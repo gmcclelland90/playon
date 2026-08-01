@@ -1,0 +1,71 @@
+#cloud-config
+# PlayOn blank node — Ubuntu 22.04+
+# Replace PLAYON_* placeholders before launch, or set them via Multipass / cloud vendor secrets.
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - curl
+  - ca-certificates
+  - gnupg
+  - git
+  - jq
+
+write_files:
+  - path: /etc/playon/node.env
+    permissions: "0600"
+    content: |
+      PLAYON_API_URL=http://CONTROL_PLANE_LAN_IP:8787
+      PLAYON_NODE_TOKEN=CHANGE_ME
+      PLAYON_NODE_ID=blank-linux
+      PLAYON_NODE_NAME=blank-linux
+      PLAYON_DATA_ROOT=/var/lib/playon
+      PLAYON_HEARTBEAT_MS=5000
+
+  - path: /usr/local/bin/playon-node-agent.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      set -euo pipefail
+      # shellcheck disable=SC1091
+      source /etc/playon/node.env
+      cd /opt/playon
+      exec pnpm --filter @playon/node-agent start
+
+runcmd:
+  # Docker Engine (official convenience script — pin/replace in hardened deploys)
+  - curl -fsSL https://get.docker.com | sh
+  - systemctl enable --now docker
+  # Node 22 via NodeSource
+  - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+  - apt-get install -y nodejs
+  - npm install -g pnpm@9
+  - mkdir -p /opt/playon /var/lib/playon
+  # Clone — replace with your fork / sync path in real LAN imaging
+  - git clone --depth 1 https://github.com/EXAMPLE/playon.git /opt/playon || true
+  - |
+    if [ -f /opt/playon/package.json ]; then
+      cd /opt/playon && pnpm install --filter @playon/node-agent...
+      cd /opt/playon && pnpm --filter @playon/node-agent build
+    fi
+  - |
+    cat >/etc/systemd/system/playon-node-agent.service <<'EOF'
+    [Unit]
+    Description=PlayOn node-agent
+    After=network-online.target docker.service
+    Wants=network-online.target
+
+    [Service]
+    Type=simple
+    EnvironmentFile=/etc/playon/node.env
+    WorkingDirectory=/opt/playon
+    ExecStart=/usr/bin/pnpm --filter @playon/node-agent start
+    Restart=always
+    RestartSec=5
+
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+  - systemctl daemon-reload
+  - systemctl enable --now playon-node-agent.service
