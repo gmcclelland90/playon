@@ -3,7 +3,7 @@
 ## Purpose
 
 Remove the biggest adoption friction: people already have servers.  
-They should be able to bring those servers under AgentHost management with minimal pain.
+They should be able to bring those servers under PlayOn management with minimal pain.
 
 ## Core Flow
 

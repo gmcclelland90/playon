@@ -1,6 +1,6 @@
-# AgentHost Design Documents
+# PlayOn Design Documents
 
-**Working titles**: AgentHost · LANForge · HostMind · ServerCursor
+**Product:** PlayOn · [playon.games](https://playon.games)
 
 This pack contains the high-level software design documents for an AI-powered, agent-driven game server hosting panel.
 
