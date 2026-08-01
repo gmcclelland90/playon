@@ -1,0 +1,137 @@
+import { PassThrough } from "node:stream";
+import Docker from "dockerode";
+import type { ContainerInfo, ContainerSpec, DockerAdapter, LogFollowHandle } from "./types.js";
+
+function mapStatus(status: string | undefined): ContainerInfo["status"] {
+  const s = (status ?? "").toLowerCase();
+  if (s.includes("running")) return "running";
+  if (s.includes("created")) return "created";
+  if (s.includes("exited") || s.includes("dead") || s.includes("stopped")) return "exited";
+  return "unknown";
+}
+
+/** Real Docker Engine adapter via dockerode. */
+export class DockerodeAdapter implements DockerAdapter {
+  private readonly docker: Docker;
+
+  constructor(options?: Docker.DockerOptions) {
+    this.docker = new Docker(options);
+  }
+
+  async ping(): Promise<void> {
+    await this.docker.ping();
+  }
+
+  async create(spec: ContainerSpec): Promise<ContainerInfo> {
+    const exposed: Record<string, object> = {};
+    const portBindings: Record<string, Array<{ HostPort: string }>> = {};
+    for (const p of spec.ports ?? []) {
+      const proto = p.protocol ?? "tcp";
+      const key = `${p.container}/${proto}`;
+      exposed[key] = {};
+      portBindings[key] = [{ HostPort: String(p.host) }];
+    }
+
+    const binds = (spec.binds ?? []).map((b) => `${b.hostPath}:${b.containerPath}`);
+
+    const container = await this.docker.createContainer({
+      name: spec.name,
+      Image: spec.image,
+      Env: Object.entries(spec.env ?? {}).map(([k, v]) => `${k}=${v}`),
+      ExposedPorts: exposed,
+      HostConfig: {
+        PortBindings: portBindings as Docker.PortMap,
+        Binds: binds.length ? binds : undefined,
+      },
+    });
+
+
+    return { id: container.id, name: spec.name, status: "created" };
+  }
+
+  async start(id: string): Promise<void> {
+    await this.docker.getContainer(id).start();
+  }
+
+  async stop(id: string): Promise<void> {
+    try {
+      await this.docker.getContainer(id).stop({ t: 10 });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/not running|already stopped|304/i.test(message)) throw err;
+    }
+  }
+
+  async inspect(id: string): Promise<ContainerInfo> {
+    const info = await this.docker.getContainer(id).inspect();
+    return {
+      id: info.Id,
+      name: (info.Name ?? "").replace(/^\//, ""),
+      status: mapStatus(info.State?.Status),
+    };
+  }
+
+  async logs(id: string, tail = 100): Promise<string[]> {
+    const buf = await this.docker.getContainer(id).logs({
+      stdout: true,
+      stderr: true,
+      tail,
+      timestamps: false,
+    });
+    const text = Buffer.isBuffer(buf) ? buf.toString("utf8") : String(buf);
+    return text.split(/\r?\n/).filter(Boolean);
+  }
+
+  async followLogs(
+    id: string,
+    onLine: (line: string) => void,
+    opts?: { tail?: number },
+  ): Promise<LogFollowHandle> {
+    const container = this.docker.getContainer(id);
+    const stream = (await container.logs({
+      follow: true,
+      stdout: true,
+      stderr: true,
+      tail: opts?.tail ?? 40,
+      timestamps: false,
+    })) as NodeJS.ReadableStream;
+
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    container.modem.demuxStream(stream, stdout, stderr);
+
+    let aborted = false;
+    const buffers = { out: "", err: "" };
+
+    const feed = (key: "out" | "err", chunk: Buffer | string) => {
+      if (aborted) return;
+      buffers[key] += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      const parts = buffers[key].split(/\r?\n/);
+      buffers[key] = parts.pop() ?? "";
+      for (const line of parts) {
+        if (line) onLine(line);
+      }
+    };
+
+    const onStdout = (chunk: Buffer | string) => feed("out", chunk);
+    const onStderr = (chunk: Buffer | string) => feed("err", chunk);
+    stdout.on("data", onStdout);
+    stderr.on("data", onStderr);
+
+    const abort = () => {
+      if (aborted) return;
+      aborted = true;
+      stdout.off("data", onStdout);
+      stderr.off("data", onStderr);
+      const destroyable = stream as unknown as { destroy?: () => void };
+      destroyable.destroy?.();
+      stdout.destroy();
+      stderr.destroy();
+    };
+
+    stream.on("end", abort);
+    stream.on("error", abort);
+
+    return { abort };
+  }
+}
