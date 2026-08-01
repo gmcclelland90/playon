@@ -1,0 +1,25 @@
+name: nightly-docker
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *"
+
+jobs:
+  paper-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install
+      - run: pnpm loop:verify
+      - name: Real Docker Paper smoke
+        run: pnpm loop:verify:runtime
+        env:
+          PLAYON_RUNTIME: docker
