@@ -1,0 +1,11 @@
+name: platform.steamcmd
+version: 0.1.0
+description: SteamCMD install/update helpers for dedicated servers (Windows and Linux).
+tags:
+  - platform
+  - steamcmd
+containerSupport: partial
+requiredTools:
+  - fetch_url
+  - fs_write
+ports: []

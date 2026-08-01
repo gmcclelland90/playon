@@ -1,0 +1,9 @@
+name: platform.docker-basics
+version: 0.1.0
+description: Guidance for containerised game servers on PlayOn nodes.
+tags:
+  - platform
+  - docker
+containerSupport: full
+requiredTools: []
+ports: []

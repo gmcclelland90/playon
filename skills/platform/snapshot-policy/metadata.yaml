@@ -1,0 +1,11 @@
+name: platform.snapshot-policy
+version: 0.1.0
+description: When to snapshot and restore managed servers.
+tags:
+  - platform
+  - snapshots
+containerSupport: none
+requiredTools:
+  - snapshot_create
+  - snapshot_restore
+  - snapshot_list

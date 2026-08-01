@@ -1,0 +1,12 @@
+name: platform.networking-lan
+version: 0.1.0
+description: LAN bind/port guidance for party nights — firewall, advertise address, port checks.
+tags:
+  - platform
+  - networking
+  - lan
+containerSupport: none
+requiredTools:
+  - net_port_check
+  - net_suggest_bind
+ports: []

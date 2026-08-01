@@ -1,0 +1,35 @@
+name: games.minecraft-paper
+version: 0.1.0
+game: Minecraft (Paper)
+description: Paper Minecraft dedicated server — container-first LAN skill.
+tags:
+  - minecraft
+  - paper
+  - reference
+theme:
+  id: paper
+  primaryHue: 145
+os:
+  - linux
+  - windows
+arch:
+  - amd64
+containerSupport: full
+requiredTools:
+  - servers_create_from_skill
+  - servers_start
+  - panel_publish
+ports:
+  - name: game
+    protocol: tcp
+    default: 25565
+dependencies: []
+healthChecks:
+  - id: process
+    type: process_running
+    onFail: restart
+  - id: game-port
+    type: tcp_port
+    portName: game
+    port: 25565
+    onFail: restart

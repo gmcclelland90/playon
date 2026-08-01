@@ -1,0 +1,9 @@
+name: platform.native-process
+version: 0.1.0
+description: Run dedicated servers as native OS processes (Windows/Linux) when containers are unavailable.
+tags:
+  - platform
+  - native
+containerSupport: none
+requiredTools: []
+ports: []
