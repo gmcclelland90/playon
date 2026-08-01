@@ -1,0 +1,33 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", "*.tsbuildinfo"]
+    },
+
+    "check": {
+      "dependsOn": ["build", "^build"]
+    },
+    "lint": {
+      "dependsOn": ["build", "^build"]
+    },
+    "test:unit": {
+      "dependsOn": ["build", "^build"]
+    },
+    "test:contract": {
+      "dependsOn": ["build", "^build"]
+    },
+    "test:int": {
+      "dependsOn": ["build", "^build"]
+    },
+    "test:agent": {
+      "dependsOn": ["build", "^build"]
+    },
+
+    "dev": {
+      "cache": false,
+      "persistent": true
+    }
+  }
+}

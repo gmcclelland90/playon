@@ -1,0 +1,40 @@
+{
+  "name": "playon",
+  "private": true,
+  "version": "0.1.0",
+  "description": "PlayOn — AI-driven game server control plane for LAN parties",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "turbo run dev --parallel",
+    "build": "turbo run build",
+    "check": "turbo run check",
+    "test:unit": "turbo run test:unit",
+    "test:contract": "turbo run test:contract",
+    "test:int": "turbo run test:int",
+    "test:agent": "turbo run test:agent",
+    "test:runtime": "node scripts/paper-docker-smoke.mjs",
+    "clean": "node scripts/clean.mjs",
+    "verify": "pnpm check && pnpm test:unit && pnpm test:contract",
+    "verify:merge": "node scripts/agent-dev-loop.mjs",
+    "loop:verify": "node scripts/agent-dev-loop.mjs",
+    "loop:verify:fast": "node scripts/agent-dev-loop.mjs --fast",
+    "loop:verify:runtime": "node scripts/agent-dev-loop.mjs --runtime",
+    "test:e2e": "playwright test",
+    "test:e2e:install": "playwright install chromium",
+    "package:mvp": "node scripts/package-mvp.mjs",
+    "smoke:venice": "pnpm --filter @playon/api smoke:venice",
+    "smoke:paper-docker": "node scripts/paper-docker-smoke.mjs",
+    "lint": "turbo run lint",
+    "db:generate": "pnpm --filter @playon/api db:generate",
+    "db:migrate": "pnpm --filter @playon/api db:migrate"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.53.2",
+    "turbo": "^2.5.4",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
+  }
+}
