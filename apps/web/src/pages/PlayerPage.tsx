@@ -196,21 +196,34 @@ export function PlayerPage() {
     window.setTimeout(() => setCopiedKey(null), 1600);
   }
 
-  const themeStyle =
-    typeof theme.primaryHue === "number"
-      ? ({
-          "--primary": `oklch(0.62 0.14 ${theme.primaryHue})`,
-          "--surface": `oklch(0.16 0.014 ${theme.primaryHue})`,
-          "--surface-2": `oklch(0.2 0.016 ${theme.primaryHue})`,
-          "--wash-a": `oklch(0.62 0.14 ${theme.primaryHue} / 0.18)`,
-        } as CSSProperties)
-      : undefined;
+  /** Game theme tokens only — scoped onto panels, never the page chrome / wordmark. */
+  const gameThemeStyle = (() => {
+    const hue = typeof theme.primaryHue === "number" ? theme.primaryHue : undefined;
+    if (hue === undefined) return undefined;
+    const steel = theme.id === "steel";
+    const ember = theme.id === "ember";
+    const L = steel ? 0.66 : ember ? 0.64 : 0.62;
+    const C = steel ? 0.08 : 0.14;
+    const accentHue = (hue + 32) % 360;
+    return {
+      "--game-primary": `oklch(${L} ${C} ${hue})`,
+      "--game-accent": `oklch(0.78 0.11 ${accentHue})`,
+      "--game-surface": `oklch(0.16 ${steel ? 0.02 : 0.014} ${hue})`,
+      "--game-surface-2": `oklch(0.2 ${steel ? 0.022 : 0.016} ${hue})`,
+      "--game-line": `oklch(0.96 0.01 ${hue} / 0.14)`,
+      "--game-wash": `oklch(${L} ${C} ${hue} / 0.12)`,
+    } as CSSProperties;
+  })();
+  const gameThemeAttrs = {
+    "data-theme": theme.id || undefined,
+    style: gameThemeStyle,
+  } as const;
+  const gameThemeClass = (...extra: string[]) =>
+    ["player-game-theme", ...extra].filter(Boolean).join(" ");
 
   return (
     <div
       className={`player${hydrated ? " panel-live" : ""}`}
-      data-theme={theme.id}
-      style={themeStyle}
       aria-busy={panel.isFetching && !panel.data ? true : undefined}
     >
       <header className="player-header">
@@ -239,7 +252,7 @@ export function PlayerPage() {
       ) : null}
 
       {!panel.isLoading && !panel.isError && !hasLive ? (
-        <div className="block">
+        <div className={gameThemeClass("block")} {...gameThemeAttrs}>
           <span className="chip">Waiting</span>
           <h2>No live servers yet</h2>
           <p className="muted status-inline">
@@ -257,6 +270,21 @@ export function PlayerPage() {
           typeof group.status?.body.status === "string"
             ? group.status.body.status
             : undefined;
+        const statusBody = group.status?.body ?? {};
+        const players =
+          typeof statusBody.players === "number" ? statusBody.players : undefined;
+        const maxPlayers =
+          typeof statusBody.maxPlayers === "number" ? statusBody.maxPlayers : undefined;
+        const map = typeof statusBody.map === "string" ? statusBody.map : undefined;
+        const mode = typeof statusBody.mode === "string" ? statusBody.mode : undefined;
+        const liveBits: string[] = [];
+        if (players !== undefined) {
+          liveBits.push(
+            maxPlayers !== undefined ? `${players}/${maxPlayers} players` : `${players} players`,
+          );
+        }
+        if (map) liveBits.push(map);
+        if (mode) liveBits.push(mode);
         const joinGame =
           (typeof joinBlock.body.game === "string" && joinBlock.body.game) ||
           theme.game ||
@@ -267,7 +295,11 @@ export function PlayerPage() {
         return (
           <section
             key={group.key}
-            className={index === 0 ? "server-section server-section-primary" : "server-section"}
+            className={gameThemeClass(
+              "server-section",
+              index === 0 ? "server-section-primary" : "",
+            )}
+            {...gameThemeAttrs}
             aria-label={sectionTitle(joinBlock, theme.game)}
           >
             <header className="server-section-header">
@@ -278,9 +310,12 @@ export function PlayerPage() {
                   className={`status status-inline ${status === "running" ? "" : "stopped"}`}
                 >
                   {statusLabel(status)}
+                  {liveBits.length ? ` · ${liveBits.join(" · ")}` : ""}
                 </p>
               ) : (
-                <p className="status status-inline">Live</p>
+                <p className="status status-inline">
+                  Live{liveBits.length ? ` · ${liveBits.join(" · ")}` : ""}
+                </p>
               )}
             </header>
 
@@ -344,22 +379,26 @@ export function PlayerPage() {
         );
       })}
 
-      {generalRest.map((block) => (
-        <PanelBlockCard
-          key={block.id}
-          block={block}
-          voteChoice={voteChoiceByBlock[block.id] ?? ""}
-          voteAcked={voteAckByBlock[block.id]}
-          onVoteChoice={(value) =>
-            setVoteChoiceByBlock((prev) => ({ ...prev, [block.id]: value }))
-          }
-          onVote={() => {
-            const choice = voteChoiceByBlock[block.id];
-            if (choice) vote.mutate({ blockId: block.id, choice });
-          }}
-          votePending={vote.isPending}
-        />
-      ))}
+      {generalRest.length ? (
+        <div className={gameThemeClass("player-game-stack")} {...gameThemeAttrs}>
+          {generalRest.map((block) => (
+            <PanelBlockCard
+              key={block.id}
+              block={block}
+              voteChoice={voteChoiceByBlock[block.id] ?? ""}
+              voteAcked={voteAckByBlock[block.id]}
+              onVoteChoice={(value) =>
+                setVoteChoiceByBlock((prev) => ({ ...prev, [block.id]: value }))
+              }
+              onVote={() => {
+                const choice = voteChoiceByBlock[block.id];
+                if (choice) vote.mutate({ blockId: block.id, choice });
+              }}
+              votePending={vote.isPending}
+            />
+          ))}
+        </div>
+      ) : null}
 
       {hasLive ? (
         <>

@@ -60,6 +60,11 @@ body:has(.app-shell)::before {
   opacity: 0.45;
 }
 
+/* Player keeps the booth wash; game themes tint sections on top. */
+body:has(.player)::before {
+  opacity: 0.55;
+}
+
 #root {
   position: relative;
   z-index: 1;
@@ -1346,6 +1351,8 @@ a.btn {
 }
 
 .player {
+  position: relative;
+  isolation: isolate;
   min-height: 100vh;
   padding: 1.5rem 1.25rem 3rem;
   max-width: 40rem;
@@ -1353,7 +1360,13 @@ a.btn {
   display: grid;
   align-content: start;
   gap: 1rem;
-  --wash-a: oklch(0.62 0.16 353 / 0.16);
+  --wash-a: oklch(0.62 0.16 353 / 0.18);
+  --wash-b: oklch(0.78 0.12 185 / 0.1);
+}
+
+.player > * {
+  position: relative;
+  z-index: 1;
 }
 
 .player::before {
@@ -1361,36 +1374,72 @@ a.btn {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  z-index: -1;
+  z-index: 0;
   background:
     radial-gradient(900px 480px at 8% -8%, var(--wash-a), transparent 55%),
-    radial-gradient(700px 420px at 100% 0%, oklch(0.78 0.12 185 / 0.08), transparent 50%);
+    radial-gradient(700px 420px at 100% 0%, var(--wash-b), transparent 50%);
 }
 
-.player[data-theme="paper"],
-.player[data-theme="grass"] {
-  --primary: oklch(0.62 0.14 145);
-  --surface: oklch(0.16 0.014 145);
-  --surface-2: oklch(0.2 0.016 145);
-  --wash-a: oklch(0.62 0.14 145 / 0.18);
+/* Game hue lives on panels only — page chrome stays Stage Rose / Live Cyan. */
+.player-game-theme {
+  --primary: var(--game-primary, oklch(0.62 0.16 353));
+  --accent: var(--game-accent, oklch(0.78 0.12 185));
+  --focus: var(--game-accent, oklch(0.78 0.12 185));
+  --surface: var(--game-surface, oklch(0.16 0.012 353));
+  --surface-2: var(--game-surface-2, oklch(0.2 0.014 353));
+  --line: var(--game-line, oklch(0.96 0.01 353 / 0.14));
 }
 
-.player[data-theme="ember"] {
-  --primary: oklch(0.64 0.14 35);
-  --surface: oklch(0.16 0.016 35);
-  --surface-2: oklch(0.2 0.018 35);
-  --wash-a: oklch(0.64 0.14 35 / 0.18);
+.player-game-theme.server-section,
+.player-game-theme.block,
+.player-game-stack {
+  background:
+    linear-gradient(180deg, var(--game-wash, transparent), transparent 42%),
+    var(--surface);
 }
 
-.player[data-theme="steel"] {
-  --primary: oklch(0.66 0.08 230);
-  --surface: oklch(0.16 0.02 230);
-  --surface-2: oklch(0.2 0.022 230);
-  --wash-a: oklch(0.66 0.08 230 / 0.16);
+.player-game-stack {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 0 1.1rem;
+}
+
+.player-game-theme[data-theme="paper"],
+.player-game-theme[data-theme="grass"] {
+  --game-primary: oklch(0.62 0.14 145);
+  --game-accent: oklch(0.78 0.11 177);
+  --game-surface: oklch(0.16 0.014 145);
+  --game-surface-2: oklch(0.2 0.016 145);
+  --game-line: oklch(0.96 0.01 145 / 0.14);
+  --game-wash: oklch(0.62 0.14 145 / 0.12);
+}
+
+.player-game-theme[data-theme="ember"] {
+  --game-primary: oklch(0.64 0.14 35);
+  --game-accent: oklch(0.78 0.11 67);
+  --game-surface: oklch(0.16 0.016 35);
+  --game-surface-2: oklch(0.2 0.018 35);
+  --game-line: oklch(0.96 0.01 35 / 0.14);
+  --game-wash: oklch(0.64 0.14 35 / 0.12);
+}
+
+.player-game-theme[data-theme="steel"] {
+  --game-primary: oklch(0.66 0.08 230);
+  --game-accent: oklch(0.78 0.1 262);
+  --game-surface: oklch(0.16 0.02 230);
+  --game-surface-2: oklch(0.2 0.022 230);
+  --game-line: oklch(0.96 0.01 230 / 0.14);
+  --game-wash: oklch(0.66 0.08 230 / 0.12);
 }
 
 .player .brand-mark {
   font-size: 2.25rem;
+}
+
+.player .brand-mark span {
+  color: oklch(0.62 0.16 353);
 }
 
 .player-header {
@@ -1408,7 +1457,7 @@ a.btn {
 }
 
 .server-section-primary {
-  box-shadow: 0 1px 0 oklch(0.9 0.02 353 / 0.04);
+  box-shadow: 0 1px 0 color-mix(in oklch, var(--primary) 18%, transparent);
 }
 
 .server-section-header {
