@@ -6,6 +6,19 @@ import { CanvasPage } from "./CanvasPage";
 import { DashboardPage } from "./DashboardPage";
 import { SettingsPage } from "./SettingsPage";
 
+function roleLabel(role: string): string {
+  switch (role) {
+    case "owner":
+      return "Owner";
+    case "admin":
+      return "Admin";
+    case "operator":
+      return "Operator";
+    default:
+      return role;
+  }
+}
+
 export function AdminShell({ user }: { user: PublicUser }) {
   const qc = useQueryClient();
   const logout = useMutation({
@@ -23,11 +36,11 @@ export function AdminShell({ user }: { user: PublicUser }) {
     <div className="app-shell">
       <header className="topbar">
         <div className="topbar-brand">
-          <p className="brand-mark">
+          <NavLink to={home} className="brand-mark">
             Play<span>On</span>
-          </p>
+          </NavLink>
           <span className="role-chip" title="Signed-in role">
-            {user.role}
+            {roleLabel(user.role)}
           </span>
         </div>
         <nav className="topbar-nav" aria-label="Admin">
@@ -56,6 +69,11 @@ export function AdminShell({ user }: { user: PublicUser }) {
             {logout.isPending ? "Signing out…" : "Sign out"}
           </button>
         </nav>
+        {logout.isError ? (
+          <p className="error topbar-error" role="alert">
+            {(logout.error as Error).message}
+          </p>
+        ) : null}
       </header>
       <main className={showChat ? "main-canvas" : undefined}>
         <Routes>
