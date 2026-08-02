@@ -74,4 +74,29 @@ describe("SkillDraftService", () => {
     const found = skills.find((s) => s.path === promoted.path);
     expect(found?.metadata.tags).not.toContain("draft");
   });
+
+  it("saves and promotes a skill_module query connector", () => {
+    const { config, drafts } = tempConfig();
+    const saved = drafts.save({
+      name: "query-draft",
+      game: "Query Draft",
+      description: "Has a connector",
+      installGuide: "# Install",
+      queryConnectorSource: `export default async function query() {
+  return { online: true, players: 0, maxPlayers: 2, map: "a" };
+}
+`,
+      queryGuide: "# Query\n\nCustom UDP.",
+    });
+
+    expect(fs.existsSync(path.join(saved.path, "query", "connector.mjs"))).toBe(true);
+    expect(fs.existsSync(path.join(saved.path, "guides", "QUERY.md"))).toBe(true);
+    const draftMeta = listSkills(config.skillsRoots).find((s) => s.metadata.name === saved.skillName);
+    expect(draftMeta?.metadata.queryDialect).toBe("skill_module");
+
+    const promoted = drafts.promote("query-draft");
+    expect(fs.existsSync(path.join(promoted.path, "query", "connector.mjs"))).toBe(true);
+    const promoMeta = listSkills(config.skillsRoots).find((s) => s.path === promoted.path);
+    expect(promoMeta?.metadata.queryDialect).toBe("skill_module");
+  });
 });

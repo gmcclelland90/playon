@@ -10,10 +10,14 @@ export type AgentActivityVerb =
   | "other";
 
 const TOOL_VERBS: Record<string, AgentActivityVerb> = {
-  net_fetch_url: "fetch",
+  fetch_url: "fetch",
   fs_read: "read",
   fs_list: "read",
   fs_write: "write",
+  fs_delete: "write",
+  fs_rename: "write",
+  fs_copy: "write",
+  archive_extract: "write",
   servers_start: "run",
   servers_stop: "run",
   servers_restart: "run",
@@ -21,6 +25,7 @@ const TOOL_VERBS: Record<string, AgentActivityVerb> = {
   servers_import_local: "run",
   servers_import_sftp: "run",
   servers_relocate: "run",
+  servers_logs_tail: "read",
   snapshot_create: "snapshot",
   snapshot_restore: "snapshot",
   snapshot_list: "snapshot",
@@ -33,7 +38,11 @@ const TOOL_VERBS: Record<string, AgentActivityVerb> = {
   skill_list: "skill",
   skill_draft_save: "skill",
   skill_draft_list: "skill",
+  skill_draft_set_query_connector: "skill",
   skill_promote: "skill",
+  servers_query: "run",
+  servers_query_test: "run",
+  servers_health_check: "run",
   skill_export: "skill",
   skill_import: "skill",
   skill_promote_server: "skill",
@@ -51,8 +60,11 @@ export function verbForTool(toolName: string): AgentActivityVerb {
   if (toolName.startsWith("skill_")) return "skill";
   if (toolName.startsWith("panel_")) return "panel";
   if (toolName.startsWith("snapshot_") || toolName.startsWith("backup_")) return "snapshot";
-  if (toolName.startsWith("fs_")) return toolName.includes("write") ? "write" : "read";
-  if (toolName.startsWith("net_")) return "fetch";
+  if (toolName.startsWith("fs_")) {
+    return /write|delete|rename|copy/.test(toolName) ? "write" : "read";
+  }
+  if (toolName === "archive_extract") return "write";
+  if (toolName.startsWith("net_") || toolName === "fetch_url") return "fetch";
   if (toolName.startsWith("servers_")) return "run";
   return "other";
 }

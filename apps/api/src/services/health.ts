@@ -1,5 +1,6 @@
 import type { HealthCheck, SkillMetadata } from "@playon/shared";
 import type { NetToolsService } from "./net-tools.js";
+import type { ServerQueryService } from "./server-query.js";
 import type { ServerRecord, ServerService } from "./servers.js";
 import { loadSkillMetadata } from "./skills.js";
 import type { AppConfig } from "../config.js";
@@ -39,6 +40,7 @@ export class HealthService {
     private readonly dbServers: ServerService,
     private readonly net: NetToolsService,
     private readonly config: AppConfig,
+    private readonly queries?: ServerQueryService,
   ) {}
 
   private resolveChecks(server: ServerRecord): { meta: SkillMetadata | null; checks: HealthCheck[] } {
@@ -118,6 +120,29 @@ export class HealthService {
         });
         if (!ok && check.onFail === "restart") needsRestart = true;
         if (!ok && check.onFail === "escalate") escalations.push(check.id);
+        continue;
+      }
+
+      if (check.type === "query_responding") {
+        if (!this.queries) {
+          results.push({
+            id: check.id,
+            ok: false,
+            detail: "query service unavailable",
+            onFail: check.onFail,
+          });
+          if (check.onFail === "escalate") escalations.push(check.id);
+          continue;
+        }
+        const probe = await this.queries.isQueryResponding(server);
+        results.push({
+          id: check.id,
+          ok: probe.ok,
+          detail: probe.detail,
+          onFail: check.onFail,
+        });
+        if (!probe.ok && check.onFail === "restart") needsRestart = true;
+        if (!probe.ok && check.onFail === "escalate") escalations.push(check.id);
       }
     }
 

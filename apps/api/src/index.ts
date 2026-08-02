@@ -3,6 +3,9 @@ import { loadConfig } from "./config.js";
 import { createDb } from "./db/client.js";
 import { applyBootstrap } from "./db/migrate.js";
 import { createApp } from "./app.js";
+import { LiveQueryScheduler } from "./services/live-query-scheduler.js";
+import { PanelService } from "./services/panel.js";
+import { ServerQueryService } from "./services/server-query.js";
 import { ServerService } from "./services/servers.js";
 import { SnapshotScheduler } from "./services/snapshot-scheduler.js";
 import { SnapshotService } from "./services/snapshots.js";
@@ -47,3 +50,11 @@ const snapshotScheduler = new SnapshotScheduler(
   new SnapshotService(db, config, new ServerService(db, config, app.eventHub)),
 );
 snapshotScheduler.start();
+
+const liveQueryServers = new ServerService(db, config, app.eventHub);
+const liveQueryScheduler = new LiveQueryScheduler(
+  liveQueryServers,
+  new PanelService(db, app.eventHub),
+  new ServerQueryService(liveQueryServers, config),
+);
+liveQueryScheduler.start();

@@ -141,6 +141,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   ];
   if (skillsProfile !== "minimal") {
     skillsRoots.unshift(path.join(repoRoot, "skills", "games"));
+    skillsRoots.push(path.join(repoRoot, "skills", "fixtures"));
   }
 
   return {

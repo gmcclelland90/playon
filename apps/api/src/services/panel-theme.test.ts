@@ -27,5 +27,6 @@ describe("panel theme", () => {
       tags: ["platform"],
     });
     expect(t.id).toBe("default");
+    expect(t.primaryHue).toBe(353);
   });
 });

@@ -25,6 +25,7 @@ dockerEnv:
   MAX_PLAYERS: "20"
   ENABLE_RCON: "true"
 adminDialect: mc_rcon
+queryDialect: minecraft_status
 join:
   clientSetupNotes: >
     Open Minecraft Java Edition → Multiplayer → Direct Connection → {{endpoint}}
@@ -58,3 +59,6 @@ healthChecks:
     portName: game
     port: 25565
     onFail: restart
+  - id: query
+    type: query_responding
+    onFail: none

@@ -5,7 +5,7 @@ export type ContainerSupport = z.infer<typeof ContainerSupportSchema>;
 
 export const HealthCheckSchema = z.object({
   id: z.string().min(1),
-  type: z.enum(["process_running", "tcp_port"]),
+  type: z.enum(["process_running", "tcp_port", "query_responding"]),
   /** For tcp_port: uses skill port name or explicit port. */
   portName: z.string().optional(),
   port: z.number().int().positive().optional(),
@@ -15,6 +15,19 @@ export const HealthCheckSchema = z.object({
 });
 
 export type HealthCheck = z.infer<typeof HealthCheckSchema>;
+
+/** Read-only live query dialect (separate from adminDialect / RCON). */
+export const QueryDialectSchema = z.enum([
+  "none",
+  "minecraft_status",
+  "a2s",
+  "valheim",
+  "unreal",
+  "terraria",
+  "factorio",
+  "skill_module",
+]);
+export type QueryDialect = z.infer<typeof QueryDialectSchema>;
 
 export const SkillThemeIdSchema = z.enum(["default", "grass", "ember", "steel", "paper"]);
 export type SkillThemeId = z.infer<typeof SkillThemeIdSchema>;
@@ -81,6 +94,12 @@ export const SkillMetadataSchema = z.object({
   /** SteamCMD dedicated-server app id (catalog Steam skills). */
   steamAppId: z.number().int().positive().optional(),
   adminDialect: AdminDialectSchema.default("none"),
+  /** Live stats query protocol; skill_module loads query/connector.mjs from the skill. */
+  queryDialect: QueryDialectSchema.default("none"),
+  /** Port name for query (default "query", else "game"). */
+  queryPortName: z.string().min(1).optional(),
+  /** Relative path under the skill dir for skill_module (default query/connector.mjs). */
+  queryConnector: z.string().min(1).optional(),
   join: SkillJoinSchema.optional(),
   native: SkillNativeSchema.optional(),
   /** Soft requirement for capacity warnings (party-box multi-server). */

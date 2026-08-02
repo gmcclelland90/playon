@@ -1,0 +1,20 @@
+name: fixtures.query-skill-module
+version: 0.1.0
+game: Query Fixture
+description: Fixture skill with a skill_module query connector for unit/integration tests.
+tags:
+  - fixture
+  - query
+  - ci
+containerSupport: none
+adminDialect: none
+queryDialect: skill_module
+queryConnector: query/connector.mjs
+ports:
+  - name: game
+    protocol: tcp
+    default: 19090
+healthChecks:
+  - id: query
+    type: query_responding
+    onFail: escalate

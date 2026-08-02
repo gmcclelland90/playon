@@ -26,10 +26,24 @@ describe("SkillMetadataSchema contract", () => {
       healthChecks: [
         { id: "process", type: "process_running", onFail: "restart" },
         { id: "game-port", type: "tcp_port", port: 25565, onFail: "restart" },
+        { id: "query", type: "query_responding", onFail: "escalate" },
       ],
     });
-    expect(parsed.healthChecks).toHaveLength(2);
+    expect(parsed.healthChecks).toHaveLength(3);
     expect(parsed.healthChecks[0]?.onFail).toBe("restart");
+    expect(parsed.healthChecks[2]?.type).toBe("query_responding");
+  });
+
+  it("accepts queryDialect and skill_module connector path", () => {
+    const parsed = SkillMetadataSchema.parse({
+      name: "drafts.custom-game",
+      version: "0.0.1-draft",
+      queryDialect: "skill_module",
+      queryPortName: "query",
+      queryConnector: "query/connector.mjs",
+    });
+    expect(parsed.queryDialect).toBe("skill_module");
+    expect(parsed.queryConnector).toBe("query/connector.mjs");
   });
 
   it("accepts optional game-flavoured theme", () => {

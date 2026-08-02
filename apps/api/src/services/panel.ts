@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { Db } from "../db/client.js";
 import { panelBlocks } from "../db/schema.js";
 import type { EventHub } from "./event-hub.js";
+import { KeyedAsyncLock } from "./panel-lock.js";
 
 export const PublishBlockSchema = z.object({
   type: PanelBlockTypeSchema,
@@ -36,6 +37,8 @@ function toRecord(row: typeof panelBlocks.$inferSelect): PanelBlockRecord {
 }
 
 export class PanelService {
+  private readonly serverLocks = new KeyedAsyncLock();
+
   constructor(
     private readonly db: Db,
     private readonly events?: EventHub,
@@ -100,18 +103,22 @@ export class PanelService {
     serverId: string,
     blocks: Array<z.infer<typeof PublishBlockSchema>>,
   ): Promise<PanelBlockRecord[]> {
-    await this.db.delete(panelBlocks).where(eq(panelBlocks.serverId, serverId));
-    if (blocks.length === 0) {
-      await this.notifyUpdated();
-      return [];
-    }
-    return this.publish({ serverId, blocks });
+    return this.serverLocks.run(`panel:${serverId}`, async () => {
+      await this.db.delete(panelBlocks).where(eq(panelBlocks.serverId, serverId));
+      if (blocks.length === 0) {
+        await this.notifyUpdated();
+        return [];
+      }
+      return this.publish({ serverId, blocks });
+    });
   }
 
   /** Remove every panel block for a server (stop / delete). */
   async clearForServer(serverId: string): Promise<void> {
-    await this.db.delete(panelBlocks).where(eq(panelBlocks.serverId, serverId));
-    await this.notifyUpdated();
+    return this.serverLocks.run(`panel:${serverId}`, async () => {
+      await this.db.delete(panelBlocks).where(eq(panelBlocks.serverId, serverId));
+      await this.notifyUpdated();
+    });
   }
 
   /** Wipe the entire player panel (lab reset / host cleanup). */

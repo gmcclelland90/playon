@@ -22,6 +22,7 @@ dockerDataMount: /root/.local/share/Terraria/Worlds
 dockerEnv:
   WORLD_FILENAME: world.wld
 adminDialect: none
+queryDialect: terraria
 join:
   clientSetupNotes: >
     Terraria → Multiplayer → Join via IP → {{endpoint}}

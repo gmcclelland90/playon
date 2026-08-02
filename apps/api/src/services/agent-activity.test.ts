@@ -3,8 +3,11 @@ import { labelForTool, verbForTool } from "./agent-activity.js";
 
 describe("agent activity verbs", () => {
   it("maps known tools", () => {
-    expect(verbForTool("net_fetch_url")).toBe("fetch");
+    expect(verbForTool("fetch_url")).toBe("fetch");
     expect(verbForTool("fs_write")).toBe("write");
+    expect(verbForTool("fs_delete")).toBe("write");
+    expect(verbForTool("archive_extract")).toBe("write");
+    expect(verbForTool("servers_logs_tail")).toBe("read");
     expect(verbForTool("panel_publish")).toBe("panel");
     expect(verbForTool("servers_start")).toBe("run");
     expect(verbForTool("skill_list")).toBe("skill");
@@ -15,7 +18,7 @@ describe("agent activity verbs", () => {
   });
 
   it("provides short labels", () => {
-    expect(labelForTool("net_fetch_url", "fetch")).toMatch(/fetch/i);
+    expect(labelForTool("fetch_url", "fetch")).toMatch(/fetch/i);
   });
 
   it("distinguishes panel list vs publish labels", () => {

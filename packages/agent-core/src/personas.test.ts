@@ -37,9 +37,17 @@ describe("personas", () => {
     expect(toolsAllowedForPersona("player_panel", "panel_publish")).toBe(true);
     expect(toolsAllowedForPersona("player_panel", "servers_stop")).toBe(false);
     expect(toolsAllowedForPersona("modder", "fetch_url")).toBe(true);
+    expect(toolsAllowedForPersona("modder", "archive_extract")).toBe(true);
+    expect(toolsAllowedForPersona("modder", "fs_delete")).toBe(true);
+    expect(toolsAllowedForPersona("modder", "servers_logs_tail")).toBe(true);
     expect(toolsAllowedForPersona("modder", "servers_create_from_skill")).toBe(false);
+    expect(toolsAllowedForPersona("installer", "archive_extract")).toBe(true);
+    expect(toolsAllowedForPersona("configurer", "fs_copy")).toBe(true);
+    expect(toolsAllowedForPersona("troubleshooter", "servers_logs_tail")).toBe(true);
     expect(toolsAllowedForPersona("backup", "snapshot_restore")).toBe(true);
     expect(toolsAllowedForPersona("monitor", "fs_write")).toBe(false);
+    expect(toolsAllowedForPersona("monitor", "servers_query")).toBe(true);
+    expect(toolsAllowedForPersona("installer", "servers_query_test")).toBe(true);
     expect(toolsAllowedForPersona("orchestrator", "servers_stop")).toBe(true);
   });
 

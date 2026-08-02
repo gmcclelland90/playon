@@ -21,6 +21,7 @@ arch:
 containerSupport: none
 steamAppId: 258550
 adminDialect: rust_web_rcon
+queryDialect: a2s
 join:
   connectCommand: "client.connect {{endpoint}}"
   steamClientAppId: 252490

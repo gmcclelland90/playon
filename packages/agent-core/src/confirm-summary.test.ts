@@ -15,6 +15,15 @@ describe("confirmSummary", () => {
     expect(confirmSummary("fs_write", { serverId: "s1", path: "server.properties" })).toBe(
       "An agent wants to change a server file: server.properties",
     );
+    expect(confirmSummary("fs_delete", { path: "plugins/Old" })).toBe(
+      "An agent wants to delete a server file or folder: plugins/Old",
+    );
+    expect(confirmSummary("archive_extract", { archivePath: "mods.zip", destDir: "game" })).toBe(
+      "An agent wants to extract an archive into the server folder: mods.zip → game",
+    );
+    expect(confirmSummary("fetch_url", { url: "https://example.com/m.jar", destPath: "game/m.jar" })).toBe(
+      "An agent wants to download a file into the server folder: https://example.com/m.jar",
+    );
     expect(confirmSummary("skill_promote", { slug: "minecraft-paper" })).toBe(
       "An agent wants to promote a draft skill so it can be installed: minecraft-paper",
     );

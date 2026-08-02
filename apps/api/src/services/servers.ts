@@ -438,6 +438,29 @@ export class ServerService {
     };
   }
 
+  /** Tail runtime logs for a server (Docker adapter; native returns empty for now). */
+  async tailLogs(
+    id: string,
+    lines = 80,
+  ): Promise<{ status: string; runtime: "docker" | "native"; lines: string[] } | null> {
+    const server = await this.get(id);
+    if (!server) return null;
+    const capped = Math.min(200, Math.max(1, Math.floor(lines)));
+    if (server.runtimeMode === "native") {
+      return { status: server.status, runtime: "native", lines: [] };
+    }
+    await this.ensureRuntime();
+    const adapter = this.adapterFor(id);
+    const name = this.containerName(id);
+    try {
+      const info = await adapter.inspect(name);
+      const logs = await adapter.logs(info.id, capped).catch(() => []);
+      return { status: server.status, runtime: "docker", lines: logs };
+    } catch {
+      return { status: server.status, runtime: "docker", lines: [] };
+    }
+  }
+
   private runtimeModeForSkill(_skillName: string, containerSupport: string): "native" | "docker" {
     return containerSupport === "none" ? "native" : "docker";
   }
@@ -463,6 +486,9 @@ export class ServerService {
           dockerDataMount: m.dockerDataMount,
           steamAppId: m.steamAppId,
           adminDialect: m.adminDialect,
+          queryDialect: m.queryDialect,
+          queryPortName: m.queryPortName,
+          queryConnector: m.queryConnector,
           join: m.join,
           native: m.native,
           dependencies: m.dependencies,

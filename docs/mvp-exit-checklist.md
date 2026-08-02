@@ -27,9 +27,9 @@ PlayOn MVP is ready for a LAN demo when all items below are green.
 - [x] One-process start: API serves built web (`pnpm build && pnpm start`)
 - [x] systemd unit under `infra/control-plane/`
 - [x] Production refuses missing `PLAYON_SESSION_SECRET` / `PLAYON_ADVERTISE_HOST`
-- [ ] `PLAYON_ADVERTISE_HOST` set on the party box; players can join published address
-- [ ] Docker Engine available for real Paper path
-- [ ] Control plane survives reboot (`systemctl enable --now playon`)
+- [x] `PLAYON_ADVERTISE_HOST` set on the party box; players can join published address
+- [x] Docker Engine available for real Paper path
+- [x] Control plane survives reboot (`systemctl enable --now playon`)
 
 ## Offline / local LLM
 

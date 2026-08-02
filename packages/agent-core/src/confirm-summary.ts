@@ -9,6 +9,11 @@ const TOOL_ACTIONS: Record<string, string> = {
   snapshot_restore: "restore this server from a snapshot",
   backup_offnode_restore: "restore this server from an off-site backup",
   fs_write: "change a server file",
+  fs_delete: "delete a server file or folder",
+  fs_rename: "rename or move a server path",
+  fs_copy: "copy a server file or folder",
+  archive_extract: "extract an archive into the server folder",
+  fetch_url: "download a file into the server folder",
   skill_promote: "promote a draft skill so it can be installed",
   skill_import: "import a skill package",
   skill_promote_server: "add a server skill to the shared library",
@@ -34,7 +39,9 @@ function detailFor(toolName: string, args: Record<string, unknown>): string | un
   const path =
     asNonEmptyString(args.path) ??
     asNonEmptyString(args.sourcePath) ??
-    asNonEmptyString(args.zipPath);
+    asNonEmptyString(args.zipPath) ??
+    asNonEmptyString(args.destPath) ??
+    asNonEmptyString(args.archivePath);
   const skill =
     asNonEmptyString(args.skillName) ??
     asNonEmptyString(args.slug) ??
@@ -42,10 +49,27 @@ function detailFor(toolName: string, args: Record<string, unknown>): string | un
   const label = asNonEmptyString(args.label);
   const appId = asNonEmptyString(args.appId) ?? (typeof args.appId === "number" ? String(args.appId) : undefined);
   const message = asNonEmptyString(args.message);
+  const url = asNonEmptyString(args.url);
 
   switch (toolName) {
     case "fs_write":
+    case "fs_delete":
       return path ? clip(path) : undefined;
+    case "fs_rename":
+    case "fs_copy": {
+      const from = asNonEmptyString(args.from);
+      const to = asNonEmptyString(args.to);
+      if (from && to) return clip(`${from} → ${to}`);
+      return from || to ? clip(from ?? to!) : undefined;
+    }
+    case "archive_extract": {
+      const archive = asNonEmptyString(args.archivePath);
+      const dest = asNonEmptyString(args.destDir);
+      if (archive && dest) return clip(`${archive} → ${dest}`);
+      return archive || dest ? clip(archive ?? dest!) : undefined;
+    }
+    case "fetch_url":
+      return url ? clip(url) : path ? clip(path) : undefined;
     case "servers_import_local":
     case "servers_import_sftp":
     case "skill_import":
@@ -62,7 +86,7 @@ function detailFor(toolName: string, args: Record<string, unknown>): string | un
       return target ? `to ${clip(target)}` : undefined;
     }
     default: {
-      const fallback = path ?? skill ?? label ?? message;
+      const fallback = path ?? skill ?? label ?? message ?? url;
       return fallback ? clip(fallback) : undefined;
     }
   }

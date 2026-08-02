@@ -20,6 +20,8 @@ arch:
   - amd64
 containerSupport: none
 adminDialect: none
+queryDialect: unreal
+queryPortName: query
 join:
   clientSetupNotes: >
     Launch Unreal Tournament 99 → Multiplayer → Open → {{endpoint}}

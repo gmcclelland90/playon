@@ -25,6 +25,7 @@ dockerEnv:
   SAVE_NAME: playon
   LOAD_LATEST_SAVE: "false"
 adminDialect: none
+queryDialect: factorio
 join:
   clientSetupNotes: >
     Factorio → Multiplayer → Connect to address → {{host}}:{{port}} (UDP game port).

@@ -56,7 +56,12 @@ import { HealthService } from "./services/health.js";
 import { NetToolsService } from "./services/net-tools.js";
 import { PanelService } from "./services/panel.js";
 import { resolvePanelTheme } from "./services/panel-theme.js";
-import { isPlayerPanelLiveStatus, publishServerPanel } from "./services/server-panel.js";
+import {
+  isPlayerPanelLiveStatus,
+  publishServerPanel,
+  safeQueryLive,
+} from "./services/server-panel.js";
+import { ServerQueryService } from "./services/server-query.js";
 import { ServerService } from "./services/servers.js";
 import { MigrateService } from "./services/migrate.js";
 import { labelForTool, verbForTool } from "./services/agent-activity.js";
@@ -152,7 +157,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   const snapshotService = new SnapshotService(db, config, serverService);
   const panelService = new PanelService(db, eventHub);
   const netTools = new NetToolsService(serverService);
-  const healthService = new HealthService(serverService, netTools, config);
+  const queryService = new ServerQueryService(serverService, config);
+  const healthService = new HealthService(serverService, netTools, config, queryService);
   const placementService = new PlacementService(db, config, netTools);
   const migrateService = new MigrateService(
     db,
@@ -173,7 +179,20 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     void (async () => {
       try {
         if (event.status === "running" || event.status === "starting") {
-          await publishServerPanel(serverService, panelService, event.serverId, event.status);
+          let live = null;
+          if (event.status === "running") {
+            live = await safeQueryLive(
+              (id) => queryService.queryServerWithRetry(id, { attempts: 5, delayMs: 1200 }),
+              event.serverId,
+            );
+          }
+          await publishServerPanel(
+            serverService,
+            panelService,
+            event.serverId,
+            event.status,
+            live,
+          );
         } else if (event.status === "stopped" || event.status === "error") {
           await publishServerPanel(serverService, panelService, event.serverId, event.status);
         }
@@ -737,7 +756,11 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     }
     try {
       const server = await serverService.start(c.req.param("id"));
-      await publishServerPanel(serverService, panelService, server.id, "running");
+      const live = await safeQueryLive(
+        (id) => queryService.queryServerWithRetry(id, { attempts: 5, delayMs: 1200 }),
+        server.id,
+      );
+      await publishServerPanel(serverService, panelService, server.id, "running", live);
       const detail = await serverService.detail(server.id);
       return c.json({ server, runtime: detail?.runtime });
     } catch (err) {
@@ -784,7 +807,11 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     }
     try {
       const server = await serverService.restart(c.req.param("id"));
-      await publishServerPanel(serverService, panelService, server.id, "running");
+      const live = await safeQueryLive(
+        (id) => queryService.queryServerWithRetry(id, { attempts: 5, delayMs: 1200 }),
+        server.id,
+      );
+      await publishServerPanel(serverService, panelService, server.id, "running", live);
       const detail = await serverService.detail(server.id);
       return c.json({ server, runtime: detail?.runtime });
     } catch (err) {

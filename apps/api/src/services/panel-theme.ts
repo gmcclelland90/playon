@@ -11,9 +11,9 @@ export type PanelTheme = {
   skillName?: string;
 };
 
-const DEFAULT_THEME: PanelTheme = { id: "default" };
+const DEFAULT_THEME: PanelTheme = { id: "default", primaryHue: 353 };
 
-const THEME_HUES: Partial<Record<SkillThemeId, number>> = {
+const THEME_HUES: Record<SkillThemeId, number> = {
   grass: 145,
   paper: 145,
   ember: 35,
@@ -50,11 +50,18 @@ export function themeFromSkill(meta: {
 
 export function resolvePanelTheme(
   config: AppConfig,
-  blocks: Array<{ serverId: string | null }>,
+  blocks: Array<{ serverId: string | null; type?: string; sortOrder?: number }>,
 ): PanelTheme {
-  const serverId =
-    blocks.find((b) => b.serverId)?.serverId ??
-    null;
+  // Prefer the primary join block's server (same idea as the player page live group).
+  const ranked = [...blocks]
+    .filter((b) => b.serverId)
+    .sort((a, b) => {
+      const aJoin = a.type === "join_info" ? 0 : 1;
+      const bJoin = b.type === "join_info" ? 0 : 1;
+      if (aJoin !== bJoin) return aJoin - bJoin;
+      return (a.sortOrder ?? 0) - (b.sortOrder ?? 0);
+    });
+  const serverId = ranked[0]?.serverId ?? null;
   if (!serverId) return DEFAULT_THEME;
 
   const dataPath = path.join(config.dataRoot, "servers", serverId);

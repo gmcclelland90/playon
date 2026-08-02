@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   PanelBlockTypeSchema,
   renderSkillTemplate,
+  type LiveServerState,
   type SkillJoin,
   type SkillMetadata,
 } from "@playon/shared";
@@ -10,6 +11,69 @@ import { PublishBlockSchema, type PanelService } from "./panel.js";
 import type { ServerService } from "./servers.js";
 import { loadSkillMetadata } from "./skills.js";
 import type { z } from "zod";
+
+/**
+ * Keys on server_status.body owned by the live-query layer.
+ * Control plane always re-applies these so agent panel_publish cannot wipe them.
+ * Extend this list when new uniform live fields are added.
+ */
+export const LIVE_PANEL_STATUS_KEYS = [
+  "online",
+  "players",
+  "maxPlayers",
+  "map",
+  "mode",
+  "serverName",
+  "version",
+  "uptimeSeconds",
+  "playerList",
+] as const;
+
+export type LivePanelStatusKey = (typeof LIVE_PANEL_STATUS_KEYS)[number];
+
+/** Panel-safe live fields for server_status.body. */
+export function liveStateToPanelBody(live?: LiveServerState | null): Record<string, unknown> {
+  if (!live?.online) return {};
+  const out: Record<string, unknown> = { online: true };
+  if (live.players !== undefined) out.players = live.players;
+  if (live.maxPlayers !== undefined) out.maxPlayers = live.maxPlayers;
+  if (live.map) out.map = live.map;
+  if (live.mode) out.mode = live.mode;
+  if (live.name) out.serverName = live.name;
+  if (live.version) out.version = live.version;
+  if (live.uptimeSeconds !== undefined) out.uptimeSeconds = live.uptimeSeconds;
+  if (live.playerList?.length) {
+    out.playerList = live.playerList.map((p) => ({
+      name: p.name,
+      ...(p.score !== undefined ? { score: p.score } : {}),
+    }));
+  }
+  return out;
+}
+
+/** Pull previously published live fields (used when a fresh query is offline). */
+export function extractLivePanelFields(body: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  if (!body) return {};
+  const out: Record<string, unknown> = {};
+  for (const key of LIVE_PANEL_STATUS_KEYS) {
+    if (body[key] !== undefined) out[key] = body[key];
+  }
+  return out;
+}
+
+/**
+ * Merge lifecycle/agent status body with live query fields.
+ * Fresh online query wins; otherwise retain prior live metrics so publishes cannot clear them.
+ */
+export function mergeLiveIntoStatusBody(
+  body: Record<string, unknown>,
+  live?: LiveServerState | null,
+  previous?: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const fromQuery = liveStateToPanelBody(live);
+  const retained = Object.keys(fromQuery).length ? fromQuery : extractLivePanelFields(previous);
+  return { ...body, ...retained };
+}
 
 type PublishBlock = z.infer<typeof PublishBlockSchema>;
 
@@ -174,6 +238,7 @@ export async function publishServerPanel(
   panel: PanelService,
   serverId: string,
   status: "running" | "starting" | "stopped" | "error",
+  live?: LiveServerState | null,
 ): Promise<void> {
   // Stopped/error servers leave the player panel — join info is only for live games.
   if (status === "stopped" || status === "error") {
@@ -191,6 +256,17 @@ export async function publishServerPanel(
 
   const existing = await panel.list(serverId);
   const preserved = preservedPanelBlocks(existing);
+  const previousStatus = existing.find((b) => b.type === "server_status")?.body ?? null;
+  const statusBody = mergeLiveIntoStatusBody(
+    {
+      status,
+      runtime: detail.runtime.kind,
+      game: detail.server.game,
+      containerStatus: detail.runtime.containerStatus ?? status,
+    },
+    live,
+    previousStatus,
+  );
 
   await panel.replaceForServer(serverId, [
     {
@@ -211,12 +287,7 @@ export async function publishServerPanel(
     {
       type: "server_status",
       title: "Status",
-      body: {
-        status,
-        runtime: detail.runtime.kind,
-        game: detail.server.game,
-        containerStatus: detail.runtime.containerStatus ?? status,
-      },
+      body: statusBody,
       sortOrder: 1,
     },
     {
@@ -229,6 +300,73 @@ export async function publishServerPanel(
     },
     ...preserved,
   ]);
+}
+
+type PanelPublishBlock = {
+  type: z.infer<typeof PanelBlockTypeSchema>;
+  title: string;
+  body: Record<string, unknown>;
+  sortOrder: number;
+};
+
+/**
+ * Ensure agent panel replaces still carry control-plane live metrics.
+ * Injects server_status when omitted. Fresh online query wins; else keep prior live keys.
+ */
+export function enrichBlocksWithLiveStatus(
+  blocks: PanelPublishBlock[],
+  opts: {
+    status: string;
+    runtime: string;
+    game?: string | null;
+    live?: LiveServerState | null;
+    previousStatusBody?: Record<string, unknown> | null;
+  },
+): PanelPublishBlock[] {
+  const base = {
+    status: opts.status,
+    runtime: opts.runtime,
+    game: opts.game ?? undefined,
+  };
+  let sawStatus = false;
+  const next = blocks.map((block) => {
+    if (block.type !== "server_status") return block;
+    sawStatus = true;
+    return {
+      ...block,
+      body: mergeLiveIntoStatusBody(
+        {
+          ...block.body,
+          status: block.body.status ?? opts.status,
+          runtime: block.body.runtime ?? opts.runtime,
+          game: block.body.game ?? opts.game ?? undefined,
+        },
+        opts.live,
+        opts.previousStatusBody,
+      ),
+    };
+  });
+  if (!sawStatus && isPlayerPanelLiveStatus(opts.status)) {
+    next.splice(Math.min(1, next.length), 0, {
+      type: "server_status",
+      title: "Status",
+      body: mergeLiveIntoStatusBody(base, opts.live, opts.previousStatusBody),
+      sortOrder: 1,
+    });
+  }
+  return next;
+}
+
+/** Query live state for panel enrichment; never throws. */
+export async function safeQueryLive(
+  query: (serverId: string) => Promise<LiveServerState>,
+  serverId: string,
+): Promise<LiveServerState | null> {
+  try {
+    return await query(serverId);
+  } catch {
+    return null;
+  }
 }
 
 /** @deprecated kept for typed re-exports in tests */

@@ -11,6 +11,10 @@ export interface SkillDraftSaveArgs {
   installGuide: string;
   containerSupport?: "full" | "partial" | "none";
   warnings?: string;
+  /** When set, writes query/connector.mjs and sets queryDialect: skill_module. */
+  queryConnectorSource?: string;
+  /** Optional guides/QUERY.md content. */
+  queryGuide?: string;
 }
 
 export interface SkillDraftRecord {
@@ -45,7 +49,8 @@ export class SkillDraftService {
     fs.mkdirSync(guidesDir, { recursive: true });
 
     const skillName = `drafts.${slug}`;
-    const metadata = {
+    const hasConnector = Boolean(args.queryConnectorSource?.trim());
+    const metadata: Record<string, unknown> = {
       name: skillName,
       version: "0.0.1-draft",
       game: args.game,
@@ -53,6 +58,10 @@ export class SkillDraftService {
       tags: ["draft"],
       containerSupport: args.containerSupport ?? "none",
     };
+    if (hasConnector) {
+      metadata.queryDialect = "skill_module";
+      metadata.queryConnector = "query/connector.mjs";
+    }
 
     fs.writeFileSync(path.join(draftDir, "metadata.yaml"), yaml.dump(metadata));
     fs.writeFileSync(path.join(guidesDir, "INSTALL.md"), args.installGuide);
@@ -61,7 +70,44 @@ export class SkillDraftService {
       fs.writeFileSync(path.join(guidesDir, "WARNINGS.md"), args.warnings.trim());
     }
 
+    if (hasConnector) {
+      this.writeQueryConnector(draftDir, args.queryConnectorSource!.trim(), args.queryGuide);
+    } else if (args.queryGuide?.trim()) {
+      fs.writeFileSync(path.join(guidesDir, "QUERY.md"), args.queryGuide.trim());
+    }
+
     return { slug, skillName, path: draftDir };
+  }
+
+  /** Update or create query/connector.mjs on an existing draft and set skill_module. */
+  setQueryConnector(
+    slug: string,
+    connectorSource: string,
+    queryGuide?: string,
+  ): SkillDraftRecord {
+    const draftDir = path.join(draftsRoot(this.config), slug);
+    if (!fs.existsSync(draftDir)) {
+      throw new Error(`unknown_draft: ${slug}`);
+    }
+    this.writeQueryConnector(draftDir, connectorSource, queryGuide);
+
+    const metadataPath = path.join(draftDir, "metadata.yaml");
+    const raw = (yaml.load(fs.readFileSync(metadataPath, "utf8")) ?? {}) as Record<string, unknown>;
+    raw.queryDialect = "skill_module";
+    raw.queryConnector = "query/connector.mjs";
+    fs.writeFileSync(metadataPath, yaml.dump(raw));
+
+    return { slug, skillName: `drafts.${slug}`, path: draftDir };
+  }
+
+  private writeQueryConnector(draftDir: string, source: string, queryGuide?: string): void {
+    const queryDir = path.join(draftDir, "query");
+    fs.mkdirSync(queryDir, { recursive: true });
+    fs.writeFileSync(path.join(queryDir, "connector.mjs"), source, "utf8");
+    if (queryGuide?.trim()) {
+      fs.mkdirSync(path.join(draftDir, "guides"), { recursive: true });
+      fs.writeFileSync(path.join(draftDir, "guides", "QUERY.md"), queryGuide.trim());
+    }
   }
 
   list(): SkillDraftRecord[] {
@@ -118,6 +164,11 @@ export class SkillDraftService {
     const draftGuides = path.join(draftDir, "guides");
     if (fs.existsSync(draftGuides)) {
       fs.cpSync(draftGuides, path.join(targetDir, "guides"), { recursive: true });
+    }
+
+    const draftQuery = path.join(draftDir, "query");
+    if (fs.existsSync(draftQuery)) {
+      fs.cpSync(draftQuery, path.join(targetDir, "query"), { recursive: true });
     }
 
     fs.rmSync(draftDir, { recursive: true, force: true });

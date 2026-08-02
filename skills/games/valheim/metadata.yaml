@@ -21,6 +21,8 @@ arch:
 containerSupport: none
 steamAppId: 896660
 adminDialect: none
+queryDialect: valheim
+queryPortName: query
 join:
   clientSetupNotes: >
     Steam → Join IP → {{endpoint}} (UDP). Same Valheim branch as the host. Password required (≥5 chars).
