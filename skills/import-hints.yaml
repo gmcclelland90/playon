@@ -1,0 +1,48 @@
+# Layout sniffers for local/SFTP import → suggested catalog skill.
+# Keep game-specific detection here — not in the control plane.
+version: 1
+hints:
+  - id: minecraft_java_layout
+    anyFiles:
+      - server.properties
+      - paper.yml
+      - spigot.yml
+    suggestedGame: Minecraft
+    suggestedSkillName: games.minecraft-paper
+
+  - id: rust_dedicated_layout
+    anyFiles:
+      - RustDedicated
+      - RustDedicated.exe
+    suggestedGame: Rust
+    suggestedSkillName: games.rust
+
+  - id: valheimish_layout
+    anyFiles:
+      - valheim_server
+      - valheim_server.x86_64
+      - valheim_server.exe
+    suggestedGame: Valheim
+    suggestedSkillName: games.valheim
+
+  - id: ut99_layout
+    anyFiles:
+      - UCC.exe
+      - ucc-bin
+      - System/UnrealTournament.ini
+    suggestedGame: Unreal Tournament 99
+    suggestedSkillName: games.unreal-tournament-99
+
+  - id: terraria_layout
+    anyFiles:
+      - TerrariaServer.exe
+      - TerrariaServer.bin.x86_64
+    suggestedGame: Terraria
+    suggestedSkillName: games.terraria
+
+  - id: factorio_layout
+    anyFiles:
+      - bin/x64/factorio
+      - factorio
+    suggestedGame: Factorio
+    suggestedSkillName: games.factorio
