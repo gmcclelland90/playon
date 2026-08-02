@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { can, type PublicUser } from "@playon/shared";
@@ -27,11 +27,24 @@ function relativeTime(iso: string): string {
 export function DashboardPage({ user }: { user: PublicUser }) {
   const qc = useQueryClient();
   const canRestore = can(user.role, "snapshots.restore");
+  const canMap = can(user.role, "chat.agent");
+  const restoreCancelRef = useRef<HTMLButtonElement>(null);
   const [pendingRestore, setPendingRestore] = useState<
     | { kind: "snapshot"; id: string; label: string; serverLabel: string }
     | { kind: "offnode"; id: string; label: string }
     | null
   >(null);
+
+  useEffect(() => {
+    if (!pendingRestore) return;
+    restoreCancelRef.current?.focus();
+  }, [pendingRestore]);
+  const [opsNotice, setOpsNotice] = useState<string | null>(null);
+
+  function flashOpsNotice(message: string) {
+    setOpsNotice(message);
+    window.setTimeout(() => setOpsNotice(null), 3000);
+  }
 
   const servers = useQuery({ queryKey: ["servers"], queryFn: api.servers, refetchInterval: 5000 });
   const skills = useQuery({ queryKey: ["skills"], queryFn: () => api.skills() });
@@ -55,6 +68,7 @@ export function DashboardPage({ user }: { user: PublicUser }) {
   const createSnap = useMutation({
     mutationFn: (serverId: string) => api.createSnapshot({ serverId, label: "manual" }),
     onSuccess: async () => {
+      flashOpsNotice("Snapshot started");
       await qc.invalidateQueries({ queryKey: ["snapshots"] });
     },
   });
@@ -70,6 +84,7 @@ export function DashboardPage({ user }: { user: PublicUser }) {
   const offnodeBackup = useMutation({
     mutationFn: (serverId: string) => api.createOffnodeBackup({ serverId }),
     onSuccess: async () => {
+      flashOpsNotice("USB/NAS copy started");
       await qc.invalidateQueries({ queryKey: ["offnode-backups"] });
       await qc.invalidateQueries({ queryKey: ["snapshots"] });
     },
@@ -102,6 +117,8 @@ export function DashboardPage({ user }: { user: PublicUser }) {
         <p className="dash-summary" aria-live="polite">
           {servers.isLoading ? (
             <span>Loading servers…</span>
+          ) : servers.isError ? (
+            <span className="error">Couldn’t load servers.</span>
           ) : (
             <>
               <strong>{running}</strong> running · <strong>{stopped}</strong> stopped
@@ -116,15 +133,31 @@ export function DashboardPage({ user }: { user: PublicUser }) {
               <strong>{nodes.data?.nodes?.length ?? 0}</strong> nodes
             </>
           )}
-          <Link to="/">Open map</Link>
+          {canMap ? <Link to="/">Open map</Link> : null}
         </p>
 
+        {opsNotice ? (
+          <p className="ok dash-ops-notice" role="status" aria-live="polite">
+            {opsNotice}
+          </p>
+        ) : null}
+
         {pendingRestore ? (
-          <div className="confirm-banner panel stack" role="alertdialog" aria-label="Confirm restore">
+          <div
+            className="confirm-banner panel stack"
+            role="alertdialog"
+            aria-label="Confirm restore"
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && !restoreSnap.isPending && !restoreOffnode.isPending) {
+                e.preventDefault();
+                setPendingRestore(null);
+              }
+            }}
+          >
             <p className="status-inline">
               {pendingRestore.kind === "snapshot"
                 ? `Restore snapshot “${pendingRestore.label}” onto ${pendingRestore.serverLabel}?`
-                : `Restore off-node backup “${pendingRestore.label}”?`}
+                : `Restore USB/NAS backup “${pendingRestore.label}”?`}
             </p>
             <div className="btn-row">
               <button
@@ -148,6 +181,7 @@ export function DashboardPage({ user }: { user: PublicUser }) {
               <button
                 type="button"
                 className="btn btn-ghost"
+                ref={restoreCancelRef}
                 disabled={restoreSnap.isPending || restoreOffnode.isPending}
                 onClick={() => setPendingRestore(null)}
               >
@@ -164,15 +198,19 @@ export function DashboardPage({ user }: { user: PublicUser }) {
         ) : null}
 
         <div className="dash-grid">
-          <section className="panel stack">
+          <section className="panel stack dash-primary">
             <div className="dash-section-head">
               <h3>Servers</h3>
-              <Link to="/">Open map →</Link>
+              {canMap ? <Link to="/">Open map →</Link> : null}
             </div>
             {servers.isLoading ? (
               <div className="skeleton" aria-hidden>
                 <div className="skeleton-row" />
               </div>
+            ) : servers.isError ? (
+              <p className="error" role="alert">
+                {(servers.error as Error).message || "Couldn’t load servers."}
+              </p>
             ) : serverList.length ? (
               <ul className="list compact-list">
                 {serverList.map((s) => (
@@ -203,7 +241,7 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                           disabled={offnodeBackup.isPending}
                           onClick={() => offnodeBackup.mutate(s.id)}
                         >
-                          Off-node
+                          USB/NAS copy
                         </button>
                       ) : null}
                     </div>
@@ -214,12 +252,25 @@ export function DashboardPage({ user }: { user: PublicUser }) {
               <div className="empty-hint">
                 <strong>No servers</strong>
                 <p className="muted status-inline">
-                  Describe a server on the <Link to="/">Map</Link> — agents will install it.
+                  {canMap ? (
+                    <>
+                      Describe a server on the <Link to="/">Map</Link> — agents will install it.
+                    </>
+                  ) : (
+                    <>Ask an Owner to stand up a server on the Map.</>
+                  )}
                 </p>
               </div>
             )}
+            {createSnap.isError ? (
+              <p className="error">{(createSnap.error as Error).message}</p>
+            ) : null}
+            {offnodeBackup.isError ? (
+              <p className="error">{(offnodeBackup.error as Error).message}</p>
+            ) : null}
           </section>
 
+          <div className="dash-secondary">
           <section className="panel stack">
             <div className="dash-section-head">
               <h3>Nodes</h3>
@@ -228,6 +279,10 @@ export function DashboardPage({ user }: { user: PublicUser }) {
               <div className="skeleton" aria-hidden>
                 <div className="skeleton-row" />
               </div>
+            ) : nodes.isError ? (
+              <p className="error" role="alert">
+                {(nodes.error as Error).message || "Couldn’t load nodes."}
+              </p>
             ) : nodes.data?.nodes?.length ? (
               <ul className="list compact-list">
                 {nodes.data.nodes.map((n) => (
@@ -256,45 +311,6 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                 </p>
               </div>
             )}
-          </section>
-
-          <section className="panel stack">
-            <div className="dash-section-head">
-              <h3>Skills</h3>
-            </div>
-            {skills.isLoading ? (
-              <div className="skeleton" aria-hidden>
-                <div className="skeleton-row" />
-                <div className="skeleton-row compact" />
-              </div>
-            ) : skills.data?.skills?.length ? (
-              <ul className="list compact-list">
-                {skills.data.skills.slice(0, 8).map((skill) => (
-                  <li key={skill.id}>
-                    <div>
-                      <strong>{skill.name}</strong>
-                      <div className="muted">
-                        {skill.game ?? skill.id} · v{skill.version}
-                        {skill.tags?.length ? ` · ${skill.tags.slice(0, 3).join(", ")}` : ""}
-                      </div>
-                      {skill.description ? (
-                        <div className="muted dash-clip">{skill.description}</div>
-                      ) : null}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <div className="empty-hint">
-                <strong>No skills discovered</strong>
-                <p className="muted status-inline">Global skill packs show up here once loaded.</p>
-              </div>
-            )}
-            {!skills.isLoading && (skills.data?.skills?.length ?? 0) > 8 ? (
-              <p className="muted status-inline">
-                +{(skills.data?.skills.length ?? 0) - 8} more skills available to agents
-              </p>
-            ) : null}
           </section>
 
           <section className="panel stack">
@@ -343,17 +359,11 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                 </p>
               </div>
             )}
-            {createSnap.isError ? (
-              <p className="error">{(createSnap.error as Error).message}</p>
-            ) : null}
             {!pendingRestore && restoreSnap.isError ? (
               <p className="error">{(restoreSnap.error as Error).message}</p>
             ) : null}
-            {offnodeBackup.isError ? (
-              <p className="error">{(offnodeBackup.error as Error).message}</p>
-            ) : null}
 
-            <h4 className="section-subhead">Off-node</h4>
+            <h4 className="section-subhead">USB/NAS</h4>
             {backupTarget.data?.target ? (
               <p className="muted status-inline">
                 Target: <code>{backupTarget.data.target.rootPath}</code>
@@ -397,38 +407,80 @@ export function DashboardPage({ user }: { user: PublicUser }) {
               <p className="error">{(restoreOffnode.error as Error).message}</p>
             ) : null}
           </section>
-        </div>
-
-        <section className="panel stack">
-          <div className="dash-section-head">
-            <h3>Agent activity</h3>
           </div>
-          {activity.isLoading ? (
-            <div className="skeleton" aria-hidden>
-              <div className="skeleton-row" />
-              <div className="skeleton-row" />
-            </div>
-          ) : activity.data?.activity?.length ? (
-            <ul className="activity-feed">
-              {activity.data.activity.map((item) => (
-                <li key={item.id}>
-                  <code className="activity-tool">{item.toolName}</code>
-                  <span className={`activity-status status-${item.status}`}>
-                    {statusLabel(item.status)}
-                  </span>
-                  <span className="muted">{relativeTime(item.createdAt)}</span>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <div className="empty-hint">
-              <strong>Quiet so far</strong>
-              <p className="muted status-inline">
-                Tool calls from admin chat show up here.
-              </p>
-            </div>
-          )}
-        </section>
+
+          <div className="dash-quiet">
+            <section className="panel stack">
+              <div className="dash-section-head">
+                <h3>Skills</h3>
+              </div>
+              {skills.isLoading ? (
+                <div className="skeleton" aria-hidden>
+                  <div className="skeleton-row" />
+                  <div className="skeleton-row compact" />
+                </div>
+              ) : skills.data?.skills?.length ? (
+                <ul className="list compact-list">
+                  {skills.data.skills.slice(0, 8).map((skill) => (
+                    <li key={skill.id}>
+                      <div>
+                        <strong>{skill.name}</strong>
+                        <div className="muted">
+                          {skill.game ?? skill.id} · v{skill.version}
+                          {skill.tags?.length ? ` · ${skill.tags.slice(0, 3).join(", ")}` : ""}
+                        </div>
+                        {skill.description ? (
+                          <div className="muted dash-clip">{skill.description}</div>
+                        ) : null}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="empty-hint">
+                  <strong>No skills discovered</strong>
+                  <p className="muted status-inline">Global skill packs show up here once loaded.</p>
+                </div>
+              )}
+              {!skills.isLoading && (skills.data?.skills?.length ?? 0) > 8 ? (
+                <p className="muted status-inline">
+                  +{(skills.data?.skills.length ?? 0) - 8} more skills available to agents
+                </p>
+              ) : null}
+            </section>
+
+            <section className="panel stack">
+              <div className="dash-section-head">
+                <h3>Agent activity</h3>
+              </div>
+              {activity.isLoading ? (
+                <div className="skeleton" aria-hidden>
+                  <div className="skeleton-row" />
+                  <div className="skeleton-row" />
+                </div>
+              ) : activity.data?.activity?.length ? (
+                <ul className="activity-feed">
+                  {activity.data.activity.map((item) => (
+                    <li key={item.id}>
+                      <code className="activity-tool">{item.toolName}</code>
+                      <span className={`activity-status status-${item.status}`}>
+                        {statusLabel(item.status)}
+                      </span>
+                      <span className="muted">{relativeTime(item.createdAt)}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="empty-hint">
+                  <strong>Quiet so far</strong>
+                  <p className="muted status-inline">
+                    Tool calls from admin chat show up here.
+                  </p>
+                </div>
+              )}
+            </section>
+          </div>
+        </div>
       </div>
     </div>
   );
