@@ -7,21 +7,34 @@ Canonical automated build/test host for PlayOn (Docker + Node).
 - Address: `172.16.0.155`
 - User: `playon`
 - Workspace: `/home/playon/src/playon`
+- Sync: **git** (`git pull --ff-only` from `origin`)
 
 ## Toolchain
 
+- Git
 - Node.js 22 via NodeSource
 - pnpm 9.15.4 via Corepack
 - Docker Engine (user in `docker` group)
 
 ## Sync from a Windows workstation
 
+Canonical path (CI/CD-aligned):
+
 ```bash
-# on the workstation: sync (preserve apps/api/data), then on the host:
+# on the workstation
+git push origin HEAD
+
+# on the lab host
+cd /home/playon/src/playon
+git pull --ff-only
 pnpm install
 pnpm loop:verify              # merge bar (real Venice + Docker)
 pnpm loop:verify:runtime      # + real Paper Docker smoke
 ```
+
+Preserve durable state across checkouts: `apps/api/data` and host `.env` live outside git (or are gitignored). After a fresh clone, restore those paths before `pnpm start`.
+
+**Disaster fallback only:** rsync/scp a tree when git auth is broken — then re-establish a tracking checkout. Do not treat rsync as the day-to-day sync path.
 
 Loop protocol: [agent-dev-loop.md](agent-dev-loop.md)
 
