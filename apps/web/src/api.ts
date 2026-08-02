@@ -120,7 +120,6 @@ export const api = {
       llmMode: string;
       toolTrace?: ToolTrace[];
       agentProgress?: {
-        serverId: string;
         persona: string;
         xp: number;
         level: number;
@@ -155,17 +154,16 @@ export const api = {
         body: JSON.stringify(title ? { title } : {}),
       },
     ),
-  serverAgents: (serverId: string) =>
+  agents: () =>
     request<{
       agents: Array<{
-        serverId: string;
         persona: string;
         xp: number;
         level: number;
         title: string;
         updatedAt: string;
       }>;
-    }>(`/api/servers/${encodeURIComponent(serverId)}/agents`),
+    }>("/api/agents"),
   nodes: () =>
     request<{
       nodes: Array<{
@@ -335,6 +333,10 @@ export const api = {
     }),
   stopServer: (id: string) =>
     request<{ server: ServerRow }>(`/api/servers/${id}/stop`, { method: "POST" }),
+  deleteServer: (id: string) =>
+    request<{ ok: true; removed: { id: string; name: string } }>(`/api/servers/${id}`, {
+      method: "DELETE",
+    }),
   restartServer: (id: string) =>
     request<{ server: ServerRow; runtime?: ServerDetail["runtime"] }>(`/api/servers/${id}/restart`, {
       method: "POST",

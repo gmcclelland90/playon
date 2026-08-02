@@ -57,6 +57,7 @@ export const WsEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("confirm.required"),
     requestId: z.string(),
+    toolName: z.string(),
     summary: z.string(),
   }),
   z.object({

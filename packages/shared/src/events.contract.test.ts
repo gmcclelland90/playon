@@ -13,7 +13,8 @@ describe("WsEventSchema", () => {
       WsEventSchema.parse({
         type: "confirm.required",
         requestId: "req-1",
-        summary: "Allow stop?",
+        toolName: "servers_stop",
+        summary: "An agent wants to stop this server.",
       }),
     ).toMatchObject({ type: "confirm.required" });
     expect(
