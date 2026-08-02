@@ -41,5 +41,34 @@ describe("SkillMetadataSchema contract", () => {
     expect(parsed.theme?.id).toBe("paper");
     expect(parsed.theme?.primaryHue).toBe(145);
   });
+
+  it("accepts docker/steam catalog fields and dependencies", () => {
+    const parsed = SkillMetadataSchema.parse({
+      name: "games.minecraft-paper",
+      version: "0.1.0",
+      containerSupport: "full",
+      dockerImage: "itzg/minecraft-server:latest",
+      dockerEnv: { TYPE: "PAPER", EULA: "TRUE" },
+      adminDialect: "mc_rcon",
+      minRamMb: 2048,
+      dependencies: ["platform.docker-basics"],
+      steamAppId: undefined,
+    });
+    expect(parsed.dockerImage).toContain("itzg/");
+    expect(parsed.adminDialect).toBe("mc_rcon");
+    expect(parsed.dependencies).toEqual(["platform.docker-basics"]);
+  });
+
+  it("accepts steamAppId for SteamCMD skills", () => {
+    const parsed = SkillMetadataSchema.parse({
+      name: "games.rust",
+      version: "0.1.0",
+      containerSupport: "none",
+      steamAppId: 258550,
+      adminDialect: "rust_web_rcon",
+      dependencies: ["platform.steamcmd"],
+    });
+    expect(parsed.steamAppId).toBe(258550);
+  });
 });
 

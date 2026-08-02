@@ -26,6 +26,42 @@ export const SkillThemeSchema = z.object({
 });
 export type SkillTheme = z.infer<typeof SkillThemeSchema>;
 
+/** How the agent / runtime should administer the running server. */
+export const AdminDialectSchema = z.enum([
+  "none",
+  "mc_rcon",
+  "source_rcon",
+  "rust_web_rcon",
+  "http_rest",
+  "stdin",
+]);
+export type AdminDialect = z.infer<typeof AdminDialectSchema>;
+
+/**
+ * Player join UX declared by the skill (not the control plane).
+ * Templates may use {{host}}, {{port}}, {{endpoint}}, {{connectCommand}}.
+ */
+export const SkillJoinSchema = z.object({
+  connectCommand: z.string().optional(),
+  /** Steam *client* app id for steam://run/<id>/… deep links. */
+  steamClientAppId: z.number().int().positive().optional(),
+  steamUrlStyle: z.enum(["run_connect", "connect"]).default("run_connect"),
+  clientSetupNotes: z.string().optional(),
+});
+export type SkillJoin = z.infer<typeof SkillJoinSchema>;
+
+/** Native process launch declared by the skill (start.sh still wins when present). */
+export const SkillNativeSchema = z.object({
+  binary: z.string().min(1).optional(),
+  binaryWindows: z.string().min(1).optional(),
+  args: z.array(z.string()).default([]),
+  env: z.record(z.string(), z.string()).default({}),
+  /** Paths relative to game/ prepended to LD_LIBRARY_PATH on Linux. */
+  libraryPathRelative: z.array(z.string()).default([]),
+  preferStartScript: z.boolean().default(true),
+});
+export type SkillNative = z.infer<typeof SkillNativeSchema>;
+
 export const SkillMetadataSchema = z.object({
   name: z.string().min(1),
   version: z.string().min(1),
@@ -36,6 +72,19 @@ export const SkillMetadataSchema = z.object({
   os: z.array(z.enum(["linux", "windows"])).default(["linux", "windows"]),
   arch: z.array(z.string()).default(["amd64"]),
   containerSupport: ContainerSupportSchema.default("none"),
+  /** Docker image when containerSupport is full/partial (e.g. itzg/minecraft-server:latest). */
+  dockerImage: z.string().min(1).optional(),
+  /** Static container env; runtime may inject RCON_* when adminDialect needs it. */
+  dockerEnv: z.record(z.string(), z.string()).default({}),
+  /** Container path for the server game/ bind mount. */
+  dockerDataMount: z.string().min(1).default("/data"),
+  /** SteamCMD dedicated-server app id (catalog Steam skills). */
+  steamAppId: z.number().int().positive().optional(),
+  adminDialect: AdminDialectSchema.default("none"),
+  join: SkillJoinSchema.optional(),
+  native: SkillNativeSchema.optional(),
+  /** Soft requirement for capacity warnings (party-box multi-server). */
+  minRamMb: z.number().int().positive().optional(),
   requiredTools: z.array(z.string()).default([]),
   ports: z
     .array(
@@ -46,8 +95,22 @@ export const SkillMetadataSchema = z.object({
       }),
     )
     .default([]),
+  /** Other skill names this skill expects (usually platform.*). */
   dependencies: z.array(z.string()).default([]),
   healthChecks: z.array(HealthCheckSchema).default([]),
 });
 
 export type SkillMetadata = z.infer<typeof SkillMetadataSchema>;
+
+/** Expand {{host}} {{port}} {{endpoint}} {{connectCommand}} in skill join templates. */
+export function renderSkillTemplate(
+  template: string,
+  vars: { host: string; port: number; connectCommand?: string },
+): string {
+  const endpoint = `${vars.host}:${vars.port}`;
+  return template
+    .replaceAll("{{host}}", vars.host)
+    .replaceAll("{{port}}", String(vars.port))
+    .replaceAll("{{endpoint}}", endpoint)
+    .replaceAll("{{connectCommand}}", vars.connectCommand ?? "");
+}

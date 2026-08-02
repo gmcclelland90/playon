@@ -20,6 +20,132 @@ export interface RconCommandResult {
   requestId: number;
 }
 
+/** Normalize agent/RCON input (strip leading /, collapse whitespace). */
+export function normalizeRconCommand(command: string): string {
+  return String(command ?? "")
+    .trim()
+    .replace(/^\/+/, "")
+    .replace(/\s+/g, " ");
+}
+
+/**
+ * Minecraft often returns HTTP-200-style RCON success with an error body.
+ * Detect command failures so agents stop retrying obsolete syntax.
+ */
+export function rconBodyIndicatesFailure(body: string): boolean {
+  const text = String(body ?? "");
+  return (
+    /incorrect argument for command/i.test(text) ||
+    /unknown or incomplete command/i.test(text) ||
+    /unknown command/i.test(text) ||
+    /<--\[HERE\]/.test(text) ||
+    /no permission/i.test(text) ||
+    /you do not have permission/i.test(text)
+  );
+}
+
+/**
+ * Legacy camelCase gamerules → modern snake_case registry ids (Java 1.21.11+ / 26.x).
+ * Keys are lowercased without the minecraft: namespace.
+ */
+export const LEGACY_MINECRAFT_GAMERULES: Record<string, string> = {
+  announceadvancements: "show_advancement_messages",
+  commandblocksenabled: "command_blocks_work",
+  command_modification_block_limit: "max_block_modifications",
+  disableelytramovementcheck: "elytra_movement_check",
+  disableplayermovementcheck: "player_movement_check",
+  disableraids: "raids",
+  dodaylightcycle: "advance_time",
+  doentitydrops: "entity_drops",
+  doimmediaterespawn: "immediate_respawn",
+  doinsomnia: "spawn_phantoms",
+  dolimitedcrafting: "limited_crafting",
+  domobloot: "mob_drops",
+  domobspawning: "spawn_mobs",
+  dopatrolspawning: "spawn_patrols",
+  dotiledrops: "block_drops",
+  dotraderspawning: "spawn_wandering_traders",
+  dovinesspread: "spread_vines",
+  dowardenspawning: "spawn_wardens",
+  doweathercycle: "advance_weather",
+  keepinventory: "keep_inventory",
+  maxcommandchainlength: "max_command_sequence_length",
+  maxcommandforkcount: "max_command_forks",
+  mobgriefing: "mob_griefing",
+  naturalregeneration: "natural_health_regeneration",
+  snowaccumulationheight: "max_snow_accumulation_height",
+  spawnradius: "respawn_radius",
+  spawnerblocksenabled: "spawner_blocks_work",
+  // common agent typos / old docs
+  daylightcycle: "advance_time",
+  weathercycle: "advance_weather",
+};
+
+/** Rewrite known obsolete `gamerule …` commands to modern names. */
+export function rewriteLegacyGameruleCommand(command: string): {
+  command: string;
+  rewrittenFrom?: string;
+} {
+  const normalized = normalizeRconCommand(command);
+  const match = normalized.match(/^gamerule\s+(\S+)(\s+.*)?$/i);
+  if (!match) return { command: normalized };
+  const ruleToken = match[1] ?? "";
+  const rest = match[2] ?? "";
+  const key = ruleToken.replace(/^minecraft:/i, "").toLowerCase();
+  const modern = LEGACY_MINECRAFT_GAMERULES[key];
+  if (!modern || modern.toLowerCase() === key) return { command: normalized };
+  return {
+    command: `gamerule ${modern}${rest}`,
+    rewrittenFrom: normalized,
+  };
+}
+
+export interface RconSelfHealResult {
+  serverId?: string;
+  command: string;
+  body: string;
+  /** Present when a legacy command was rewritten before/after failure. */
+  healedFrom?: string;
+  healed?: boolean;
+  error?: string;
+  hint?: string;
+}
+
+/**
+ * Run an RCON command with automatic rewrite of known legacy gamerules.
+ * Returns error + hint when the (possibly healed) command still fails.
+ */
+export async function rconExecWithSelfHeal(
+  endpoint: RconEndpoint,
+  rawCommand: string,
+  opts: { timeoutMs?: number } = {},
+): Promise<RconSelfHealResult> {
+  const rewritten = rewriteLegacyGameruleCommand(rawCommand);
+  const command = rewritten.command;
+  const result = await rconExec(endpoint, command, opts);
+  if (!rconBodyIndicatesFailure(result.body)) {
+    return {
+      command,
+      body: result.body,
+      ...(rewritten.rewrittenFrom
+        ? { healed: true, healedFrom: rewritten.rewrittenFrom }
+        : {}),
+    };
+  }
+
+  return {
+    error: "rcon_command_failed",
+    command,
+    body: result.body,
+    ...(rewritten.rewrittenFrom
+      ? { healed: true, healedFrom: rewritten.rewrittenFrom }
+      : {}),
+    hint: rewritten.rewrittenFrom
+      ? "Legacy gamerule was rewritten but still failed. Read the body, try one different approach, then explain — do not spam the same command."
+      : "Command syntax rejected. Prefer modern snake_case gamerules on Java 26.x (advance_time, keep_inventory). Diagnose once, try one alternate, then stop.",
+  };
+}
+
 function readInt32LE(buf: Buffer, offset: number): number {
   return buf.readInt32LE(offset);
 }
