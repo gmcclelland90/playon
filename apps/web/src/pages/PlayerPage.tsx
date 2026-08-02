@@ -97,6 +97,7 @@ export function PlayerPage() {
   const [copyError, setCopyError] = useState(false);
   const [readyAck, setReadyAck] = useState(false);
   const [voteChoiceByBlock, setVoteChoiceByBlock] = useState<Record<string, string>>({});
+  const [voteAckByBlock, setVoteAckByBlock] = useState<Record<string, string>>({});
   const [wsOpen, setWsOpen] = useState(false);
   const [visible, setVisible] = useState(
     () => typeof document === "undefined" || document.visibilityState === "visible",
@@ -164,7 +165,7 @@ export function PlayerPage() {
     mutationFn: ({ blockId, choice }: { blockId: string; choice: string }) =>
       api.panelInput({ type: "vote", payload: { choice, blockId } }),
     onSuccess: async (_data, vars) => {
-      setVoteChoiceByBlock((prev) => ({ ...prev, [vars.blockId]: "" }));
+      setVoteAckByBlock((prev) => ({ ...prev, [vars.blockId]: vars.choice }));
       await qc.invalidateQueries({ queryKey: ["panel"] });
     },
   });
@@ -328,6 +329,7 @@ export function PlayerPage() {
                 key={block.id}
                 block={block}
                 voteChoice={voteChoiceByBlock[block.id] ?? ""}
+                voteAcked={voteAckByBlock[block.id]}
                 onVoteChoice={(value) =>
                   setVoteChoiceByBlock((prev) => ({ ...prev, [block.id]: value }))
                 }
@@ -347,6 +349,7 @@ export function PlayerPage() {
           key={block.id}
           block={block}
           voteChoice={voteChoiceByBlock[block.id] ?? ""}
+          voteAcked={voteAckByBlock[block.id]}
           onVoteChoice={(value) =>
             setVoteChoiceByBlock((prev) => ({ ...prev, [block.id]: value }))
           }
@@ -371,6 +374,11 @@ export function PlayerPage() {
               {ready.isPending ? "Sending…" : readyAck ? "Ready ✓" : "I'm ready"}
             </button>
           </div>
+          {readyAck ? (
+            <p className="muted status-inline" aria-live="polite">
+              Host notified you&apos;re ready.
+            </p>
+          ) : null}
           {ready.isError ? (
             <p className="error" role="alert">
               {(ready.error as Error).message}
@@ -399,12 +407,14 @@ function bodySteps(body: Record<string, unknown>): string[] {
 function PanelBlockCard({
   block,
   voteChoice,
+  voteAcked,
   onVoteChoice,
   onVote,
   votePending,
 }: {
   block: PanelBlockRow;
   voteChoice: string;
+  voteAcked?: string;
   onVoteChoice: (value: string) => void;
   onVote: () => void;
   votePending: boolean;
@@ -438,31 +448,37 @@ function PanelBlockCard({
         </p>
       ) : null}
       {block.type === "vote" && options.length ? (
-        <div className="stack vote-stack">
-          <label className="field">
-            <span>Your vote</span>
-            <select
-              value={voteChoice}
-              onChange={(e) => onVoteChoice(e.target.value)}
-              disabled={votePending}
+        voteAcked ? (
+          <p className="ok status-inline" aria-live="polite">
+            Voted · {voteAcked}
+          </p>
+        ) : (
+          <div className="stack vote-stack">
+            <label className="field">
+              <span>Your vote</span>
+              <select
+                value={voteChoice}
+                onChange={(e) => onVoteChoice(e.target.value)}
+                disabled={votePending}
+              >
+                <option value="">Pick one…</option>
+                {options.map((opt) => (
+                  <option key={opt} value={opt}>
+                    {opt}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              className="btn btn-ghost"
+              type="button"
+              disabled={!voteChoice || votePending}
+              onClick={onVote}
             >
-              <option value="">Pick one…</option>
-              {options.map((opt) => (
-                <option key={opt} value={opt}>
-                  {opt}
-                </option>
-              ))}
-            </select>
-          </label>
-          <button
-            className="btn btn-ghost"
-            type="button"
-            disabled={!voteChoice || votePending}
-            onClick={onVote}
-          >
-            {votePending ? "Sending…" : "Submit vote"}
-          </button>
-        </div>
+              {votePending ? "Sending…" : "Submit vote"}
+            </button>
+          </div>
+        )
       ) : null}
     </article>
   );

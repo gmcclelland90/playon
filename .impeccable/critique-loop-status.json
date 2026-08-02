@@ -1,6 +1,6 @@
 {
   "gate": 30,
-  "updatedAt": "2026-08-02T08:30:00.000Z",
+  "updatedAt": "2026-08-02T08:45:00.000Z",
   "surfaces": {
     "apps-web-src-pages-canvaspage-tsx": {
       "target": "apps/web/src/pages/CanvasPage.tsx",
@@ -8,56 +8,43 @@
       "score": 30,
       "rounds": 2,
       "status": "done",
-      "latestSnapshot": null,
-      "lastCommitSha": null
+      "lastCommitSha": "edf138a50f811cafe819975b153f5cee9d8eaea6"
     },
     "apps-web-src-pages-playerpage-tsx": {
       "target": "apps/web/src/pages/PlayerPage.tsx",
-      "score": null,
-      "rounds": 0,
-      "status": "pending",
-      "latestSnapshot": null,
-      "lastCommitSha": null
+      "score": 34,
+      "rounds": 1,
+      "status": "done"
     },
     "apps-web-src-pages-dashboardpage-tsx": {
       "target": "apps/web/src/pages/DashboardPage.tsx",
-      "score": null,
-      "rounds": 0,
-      "status": "pending",
-      "latestSnapshot": null,
-      "lastCommitSha": null
+      "score": 31,
+      "rounds": 2,
+      "status": "done"
     },
     "apps-web-src-pages-settingspage-tsx": {
       "target": "apps/web/src/pages/SettingsPage.tsx",
-      "score": null,
-      "rounds": 0,
-      "status": "pending",
-      "latestSnapshot": null,
-      "lastCommitSha": null
+      "score": 31,
+      "rounds": 1,
+      "status": "done"
     },
     "apps-web-src-pages-setuppage-tsx": {
       "target": "apps/web/src/pages/SetupPage.tsx",
-      "score": null,
-      "rounds": 0,
-      "status": "pending",
-      "latestSnapshot": null,
-      "lastCommitSha": null
+      "score": 35,
+      "rounds": 1,
+      "status": "done"
     },
     "apps-web-src-pages-loginpage-tsx": {
       "target": "apps/web/src/pages/LoginPage.tsx",
-      "score": null,
-      "rounds": 0,
-      "status": "pending",
-      "latestSnapshot": null,
-      "lastCommitSha": null
+      "score": 36,
+      "rounds": 1,
+      "status": "done"
     },
     "apps-web-src-pages-adminshell-tsx": {
       "target": "apps/web/src/pages/AdminShell.tsx",
-      "score": null,
-      "rounds": 0,
-      "status": "pending",
-      "latestSnapshot": null,
-      "lastCommitSha": null
+      "score": 33,
+      "rounds": 1,
+      "status": "done"
     }
   }
 }
