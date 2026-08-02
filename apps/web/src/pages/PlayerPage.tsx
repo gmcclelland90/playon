@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type PanelBlockRow } from "../api";
 import { panelSocket } from "../panel-ws";
+import { statusLabel } from "../status";
 
 function joinEndpoint(body: Record<string, unknown>): string | null {
   if (typeof body.endpoint === "string" && body.endpoint.trim()) return body.endpoint.trim();
@@ -155,19 +156,30 @@ export function PlayerPage() {
         <h1 className="brand-mark">
           Play<span>On</span>
         </h1>
-        <p className="muted" style={{ margin: "0.35rem 0 0", maxWidth: "36ch" }}>
+        <p className="muted player-lede">
           Tonight’s join info — updated live by the host.
           {theme.game ? ` · ${theme.game}` : ""}
         </p>
       </header>
 
-      {panel.isLoading ? <p className="muted">Loading panel…</p> : null}
+      {panel.isLoading ? (
+        <div className="skeleton" aria-busy="true" aria-label="Loading panel">
+          <div className="skeleton-row" />
+          <div className="skeleton-row compact" />
+        </div>
+      ) : null}
 
-      {!panel.isLoading && blocks.length === 0 ? (
+      {panel.isError ? (
+        <p className="error" role="alert">
+          {(panel.error as Error).message || "Could not load the player panel."}
+        </p>
+      ) : null}
+
+      {!panel.isLoading && !panel.isError && blocks.length === 0 ? (
         <div className="block">
           <span className="chip">Waiting</span>
           <h2>No servers posted yet</h2>
-          <p className="muted">
+          <p className="muted status-inline">
             When the host spins something up, connection details and setup steps appear here.
           </p>
         </div>
@@ -178,19 +190,24 @@ export function PlayerPage() {
           <span className="chip">Join</span>
           <p className="join-endpoint">{join}</p>
           {status ? (
-            <p className={`status ${status === "running" ? "" : "stopped"}`} style={{ margin: 0 }}>
-              {status}
+            <p
+              className={`status status-inline ${status === "running" ? "" : "stopped"}`}
+            >
+              {statusLabel(status)}
             </p>
           ) : null}
           <div className="btn-row">
-            <button className="btn btn-primary" type="button" onClick={() => void copyJoin()}>
+            <button
+              className="btn btn-primary"
+              type="button"
+              onClick={() => void copyJoin()}
+              aria-live="polite"
+            >
               {copied ? "Copied" : "Copy address"}
             </button>
           </div>
           {typeof joinBlock?.body.runtime === "string" ? (
-            <p className="muted" style={{ margin: 0 }}>
-              Runtime: {String(joinBlock.body.runtime)}
-            </p>
+            <p className="muted status-inline">Runtime: {String(joinBlock.body.runtime)}</p>
           ) : null}
         </section>
       ) : null}
@@ -219,7 +236,17 @@ export function PlayerPage() {
           {ready.isPending ? "Sending…" : readyAck ? "Ready ✓" : "I'm ready"}
         </button>
       </div>
-      <p className="muted">
+      {ready.isError ? (
+        <p className="error" role="alert">
+          {(ready.error as Error).message}
+        </p>
+      ) : null}
+      {vote.isError ? (
+        <p className="error" role="alert">
+          {(vote.error as Error).message}
+        </p>
+      ) : null}
+      <p className="muted status-inline">
         Tells the host you’re set. Hosts manage servers from the{" "}
         <Link to="/login">admin login</Link>.
       </p>
@@ -262,11 +289,11 @@ function PanelBlockCard({
       ) : null}
       {typeof block.body.status === "string" && block.type === "server_status" ? (
         <p className={`status ${block.body.status === "running" ? "" : "stopped"}`}>
-          {String(block.body.status)}
+          {statusLabel(String(block.body.status))}
         </p>
       ) : null}
       {block.type === "vote" && options.length ? (
-        <div className="stack" style={{ marginTop: "0.75rem" }}>
+        <div className="stack vote-stack">
           <label className="field">
             <span>Your vote</span>
             <select

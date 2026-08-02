@@ -1,0 +1,38 @@
+name: games.unreal-tournament-99
+version: 0.1.0
+game: Unreal Tournament 99
+description: >
+  Classic UT99 dedicated server skill. PlayOn prepares data layout and player
+  panel guidance; the host supplies OldUnreal (or equivalent) server binaries
+  under the server game directory.
+tags:
+  - unreal
+  - ut99
+  - classic
+  - native
+theme:
+  id: ember
+  primaryHue: 35
+os:
+  - linux
+  - windows
+arch:
+  - amd64
+containerSupport: none
+requiredTools:
+  - servers_create_from_skill
+  - servers_start
+  - panel_publish
+  - fs_list
+ports:
+  - name: game
+    protocol: udp
+    default: 7777
+  - name: query
+    protocol: udp
+    default: 7778
+dependencies: []
+healthChecks:
+  - id: process
+    type: process_running
+    onFail: escalate

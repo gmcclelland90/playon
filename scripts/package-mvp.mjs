@@ -42,27 +42,44 @@ copyTree(root, stage);
 
 fs.writeFileSync(
   path.join(stage, "INSTALL.md"),
-  `# PlayOn MVP install
+  `# PlayOn single-host install
 
 ## Prerequisites
 
 - Node.js 22 LTS
 - pnpm 9 (\`corepack enable && corepack prepare pnpm@9.15.4 --activate\`)
-- Docker Desktop / Engine optional (required for real Minecraft Paper containers)
+- Docker Engine (required for Minecraft Paper and other container skills)
 
-## Setup
+## Production setup (one process)
 
 \`\`\`bash
 pnpm install
-pnpm verify
+pnpm build
+
+export PLAYON_ENV=production
+export PLAYON_HOST=0.0.0.0
+export PLAYON_PORT=8787
+export PLAYON_ADVERTISE_HOST=<your-lan-ip>
+export PLAYON_SESSION_SECRET=<long-random-string>
+export PLAYON_RUNTIME=docker
+export PLAYON_LLM_MODE=openai_compatible
+
+pnpm start
+\`\`\`
+
+Open http://<your-lan-ip>:8787 (API serves the built web UI).
+
+For systemd, copy \`infra/control-plane/linux/playon.service\` and \`playon.env.example\` — see \`docs/lan-install.md\`.
+
+## Developer setup (optional)
+
+\`\`\`bash
+pnpm install
 pnpm dev
 \`\`\`
 
-- Web UI: http://127.0.0.1:5173
+- Vite UI: http://127.0.0.1:5173
 - API: http://127.0.0.1:8787
-
-Default test/dev modes use \`PLAYON_LLM_MODE=mock\` and \`PLAYON_RUNTIME=mock\`.
-Set \`PLAYON_RUNTIME=docker\` when Docker is available for container skills.
 `,
 );
 

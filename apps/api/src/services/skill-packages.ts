@@ -10,7 +10,7 @@ function globalSkillsRoot(config: AppConfig): string {
   return path.join(config.dataRoot, "skills");
 }
 
-function serverSkillsRoot(config: AppConfig, serverId: string): string {
+export function serverSkillsRoot(config: AppConfig, serverId: string): string {
   return path.join(config.dataRoot, "servers", serverId, "skills");
 }
 

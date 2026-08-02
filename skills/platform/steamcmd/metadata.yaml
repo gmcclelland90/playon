@@ -6,6 +6,7 @@ tags:
   - steamcmd
 containerSupport: partial
 requiredTools:
+  - steamcmd_app_update
   - fetch_url
   - fs_write
 ports: []

@@ -48,6 +48,8 @@ export interface ChatStreamSink {
 export interface OrchestratorOptions {
   confirmGate?: ConfirmGate;
   stream?: ChatStreamSink;
+  /** When set, agents operate inside this server workspace. */
+  workspaceServerId?: string;
 }
 
 function emitContentTokens(stream: ChatStreamSink | undefined, content: string): void {
@@ -58,12 +60,51 @@ function emitContentTokens(stream: ChatStreamSink | undefined, content: string):
   }
 }
 
-const MAX_TOOL_ITERATIONS = 8;
+export function workspaceSystemPrompt(serverId: string): string {
+  return [
+    `You are working inside PlayOn server workspace workspaceServerId=${serverId}.`,
+    "All server-scoped tools default to this server. Do not target other serverIds.",
+    "Prefer configuring, starting, stopping, and publishing the panel for this workspace server.",
+    "Creating additional servers from this chat is discouraged unless the host explicitly asks.",
+  ].join(" ");
+}
+
+/** LLM rounds that may include tool calls. Draft→create→start→panel often needs >8. */
+const MAX_TOOL_ITERATIONS = 16;
 
 function defaultSummary(toolName: string, args: Record<string, unknown>): string {
   const compact = JSON.stringify(args);
   const clipped = compact.length > 180 ? `${compact.slice(0, 180)}…` : compact;
   return `Allow tool \`${toolName}\` with ${clipped}?`;
+}
+
+function summarizeMaxIterations(toolTrace: ToolTraceEntry[]): string {
+  const names = [...new Set(toolTrace.map((t) => t.name))];
+  const created = toolTrace.some(
+    (t) =>
+      t.name === "servers_create_from_skill" &&
+      !(t.result && typeof t.result === "object" && "error" in (t.result as object)),
+  );
+  const started = toolTrace.some(
+    (t) =>
+      t.name === "servers_start" &&
+      !(t.result && typeof t.result === "object" && "error" in (t.result as object)),
+  );
+  const panelled = toolTrace.some((t) => t.name === "panel_publish");
+  const lines = [
+    "I hit the tool step limit before finishing a final reply.",
+    names.length ? `Tools used: ${names.join(", ")}.` : null,
+    created && !started
+      ? "A server was created but not started — say **continue** and I will start it and publish join/setup for players."
+      : null,
+    started && !panelled
+      ? "The server was started but the player panel may be incomplete — say **continue** to publish join + client setup."
+      : null,
+    !created
+      ? "Say **continue** to resume, or tell me which game/skill to use."
+      : null,
+  ].filter(Boolean);
+  return lines.join("\n");
 }
 
 export class Orchestrator {
@@ -92,8 +133,17 @@ export class Orchestrator {
     const history = priorMessages.filter(
       (m) => m.role === "user" || m.role === "assistant" || m.role === "tool",
     );
-    const messages: LlmMessage[] = [
+    const systemMessages: LlmMessage[] = [
       { role: "system", content: PERSONA_SYSTEM_PROMPTS[persona] },
+    ];
+    if (this.options.workspaceServerId) {
+      systemMessages.push({
+        role: "system",
+        content: workspaceSystemPrompt(this.options.workspaceServerId),
+      });
+    }
+    const messages: LlmMessage[] = [
+      ...systemMessages,
       ...history,
       { role: "user", content: userMessage },
     ];
@@ -209,7 +259,7 @@ export class Orchestrator {
       }
     }
 
-    const stopped = "Stopped after maximum tool iterations.";
+    const stopped = summarizeMaxIterations(toolTrace);
     emitContentTokens(stream, stopped);
     return {
       persona,

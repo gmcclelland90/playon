@@ -5,12 +5,12 @@ describe("redaction", () => {
   it("redacts sensitive object keys", () => {
     expect(
       redactValue({
-        skillName: "fixtures.fake-http-game",
+        skillName: "games.minecraft-paper",
         apiKey: "super-secret",
         nested: { password: "hunter2", ok: true },
       }),
     ).toEqual({
-      skillName: "fixtures.fake-http-game",
+      skillName: "games.minecraft-paper",
       apiKey: "[REDACTED]",
       nested: { password: "[REDACTED]", ok: true },
     });

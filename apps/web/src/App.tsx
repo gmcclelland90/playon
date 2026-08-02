@@ -17,8 +17,17 @@ export function App() {
 
   if (setup.isLoading) {
     return (
-      <div className="auth-screen">
-        <p className="muted">Loading PlayOn…</p>
+      <div className="auth-screen" aria-busy="true">
+        <div className="auth-panel auth-loading">
+          <h1 className="brand-mark">
+            Play<span>On</span>
+          </h1>
+          <div className="skeleton" aria-hidden>
+            <div className="skeleton-row compact" />
+            <div className="skeleton-row" />
+          </div>
+          <p className="muted status-inline">Loading…</p>
+        </div>
       </div>
     );
   }

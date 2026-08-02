@@ -56,3 +56,14 @@ export function listSkills(skillsRoots: string[]): SkillEntry[] {
 export function loadSkillMetadata(skillsRoots: string[], skillName: string): SkillEntry | null {
   return listSkills(skillsRoots).find((s) => s.metadata.name === skillName) ?? null;
 }
+
+/** Global skills roots plus optional per-server skills directory. */
+export function skillsRootsForWorkspace(
+  globalRoots: string[],
+  dataRoot: string,
+  serverId?: string | null,
+): string[] {
+  if (!serverId) return globalRoots;
+  const serverRoot = path.join(dataRoot, "servers", serverId, "skills");
+  return [...globalRoots, serverRoot];
+}

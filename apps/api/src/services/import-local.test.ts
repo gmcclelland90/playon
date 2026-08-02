@@ -36,8 +36,8 @@ function tempEnv(): {
     dataRoot: path.join(root, "data"),
     dbPath,
     sessionSecret: "test",
-    llmMode: "mock",
-    runtimeMode: "mock",
+    llmMode: "openai_compatible",
+    runtimeMode: "docker",
     advertiseHost: "127.0.0.1",
     skillsRoots: [path.join(root, "data", "skills")],
   };

@@ -25,16 +25,24 @@ export function LoginPage() {
 
   return (
     <div className="auth-screen">
-      <form className="auth-panel" onSubmit={onSubmit}>
-        <div>
+      <form className="auth-panel" onSubmit={onSubmit} noValidate>
+        <header className="auth-brand">
           <h1 className="brand-mark">
             Play<span>On</span>
           </h1>
           <p className="lede">Sign in to run servers for the night.</p>
-        </div>
+        </header>
         <label className="field">
           <span>Username</span>
-          <input value={username} onChange={(e) => setUsername(e.target.value)} required autoComplete="username" />
+          <input
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            required
+            autoComplete="username"
+            autoFocus
+            disabled={mutation.isPending}
+            aria-invalid={Boolean(error) || undefined}
+          />
         </label>
         <label className="field">
           <span>Password</span>
@@ -44,13 +52,19 @@ export function LoginPage() {
             onChange={(e) => setPassword(e.target.value)}
             required
             autoComplete="current-password"
+            disabled={mutation.isPending}
+            aria-invalid={Boolean(error) || undefined}
           />
         </label>
-        {error ? <p className="error">{error}</p> : null}
+        {error ? (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        ) : null}
         <button className="btn btn-primary" type="submit" disabled={mutation.isPending}>
           {mutation.isPending ? "Signing in…" : "Sign in"}
         </button>
-        <p className="muted">
+        <p className="muted auth-foot">
           Players join at <Link to="/play">/play</Link> — no account needed.
         </p>
       </form>

@@ -1,5 +1,22 @@
 {
   "$schema": "https://turbo.build/schema.json",
+  "globalPassThroughEnv": [
+    "PLAYON_VENICE_API_KEY",
+    "VENICE_API_KEY",
+    "PLAYON_VENICE_BASE_URL",
+    "PLAYON_VENICE_MODEL",
+    "PLAYON_LLM_MODE",
+    "PLAYON_RUNTIME",
+    "PLAYON_SESSION_SECRET",
+    "PLAYON_DATA_ROOT",
+    "PLAYON_HOST",
+    "PLAYON_ENV",
+    "PLAYON_ADVERTISE_HOST",
+    "PLAYON_CORS_ORIGINS",
+    "PLAYON_WEB_DIST",
+    "NODE_ENV",
+    "CI"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -19,10 +36,12 @@
       "dependsOn": ["build", "^build"]
     },
     "test:int": {
-      "dependsOn": ["build", "^build"]
+      "dependsOn": ["build", "^build"],
+      "cache": false
     },
     "test:agent": {
-      "dependsOn": ["build", "^build"]
+      "dependsOn": ["build", "^build"],
+      "cache": false
     },
 
     "dev": {

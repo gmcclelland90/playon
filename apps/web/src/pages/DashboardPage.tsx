@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { can, type PublicUser } from "@playon/shared";
 import { api } from "../api";
+import { statusLabel } from "../status";
 
 function formatBytes(bytes: number | null | undefined): string {
   if (bytes == null || !Number.isFinite(bytes)) return "—";
@@ -25,9 +27,14 @@ function relativeTime(iso: string): string {
 export function DashboardPage({ user }: { user: PublicUser }) {
   const qc = useQueryClient();
   const canRestore = can(user.role, "snapshots.restore");
+  const [pendingRestore, setPendingRestore] = useState<
+    | { kind: "snapshot"; id: string; label: string; serverLabel: string }
+    | { kind: "offnode"; id: string; label: string }
+    | null
+  >(null);
 
   const servers = useQuery({ queryKey: ["servers"], queryFn: api.servers, refetchInterval: 5000 });
-  const skills = useQuery({ queryKey: ["skills"], queryFn: api.skills });
+  const skills = useQuery({ queryKey: ["skills"], queryFn: () => api.skills() });
   const nodes = useQuery({ queryKey: ["nodes"], queryFn: api.nodes, refetchInterval: 10_000 });
   const snapshots = useQuery({
     queryKey: ["snapshots"],
@@ -45,12 +52,6 @@ export function DashboardPage({ user }: { user: PublicUser }) {
     queryFn: () => api.activity(30),
     refetchInterval: 8_000,
   });
-  const achievements = useQuery({
-    queryKey: ["achievements"],
-    queryFn: api.achievements,
-    refetchInterval: 20_000,
-  });
-
   const createSnap = useMutation({
     mutationFn: (serverId: string) => api.createSnapshot({ serverId, label: "manual" }),
     onSuccess: async () => {
@@ -89,72 +90,84 @@ export function DashboardPage({ user }: { user: PublicUser }) {
   const serverName = (id: string) => serverList.find((s) => s.id === id)?.name ?? id.slice(0, 8);
 
   return (
-    <div className="pane dashboard" style={{ maxWidth: 1100, margin: "0 auto", width: "100%" }}>
+    <div className="pane dashboard dashboard-page">
       <div className="stack">
-        <div>
+        <header className="page-header">
           <h2>Dashboard</h2>
-          <p className="muted" style={{ margin: 0 }}>
+          <p className="lede">
             Tonight&apos;s host view — servers, nodes, backups, and recent agent tools.
           </p>
-        </div>
+        </header>
 
-        <div className="dash-strip" role="group" aria-label="Status summary">
-          <div>
-            <strong>{running}</strong>
-            <span className="muted">running</span>
-          </div>
-          <div>
-            <strong>{stopped}</strong>
-            <span className="muted">stopped</span>
-          </div>
-          <div>
-            <strong>{errored}</strong>
-            <span className="muted">error</span>
-          </div>
-          <div>
-            <strong>{skills.data?.skills?.length ?? "…"}</strong>
-            <span className="muted">skills</span>
-          </div>
-          <div>
-            <strong>{nodes.data?.nodes?.length ?? "…"}</strong>
-            <span className="muted">nodes</span>
-          </div>
-        </div>
+        <p className="dash-summary" aria-live="polite">
+          {servers.isLoading ? (
+            <span>Loading servers…</span>
+          ) : (
+            <>
+              <strong>{running}</strong> running · <strong>{stopped}</strong> stopped
+              {errored ? (
+                <>
+                  {" "}
+                  · <strong>{errored}</strong> failed
+                </>
+              ) : null}
+              {" · "}
+              <strong>{skills.data?.skills?.length ?? 0}</strong> skills ·{" "}
+              <strong>{nodes.data?.nodes?.length ?? 0}</strong> nodes
+            </>
+          )}
+          <Link to="/">Open map</Link>
+        </p>
 
-        {achievements.data ? (
-          <section className="panel stack" aria-label="Host achievements">
-            <div className="dash-section-head">
-              <h3>Host trophies</h3>
-              <span className="muted">
-                {achievements.data.unlocked.length}/{achievements.data.unlocked.length + achievements.data.locked.length}
-              </span>
+        {pendingRestore ? (
+          <div className="confirm-banner panel stack" role="alertdialog" aria-label="Confirm restore">
+            <p className="status-inline">
+              {pendingRestore.kind === "snapshot"
+                ? `Restore snapshot “${pendingRestore.label}” onto ${pendingRestore.serverLabel}?`
+                : `Restore off-node backup “${pendingRestore.label}”?`}
+            </p>
+            <div className="btn-row">
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={restoreSnap.isPending || restoreOffnode.isPending}
+                onClick={() => {
+                  if (pendingRestore.kind === "snapshot") {
+                    restoreSnap.mutate(pendingRestore.id, {
+                      onSuccess: () => setPendingRestore(null),
+                    });
+                  } else {
+                    restoreOffnode.mutate(pendingRestore.id, {
+                      onSuccess: () => setPendingRestore(null),
+                    });
+                  }
+                }}
+              >
+                {restoreSnap.isPending || restoreOffnode.isPending ? "Restoring…" : "Restore"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={restoreSnap.isPending || restoreOffnode.isPending}
+                onClick={() => setPendingRestore(null)}
+              >
+                Cancel
+              </button>
             </div>
-            <ul className="list compact-list achievement-list">
-              {achievements.data.unlocked.map((a) => (
-                <li key={a.id} className="achievement-unlocked">
-                  <div>
-                    <strong>{a.title}</strong>
-                    <div className="muted">{a.description}</div>
-                  </div>
-                </li>
-              ))}
-              {achievements.data.locked.map((a) => (
-                <li key={a.id} className="achievement-locked">
-                  <div>
-                    <strong>{a.title}</strong>
-                    <div className="muted">{a.description}</div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </section>
+            {restoreSnap.isError ? (
+              <p className="error">{(restoreSnap.error as Error).message}</p>
+            ) : null}
+            {restoreOffnode.isError ? (
+              <p className="error">{(restoreOffnode.error as Error).message}</p>
+            ) : null}
+          </div>
         ) : null}
 
         <div className="dash-grid">
           <section className="panel stack">
             <div className="dash-section-head">
               <h3>Servers</h3>
-              <Link to="/servers">Manage →</Link>
+              <Link to="/">Open map →</Link>
             </div>
             {servers.isLoading ? (
               <div className="skeleton" aria-hidden>
@@ -166,8 +179,12 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                   <li key={s.id}>
                     <div>
                       <strong>{s.name}</strong>
-                      <div className="muted">
-                        {s.game ?? "—"} · <code>{s.status}</code> · {s.runtimeMode}
+                      <div className="muted canvas-status-row">
+                        <span className={`server-status-pill status-${s.status}`}>
+                          {statusLabel(s.status)}
+                        </span>
+                        <span>{s.game ?? "—"}</span>
+                        {s.runtimeMode ? <span>{s.runtimeMode}</span> : null}
                       </div>
                     </div>
                     <div className="btn-row">
@@ -196,8 +213,8 @@ export function DashboardPage({ user }: { user: PublicUser }) {
             ) : (
               <div className="empty-hint">
                 <strong>No servers</strong>
-                <p className="muted" style={{ margin: 0 }}>
-                  Create one on <Link to="/servers">Servers</Link> or ask chat.
+                <p className="muted status-inline">
+                  Describe a server on the <Link to="/">Map</Link> — agents will install it.
                 </p>
               </div>
             )}
@@ -218,7 +235,9 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                     <div>
                       <strong>{n.name}</strong>
                       <div className="muted">
-                        <span className={`node-status node-${n.status}`}>{n.status}</span>
+                        <span className={`node-status node-${n.status}`}>
+                          {statusLabel(n.status)}
+                        </span>
                         {" · "}
                         {n.os}
                         {n.docker ? " · Docker" : " · no Docker"} · free {formatBytes(n.freeDiskBytes)}
@@ -232,7 +251,7 @@ export function DashboardPage({ user }: { user: PublicUser }) {
             ) : (
               <div className="empty-hint">
                 <strong>Local host only</strong>
-                <p className="muted" style={{ margin: 0 }}>
+                <p className="muted status-inline">
                   Remote node-agents appear here after heartbeat registration.
                 </p>
               </div>
@@ -243,7 +262,12 @@ export function DashboardPage({ user }: { user: PublicUser }) {
             <div className="dash-section-head">
               <h3>Skills</h3>
             </div>
-            {skills.data?.skills?.length ? (
+            {skills.isLoading ? (
+              <div className="skeleton" aria-hidden>
+                <div className="skeleton-row" />
+                <div className="skeleton-row compact" />
+              </div>
+            ) : skills.data?.skills?.length ? (
               <ul className="list compact-list">
                 {skills.data.skills.slice(0, 8).map((skill) => (
                   <li key={skill.id}>
@@ -261,13 +285,14 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                 ))}
               </ul>
             ) : (
-              <p className="muted" style={{ margin: 0 }}>
-                No skills discovered.
-              </p>
+              <div className="empty-hint">
+                <strong>No skills discovered</strong>
+                <p className="muted status-inline">Global skill packs show up here once loaded.</p>
+              </div>
             )}
-            {(skills.data?.skills?.length ?? 0) > 8 ? (
-              <p className="muted" style={{ margin: 0 }}>
-                +{(skills.data?.skills.length ?? 0) - 8} more on <Link to="/servers">Servers</Link>
+            {!skills.isLoading && (skills.data?.skills?.length ?? 0) > 8 ? (
+              <p className="muted status-inline">
+                +{(skills.data?.skills.length ?? 0) - 8} more skills available to agents
               </p>
             ) : null}
           </section>
@@ -295,15 +320,14 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                         type="button"
                         className="btn btn-ghost btn-compact"
                         disabled={restoreSnap.isPending}
-                        onClick={() => {
-                          if (
-                            window.confirm(
-                              `Restore snapshot "${snap.label}" onto ${serverName(snap.serverId)}?`,
-                            )
-                          ) {
-                            restoreSnap.mutate(snap.id);
-                          }
-                        }}
+                        onClick={() =>
+                          setPendingRestore({
+                            kind: "snapshot",
+                            id: snap.id,
+                            label: snap.label,
+                            serverLabel: serverName(snap.serverId),
+                          })
+                        }
                       >
                         Restore
                       </button>
@@ -314,7 +338,7 @@ export function DashboardPage({ user }: { user: PublicUser }) {
             ) : (
               <div className="empty-hint">
                 <strong>No snapshots yet</strong>
-                <p className="muted" style={{ margin: 0 }}>
+                <p className="muted status-inline">
                   Snapshot a server above, or let scheduled retention create them.
                 </p>
               </div>
@@ -322,20 +346,20 @@ export function DashboardPage({ user }: { user: PublicUser }) {
             {createSnap.isError ? (
               <p className="error">{(createSnap.error as Error).message}</p>
             ) : null}
-            {restoreSnap.isError ? (
+            {!pendingRestore && restoreSnap.isError ? (
               <p className="error">{(restoreSnap.error as Error).message}</p>
             ) : null}
             {offnodeBackup.isError ? (
               <p className="error">{(offnodeBackup.error as Error).message}</p>
             ) : null}
 
-            <h4 style={{ margin: "0.75rem 0 0" }}>Off-node</h4>
+            <h4 className="section-subhead">Off-node</h4>
             {backupTarget.data?.target ? (
-              <p className="muted" style={{ margin: 0 }}>
+              <p className="muted status-inline">
                 Target: <code>{backupTarget.data.target.rootPath}</code>
               </p>
             ) : (
-              <p className="muted" style={{ margin: 0 }}>
+              <p className="muted status-inline">
                 Set a backup root in Settings to enable external copies.
               </p>
             )}
@@ -354,11 +378,13 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                         type="button"
                         className="btn btn-ghost btn-compact"
                         disabled={restoreOffnode.isPending}
-                        onClick={() => {
-                          if (window.confirm(`Restore off-node backup "${b.label}"?`)) {
-                            restoreOffnode.mutate(b.id);
-                          }
-                        }}
+                        onClick={() =>
+                          setPendingRestore({
+                            kind: "offnode",
+                            id: b.id,
+                            label: b.label,
+                          })
+                        }
                       >
                         Restore
                       </button>
@@ -367,7 +393,7 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                 ))}
               </ul>
             ) : null}
-            {restoreOffnode.isError ? (
+            {!pendingRestore && restoreOffnode.isError ? (
               <p className="error">{(restoreOffnode.error as Error).message}</p>
             ) : null}
           </section>
@@ -387,7 +413,9 @@ export function DashboardPage({ user }: { user: PublicUser }) {
               {activity.data.activity.map((item) => (
                 <li key={item.id}>
                   <code className="activity-tool">{item.toolName}</code>
-                  <span className={`activity-status status-${item.status}`}>{item.status}</span>
+                  <span className={`activity-status status-${item.status}`}>
+                    {statusLabel(item.status)}
+                  </span>
                   <span className="muted">{relativeTime(item.createdAt)}</span>
                 </li>
               ))}
@@ -395,7 +423,7 @@ export function DashboardPage({ user }: { user: PublicUser }) {
           ) : (
             <div className="empty-hint">
               <strong>Quiet so far</strong>
-              <p className="muted" style={{ margin: 0 }}>
+              <p className="muted status-inline">
                 Tool calls from admin chat show up here.
               </p>
             </div>

@@ -20,130 +20,9 @@ export interface LlmCompletion {
 }
 
 export interface LlmClient {
-  readonly mode: "mock" | "openai_compatible" | "ollama";
+  readonly mode: "openai_compatible" | "ollama";
   complete(messages: LlmMessage[], tools?: ToolDefinition[]): Promise<LlmCompletion>;
 }
-
-/** Deterministic stub for CI / autonomous loops. */
-export class MockLlmClient implements LlmClient {
-  readonly mode = "mock" as const;
-
-  constructor(private readonly reply: LlmCompletion = { content: "Mock LLM ready." }) {}
-
-  async complete(_messages: LlmMessage[], _tools?: ToolDefinition[]): Promise<LlmCompletion> {
-    return this.reply;
-  }
-}
-
-const FIXTURE_PATTERN = /fake-http|fixture|test server/i;
-const PAPER_PATTERN = /minecraft|paper/i;
-
-type MockInstallTarget = {
-  skillName: string;
-  serverName: string;
-  port: number;
-  doneMessage: string;
-};
-
-function resolveInstallTarget(userText: string): MockInstallTarget | null {
-  if (FIXTURE_PATTERN.test(userText)) {
-    return {
-      skillName: "fixtures.fake-http-game",
-      serverName: "Fake HTTP Fixture",
-      port: 8080,
-      doneMessage:
-        "Installed the fake-http fixture server and published join + status blocks to the player panel.",
-    };
-  }
-  if (PAPER_PATTERN.test(userText)) {
-    return {
-      skillName: "games.minecraft-paper",
-      serverName: "Paper Minecraft",
-      port: 25565,
-      doneMessage:
-        "Created the Paper Minecraft server (mock runtime) and published join + status blocks to the player panel.",
-    };
-  }
-  return null;
-}
-
-/** Mock client that emits tool calls for fixture / reference-skill install flows. */
-export class IntentMockLlmClient implements LlmClient {
-  readonly mode = "mock" as const;
-
-  async complete(messages: LlmMessage[], _tools?: ToolDefinition[]): Promise<LlmCompletion> {
-    const userText = messages
-      .filter((m) => m.role === "user")
-      .map((m) => m.content)
-      .join("\n");
-
-    const target = resolveInstallTarget(userText);
-    if (!target) {
-      return {
-        content:
-          "PlayOn is running in mock LLM mode. Configure an OpenAI-compatible or Ollama provider under Settings → Model settings to enable live model routing.",
-      };
-    }
-
-    const toolMessages = messages.filter((m) => m.role === "tool");
-    const createDone = toolMessages.some((m) => m.name === "servers_create_from_skill");
-    const publishDone = toolMessages.some((m) => m.name === "panel_publish");
-
-    if (!createDone) {
-      return {
-        content: "",
-        toolCalls: [
-          {
-            id: "call-create-skill",
-            name: "servers_create_from_skill",
-            arguments: { skillName: target.skillName, serverName: target.serverName },
-          },
-        ],
-      };
-    }
-
-    if (!publishDone) {
-      const createResult = toolMessages.find((m) => m.name === "servers_create_from_skill");
-      let serverId = "unknown";
-      if (createResult?.content) {
-        try {
-          const parsed = JSON.parse(createResult.content) as { serverId?: string };
-          serverId = parsed.serverId ?? serverId;
-        } catch {
-          /* ignore */
-        }
-      }
-
-      return {
-        content: "",
-        toolCalls: [
-          {
-            id: "call-panel-publish",
-            name: "panel_publish",
-            arguments: {
-              serverId,
-              blocks: [
-                {
-                  type: "join_info",
-                  title: "Join",
-                  body: { address: "127.0.0.1", port: target.port },
-                },
-                {
-                  type: "server_status",
-                  title: "Status",
-                  body: { status: "stopped" },
-                },
-              ],
-            },
-          },
-        ],
-      };
-    }
-
-    return { content: target.doneMessage };
-  }
-}
-
 
 interface OpenAiChatResponse {
   choices?: Array<{
@@ -170,7 +49,90 @@ function parseToolArguments(raw: string): Record<string, unknown> {
   }
 }
 
-/** Calls POST .../chat/completions on an OpenAI-compatible endpoint. */
+function asArgObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value === "string") return parseToolArguments(value);
+  return {};
+}
+
+/**
+ * Recover tool calls when a model emits OpenAI/Hermes-style JSON in content
+ * instead of native `tool_calls` (common intermittent Venice behavior).
+ */
+export function extractToolCallsFromContent(content: string): LlmToolCall[] {
+  const trimmed = content.trim();
+  if (!trimmed) return [];
+
+  const candidates: string[] = [trimmed];
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) candidates.push(fenced[1].trim());
+
+  const calls: LlmToolCall[] = [];
+  const push = (name: unknown, args: unknown, idHint: string) => {
+    if (typeof name !== "string" || !name.trim()) return;
+    calls.push({
+      id: idHint,
+      name: name.trim(),
+      arguments: asArgObject(args),
+    });
+  };
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate) as unknown;
+      if (Array.isArray(parsed)) {
+        parsed.forEach((item, idx) => {
+          if (!item || typeof item !== "object") return;
+          const rec = item as Record<string, unknown>;
+          const fn = rec.function;
+          if (fn && typeof fn === "object") {
+            const f = fn as Record<string, unknown>;
+            push(f.name, f.parameters ?? f.arguments, `content-${idx}`);
+            return;
+          }
+          push(rec.name, rec.parameters ?? rec.arguments, `content-${idx}`);
+        });
+      } else if (parsed && typeof parsed === "object") {
+        const rec = parsed as Record<string, unknown>;
+        const fn = rec.function;
+        if (fn && typeof fn === "object") {
+          const f = fn as Record<string, unknown>;
+          push(f.name, f.parameters ?? f.arguments, "content-0");
+        } else if (typeof rec.name === "string") {
+          push(rec.name, rec.parameters ?? rec.arguments, "content-0");
+        }
+      }
+    } catch {
+      // keep scanning
+    }
+    if (calls.length) return calls;
+  }
+
+  // Loose scan for {"type":"function","function":{...}} blobs in prose.
+  const blobRe =
+    /\{\s*"type"\s*:\s*"function"\s*,\s*"function"\s*:\s*\{[\s\S]*?\}\s*\}/g;
+  let match: RegExpExecArray | null;
+  let idx = 0;
+  while ((match = blobRe.exec(trimmed)) !== null) {
+    try {
+      const parsed = JSON.parse(match[0]) as {
+        function?: { name?: string; parameters?: unknown; arguments?: unknown };
+      };
+      push(
+        parsed.function?.name,
+        parsed.function?.parameters ?? parsed.function?.arguments,
+        `content-scan-${idx++}`,
+      );
+    } catch {
+      // ignore partial matches
+    }
+  }
+  return calls;
+}
+
+/** Calls POST .../chat/completions on an OpenAI-compatible endpoint (Venice, Ollama, …). */
 export class OpenAICompatibleLlmClient implements LlmClient {
   readonly mode: "openai_compatible" | "ollama";
 
@@ -224,6 +186,14 @@ export class OpenAICompatibleLlmClient implements LlmClient {
           parameters: t.parameters,
         },
       }));
+      body.tool_choice = "auto";
+    }
+
+    if (this.baseUrl.includes("venice.ai")) {
+      // Prefer our persona system prompts over Venice's default chat persona.
+      body.venice_parameters = {
+        include_venice_system_prompt: false,
+      };
     }
 
     const headers: Record<string, string> = { "content-type": "application/json" };
@@ -242,14 +212,24 @@ export class OpenAICompatibleLlmClient implements LlmClient {
 
     const data = (await res.json()) as OpenAiChatResponse;
     const message = data.choices?.[0]?.message;
-    const toolCalls = message?.tool_calls?.map((tc) => ({
+    const content = message?.content ?? "";
+    let toolCalls = message?.tool_calls?.map((tc) => ({
       id: tc.id,
       name: tc.function.name,
       arguments: parseToolArguments(tc.function.arguments || "{}"),
     }));
 
+    if (!toolCalls?.length && tools?.length) {
+      const recovered = extractToolCallsFromContent(content);
+      if (recovered.length) {
+        toolCalls = recovered;
+      }
+    }
+
     return {
-      content: message?.content ?? "",
+      // When we recovered tool calls from content, clear content so the orchestrator
+      // doesn't surface raw function JSON as the user-visible reply.
+      content: toolCalls?.length && !message?.tool_calls?.length ? "" : content,
       toolCalls: toolCalls?.length ? toolCalls : undefined,
     };
   }

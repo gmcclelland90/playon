@@ -22,10 +22,6 @@ async function main(): Promise<number> {
   const { db } = createDb(config.dbPath);
   const llm = await createLlmClient(db, config);
   console.log("provider_mode=", llm.mode);
-  if (llm.mode === "mock") {
-    console.error("LLM is still mock — save OpenAI-compatible settings in the UI first.");
-    return 2;
-  }
   const completion = await llm.complete([
     {
       role: "user",

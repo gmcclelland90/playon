@@ -7,7 +7,7 @@ import { api, type LlmPublic } from "../api";
 export function SettingsPage({ user }: { user: PublicUser }) {
   const qc = useQueryClient();
   const llm = useQuery({ queryKey: ["llm"], queryFn: api.getLlmSettings });
-  const [provider, setProvider] = useState<LlmPublic["provider"]>("mock");
+  const [provider, setProvider] = useState<LlmPublic["provider"]>("openai_compatible");
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -19,6 +19,8 @@ export function SettingsPage({ user }: { user: PublicUser }) {
   const [userCreated, setUserCreated] = useState<string | null>(null);
   const [backupRoot, setBackupRoot] = useState("");
   const [backupSaved, setBackupSaved] = useState(false);
+  const [skillNotice, setSkillNotice] = useState<string | null>(null);
+  const [skillError, setSkillError] = useState<string | null>(null);
 
   const backupTarget = useQuery({
     queryKey: ["backup-target"],
@@ -89,59 +91,70 @@ export function SettingsPage({ user }: { user: PublicUser }) {
   }
 
   return (
-    <div className="stack">
+    <div className="pane settings-page stack">
       <header className="page-header">
         <h2>Settings</h2>
-        <p className="lede">LLM provider and host accounts.</p>
+        <p className="lede">LLM provider, backups, and host accounts.</p>
       </header>
 
-      <form className="panel" onSubmit={onSubmit}>
+      <form className="panel stack tight" onSubmit={onSubmit}>
         <h3>LLM</h3>
-        <div className="stack tight">
-          <label className="field">
-            <span>Provider</span>
-            <select value={provider} onChange={(e) => setProvider(e.target.value as LlmPublic["provider"])}>
-              <option value="mock">Mock (offline)</option>
-              <option value="openai_compatible">OpenAI-compatible</option>
-              <option value="ollama">Ollama</option>
-            </select>
-          </label>
-
-          {provider !== "mock" ? (
-            <>
-              <label className="field">
-                <span>Base URL</span>
-                <input
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder={provider === "ollama" ? "http://127.0.0.1:11434" : "https://…"}
-                />
-              </label>
-              <label className="field">
-                <span>Model</span>
-                <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="model id" />
-              </label>
-              <label className="field">
-                <span>API key {llm.data?.llm.hasApiKey ? "(saved — leave blank to keep)" : ""}</span>
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  autoComplete="off"
-                  placeholder={provider === "ollama" ? "optional" : "sk-…"}
-                />
-              </label>
-            </>
-          ) : null}
-
-          <div className="btn-row">
-            <button className="btn btn-primary" type="submit" disabled={save.isPending}>
-              {save.isPending ? "Saving…" : "Save settings"}
-            </button>
-            {saved ? <span className="ok">Saved</span> : null}
+        {llm.isLoading ? (
+          <div className="skeleton" aria-hidden>
+            <div className="skeleton-row" />
+            <div className="skeleton-row compact" />
           </div>
-          {save.isError ? <p className="error">{(save.error as Error).message}</p> : null}
-        </div>
+        ) : (
+          <div className="stack tight">
+            <label className="field">
+              <span>Provider</span>
+              <select
+                value={provider}
+                onChange={(e) => setProvider(e.target.value as LlmPublic["provider"])}
+              >
+                <option value="openai_compatible">Venice / OpenAI-compatible</option>
+                <option value="ollama">Ollama (offline)</option>
+              </select>
+            </label>
+
+            <label className="field">
+              <span>Base URL</span>
+              <input
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder={
+                  provider === "ollama" ? "http://127.0.0.1:11434/v1" : "https://api.venice.ai/api/v1"
+                }
+              />
+            </label>
+            <label className="field">
+              <span>Model</span>
+              <input
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder={provider === "ollama" ? "llama3.2" : "llama-3.3-70b"}
+              />
+            </label>
+            <label className="field">
+              <span>API key {llm.data?.llm.hasApiKey ? "(saved — leave blank to keep)" : ""}</span>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                autoComplete="off"
+                placeholder={provider === "ollama" ? "optional" : "Venice API key"}
+              />
+            </label>
+
+            <div className="btn-row">
+              <button className="btn btn-primary" type="submit" disabled={save.isPending}>
+                {save.isPending ? "Saving…" : "Save settings"}
+              </button>
+              {saved ? <span className="ok">Saved</span> : null}
+            </div>
+            {save.isError ? <p className="error">{(save.error as Error).message}</p> : null}
+          </div>
+        )}
       </form>
 
       <form
@@ -152,7 +165,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
         }}
       >
         <h3>Off-node backups</h3>
-        <p className="muted">
+        <p className="muted status-inline">
           Absolute path to an external disk, USB stick, or NAS mount. Durable backups copy here so a
           dead host disk is not the only copy.
         </p>
@@ -177,9 +190,9 @@ export function SettingsPage({ user }: { user: PublicUser }) {
       {can(user.role, "skills.package") ? (
         <div className="panel stack tight">
           <h3>Skill packages</h3>
-          <p className="muted">
+          <p className="muted status-inline">
             Import a <code>.skill.zip</code> (directory with <code>metadata.yaml</code>) into the host
-            global skills library. Export from the Servers page.
+            global skills library.
           </p>
           <label className="field">
             <span>Import zip</span>
@@ -189,23 +202,28 @@ export function SettingsPage({ user }: { user: PublicUser }) {
               onChange={(e) => {
                 const file = e.target.files?.[0];
                 if (!file) return;
+                setSkillNotice(null);
+                setSkillError(null);
                 void api
                   .importSkill(file)
                   .then((result) => {
-                    window.alert(`Imported ${result.skill.skillName} v${result.skill.version}`);
+                    setSkillNotice(`Imported ${result.skill.skillName} v${result.skill.version}`);
                     e.target.value = "";
+                    window.setTimeout(() => setSkillNotice(null), 4000);
                   })
-                  .catch((err: Error) => window.alert(err.message));
+                  .catch((err: Error) => setSkillError(err.message));
               }}
             />
           </label>
+          {skillNotice ? <span className="ok">{skillNotice}</span> : null}
+          {skillError ? <p className="error">{skillError}</p> : null}
         </div>
       ) : null}
 
       {can(user.role, "users.manage") ? (
-        <form className="panel" onSubmit={onCreateUser}>
+        <form className="panel stack tight" onSubmit={onCreateUser}>
           <h3>Create account</h3>
-          <p className="muted">
+          <p className="muted status-inline">
             Operators can start/stop servers and watch logs. Admins also get chat, LLM settings, and host
             confirms.
           </p>

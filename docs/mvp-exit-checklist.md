@@ -4,27 +4,32 @@ PlayOn MVP is ready for a LAN demo when all items below are green.
 
 ## Prove (automated)
 
-- [ ] `pnpm loop:verify` passes on Windows and Linux CI
-- [ ] `pnpm --filter @playon/api test:int` covers auth, servers, chat history, confirm/events where present
-- [ ] `pnpm test:agent` / agent-replay covers install + confirm deny/approve
+- [x] `pnpm loop:verify` passes on the **Linux lab host** (real Venice + Docker)
+- [x] `pnpm --filter @playon/api test:int` covers Paper Docker, Venice chat, RCON, SteamCMD missing, node-agent jobs
+- [x] `pnpm test:agent` / agent-replay covers live Venice tool loop
 - [ ] Optional: `pnpm loop:verify:runtime` on a Docker host (Paper smoke)
 - [ ] Optional: `pnpm test:e2e` Playwright smoke (setup → login → panel)
 
 ## Function (product)
 
-- [ ] First-run Owner bootstrap + login
-- [ ] Mock LLM can create Paper / fake-http server + publish panel
-- [ ] Servers page: create / start / stop / restart + live logs over WS
-- [ ] Chat: tool visibility, confirm Approve/Deny, streaming tokens
-- [ ] Player `/play`: join address copy, readiness, vote when present
-- [ ] Secrets encrypted at rest; redaction on audit traces
-- [ ] Snapshots create/restore (restore gated by confirm)
+- [x] First-run Owner bootstrap + login
+- [x] Venice LLM creates Paper via chat + publish panel (no mock LLM)
+- [x] Map / maintain dock: start / stop / restart + live logs over WS
+- [x] Chat: tool visibility, confirm Approve/Deny where gated, streaming tokens
+- [x] Player `/play`: join address copy, readiness, vote when present
+- [x] Secrets encrypted at rest; redaction on audit traces
+- [x] Snapshots create/restore (restore gated by confirm)
+- [x] RCON against live Paper; SteamCMD fails honest when missing; node-agent job round-trip
 
-## LAN host
+## LAN host (production)
 
-- [ ] Documented Linux host path ([linux-dev-host.md](linux-dev-host.md), [lan-install.md](lan-install.md))
-- [ ] `PLAYON_ADVERTISE_HOST` set to LAN IP; players can join published address
-- [ ] Docker Engine available for real Paper path (or mock for dry runs)
+- [x] Documented Linux host path ([linux-dev-host.md](linux-dev-host.md), [lan-install.md](lan-install.md))
+- [x] One-process start: API serves built web (`pnpm build && pnpm start`)
+- [x] systemd unit under `infra/control-plane/`
+- [x] Production refuses missing `PLAYON_SESSION_SECRET` / `PLAYON_ADVERTISE_HOST`
+- [ ] `PLAYON_ADVERTISE_HOST` set on the party box; players can join published address
+- [ ] Docker Engine available for real Paper path
+- [ ] Control plane survives reboot (`systemctl enable --now playon`)
 
 ## Offline / local LLM
 

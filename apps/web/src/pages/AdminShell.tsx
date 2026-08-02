@@ -2,9 +2,8 @@ import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { can, type PublicUser } from "@playon/shared";
 import { api } from "../api";
-import { ChatPage } from "./ChatPage";
+import { CanvasPage } from "./CanvasPage";
 import { DashboardPage } from "./DashboardPage";
-import { ServersPage } from "./ServersPage";
 import { SettingsPage } from "./SettingsPage";
 
 export function AdminShell({ user }: { user: PublicUser }) {
@@ -24,9 +23,9 @@ export function AdminShell({ user }: { user: PublicUser }) {
     <div className="app-shell">
       <header className="topbar">
         <div className="topbar-brand">
-          <h1 className="brand-mark">
+          <p className="brand-mark">
             Play<span>On</span>
-          </h1>
+          </p>
           <span className="role-chip" title="Signed-in role">
             {user.role}
           </span>
@@ -34,14 +33,11 @@ export function AdminShell({ user }: { user: PublicUser }) {
         <nav className="topbar-nav" aria-label="Admin">
           {showChat ? (
             <NavLink to="/" end className={({ isActive }) => (isActive ? "active" : undefined)}>
-              Chat
+              Map
             </NavLink>
           ) : null}
           <NavLink to="/dashboard" className={({ isActive }) => (isActive ? "active" : undefined)}>
             Dashboard
-          </NavLink>
-          <NavLink to="/servers" className={({ isActive }) => (isActive ? "active" : undefined)}>
-            Servers
           </NavLink>
           {showSettings ? (
             <NavLink to="/settings" className={({ isActive }) => (isActive ? "active" : undefined)}>
@@ -51,19 +47,24 @@ export function AdminShell({ user }: { user: PublicUser }) {
           <NavLink to="/play" className="util">
             Player view
           </NavLink>
-          <button type="button" className="linkish util" onClick={() => logout.mutate()}>
-            Sign out
+          <button
+            type="button"
+            className="linkish util"
+            onClick={() => logout.mutate()}
+            disabled={logout.isPending}
+          >
+            {logout.isPending ? "Signing out…" : "Sign out"}
           </button>
         </nav>
       </header>
-      <main>
+      <main className={showChat ? "main-canvas" : undefined}>
         <Routes>
-          {showChat ? <Route path="/" element={<ChatPage user={user} />} /> : null}
+          {showChat ? <Route path="/" element={<CanvasPage user={user} />} /> : null}
           <Route path="/dashboard" element={<DashboardPage user={user} />} />
-          <Route path="/servers" element={<ServersPage user={user} />} />
           {showSettings ? (
             <Route path="/settings" element={<SettingsPage user={user} />} />
           ) : null}
+          <Route path="/servers/*" element={<Navigate to={home} replace />} />
           <Route path="*" element={<Navigate to={home} replace />} />
         </Routes>
       </main>

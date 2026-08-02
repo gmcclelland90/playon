@@ -1,0 +1,627 @@
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { PublicUser } from "@playon/shared";
+import { api, type ToolTrace } from "../api";
+import {
+  AgentCanvas,
+  type AgentActivityView,
+} from "../components/agent-canvas/AgentCanvas";
+import { statusHint, statusLabel } from "../status";
+import { playonSocket } from "../ws";
+
+type ChatLine = {
+  role: "user" | "assistant";
+  content: string;
+  tools?: ToolTrace[];
+};
+
+type DockTab = "chat" | "ops";
+
+function personaLabel(persona: string): string {
+  return persona.replace(/_/g, " ");
+}
+
+export function CanvasPage({ user }: { user: PublicUser }) {
+  const qc = useQueryClient();
+  const [selectedId, setSelectedId] = useState<string | undefined>(() => {
+    try {
+      return localStorage.getItem("playon.lastServerId") ?? undefined;
+    } catch {
+      return undefined;
+    }
+  });
+  /** Unbound install dock (no crate selected). */
+  const [installOpen, setInstallOpen] = useState(false);
+  const [conversationId, setConversationId] = useState<string | undefined>();
+  const [lines, setLines] = useState<ChatLine[]>([]);
+  const [message, setMessage] = useState("");
+  const [activityByServer, setActivityByServer] = useState<
+    Record<string, AgentActivityView | undefined>
+  >({});
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    requestId: string;
+    summary: string;
+  } | null>(null);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [celebration, setCelebration] = useState<string | null>(null);
+  const [liveConversationId, setLiveConversationId] = useState<string | undefined>();
+  const [opsError, setOpsError] = useState<string | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [dockTab, setDockTab] = useState<DockTab>("chat");
+  const chatLogRef = useRef<HTMLDivElement>(null);
+
+  const servers = useQuery({ queryKey: ["servers"], queryFn: api.servers, refetchInterval: 4000 });
+  const agents = useQuery({
+    queryKey: ["server-agents", selectedId],
+    queryFn: () => api.serverAgents(selectedId!),
+    enabled: Boolean(selectedId),
+    refetchInterval: 8000,
+  });
+  const detail = useQuery({
+    queryKey: ["server-detail", selectedId],
+    queryFn: () => api.serverDetail(selectedId!),
+    enabled: Boolean(selectedId),
+    refetchInterval: 5000,
+  });
+
+  const dockOpen = Boolean(selectedId) || installOpen;
+  const unbound = !selectedId && installOpen;
+
+  useEffect(() => {
+    if (!selectedId || !servers.data?.servers.length) return;
+    if (!servers.data.servers.some((s) => s.id === selectedId)) {
+      setSelectedId(undefined);
+    }
+  }, [selectedId, servers.data?.servers]);
+
+  function openInstallChat() {
+    setSelectedId(undefined);
+    setInstallOpen(true);
+    setConversationId(undefined);
+    setLines([]);
+    setOpsError(null);
+    setSessionError(null);
+    setDockTab("chat");
+    try {
+      localStorage.removeItem("playon.lastServerId");
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function selectServer(id: string | undefined) {
+    if (!id) {
+      setSelectedId(undefined);
+      setInstallOpen(false);
+      return;
+    }
+    setInstallOpen(false);
+    setSelectedId(id);
+    setOpsError(null);
+    setSessionError(null);
+    setDockTab("chat");
+  }
+
+  useEffect(() => {
+    return playonSocket.subscribe((event) => {
+      if (event.type === "server.status") {
+        void qc.invalidateQueries({ queryKey: ["servers"] });
+        void qc.invalidateQueries({ queryKey: ["server-detail", event.serverId] });
+        return;
+      }
+      if (event.type === "agent.activity") {
+        setActivityByServer((prev) => ({
+          ...prev,
+          [event.serverId]: {
+            serverId: event.serverId,
+            persona: event.persona,
+            phase: event.phase,
+            verb: event.verb,
+            label: event.label,
+          },
+        }));
+        return;
+      }
+      if (event.type === "agent.celebration") {
+        if (selectedId && event.serverId !== selectedId) return;
+        const msg = event.leveledUp
+          ? `${event.title} hit level ${event.level}`
+          : `${event.title} +${event.xpGained} XP`;
+        setCelebration(msg);
+        window.setTimeout(() => setCelebration(null), 4000);
+        void qc.invalidateQueries({ queryKey: ["server-agents", event.serverId] });
+        return;
+      }
+      if (event.type === "confirm.required") {
+        setPendingConfirm({ requestId: event.requestId, summary: event.summary });
+        return;
+      }
+      if (event.type === "chat.token") {
+        if (liveConversationId && event.conversationId !== liveConversationId) return;
+        setLines((prev) => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (!last || last.role !== "assistant") return prev;
+          next[next.length - 1] = { ...last, content: `${last.content}${event.token}` };
+          return next;
+        });
+      }
+    });
+  }, [liveConversationId, selectedId, qc]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      if (!installOpen) {
+        setConversationId(undefined);
+        setLines([]);
+      }
+      return;
+    }
+    localStorage.setItem("playon.lastServerId", selectedId);
+    let cancelled = false;
+    setSessionError(null);
+    (async () => {
+      try {
+        const sessions = await api.serverConversations(selectedId);
+        if (cancelled) return;
+        let id = sessions.conversations[0]?.id;
+        if (!id) {
+          const created = await api.createServerConversation(selectedId);
+          id = created.conversation.id;
+        }
+        setConversationId(id);
+        const history = await api.conversationMessages(id);
+        if (cancelled) return;
+        setLines(
+          history.messages
+            .filter((m) => m.role === "user" || m.role === "assistant")
+            .map((m) => ({
+              role: m.role as "user" | "assistant",
+              content: m.content,
+            })),
+        );
+      } catch (err) {
+        if (cancelled) return;
+        setSessionError((err as Error).message || "Could not load chat history.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, installOpen]);
+
+  const refreshServer = async (serverId: string) => {
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ["servers"] }),
+      qc.invalidateQueries({ queryKey: ["server-detail", serverId] }),
+    ]);
+  };
+
+  const start = useMutation({
+    mutationFn: (id: string) => api.startServer(id),
+    onMutate: () => setOpsError(null),
+    onSuccess: async (data) => {
+      await refreshServer(data.server.id);
+    },
+    onError: (err) => setOpsError((err as Error).message),
+  });
+  const stop = useMutation({
+    mutationFn: (id: string) => api.stopServer(id),
+    onMutate: () => setOpsError(null),
+    onSuccess: async (data) => {
+      await refreshServer(data.server.id);
+    },
+    onError: (err) => setOpsError((err as Error).message),
+  });
+  const restart = useMutation({
+    mutationFn: (id: string) => api.restartServer(id),
+    onMutate: () => setOpsError(null),
+    onSuccess: async (data) => {
+      await refreshServer(data.server.id);
+    },
+    onError: (err) => setOpsError((err as Error).message),
+  });
+
+  const opsBusy = start.isPending || stop.isPending || restart.isPending;
+
+  const chat = useMutation({
+    mutationFn: (text: string) => {
+      if (selectedId) {
+        return api.chat(text, { conversationId, serverId: selectedId });
+      }
+      return api.chat(text, { conversationId });
+    },
+    onMutate: (text) => {
+      setLiveConversationId(conversationId);
+      setLines((prev) => [
+        ...prev,
+        { role: "user", content: text },
+        { role: "assistant", content: "", tools: [] },
+      ]);
+      setMessage("");
+    },
+    onSuccess: async (data) => {
+      setConversationId(data.conversationId);
+      setLiveConversationId(undefined);
+      setLines((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last?.role === "assistant") {
+          next[next.length - 1] = {
+            role: "assistant",
+            content: data.reply || last.content,
+            tools: data.toolTrace?.length ? data.toolTrace : last.tools,
+          };
+        }
+        return next;
+      });
+      if (data.celebrations?.length) {
+        const top = data.celebrations[0]!;
+        setCelebration(
+          top.leveledUp ? `${top.title} hit level ${top.level}` : `${top.title} +${top.xpGained} XP`,
+        );
+        window.setTimeout(() => setCelebration(null), 4000);
+      }
+      await qc.invalidateQueries({ queryKey: ["servers"] });
+      if (data.serverId) {
+        await qc.invalidateQueries({ queryKey: ["server-agents", data.serverId] });
+        await qc.invalidateQueries({ queryKey: ["server-detail", data.serverId] });
+      }
+      if (data.serverId && data.serverId !== selectedId) {
+        setInstallOpen(false);
+        setSelectedId(data.serverId);
+        localStorage.setItem("playon.lastServerId", data.serverId);
+      }
+    },
+    onError: () => {
+      setLiveConversationId(undefined);
+      setLines((prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last?.role === "assistant" && !last.content) next.pop();
+        return next;
+      });
+    },
+  });
+
+  useEffect(() => {
+    const el = chatLogRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+  }, [lines, chat.isPending]);
+
+  function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    const text = message.trim();
+    if (!text || !dockOpen || chat.isPending) return;
+    chat.mutate(text);
+  }
+
+  function onComposerKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key !== "Enter" || e.shiftKey) return;
+    e.preventDefault();
+    const text = message.trim();
+    if (!text || !dockOpen || chat.isPending) return;
+    chat.mutate(text);
+  }
+
+  async function answerConfirm(approved: boolean) {
+    if (!pendingConfirm || confirmBusy) return;
+    setConfirmBusy(true);
+    setConfirmError(null);
+    try {
+      await api.confirm(pendingConfirm.requestId, approved);
+      setPendingConfirm(null);
+    } catch (err) {
+      setConfirmError((err as Error).message || "Confirmation failed.");
+    } finally {
+      setConfirmBusy(false);
+    }
+  }
+
+  const selected = servers.data?.servers.find((s) => s.id === selectedId);
+  const status = detail.data?.server.status ?? selected?.status ?? "unknown";
+  const join = detail.data?.runtime.join;
+  const activity = selectedId ? activityByServer[selectedId] : undefined;
+  const dockTitle = selected?.name ?? "New server";
+  const dockHint = unbound
+    ? `${user.displayName} · tell agents what to install`
+    : `${user.displayName} · ask agents to maintain this server`;
+  const emptyHint = unbound
+    ? "Try “I want a vanilla Minecraft server”."
+    : "Ask about status, config, restarts, snapshots…";
+
+  return (
+    <div className="canvas-page">
+      <AgentCanvas
+        servers={servers.data?.servers ?? []}
+        selectedId={selectedId}
+        activityByServer={activityByServer}
+        onSelect={selectServer}
+        onDescribe={openInstallChat}
+        onAddServer={openInstallChat}
+        showAddButton={!dockOpen}
+      />
+
+      {celebration ? (
+        <div className="celebration-banner canvas-toast" role="status">
+          {celebration}
+        </div>
+      ) : null}
+
+      {dockOpen ? (
+        <aside
+          className={`canvas-chat-dock dock-tab-${dockTab}`}
+          aria-label={`Chat for ${dockTitle}`}
+        >
+          <div className="canvas-dock-head">
+            <div className="dash-section-head">
+              <h3>{dockTitle}</h3>
+              <div className="btn-row">
+                {selectedId ? (
+                  <button type="button" className="linkish" onClick={openInstallChat}>
+                    + Add
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="linkish"
+                  onClick={() => {
+                    setSelectedId(undefined);
+                    setInstallOpen(false);
+                  }}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <p className="canvas-dock-hint">{dockHint}</p>
+            {sessionError ? <p className="error">{sessionError}</p> : null}
+            {servers.isError ? (
+              <p className="error">{(servers.error as Error).message}</p>
+            ) : null}
+            {selectedId ? (
+              <div
+                className="canvas-dock-tabs"
+                role="tablist"
+                aria-label="Dock sections"
+                onKeyDown={(e) => {
+                  if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+                  e.preventDefault();
+                  setDockTab((tab) => (tab === "chat" ? "ops" : "chat"));
+                }}
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  id="dock-tab-chat"
+                  aria-controls="dock-panel-chat"
+                  aria-selected={dockTab === "chat"}
+                  tabIndex={dockTab === "chat" ? 0 : -1}
+                  className={dockTab === "chat" ? "active" : undefined}
+                  onClick={() => setDockTab("chat")}
+                >
+                  Chat
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  id="dock-tab-ops"
+                  aria-controls="dock-panel-ops"
+                  aria-selected={dockTab === "ops"}
+                  tabIndex={dockTab === "ops" ? 0 : -1}
+                  className={dockTab === "ops" ? "active" : undefined}
+                  onClick={() => setDockTab("ops")}
+                >
+                  Controls
+                </button>
+              </div>
+            ) : null}
+          </div>
+
+          {selected && selectedId ? (
+            <div
+              className="canvas-maintain stack"
+              id="dock-panel-ops"
+              role="tabpanel"
+              aria-labelledby="dock-tab-ops"
+            >
+              <div className="canvas-status-row">
+                <span className={`server-status-pill status-${status}`}>{statusLabel(status)}</span>
+                {selected.game ? <span className="muted">{selected.game}</span> : null}
+                {selected.runtimeMode ? (
+                  <span className="muted">
+                    <code>{selected.runtimeMode}</code>
+                  </span>
+                ) : null}
+              </div>
+              {statusHint(status) ? (
+                <p className="muted canvas-dock-hint">{statusHint(status)}</p>
+              ) : null}
+              {join ? (
+                <div className="canvas-join-card">
+                  <span className="chip">Join</span>
+                  <p className="canvas-join-endpoint">
+                    {join.address}:{join.port}
+                  </p>
+                </div>
+              ) : null}
+              <div className="btn-row">
+                <button
+                  type="button"
+                  className="btn btn-primary btn-compact"
+                  disabled={opsBusy || status === "running" || status === "starting"}
+                  onClick={() => start.mutate(selectedId)}
+                >
+                  {start.isPending ? "Starting…" : "Start"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-compact"
+                  disabled={opsBusy || status === "stopped" || status === "stopping"}
+                  onClick={() => stop.mutate(selectedId)}
+                >
+                  {stop.isPending ? "Stopping…" : "Stop"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-compact"
+                  disabled={opsBusy}
+                  onClick={() => restart.mutate(selectedId)}
+                >
+                  {restart.isPending ? "Restarting…" : "Restart"}
+                </button>
+              </div>
+              {opsError ? <p className="error">{opsError}</p> : null}
+
+              <div className="agent-cast">
+                <div className="dash-section-head">
+                  <h4>Agent cast</h4>
+                  {activity && activity.phase !== "idle" ? (
+                    <span className="muted canvas-busy-hint">
+                      {personaLabel(activity.persona)} · {activity.label ?? activity.verb}
+                    </span>
+                  ) : null}
+                </div>
+                {agents.isLoading ? (
+                  <div className="skeleton" aria-hidden>
+                    <div className="skeleton-row compact" />
+                    <div className="skeleton-row compact" />
+                  </div>
+                ) : (agents.data?.agents ?? []).length === 0 ? (
+                  <p className="muted canvas-dock-hint">Agents appear once this server is claimed.</p>
+                ) : (
+                  <ul className="agent-cast-list">
+                    {(agents.data?.agents ?? []).map((agent) => {
+                      const busy =
+                        activity &&
+                        activity.persona === agent.persona &&
+                        activity.phase !== "idle";
+                      return (
+                        <li
+                          key={agent.persona}
+                          className={busy ? "agent-cast-item busy" : "agent-cast-item"}
+                        >
+                          <div>
+                            <strong>{personaLabel(agent.persona)}</strong>
+                            <div className="muted">{agent.title}</div>
+                          </div>
+                          <div className="agent-cast-stats">
+                            <span>Lv {agent.level}</span>
+                            <span className="muted">{agent.xp} XP</span>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            </div>
+          ) : null}
+
+          {pendingConfirm ? (
+            <div
+              className="confirm-banner panel stack"
+              role="alertdialog"
+              aria-label="Confirmation required"
+              aria-busy={confirmBusy || undefined}
+            >
+              <p className="status-inline">{pendingConfirm.summary}</p>
+              <div className="btn-row">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={confirmBusy}
+                  onClick={() => void answerConfirm(true)}
+                >
+                  {confirmBusy ? "Sending…" : "Approve"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={confirmBusy}
+                  onClick={() => void answerConfirm(false)}
+                >
+                  Deny
+                </button>
+              </div>
+              {confirmError ? <p className="error">{confirmError}</p> : null}
+            </div>
+          ) : null}
+
+          <div
+            className="chat-log canvas-chat-log"
+            id="dock-panel-chat"
+            role="tabpanel"
+            aria-labelledby="dock-tab-chat"
+            ref={chatLogRef}
+            aria-live="polite"
+          >
+            {lines.length === 0 ? (
+              <div className="empty-hint">
+                <strong>{unbound ? "Describe what to install" : "Ask the cast"}</strong>
+                <p className="muted status-inline">{emptyHint}</p>
+              </div>
+            ) : (
+              lines.map((line, i) => {
+                const streaming =
+                  chat.isPending && line.role === "assistant" && i === lines.length - 1;
+                return (
+                  <div
+                    key={i}
+                    className={`msg ${line.role}${streaming ? " streaming" : ""}`}
+                  >
+                    <span className="meta">{line.role === "user" ? "You" : "Agent"}</span>
+                    {line.content}
+                    {streaming ? <span className="stream-caret" aria-hidden /> : null}
+                    {line.tools?.length ? (
+                      <details className="tool-trace">
+                        <summary>Tools ({line.tools.length})</summary>
+                        <ul className="list compact-list">
+                          {line.tools.map((tool, ti) => (
+                            <li key={`${tool.name}-${ti}`}>
+                              <code>{tool.name}</code>
+                            </li>
+                          ))}
+                        </ul>
+                      </details>
+                    ) : null}
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          <form className="stack canvas-chat-composer" onSubmit={onSubmit}>
+            <label className="field">
+              <span className="sr-only">Message</span>
+              <textarea
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                onKeyDown={onComposerKeyDown}
+                placeholder={
+                  unbound ? "Describe the server you want…" : "Tell the agents what you need…"
+                }
+                disabled={chat.isPending}
+                rows={2}
+                aria-label="Message the agents"
+              />
+            </label>
+            <div className="btn-row">
+              <button
+                type="submit"
+                className="btn btn-primary"
+                disabled={chat.isPending || !message.trim()}
+              >
+                {chat.isPending ? "Working…" : "Send"}
+              </button>
+              <span className="muted canvas-busy-hint">Enter to send · Shift+Enter for line</span>
+            </div>
+            {chat.isError ? <p className="error">{(chat.error as Error).message}</p> : null}
+          </form>
+        </aside>
+      ) : null}
+    </div>
+  );
+}

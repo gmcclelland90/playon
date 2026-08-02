@@ -27,10 +27,9 @@ const config = {
   dataRoot: root,
   dbPath,
   sessionSecret: "paper-smoke-secret",
-  llmMode: "mock",
+  llmMode: "openai_compatible",
   runtimeMode: "docker",
   skillsRoots: [
-    path.join(repoRoot, "skills", "fixtures"),
     path.join(repoRoot, "skills", "games"),
     path.join(root, "skills"),
   ],

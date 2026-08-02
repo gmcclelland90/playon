@@ -2,11 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ChatStreamSink, ConfirmGate, ToolDefinition } from "@playon/agent-core";
 import { Orchestrator } from "@playon/agent-core";
-import {
-  IntentMockLlmClient,
-  OpenAICompatibleLlmClient,
-  type LlmClient,
-} from "@playon/agent-core";
+import { OpenAICompatibleLlmClient, type LlmClient } from "@playon/agent-core";
 import { PanelBlockTypeSchema } from "@playon/shared";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db/client.js";
@@ -15,7 +11,7 @@ import { getSetting, LLM_SETTINGS_KEY, type LlmSettings } from "./settings.js";
 import type { EventHub } from "./event-hub.js";
 import { ServerFsService } from "./fs-tools.js";
 import { NetToolsService } from "./net-tools.js";
-import { listSkills } from "./skills.js";
+import { listSkills, skillsRootsForWorkspace } from "./skills.js";
 import { SkillDraftService } from "./skill-drafts.js";
 import { SkillPackageService } from "./skill-packages.js";
 import { MigrateService } from "./migrate.js";
@@ -24,10 +20,13 @@ import { ImportSftpService } from "./import-sftp.js";
 import { OffNodeBackupService } from "./offnode-backup.js";
 import { PlacementService } from "./placement.js";
 import { HealthService } from "./health.js";
+import { nodeJobService } from "./node-jobs.js";
 import { PanelService } from "./panel.js";
+import { rconExec } from "./rcon.js";
 import { publishServerPanel } from "./server-panel.js";
 import { ServerService } from "./servers.js";
 import { SnapshotService, withSnapshot } from "./snapshots.js";
+import { SteamcmdNotFoundError, steamcmdAppUpdate } from "./steamcmd.js";
 
 
 
@@ -66,16 +65,85 @@ export function normalizePanelBlockType(raw: unknown): string {
   return aliases[value] ?? value;
 }
 
+/** Resolve serverId for tools inside a server workspace (default + cross-server jail). */
+/** Bound maintain chat cannot provision sibling servers. */
+export function workspaceCreateForbidden(
+  workspaceServerId: string | undefined,
+  hint: string,
+): Record<string, unknown> | null {
+  if (!workspaceServerId) return null;
+  return {
+    error: "workspace_create_forbidden",
+    workspaceServerId,
+    hint,
+  };
+}
+
+export function resolveWorkspaceServerId(
+  args: Record<string, unknown>,
+  workspaceServerId: string | undefined,
+): { ok: true; serverId: string } | { ok: false; error: Record<string, unknown> } {
+  const raw = args.serverId;
+  const requested =
+    raw !== undefined && raw !== null && String(raw).trim() !== ""
+      ? String(raw)
+      : undefined;
+  if (workspaceServerId) {
+    if (requested && requested !== workspaceServerId) {
+      return {
+        ok: false,
+        error: {
+          error: "workspace_server_mismatch",
+          workspaceServerId,
+          requestedServerId: requested,
+        },
+      };
+    }
+    return { ok: true, serverId: requested ?? workspaceServerId };
+  }
+  if (!requested) {
+    return { ok: false, error: { error: "serverId_required" } };
+  }
+  return { ok: true, serverId: requested };
+}
+
+function resolveOptionalWorkspaceServerId(
+  args: Record<string, unknown>,
+  workspaceServerId: string | undefined,
+): { ok: true; serverId: string | undefined } | { ok: false; error: Record<string, unknown> } {
+  const raw = args.serverId;
+  const requested =
+    raw !== undefined && raw !== null && String(raw).trim() !== ""
+      ? String(raw)
+      : undefined;
+  if (workspaceServerId) {
+    if (requested && requested !== workspaceServerId) {
+      return {
+        ok: false,
+        error: {
+          error: "workspace_server_mismatch",
+          workspaceServerId,
+          requestedServerId: requested,
+        },
+      };
+    }
+    return { ok: true, serverId: requested ?? workspaceServerId };
+  }
+  return { ok: true, serverId: requested };
+}
+
+const VENICE_BASE_URL = "https://api.venice.ai/api/v1";
+const VENICE_DEFAULT_MODEL = "llama-3.3-70b";
+
 export async function createLlmClient(
   db: Db,
   config: AppConfig,
 ): Promise<LlmClient> {
   const stored = await getSetting<LlmSettings>(db, LLM_SETTINGS_KEY);
-  const provider = stored?.provider ?? config.llmMode;
-
-  if (provider === "mock") {
-    return new IntentMockLlmClient();
-  }
+  const provider =
+    stored?.provider === "ollama" || stored?.provider === "openai_compatible"
+      ? stored.provider
+      : config.llmMode;
 
   if (provider === "ollama") {
     return new OpenAICompatibleLlmClient(
@@ -86,16 +154,22 @@ export async function createLlmClient(
     );
   }
 
-  if (provider === "openai_compatible") {
-    const baseUrl = stored?.baseUrl ?? "https://api.openai.com/v1";
-    const model = stored?.model ?? "gpt-4o-mini";
-    const apiKey = stored?.apiKeyEncrypted
-      ? decryptSecret(config.sessionSecret, stored.apiKeyEncrypted)
-      : "";
-    return new OpenAICompatibleLlmClient(baseUrl, apiKey, model, "openai_compatible");
+  const apiKey = stored?.apiKeyEncrypted
+    ? decryptSecret(config.sessionSecret, stored.apiKeyEncrypted)
+    : process.env.PLAYON_VENICE_API_KEY?.trim() ||
+      process.env.VENICE_API_KEY?.trim() ||
+      "";
+  if (!apiKey) {
+    throw new Error(
+      "llm_api_key_required: set a Venice API key under Settings → Model, or PLAYON_VENICE_API_KEY",
+    );
   }
-
-  return new IntentMockLlmClient();
+  return new OpenAICompatibleLlmClient(
+    stored?.baseUrl ?? VENICE_BASE_URL,
+    apiKey,
+    stored?.model ?? VENICE_DEFAULT_MODEL,
+    "openai_compatible",
+  );
 }
 
 export function createOrchestrator(
@@ -106,8 +180,15 @@ export function createOrchestrator(
     confirmGate?: ConfirmGate;
     stream?: ChatStreamSink;
     eventHub?: EventHub;
+    workspaceServerId?: string;
   } = {},
 ): Orchestrator {
+  const workspaceServerId = options.workspaceServerId;
+  const skillRoots = skillsRootsForWorkspace(
+    config.skillsRoots,
+    config.dataRoot,
+    workspaceServerId,
+  );
   const servers = new ServerService(db, config, options.eventHub);
   const snapshots = new SnapshotService(db, config, servers);
   const serverFs = new ServerFsService(servers);
@@ -124,6 +205,7 @@ export function createOrchestrator(
   const orch = new Orchestrator(llm, {
     confirmGate: options.confirmGate,
     stream: options.stream,
+    workspaceServerId,
   });
 
 
@@ -523,17 +605,82 @@ export function createOrchestrator(
         required: ["host", "username", "remotePath"],
       },
     },
+    {
+      name: "rcon_exec",
+      description:
+        "Run a Minecraft RCON command against a running server (list, say, whitelist add, op, etc.). Prefer rcon_say for chat broadcasts.",
+      parameters: {
+        type: "object",
+        properties: {
+          serverId: { type: "string" },
+          command: { type: "string" },
+        },
+        required: ["serverId", "command"],
+      },
+    },
+    {
+      name: "rcon_say",
+      description: "Broadcast a chat message to players via RCON say",
+      parameters: {
+        type: "object",
+        properties: {
+          serverId: { type: "string" },
+          message: { type: "string" },
+        },
+        required: ["serverId", "message"],
+      },
+    },
+    {
+      name: "steamcmd_app_update",
+      description:
+        "Run host SteamCMD +app_update into the server jail. Fails with steamcmd_not_found if SteamCMD is not installed.",
+      requiresConfirm: true,
+      parameters: {
+        type: "object",
+        properties: {
+          serverId: { type: "string" },
+          appId: { type: "number" },
+          installDir: { type: "string" },
+          validate: { type: "boolean" },
+        },
+        required: ["serverId", "appId"],
+      },
+    },
+    {
+      name: "node_ping",
+      description:
+        "Enqueue a ping job on a node-agent and wait for the result (proves remote job execution).",
+      parameters: {
+        type: "object",
+        properties: { nodeId: { type: "string" } },
+        required: ["nodeId"],
+      },
+    },
+    {
+      name: "node_fs_list",
+      description:
+        "List a directory on a node-agent under its data root (path-jailed remote FS).",
+      parameters: {
+        type: "object",
+        properties: {
+          nodeId: { type: "string" },
+          path: { type: "string" },
+        },
+        required: ["nodeId"],
+      },
+    },
   ];
 
 
 
   orch.registerTool(toolDefs[0]!, async () =>
-    listSkills(config.skillsRoots).map((s) => ({
+    listSkills(skillRoots).map((s) => ({
       name: s.metadata.name,
       version: s.metadata.version,
       game: s.metadata.game,
       description: s.metadata.description,
       tags: s.metadata.tags,
+      scope: s.path.includes(`${path.sep}servers${path.sep}`) ? "server" : "global",
     })),
   );
 
@@ -556,6 +703,11 @@ export function createOrchestrator(
   });
 
   orch.registerTool(toolDefs[4]!, async (args) => {
+    const blocked = workspaceCreateForbidden(
+      workspaceServerId,
+      "Deselect the server (install chat) to create another, or maintain this one.",
+    );
+    if (blocked) return blocked;
     const server = await servers.createFromSkill({
       skillName: String(args.skillName),
       serverName: args.serverName ? String(args.serverName) : undefined,
@@ -574,7 +726,9 @@ export function createOrchestrator(
   });
 
   orch.registerTool(toolDefs[5]!, async (args) => {
-    const server = await servers.start(String(args.serverId));
+    const resolved = resolveWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    const server = await servers.start(resolved.serverId);
     await publishServerPanel(servers, panel, server.id, "running");
     const detail = await servers.detail(server.id);
     return {
@@ -586,13 +740,17 @@ export function createOrchestrator(
   });
 
   orch.registerTool(toolDefs[6]!, async (args) => {
-    const server = await servers.stop(String(args.serverId));
+    const resolved = resolveWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    const server = await servers.stop(resolved.serverId);
     await publishServerPanel(servers, panel, server.id, "stopped");
     return { serverId: server.id, status: server.status };
   });
 
   orch.registerTool(toolDefs[7]!, async (args) => {
-    const server = await servers.restart(String(args.serverId));
+    const resolved = resolveWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    const server = await servers.restart(resolved.serverId);
     await publishServerPanel(servers, panel, server.id, "running");
     const detail = await servers.detail(server.id);
     return {
@@ -615,6 +773,8 @@ export function createOrchestrator(
   });
 
   orch.registerTool(toolDefs[9]!, async (args) => {
+    const resolved = resolveOptionalWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
     const blocks = Array.isArray(args.blocks) ? args.blocks : [];
     const parsedBlocks = blocks.map((block, index) => {
       const raw = block as Record<string, unknown>;
@@ -626,21 +786,23 @@ export function createOrchestrator(
       };
     });
     const published = await panel.publish({
-      serverId: args.serverId ? String(args.serverId) : undefined,
+      serverId: resolved.serverId,
       blocks: parsedBlocks,
     });
     return { published: published.length, blocks: published };
   });
 
   orch.registerTool(toolDefs[10]!, async (args) => {
-    const rows = await panel.list(args.serverId ? String(args.serverId) : undefined);
-    return rows;
+    const resolved = resolveOptionalWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    return panel.list(resolved.serverId);
   });
 
   orch.registerTool(toolDefs[11]!, async (args) => {
-    const serverId = String(args.serverId);
+    const resolved = resolveWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
     const label = args.label ? String(args.label) : `snapshot-${Date.now()}`;
-    const snapshot = await snapshots.create(serverId, label);
+    const snapshot = await snapshots.create(resolved.serverId, label);
     return { snapshotId: snapshot.id, label: snapshot.label, path: snapshot.path };
   });
 
@@ -648,6 +810,13 @@ export function createOrchestrator(
     const snapshotId = String(args.snapshotId);
     const snapshot = await snapshots.get(snapshotId);
     if (!snapshot) throw new Error(`unknown_snapshot: ${snapshotId}`);
+    if (workspaceServerId && snapshot.serverId !== workspaceServerId) {
+      return {
+        error: "workspace_server_mismatch",
+        workspaceServerId,
+        requestedServerId: snapshot.serverId,
+      };
+    }
 
     const server = await withSnapshot(snapshots, snapshot.serverId, "pre-restore", async () =>
       snapshots.restore(snapshotId),
@@ -656,7 +825,9 @@ export function createOrchestrator(
   });
 
   orch.registerTool(toolDefs[13]!, async (args) => {
-    const rows = await snapshots.list(args.serverId ? String(args.serverId) : undefined);
+    const resolved = resolveOptionalWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    const rows = await snapshots.list(resolved.serverId);
     return rows.map((s) => ({
       id: s.id,
       serverId: s.serverId,
@@ -665,26 +836,32 @@ export function createOrchestrator(
     }));
   });
 
-  orch.registerTool(toolDefs[14]!, async (args) =>
-    snapshots.enforceRetention(args.serverId ? String(args.serverId) : undefined, {
-      maxCount:
-        args.maxCount !== undefined ? Number(args.maxCount) : 10,
-      maxAgeHours:
-        args.maxAgeHours !== undefined ? Number(args.maxAgeHours) : 72,
-    }),
-  );
+  orch.registerTool(toolDefs[14]!, async (args) => {
+    const resolved = resolveOptionalWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    return snapshots.enforceRetention(resolved.serverId, {
+      maxCount: args.maxCount !== undefined ? Number(args.maxCount) : 10,
+      maxAgeHours: args.maxAgeHours !== undefined ? Number(args.maxAgeHours) : 72,
+    });
+  });
 
-  orch.registerTool(toolDefs[15]!, async (args) =>
-    serverFs.list(String(args.serverId), args.path ? String(args.path) : "."),
-  );
+  orch.registerTool(toolDefs[15]!, async (args) => {
+    const resolved = resolveWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    return serverFs.list(resolved.serverId, args.path ? String(args.path) : ".");
+  });
 
-  orch.registerTool(toolDefs[16]!, async (args) =>
-    serverFs.read(String(args.serverId), String(args.path)),
-  );
+  orch.registerTool(toolDefs[16]!, async (args) => {
+    const resolved = resolveWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    return serverFs.read(resolved.serverId, String(args.path));
+  });
 
-  orch.registerTool(toolDefs[17]!, async (args) =>
-    serverFs.write(String(args.serverId), String(args.path), String(args.content)),
-  );
+  orch.registerTool(toolDefs[17]!, async (args) => {
+    const resolved = resolveWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    return serverFs.write(resolved.serverId, String(args.path), String(args.content));
+  });
 
   orch.registerTool(toolDefs[18]!, async (args) =>
     net.portCheck({
@@ -700,19 +877,23 @@ export function createOrchestrator(
     }),
   );
 
-  orch.registerTool(toolDefs[20]!, async (args) =>
-    net.fetchUrl({
-      serverId: String(args.serverId),
+  orch.registerTool(toolDefs[20]!, async (args) => {
+    const resolved = resolveWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    return net.fetchUrl({
+      serverId: resolved.serverId,
       url: String(args.url),
       destPath: String(args.destPath),
-    }),
-  );
+    });
+  });
 
-  orch.registerTool(toolDefs[21]!, async (args) =>
-    health.checkServer(String(args.serverId), {
+  orch.registerTool(toolDefs[21]!, async (args) => {
+    const resolved = resolveWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    return health.checkServer(resolved.serverId, {
       remediate: Boolean(args.remediate),
-    }),
-  );
+    });
+  });
 
   orch.registerTool(toolDefs[22]!, async (args) => {
     const exported = skillPackages.exportZip(String(args.skillName));
@@ -738,41 +919,72 @@ export function createOrchestrator(
     return skillPackages.importZip(bytes, { overwrite: Boolean(args.overwrite) });
   });
 
-  orch.registerTool(toolDefs[24]!, async (args) =>
-    skillPackages.promoteServerSkill(String(args.serverId), String(args.skillSlug), {
+  orch.registerTool(toolDefs[24]!, async (args) => {
+    const resolved = resolveWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    return skillPackages.promoteServerSkill(resolved.serverId, String(args.skillSlug), {
       overwrite: Boolean(args.overwrite),
-    }),
-  );
+    });
+  });
 
   orch.registerTool(toolDefs[25]!, async (args) => placement.plan(String(args.skillName)));
 
-  orch.registerTool(toolDefs[26]!, async (args) =>
-    migrate.relocate(String(args.serverId), String(args.targetNodeId)),
-  );
+  orch.registerTool(toolDefs[26]!, async (args) => {
+    const resolved = resolveWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    return migrate.relocate(resolved.serverId, String(args.targetNodeId));
+  });
 
-  orch.registerTool(toolDefs[27]!, async (args) =>
-    offNode.backupServer(String(args.serverId), args.label ? String(args.label) : undefined),
-  );
+  orch.registerTool(toolDefs[27]!, async (args) => {
+    const resolved = resolveWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    return offNode.backupServer(
+      resolved.serverId,
+      args.label ? String(args.label) : undefined,
+    );
+  });
 
-  orch.registerTool(toolDefs[28]!, async (args) =>
-    offNode.list(args.serverId ? String(args.serverId) : undefined),
-  );
+  orch.registerTool(toolDefs[28]!, async (args) => {
+    const resolved = resolveOptionalWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    return offNode.list(resolved.serverId);
+  });
 
-  orch.registerTool(toolDefs[29]!, async (args) =>
-    offNode.restore(String(args.backupId), args.serverId ? String(args.serverId) : undefined),
-  );
+  orch.registerTool(toolDefs[29]!, async (args) => {
+    const resolved = resolveOptionalWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    return offNode.restore(String(args.backupId), resolved.serverId);
+  });
 
-  orch.registerTool(toolDefs[30]!, async (args) =>
-    importLocal.importFromPath({
+  orch.registerTool(toolDefs[30]!, async (args) => {
+    const blocked = workspaceCreateForbidden(
+      workspaceServerId,
+      "Deselect the server (install chat) to import another.",
+    );
+    if (blocked) return blocked;
+    const report = await importLocal.importFromPath({
       sourcePath: String(args.sourcePath),
       serverName: args.serverName ? String(args.serverName) : undefined,
       skillName: args.skillName ? String(args.skillName) : undefined,
       game: args.game ? String(args.game) : undefined,
       nodeId: args.nodeId ? String(args.nodeId) : undefined,
-    }),
-  );
+    });
+    return {
+      serverId: report.server.id,
+      name: report.server.name,
+      skillName: report.skillName,
+      skillSource: report.skillSource,
+      baselineSnapshotId: report.baselineSnapshotId,
+      followUp: report.followUp,
+    };
+  });
 
   orch.registerTool(toolDefs[31]!, async (args) => {
+    const blocked = workspaceCreateForbidden(
+      workspaceServerId,
+      "Deselect the server (install chat) to import another.",
+    );
+    if (blocked) return blocked;
     const report = await importSftp.importFromSftp({
       host: String(args.host),
       port: args.port !== undefined ? Number(args.port) : undefined,
@@ -796,6 +1008,97 @@ export function createOrchestrator(
       remotePath: report.remotePath,
       followUp: report.followUp,
     };
+  });
+
+  orch.registerTool(toolDefs[32]!, async (args) => {
+    const resolved = resolveWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    const endpoint = await servers.getRconEndpoint(resolved.serverId);
+    if (!endpoint) {
+      return {
+        error: "rcon_not_configured",
+        hint: "Start a Paper server with RCON enabled, then retry.",
+      };
+    }
+    try {
+      const result = await rconExec(endpoint, String(args.command));
+      return { serverId: resolved.serverId, command: String(args.command), body: result.body };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : "rcon_failed" };
+    }
+  });
+
+  orch.registerTool(toolDefs[33]!, async (args) => {
+    const resolved = resolveWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    const endpoint = await servers.getRconEndpoint(resolved.serverId);
+    if (!endpoint) {
+      return {
+        error: "rcon_not_configured",
+        hint: "Start a Paper server with RCON enabled, then retry.",
+      };
+    }
+    const message = String(args.message);
+    try {
+      const result = await rconExec(endpoint, `say ${message}`);
+      return { serverId: resolved.serverId, message, body: result.body };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : "rcon_failed" };
+    }
+  });
+
+  orch.registerTool(toolDefs[34]!, async (args) => {
+    const resolved = resolveWorkspaceServerId(args, workspaceServerId);
+    if (!resolved.ok) return resolved.error;
+    const server = await servers.get(resolved.serverId);
+    if (!server) return { error: `unknown_server: ${resolved.serverId}` };
+    try {
+      const result = await steamcmdAppUpdate({
+        serverDataPath: server.dataPath,
+        appId: Number(args.appId),
+        installDirRel: args.installDir ? String(args.installDir) : undefined,
+        validate: args.validate === undefined ? true : Boolean(args.validate),
+      });
+      return {
+        serverId: resolved.serverId,
+        appId: result.appId,
+        installDir: result.installDir,
+        exitCode: result.exitCode,
+        // Truncated logs only — never include secrets.
+        stdoutTail: result.stdout.slice(-800),
+      };
+    } catch (err) {
+      if (err instanceof SteamcmdNotFoundError) {
+        return { error: err.message };
+      }
+      return { error: err instanceof Error ? err.message : "steamcmd_failed" };
+    }
+  });
+
+  orch.registerTool(toolDefs[35]!, async (args) => {
+    const nodeId = String(args.nodeId);
+    const job = nodeJobService.enqueue(nodeId, "ping", {});
+    try {
+      const done = await nodeJobService.waitFor(job.id, { timeoutMs: 20_000 });
+      if (done.status === "failed") return { error: done.error ?? "node_job_failed", jobId: job.id };
+      return { jobId: job.id, nodeId, result: done.result };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : "node_job_timeout", jobId: job.id };
+    }
+  });
+
+  orch.registerTool(toolDefs[36]!, async (args) => {
+    const nodeId = String(args.nodeId);
+    const job = nodeJobService.enqueue(nodeId, "fs_list", {
+      path: args.path ? String(args.path) : ".",
+    });
+    try {
+      const done = await nodeJobService.waitFor(job.id, { timeoutMs: 20_000 });
+      if (done.status === "failed") return { error: done.error ?? "node_job_failed", jobId: job.id };
+      return { jobId: job.id, nodeId, result: done.result };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : "node_job_timeout", jobId: job.id };
+    }
   });
 
   return orch;

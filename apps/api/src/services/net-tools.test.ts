@@ -31,10 +31,10 @@ function tempEnv(): { db: Db; config: AppConfig; net: NetToolsService; servers: 
     dataRoot: root,
     dbPath,
     sessionSecret: "test",
-    llmMode: "mock",
-    runtimeMode: "mock",
+    llmMode: "openai_compatible",
+    runtimeMode: "docker",
     advertiseHost: "127.0.0.1",
-    skillsRoots: [path.join(findRepoRoot(), "skills", "fixtures"), path.join(root, "skills")],
+    skillsRoots: [path.join(findRepoRoot(), "skills", "games"), path.join(root, "skills")],
   };
   const { db, sqlite } = createDb(dbPath);
   temps.push({ root, sqlite });
@@ -62,7 +62,7 @@ describe("NetToolsService", () => {
 
   it("fetches a URL into the server jail", async () => {
     const { net, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "fixtures.fake-http-game" });
+    const server = await servers.createFromSkill({ skillName: "games.minecraft-paper" });
 
     const httpServer = http.createServer((_req, res) => {
       res.writeHead(200, { "content-type": "text/plain" });

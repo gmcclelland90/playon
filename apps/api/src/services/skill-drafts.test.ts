@@ -16,8 +16,8 @@ function tempConfig(): { config: AppConfig; drafts: SkillDraftService } {
     dataRoot: root,
     dbPath: path.join(root, "playon.db"),
     sessionSecret: "test",
-    llmMode: "mock",
-    runtimeMode: "mock",
+    llmMode: "openai_compatible",
+    runtimeMode: "docker",
     advertiseHost: "127.0.0.1",
     skillsRoots: [path.join(root, "skills")],
   };

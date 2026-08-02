@@ -20,7 +20,7 @@ export async function setSetting<T>(db: Db, key: string, value: T): Promise<void
 
 export const LLM_SETTINGS_KEY = "llm";
 
-export type LlmProvider = "mock" | "openai_compatible" | "ollama";
+export type LlmProvider = "openai_compatible" | "ollama";
 
 export interface LlmSettings {
   provider: LlmProvider;

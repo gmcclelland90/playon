@@ -4,14 +4,14 @@ import { SkillMetadataSchema } from "./skill.js";
 describe("SkillMetadataSchema contract", () => {
   it("accepts a minimal fixture skill", () => {
     const parsed = SkillMetadataSchema.parse({
-      name: "fixtures.fake-http-game",
+      name: "games.minecraft-paper",
       version: "0.1.0",
       game: "Fake HTTP Game",
       containerSupport: "full",
       tags: ["fixture", "ci"],
       ports: [{ name: "game", protocol: "tcp", default: 8080 }],
     });
-    expect(parsed.name).toBe("fixtures.fake-http-game");
+    expect(parsed.name).toBe("games.minecraft-paper");
     expect(parsed.os).toContain("linux");
   });
 

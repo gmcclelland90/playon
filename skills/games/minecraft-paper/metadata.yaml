@@ -19,10 +19,15 @@ requiredTools:
   - servers_create_from_skill
   - servers_start
   - panel_publish
+  - rcon_exec
+  - rcon_say
 ports:
   - name: game
     protocol: tcp
     default: 25565
+  - name: rcon
+    protocol: tcp
+    default: 25575
 dependencies: []
 healthChecks:
   - id: process

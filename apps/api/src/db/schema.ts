@@ -33,7 +33,7 @@ export const servers = sqliteTable("servers", {
   name: text("name").notNull(),
   game: text("game"),
   nodeId: text("node_id").references(() => nodes.id),
-  runtimeMode: text("runtime_mode").notNull().default("mock"),
+  runtimeMode: text("runtime_mode").notNull().default("docker"),
   status: text("status").notNull().default("stopped"),
   dataPath: text("data_path").notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
@@ -44,8 +44,11 @@ export const conversations = sqliteTable("conversations", {
   userId: text("user_id")
     .notNull()
     .references(() => users.id),
+  /** Bound after install; null during unbound install chat until create/import succeeds. */
+  serverId: text("server_id").references(() => servers.id),
   title: text("title"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
 
 export const messages = sqliteTable("messages", {
@@ -101,24 +104,19 @@ export const settings = sqliteTable("settings", {
   valueJson: text("value_json").notNull(),
 });
 
-export const agentProgress = sqliteTable("agent_progress", {
-  persona: text("persona").primaryKey(),
-  xp: integer("xp").notNull().default(0),
-  level: integer("level").notNull().default(1),
-  title: text("title").notNull().default("Rookie"),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
-});
-
-export const hostAchievements = sqliteTable(
-  "host_achievements",
+export const agentProgress = sqliteTable(
+  "agent_progress",
   {
-    userId: text("user_id")
+    serverId: text("server_id")
       .notNull()
-      .references(() => users.id),
-    achievementId: text("achievement_id").notNull(),
-    unlockedAt: integer("unlocked_at", { mode: "timestamp_ms" }).notNull(),
+      .references(() => servers.id),
+    persona: text("persona").notNull(),
+    xp: integer("xp").notNull().default(0),
+    level: integer("level").notNull().default(1),
+    title: text("title").notNull().default("Rookie"),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
   },
   (t) => ({
-    pk: primaryKey({ columns: [t.userId, t.achievementId] }),
+    pk: primaryKey({ columns: [t.serverId, t.persona] }),
   }),
 );

@@ -192,7 +192,7 @@ export class ImportLocalService {
       game: gameLabel,
       nodeId: resolvedNodeId,
       runtimeMode:
-        metaName === "games.windows-native-stub" ? "native" : this.config.runtimeMode,
+        this.config.runtimeMode,
       status: "stopped",
       dataPath,
       createdAt: now,

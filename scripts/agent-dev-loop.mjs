@@ -63,8 +63,8 @@ function runLayer(name) {
     shell: process.platform === "win32",
     env: {
       ...process.env,
-      PLAYON_LLM_MODE: process.env.PLAYON_LLM_MODE ?? "mock",
-      PLAYON_RUNTIME: process.env.PLAYON_RUNTIME ?? "mock",
+      PLAYON_LLM_MODE: process.env.PLAYON_LLM_MODE ?? "openai_compatible",
+      PLAYON_RUNTIME: process.env.PLAYON_RUNTIME ?? "docker",
       CI: process.env.CI ?? "1",
     },
     maxBuffer: 16 * 1024 * 1024,

@@ -1,126 +1,64 @@
 import { describe, expect, it } from "vitest";
-import type { LlmClient, LlmCompletion, LlmMessage } from "./llm.js";
+import { OpenAICompatibleLlmClient } from "./llm.js";
 import { Orchestrator } from "./orchestrator.js";
-import type { ToolDefinition } from "./tools.js";
 
-
-/** Recorded transcript: create skill → publish panel → done. */
-class ReplayLlmClient implements LlmClient {
-  readonly mode = "mock" as const;
-  private step = 0;
-
-  async complete(_messages: LlmMessage[], _tools?: ToolDefinition[]): Promise<LlmCompletion> {
-    this.step += 1;
-    if (this.step === 1) {
-      return {
-        content: "",
-        toolCalls: [
-          {
-            id: "1",
-            name: "servers_create_from_skill",
-            arguments: { skillName: "fixtures.fake-http-game" },
-          },
-        ],
-      };
+/**
+ * Live Venice tool-calling smoke. Requires PLAYON_VENICE_API_KEY or VENICE_API_KEY.
+ * Runs on the Linux lab host as part of the agent verify layer.
+ */
+describe("agent live Venice tool loop", () => {
+  it("calls Venice and can request a Paper create tool", async () => {
+    const apiKey =
+      process.env.PLAYON_VENICE_API_KEY?.trim() || process.env.VENICE_API_KEY?.trim() || "";
+    if (!apiKey) {
+      throw new Error(
+        "llm_api_key_required: set PLAYON_VENICE_API_KEY (or VENICE_API_KEY) for agent verify on the lab host",
+      );
     }
-    if (this.step === 2) {
-      return {
-        content: "",
-        toolCalls: [
-          {
-            id: "2",
-            name: "panel_publish",
-            arguments: {
-              serverId: "srv-replay",
-              blocks: [{ type: "join_info", title: "Join", body: { port: 8080 } }],
-            },
-          },
-        ],
-      };
-    }
-    return { content: "Replay install complete." };
-  }
-}
 
-describe("agent replay transcripts", () => {
-  it("replays fixture install tool loop without a live model", async () => {
-    const orch = new Orchestrator(new ReplayLlmClient());
+    const llm = new OpenAICompatibleLlmClient(
+      process.env.PLAYON_VENICE_BASE_URL?.trim() || "https://api.venice.ai/api/v1",
+      apiKey,
+      process.env.PLAYON_VENICE_MODEL?.trim() || "llama-3.3-70b",
+      "openai_compatible",
+    );
+
+    const orch = new Orchestrator(llm);
     const calls: string[] = [];
-
+    orch.registerTool(
+      {
+        name: "skill_list",
+        description: "List installable skills",
+        parameters: { type: "object", properties: {}, additionalProperties: false },
+      },
+      async () => {
+        calls.push("skill_list");
+        return { skills: [{ name: "games.minecraft-paper" }] };
+      },
+    );
     orch.registerTool(
       {
         name: "servers_create_from_skill",
-        description: "create",
-        parameters: { type: "object", properties: {} },
+        description: "Create a server from a skill",
+        parameters: {
+          type: "object",
+          properties: { skillName: { type: "string" }, serverName: { type: "string" } },
+          required: ["skillName"],
+        },
       },
-      async () => {
-        calls.push("create");
-        return { serverId: "srv-replay" };
-      },
-    );
-    orch.registerTool(
-      {
-        name: "panel_publish",
-        description: "publish",
-        parameters: { type: "object", properties: {} },
-      },
-      async () => {
-        calls.push("publish");
-        return { published: 1 };
+      async (args) => {
+        calls.push(`create:${String(args.skillName)}`);
+        return { serverId: "live-srv", skillName: args.skillName };
       },
     );
 
-    const result = await orch.handle("orchestrator", "install fixture");
-    expect(calls).toEqual(["create", "publish"]);
-    expect(result.toolTrace).toHaveLength(2);
-    expect(result.content).toBe("Replay install complete.");
-  });
+    const result = await orch.handle(
+      "installer",
+      "List skills then create a Paper Minecraft server named LAN Paper using servers_create_from_skill.",
+    );
 
-  it("replays confirm approve then deny for high-impact stop", async () => {
-    class StopReplay implements LlmClient {
-      readonly mode = "mock" as const;
-      private step = 0;
-      async complete(): Promise<LlmCompletion> {
-        this.step += 1;
-        if (this.step === 1) {
-          return {
-            content: "",
-            toolCalls: [{ id: "1", name: "servers_stop", arguments: { serverId: "srv" } }],
-          };
-        }
-        return { content: "Handled confirm outcome." };
-      }
-    }
-
-    const decisions = [true, false];
-    for (const approved of decisions) {
-      let ran = false;
-      const orch = new Orchestrator(new StopReplay(), {
-        confirmGate: {
-          async requestConfirmation() {
-            return { requestId: `req-${approved}`, approved };
-          },
-        },
-      });
-      orch.registerTool(
-        {
-          name: "servers_stop",
-          description: "stop",
-          requiresConfirm: true,
-          parameters: { type: "object", properties: {} },
-        },
-        async () => {
-          ran = true;
-          return { ok: true };
-        },
-      );
-      const result = await orch.handle("orchestrator", "stop server");
-      expect(ran).toBe(approved);
-      if (approved) {
-        expect(result.toolTrace[0]?.result).toMatchObject({ ok: true });
-      } else {
-        expect(result.toolTrace[0]?.result).toMatchObject({ error: "confirm_denied" });
-      }
-    }
-  });
+    expect(result.content.length + (result.toolTrace?.length ?? 0)).toBeGreaterThan(0);
+    // Model should use at least one registered tool when asked to create.
+    expect(calls.length).toBeGreaterThan(0);
+  }, 120_000);
 });

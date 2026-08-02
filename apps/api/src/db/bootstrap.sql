@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS servers (
   name TEXT NOT NULL,
   game TEXT,
   node_id TEXT REFERENCES nodes(id),
-  runtime_mode TEXT NOT NULL DEFAULT 'mock',
+  runtime_mode TEXT NOT NULL DEFAULT 'docker',
   status TEXT NOT NULL DEFAULT 'stopped',
   data_path TEXT NOT NULL,
   created_at INTEGER NOT NULL
@@ -38,8 +38,10 @@ CREATE TABLE IF NOT EXISTS servers (
 CREATE TABLE IF NOT EXISTS conversations (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id),
+  server_id TEXT REFERENCES servers(id),
   title TEXT,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -92,16 +94,11 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 CREATE TABLE IF NOT EXISTS agent_progress (
-  persona TEXT PRIMARY KEY,
+  server_id TEXT NOT NULL REFERENCES servers(id),
+  persona TEXT NOT NULL,
   xp INTEGER NOT NULL DEFAULT 0,
   level INTEGER NOT NULL DEFAULT 1,
   title TEXT NOT NULL DEFAULT 'Rookie',
-  updated_at INTEGER NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS host_achievements (
-  user_id TEXT NOT NULL REFERENCES users(id),
-  achievement_id TEXT NOT NULL,
-  unlocked_at INTEGER NOT NULL,
-  PRIMARY KEY (user_id, achievement_id)
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (server_id, persona)
 );

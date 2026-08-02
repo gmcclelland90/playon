@@ -170,9 +170,8 @@ export class PlacementService {
     if (!skill) throw new Error(`unknown_skill: ${skillName}`);
 
     const caps = await this.listNodeCaps();
-    const relaxDocker = this.config.runtimeMode === "mock";
     const candidates = caps
-      .map((n) => scoreNodeForSkill(n, skill.metadata, Date.now(), { relaxDocker }))
+      .map((n) => scoreNodeForSkill(n, skill.metadata, Date.now()))
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 
     // Best-effort port probe on the control plane for preferred skill ports.

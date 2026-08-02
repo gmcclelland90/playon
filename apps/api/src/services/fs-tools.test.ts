@@ -32,11 +32,10 @@ function tempEnv(): { db: Db; config: AppConfig; fsTools: ServerFsService; serve
     dataRoot: root,
     dbPath,
     sessionSecret: "test",
-    llmMode: "mock",
-    runtimeMode: "mock",
+    llmMode: "openai_compatible",
+    runtimeMode: "docker",
     advertiseHost: "127.0.0.1",
     skillsRoots: [
-      path.join(repoRoot, "skills", "fixtures"),
       path.join(repoRoot, "skills", "games"),
       path.join(root, "skills"),
     ],
@@ -58,7 +57,7 @@ describe("ServerFsService", () => {
   it("reads and writes inside the server jail", async () => {
     const { fsTools, servers } = tempEnv();
     const server = await servers.createFromSkill({
-      skillName: "fixtures.fake-http-game",
+      skillName: "games.minecraft-paper",
       serverName: "FS Test",
     });
 
@@ -73,7 +72,7 @@ describe("ServerFsService", () => {
   it("blocks path escape attempts", async () => {
     const { fsTools, servers } = tempEnv();
     const server = await servers.createFromSkill({
-      skillName: "fixtures.fake-http-game",
+      skillName: "games.minecraft-paper",
     });
 
     await expect(fsTools.read(server.id, "../escape.txt")).rejects.toBeInstanceOf(PathJailError);

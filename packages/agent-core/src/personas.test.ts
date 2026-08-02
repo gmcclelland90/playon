@@ -5,6 +5,16 @@ import { pickPersona, toolsAllowedForPersona } from "./personas.js";
 describe("personas", () => {
   it("routes install, panel, and specialised Phase-2 personas", () => {
     expect(pickPersona("spin up paper minecraft")).toBe("installer");
+    expect(
+      pickPersona(
+        "we now want to play the original Unreal Tournament, can you get a UT99 server running",
+      ),
+    ).toBe("installer");
+    expect(
+      pickPersona(
+        "Create a Paper Minecraft server named Venice Paper using servers_create_from_skill with skillName games.minecraft-paper, then publish a join panel.",
+      ),
+    ).toBe("installer");
     expect(pickPersona("update the player panel join info")).toBe("player_panel");
     expect(pickPersona("install a fabric mod")).toBe("modder");
     expect(pickPersona("tune server.properties difficulty")).toBe("configurer");
@@ -26,9 +36,9 @@ describe("personas", () => {
 
   it("filters tool defs exposed to the LLM by persona", () => {
     const orch = new Orchestrator({
-      mode: "mock",
+      mode: "openai_compatible",
       async complete() {
-        return { content: "ok" };
+        throw new Error("llm_should_not_be_called");
       },
     });
     orch.registerTool(

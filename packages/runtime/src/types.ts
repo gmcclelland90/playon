@@ -1,4 +1,4 @@
-export type RuntimeMode = "docker" | "native" | "mock";
+export type RuntimeMode = "docker" | "native";
 
 export interface ContainerSpec {
   name: string;

@@ -1,49 +1,43 @@
-# 07 – Admin Interface & Gamification
+# 07 – Admin Interface & Agent Visual Layer
 
 ## Dual Interface
 
-1. **Primary: Conversational Agent Chat**  
-   The main way the host works. Natural language requests are routed to the appropriate agents.
+1. **Primary: Canvas + Conversational Agents**  
+   A sparse 2.5D canvas (2D sprites on a pannable plane) shows servers that already exist. Chat is how servers appear and how they are maintained.
 
-2. **Secondary: Supporting Dashboard**  
-   Server list, live status, logs, resource usage, skill browser, node overview, quick actions, and backup controls.
+2. **Secondary: Dashboard**  
+   Ops visibility — nodes, skills, snapshots, backups. Not a second home for creating servers.
 
-The chat is where power lives; the dashboard provides visibility and convenience.
+The canvas is where you *watch*; chat is where you *direct*.
 
-## Gamification Philosophy
+## Chat-first provisioning
 
-Server management is serious infrastructure work.  
-We deliberately make the experience of doing that work feel playful and rewarding.
+- Empty map → **Describe a server** opens unbound install chat (no silent `POST /api/servers`).
+- Agents create via tools (`servers_create_from_skill`, imports). The new crate appears on the map; the conversation binds to that server.
+- **+ Add server** deselects the current crate and opens a fresh install chat.
+- Selecting a crate opens **maintain-only** chat. Creating/importing siblings is hard-blocked while a workspace is bound.
 
-### Agent Gamification
+## Agent progression (not host trophies)
 
-- Agents gain XP and levels from successful tasks
-- Titles, badges, and visual personality evolve
-- Different agents can have distinct characters and themes
-- Clean installs, successful recoveries, and helpful player-panel updates can trigger positive feedback
+Agents are named personas **per server** (installer, monitor, configurer, …).
 
-### Broader Gamification
+- Agents gain XP and levels from successful tools on that server
+- Titles evolve with level
+- Celebrations are scoped to the server’s cast
+- There is **no** host XP / achievement / trophy cabinet
 
-- Achievements for the host (“First modded server”, “Zero-downtime LAN”, etc.)
-- Skills presented with game-like flair
-- Visual themes that can shift with the games currently being hosted
-- Light narrative or flavour text woven into status and agent responses where it doesn’t reduce clarity
+## Visual stage
+
+- PixiJS stage: server crates + agent sprites
+- `agent.activity` events drive motion (fetch, write, run, …)
+- Confirm gates can pause an agent at a “wait” pose
 
 ## UX Tone
 
 - Powerful and trustworthy
 - Entertaining without becoming childish or obstructive
-- Celebrates competence (both the host’s and the agents’)
-
-## Key Admin Views (Dashboard)
-
-- Global overview of all servers and nodes
-- Per-server detail (status, logs, mods, skills, snapshots)
-- Agent activity feed
-- Skill library browser
-- Backup & snapshot management
-- User / role management (for multi-admin setups)
+- Celebrates the agents’ competence on the map
 
 ## Design Goal
 
-Make the host look forward to opening the panel, not dread it.
+Make the host look forward to opening PlayOn — a living LAN map, not a dread-inducing panel.

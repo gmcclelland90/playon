@@ -19,8 +19,8 @@
     "8787": { "label": "PlayOn API", "onAutoForward": "silent" }
   },
   "remoteEnv": {
-    "PLAYON_LLM_MODE": "mock",
-    "PLAYON_RUNTIME": "mock",
+    "PLAYON_LLM_MODE": "openai_compatible",
+    "PLAYON_RUNTIME": "docker",
     "PLAYON_HOST": "0.0.0.0",
     "PLAYON_WEB_HOST": "0.0.0.0"
   },

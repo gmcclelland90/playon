@@ -26,20 +26,32 @@ export function SetupPage() {
 
   return (
     <div className="auth-screen">
-      <form className="auth-panel" onSubmit={onSubmit}>
-        <div>
+      <form className="auth-panel" onSubmit={onSubmit} noValidate>
+        <header className="auth-brand">
           <h1 className="brand-mark">
             Play<span>On</span>
           </h1>
           <p className="lede">Create the Owner account for this LAN control plane.</p>
-        </div>
+        </header>
         <label className="field">
           <span>Username</span>
-          <input value={username} onChange={(e) => setUsername(e.target.value)} required minLength={3} autoComplete="username" />
+          <input
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            required
+            minLength={3}
+            autoComplete="username"
+            autoFocus
+          />
         </label>
         <label className="field">
           <span>Display name</span>
-          <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} required />
+          <input
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            required
+            autoComplete="nickname"
+          />
         </label>
         <label className="field">
           <span>Password</span>
@@ -51,8 +63,13 @@ export function SetupPage() {
             minLength={8}
             autoComplete="new-password"
           />
+          <span className="field-hint">At least 8 characters. Stored only on this host.</span>
         </label>
-        {error ? <p className="error">{error}</p> : null}
+        {error ? (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        ) : null}
         <button className="btn btn-primary" type="submit" disabled={mutation.isPending}>
           {mutation.isPending ? "Creating…" : "Create Owner"}
         </button>

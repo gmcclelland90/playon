@@ -4,7 +4,7 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { cors } from "hono/cors";
-import { asc, count, desc, eq } from "drizzle-orm";
+import { and, asc, count, desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import type { LlmMessage } from "@playon/agent-core";
@@ -20,10 +20,16 @@ import {
   type Role,
   type WsEvent,
 } from "@playon/shared";
-import type { AppConfig } from "./config.js";
+import {
+  buildCorsOrigins,
+  findRepoRoot,
+  resolveWebDist,
+  type AppConfig,
+} from "./config.js";
 import type { Db } from "./db/client.js";
 import { conversations, messages, nodes, toolInvocations, users } from "./db/schema.js";
 import { redactJson, redactString } from "./services/redaction.js";
+import { mountStaticWeb } from "./static-web.js";
 
 import { nodeTokenAuthorized } from "./auth/node-token.js";
 import { hashPassword, verifyPassword } from "./auth/password.js";
@@ -42,7 +48,7 @@ import {
   toPublicLlmSettings,
   type LlmSettings,
 } from "./services/settings.js";
-import { listSkills } from "./services/skills.js";
+import { listSkills, skillsRootsForWorkspace } from "./services/skills.js";
 import { SkillPackageService } from "./services/skill-packages.js";
 import { ConfirmService } from "./services/confirm.js";
 import { EventHub } from "./services/event-hub.js";
@@ -53,16 +59,14 @@ import { resolvePanelTheme } from "./services/panel-theme.js";
 import { publishServerPanel } from "./services/server-panel.js";
 import { ServerService } from "./services/servers.js";
 import { MigrateService } from "./services/migrate.js";
+import { labelForTool, verbForTool } from "./services/agent-activity.js";
 import { AgentProgressService } from "./services/agent-progress.js";
-import {
-  HostAchievementService,
-  type AchievementEvent,
-} from "./services/host-achievements.js";
 import { ImportLocalService } from "./services/import-local.js";
 import { ImportSftpService } from "./services/import-sftp.js";
 import { OffNodeBackupService } from "./services/offnode-backup.js";
 import { PlacementService } from "./services/placement.js";
 import { SnapshotService } from "./services/snapshots.js";
+import { nodeJobService } from "./services/node-jobs.js";
 import { createLlmClient, createOrchestrator } from "./services/tools.js";
 
 
@@ -72,6 +76,32 @@ type Vars = {
   config: AppConfig;
 };
 
+const CREATE_BIND_TOOLS = new Set([
+  "servers_create_from_skill",
+  "servers_import_local",
+  "servers_import_sftp",
+]);
+
+/** Prefer create/import tool results when binding an unbound install conversation. */
+function serverIdFromCreateTrace(
+  toolTrace: Array<{ name: string; result?: unknown }>,
+): string | undefined {
+  for (const trace of toolTrace) {
+    if (!CREATE_BIND_TOOLS.has(trace.name)) continue;
+    const result = trace.result;
+    if (!result || typeof result !== "object") continue;
+    const rec = result as Record<string, unknown>;
+    if (typeof rec.error === "string") continue;
+    if (typeof rec.serverId === "string" && rec.serverId) return rec.serverId;
+    const nested = rec.server;
+    if (nested && typeof nested === "object") {
+      const id = (nested as { id?: unknown }).id;
+      if (typeof id === "string" && id) return id;
+    }
+  }
+  return undefined;
+}
+
 export type PlayOnApp = Hono<{ Variables: Vars }> & {
   injectWebSocket: (server: NodeHttpServer) => void;
   eventHub: EventHub;
@@ -79,7 +109,7 @@ export type PlayOnApp = Hono<{ Variables: Vars }> & {
 };
 
 const LlmSettingsPutSchema = z.object({
-  provider: z.enum(["mock", "openai_compatible", "ollama"]),
+  provider: z.enum(["openai_compatible", "ollama"]),
   baseUrl: z.string().optional(),
   model: z.string().optional(),
   apiKey: z.string().optional(),
@@ -135,25 +165,18 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   const importLocal = new ImportLocalService(db, config, serverService, snapshotService);
   const importSftp = new ImportSftpService(db, config, serverService, snapshotService);
   const agentProgress = new AgentProgressService(db);
-  const hostAchievements = new HostAchievementService(db);
-  const emitHostAchievements = async (userId: string, event: AchievementEvent) => {
-    const unlocked = await hostAchievements.evaluate(userId, event);
-    for (const u of unlocked) {
-      eventHub.publish({
-        type: "host.achievement",
-        achievementId: u.id,
-        title: u.title,
-        description: u.description,
-      });
-    }
-    return unlocked;
-  };
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
+  const corsOrigins =
+    config.corsOrigins ??
+    buildCorsOrigins({
+      advertiseHost: config.advertiseHost,
+      port: config.port,
+    });
   app.use(
     "*",
     cors({
-      origin: ["http://localhost:5173", "http://127.0.0.1:5173"],
+      origin: corsOrigins,
       credentials: true,
     }),
   );
@@ -383,15 +406,28 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     if (!user || !roleAtLeast(user.role, "operator")) {
       return c.json({ error: "forbidden" }, 403);
     }
-    const skills = listSkills(config.skillsRoots).map((s) => ({
-      id: s.id,
-      name: s.metadata.name,
-      version: s.metadata.version,
-      game: s.metadata.game,
-      description: s.metadata.description,
-      tags: s.metadata.tags,
-      theme: s.metadata.theme ?? null,
-    }));
+    const serverId = c.req.query("serverId") || undefined;
+    if (serverId) {
+      const server = await serverService.get(serverId);
+      if (!server) return c.json({ error: "server_not_found" }, 404);
+    }
+    const roots = skillsRootsForWorkspace(config.skillsRoots, config.dataRoot, serverId);
+    const skills = listSkills(roots).map((s) => {
+      const normalized = s.path.replace(/\\/g, "/");
+      const isServerSkill = Boolean(
+        serverId && normalized.includes(`/servers/${serverId}/skills`),
+      );
+      return {
+        id: s.id,
+        name: s.metadata.name,
+        version: s.metadata.version,
+        game: s.metadata.game,
+        description: s.metadata.description,
+        tags: s.metadata.tags,
+        theme: s.metadata.theme ?? null,
+        scope: isServerSkill ? ("server" as const) : ("global" as const),
+      };
+    });
     return c.json({ skills });
   });
 
@@ -515,6 +551,72 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     }
   });
 
+  app.get("/api/servers/:id/conversations", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "chat.agent")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const serverId = c.req.param("id");
+    const server = await serverService.get(serverId);
+    if (!server) return c.json({ error: "not_found" }, 404);
+
+    const rows = await db
+      .select({
+        id: conversations.id,
+        serverId: conversations.serverId,
+        title: conversations.title,
+        createdAt: conversations.createdAt,
+        updatedAt: conversations.updatedAt,
+      })
+      .from(conversations)
+      .where(and(eq(conversations.userId, user.id), eq(conversations.serverId, serverId)))
+      .orderBy(desc(conversations.updatedAt));
+
+    return c.json({
+      conversations: rows.map((row) => ({
+        id: row.id,
+        serverId: row.serverId,
+        title: row.title,
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+      })),
+    });
+  });
+
+  app.post("/api/servers/:id/conversations", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "chat.agent")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const serverId = c.req.param("id");
+    const server = await serverService.get(serverId);
+    if (!server) return c.json({ error: "not_found" }, 404);
+
+    const body = z
+      .object({ title: z.string().min(1).max(120).optional() })
+      .parse((await c.req.json().catch(() => ({}))) as unknown);
+    const now = new Date();
+    const id = nanoid();
+    await db.insert(conversations).values({
+      id,
+      userId: user.id,
+      serverId,
+      title: body.title ?? "New session",
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    return c.json({
+      conversation: {
+        id,
+        serverId,
+        title: body.title ?? "New session",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      },
+    });
+  });
+
   app.post("/api/servers", async (c) => {
     const user = c.get("user");
     if (!user || !roleAtLeast(user.role, "operator")) {
@@ -528,12 +630,6 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         nodeId: body.nodeId,
       });
       await publishServerPanel(serverService, panelService, server.id, "stopped");
-      const skill = listSkills(config.skillsRoots).find((s) => s.metadata.name === body.skillName);
-      await emitHostAchievements(user.id, {
-        type: "server_created",
-        skillName: body.skillName,
-        skillTags: skill?.metadata.tags,
-      });
       return c.json({ server });
     } catch (err) {
       const message = err instanceof Error ? err.message : "create_failed";
@@ -558,11 +654,6 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         .parse(await c.req.json());
       const report = await importLocal.importFromPath(body);
       await publishServerPanel(serverService, panelService, report.server.id, "stopped");
-      await emitHostAchievements(user.id, {
-        type: "server_imported",
-        skillName: report.skillName,
-        hints: report.detectedHints,
-      });
       return c.json({
         import: {
           server: report.server,
@@ -603,11 +694,6 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         .parse(await c.req.json());
       const report = await importSftp.importFromSftp(body);
       await publishServerPanel(serverService, panelService, report.server.id, "stopped");
-      await emitHostAchievements(user.id, {
-        type: "server_imported",
-        skillName: report.skillName,
-        hints: report.detectedHints,
-      });
       return c.json({
         import: {
           server: report.server,
@@ -636,7 +722,6 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     try {
       const server = await serverService.start(c.req.param("id"));
       await publishServerPanel(serverService, panelService, server.id, "running");
-      await emitHostAchievements(user.id, { type: "server_started" });
       const detail = await serverService.detail(server.id);
       return c.json({ server, runtime: detail?.runtime });
     } catch (err) {
@@ -668,7 +753,6 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     try {
       const server = await serverService.restart(c.req.param("id"));
       await publishServerPanel(serverService, panelService, server.id, "running");
-      await emitHostAchievements(user.id, { type: "server_started" });
       const detail = await serverService.detail(server.id);
       return c.json({ server, runtime: detail?.runtime });
     } catch (err) {
@@ -844,7 +928,6 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     }
     try {
       const server = await snapshotService.restore(c.req.param("id"));
-      await emitHostAchievements(user.id, { type: "server_restored" });
       return c.json({ server });
     } catch (err) {
       const message = err instanceof Error ? err.message : "restore_failed";
@@ -914,7 +997,6 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           ? await offNodeBackup.backupServer(body.serverId, body.label)
           : null;
       if (!record) return c.json({ error: "serverId_or_snapshotId_required" }, 400);
-      await emitHostAchievements(user.id, { type: "offnode_backup" });
       return c.json({
         backup: {
           id: record.id,
@@ -941,7 +1023,6 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         .object({ serverId: z.string().min(1).optional() })
         .parse((await c.req.json().catch(() => ({}))) as unknown);
       const result = await offNodeBackup.restore(c.req.param("id"), body.serverId);
-      await emitHostAchievements(user.id, { type: "server_restored" });
       return c.json({ restore: result });
     } catch (err) {
       const message = err instanceof Error ? err.message : "offnode_restore_failed";
@@ -949,36 +1030,18 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       return c.json({ error: message }, status);
     }
   });
-
-  app.get("/api/achievements", async (c) => {
+  app.get("/api/servers/:id/agents", async (c) => {
     const user = c.get("user");
     if (!user || !can(user.role, "servers.manage")) {
       return c.json({ error: "forbidden" }, 403);
     }
-    const { unlocked, locked } = await hostAchievements.listForUser(user.id);
-    return c.json({
-      unlocked: unlocked.map((a) => ({
-        id: a.id,
-        title: a.title,
-        description: a.description,
-        unlockedAt: a.unlockedAt.toISOString(),
-      })),
-      locked: locked.map((a) => ({
-        id: a.id,
-        title: a.title,
-        description: a.description,
-      })),
-    });
-  });
-
-  app.get("/api/agents/progress", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const list = await agentProgress.list();
+    const serverId = c.req.param("id");
+    const server = await serverService.get(serverId);
+    if (!server) return c.json({ error: "not_found" }, 404);
+    const list = await agentProgress.listCast(serverId);
     return c.json({
       agents: list.map((a) => ({
+        serverId: a.serverId,
         persona: a.persona,
         xp: a.xp,
         level: a.level,
@@ -1070,14 +1133,6 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         agentVersion: body.agentVersion,
         lastSeenAt: now,
       });
-      if (body.nodeId !== "local") {
-        const hosts = await db.select({ id: users.id, role: users.role }).from(users);
-        for (const host of hosts) {
-          if (can(host.role as Role, "servers.manage")) {
-            await emitHostAchievements(host.id, { type: "tools", toolNames: [] });
-          }
-        }
-      }
     }
 
     eventHub.publish({
@@ -1145,27 +1200,106 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     return c.json({ ok: true });
   });
 
+  app.get("/api/nodes/:nodeId/jobs/next", async (c) => {
+    if (!nodeTokenAuthorized(c, config.nodeToken)) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
+    const nodeId = c.req.param("nodeId");
+    const job = nodeJobService.claimNext(nodeId);
+    if (!job) return c.body(null, 204);
+    return c.json({
+      id: job.id,
+      nodeId: job.nodeId,
+      kind: job.kind,
+      args: job.args,
+    });
+  });
+
+  app.post("/api/nodes/:nodeId/jobs/:jobId/result", async (c) => {
+    if (!nodeTokenAuthorized(c, config.nodeToken)) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
+    const nodeId = c.req.param("nodeId");
+    const jobId = c.req.param("jobId");
+    const existing = nodeJobService.get(jobId);
+    if (!existing || existing.nodeId !== nodeId) {
+      return c.json({ error: "job_not_found" }, 404);
+    }
+    const body = z
+      .union([
+        z.object({ ok: z.literal(true), result: z.unknown() }),
+        z.object({ ok: z.literal(false), error: z.string().min(1) }),
+      ])
+      .parse(await c.req.json());
+    const updated =
+      body.ok === true
+        ? nodeJobService.complete(jobId, body.result)
+        : nodeJobService.fail(jobId, body.error);
+    return c.json({
+      id: updated.id,
+      status: updated.status,
+      error: updated.error,
+    });
+  });
+
+  app.post("/api/nodes/:nodeId/jobs", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "servers.manage")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const nodeId = c.req.param("nodeId");
+    const body = z
+      .object({
+        kind: z.enum(["ping", "fs_list"]),
+        args: z.record(z.unknown()).optional(),
+      })
+      .parse(await c.req.json());
+    const job = nodeJobService.enqueue(nodeId, body.kind, body.args ?? {});
+    return c.json({ job }, 201);
+  });
+
+  app.get("/api/nodes/:nodeId/jobs/:jobId", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "servers.manage")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const nodeId = c.req.param("nodeId");
+    const jobId = c.req.param("jobId");
+    const job = nodeJobService.get(jobId);
+    if (!job || job.nodeId !== nodeId) return c.json({ error: "job_not_found" }, 404);
+    return c.json({ job });
+  });
+
   app.get("/api/conversations", async (c) => {
     const user = c.get("user");
     if (!user || !can(user.role, "chat.agent")) {
       return c.json({ error: "forbidden" }, 403);
     }
 
+    const serverId = c.req.query("serverId") || undefined;
     const rows = await db
       .select({
         id: conversations.id,
+        serverId: conversations.serverId,
         title: conversations.title,
         createdAt: conversations.createdAt,
+        updatedAt: conversations.updatedAt,
       })
       .from(conversations)
-      .where(eq(conversations.userId, user.id))
-      .orderBy(asc(conversations.createdAt));
+      .where(
+        serverId
+          ? and(eq(conversations.userId, user.id), eq(conversations.serverId, serverId))
+          : eq(conversations.userId, user.id),
+      )
+      .orderBy(desc(conversations.updatedAt));
 
     return c.json({
       conversations: rows.map((row) => ({
         id: row.id,
+        serverId: row.serverId,
         title: row.title,
         createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
       })),
     });
   });
@@ -1185,8 +1319,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     const conversation = rows[0];
     if (!conversation) return c.json({ error: "not_found" }, 404);
 
-    const isOwner = conversation.userId === user.id;
-    if (!isOwner && !can(user.role, "chat.agent")) {
+    if (conversation.userId !== user.id) {
       return c.json({ error: "forbidden" }, 403);
     }
 
@@ -1202,6 +1335,11 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       .orderBy(asc(messages.createdAt));
 
     return c.json({
+      conversation: {
+        id: conversation.id,
+        serverId: conversation.serverId,
+        title: conversation.title,
+      },
       messages: messageRows.map((row) => ({
         id: row.id,
         role: row.role,
@@ -1216,18 +1354,52 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     if (!user || !can(user.role, "chat.agent")) {
       return c.json({ error: "forbidden" }, 403);
     }
-    const body = (await c.req.json()) as { message?: string; conversationId?: string };
+    const body = (await c.req.json()) as {
+      message?: string;
+      conversationId?: string;
+      serverId?: string;
+    };
     if (!body.message?.trim()) return c.json({ error: "message_required" }, 400);
 
     let conversationId = body.conversationId;
+    /** Bound maintain chat when set; unbound install chat when undefined. */
+    let workspaceServerId: string | undefined = body.serverId;
     const now = new Date();
-    if (!conversationId) {
+
+    if (conversationId) {
+      const existing = await db
+        .select()
+        .from(conversations)
+        .where(eq(conversations.id, conversationId))
+        .limit(1);
+      const conversation = existing[0];
+      if (!conversation || conversation.userId !== user.id) {
+        return c.json({ error: "conversation_not_found" }, 404);
+      }
+      if (body.serverId && conversation.serverId && body.serverId !== conversation.serverId) {
+        return c.json({ error: "serverId_mismatch" }, 400);
+      }
+      workspaceServerId = conversation.serverId ?? body.serverId;
+      await db
+        .update(conversations)
+        .set({ updatedAt: now })
+        .where(eq(conversations.id, conversationId));
+    } else {
+      if (body.serverId) {
+        const server = await serverService.get(body.serverId);
+        if (!server) return c.json({ error: "server_not_found" }, 404);
+        workspaceServerId = body.serverId;
+      } else {
+        workspaceServerId = undefined;
+      }
       conversationId = nanoid();
       await db.insert(conversations).values({
         id: conversationId,
         userId: user.id,
+        serverId: workspaceServerId,
         title: body.message.slice(0, 80),
         createdAt: now,
+        updatedAt: now,
       });
     }
 
@@ -1254,9 +1426,31 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
 
     try {
       const llm = await createLlmClient(db, config);
+      const persona = pickPersona(body.message);
+      /** Mutable: unbound create binds activity to the new server mid-turn. */
+      let activityServerId = workspaceServerId;
+      const publishActivity = (
+        phase: "thinking" | "tool_start" | "tool_done" | "tool_fail" | "idle",
+        opts?: { toolName?: string; verb?: ReturnType<typeof verbForTool>; label?: string },
+      ) => {
+        if (!activityServerId) return;
+        const verb = opts?.verb ?? "other";
+        eventHub.publish({
+          type: "agent.activity",
+          serverId: activityServerId,
+          conversationId,
+          persona,
+          phase,
+          verb,
+          toolName: opts?.toolName,
+          label: opts?.label ?? (phase === "thinking" ? "Thinking…" : phase === "idle" ? "Idle" : undefined),
+        });
+      };
+
       const orchestrator = createOrchestrator(db, config, llm, {
         confirmGate: confirmService,
         eventHub,
+        workspaceServerId,
         stream: {
           conversationId,
           onToken: (token) => {
@@ -1270,10 +1464,31 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
               status,
               detail,
             });
+            if (
+              status === "completed" &&
+              detail &&
+              typeof detail.serverId === "string" &&
+              detail.serverId &&
+              !activityServerId
+            ) {
+              activityServerId = detail.serverId;
+            }
+            const verb = verbForTool(toolName);
+            const phase =
+              status === "started"
+                ? "tool_start"
+                : status === "failed"
+                  ? "tool_fail"
+                  : "tool_done";
+            publishActivity(phase, {
+              toolName,
+              verb,
+              label: labelForTool(toolName, verb),
+            });
           },
         },
       });
-      const persona = pickPersona(body.message);
+      publishActivity("thinking");
       const result = await orchestrator.handle(persona, body.message, priorMessages);
 
       for (const trace of result.toolTrace) {
@@ -1294,11 +1509,25 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         });
       }
 
-      const awards = await agentProgress.awardForTools(result.persona, result.toolTrace);
+      const createdServerId = serverIdFromCreateTrace(result.toolTrace);
+      let boundServerId = workspaceServerId ?? createdServerId;
+      if (!workspaceServerId && createdServerId) {
+        await db
+          .update(conversations)
+          .set({ serverId: createdServerId, updatedAt: new Date() })
+          .where(eq(conversations.id, conversationId));
+        boundServerId = createdServerId;
+        activityServerId = createdServerId;
+      }
+
+      const awards = boundServerId
+        ? await agentProgress.awardForTools(boundServerId, result.persona, result.toolTrace)
+        : [];
       const celebrations = awards.filter((a) => a.celebrate);
       for (const award of celebrations) {
         eventHub.publish({
           type: "agent.celebration",
+          serverId: award.serverId,
           persona: award.persona,
           reason: award.reason,
           xpGained: award.xpGained,
@@ -1308,26 +1537,10 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         });
       }
 
-      const okTools = result.toolTrace.filter((t) => {
-        const failed =
-          t.result &&
-          typeof t.result === "object" &&
-          ("error" in (t.result as object) || (t.result as { ok?: boolean }).ok === false);
-        return !failed;
-      });
-      const skillHints: string[] = [];
-      for (const t of okTools) {
-        const args = t.arguments as { skillName?: string };
-        if (typeof args.skillName === "string") skillHints.push(args.skillName);
-        const res = t.result as { detectedHints?: string[]; skillName?: string } | undefined;
-        if (res?.skillName) skillHints.push(res.skillName);
-        if (Array.isArray(res?.detectedHints)) skillHints.push(...res.detectedHints);
+      if (boundServerId) {
+        activityServerId = boundServerId;
+        publishActivity("idle");
       }
-      const hostUnlocks = await emitHostAchievements(user.id, {
-        type: "tools",
-        toolNames: okTools.map((t) => t.name),
-        skillHints,
-      });
 
       const safeReply = redactString(result.content);
       await db.insert(messages).values({
@@ -1339,21 +1552,28 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       });
 
       const stored = await getSetting<LlmSettings>(db, LLM_SETTINGS_KEY);
-      const progress = await agentProgress.get(result.persona);
+      const progress = boundServerId
+        ? await agentProgress.get(boundServerId, result.persona)
+        : undefined;
 
       return c.json({
         conversationId,
+        serverId: boundServerId,
         reply: safeReply,
         persona: result.persona,
         llmMode: stored?.provider ?? config.llmMode,
         toolTrace: result.toolTrace,
-        agentProgress: {
-          persona: progress.persona,
-          xp: progress.xp,
-          level: progress.level,
-          title: progress.title,
-        },
+        agentProgress: progress
+          ? {
+              serverId: progress.serverId,
+              persona: progress.persona,
+              xp: progress.xp,
+              level: progress.level,
+              title: progress.title,
+            }
+          : undefined,
         celebrations: celebrations.map((a) => ({
+          serverId: a.serverId,
           persona: a.persona,
           reason: a.reason,
           xpGained: a.xpGained,
@@ -1361,17 +1581,13 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           title: a.progress.title,
           leveledUp: a.leveledUp,
         })),
-        hostAchievements: hostUnlocks.map((a) => ({
-          id: a.id,
-          title: a.title,
-          description: a.description,
-        })),
       });
 
     } catch (err) {
       const messageText = err instanceof Error ? err.message : "chat_failed";
       console.error("chat failed:", messageText);
-      return c.json({ error: messageText }, 502);
+      const status = messageText.includes("llm_api_key_required") ? 400 : 502;
+      return c.json({ error: messageText }, status);
     }
   });
 
@@ -1423,6 +1639,10 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     if (!ok) return c.json({ error: "unknown_or_expired_request" }, 404);
     return c.json({ ok: true, requestId: body.requestId, approved: body.approved });
   });
+
+  const webDist =
+    config.webDist ?? resolveWebDist(process.env, findRepoRoot(process.cwd()));
+  mountStaticWeb(app, webDist);
 
   const playon = app as PlayOnApp;
   playon.injectWebSocket = injectWebSocket;

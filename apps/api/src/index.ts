@@ -6,16 +6,39 @@ import { createApp } from "./app.js";
 import { ServerService } from "./services/servers.js";
 import { SnapshotScheduler } from "./services/snapshot-scheduler.js";
 import { SnapshotService } from "./services/snapshots.js";
+import { webDistReady } from "./static-web.js";
 
 const config = loadConfig();
 applyBootstrap(config.dbPath);
 const { db } = createDb(config.dbPath);
 const app = createApp(db, config);
 
-const host = process.env.PLAYON_HOST ?? "127.0.0.1";
-console.log(`PlayOn API listening on http://${host}:${config.port}`);
-console.log(`data root: ${config.dataRoot}`);
-console.log(`llm=${config.llmMode} runtime=${config.runtimeMode}`);
+const host = config.host ?? "127.0.0.1";
+const webReady = Boolean(config.webDist && webDistReady(config.webDist));
+
+console.log(
+  JSON.stringify({
+    msg: "playon_start",
+    env: config.isProduction ? "production" : "development",
+    bind: `http://${host}:${config.port}`,
+    advertiseHost: config.advertiseHost,
+    webDist: config.webDist,
+    webDistReady: webReady,
+    llmMode: config.llmMode,
+    runtimeMode: config.runtimeMode,
+    dataRoot: config.dataRoot,
+  }),
+);
+
+if (config.isProduction && !webReady) {
+  console.warn(
+    JSON.stringify({
+      msg: "playon_web_dist_missing",
+      hint: "run pnpm build so apps/web/dist exists, or set PLAYON_WEB_DIST",
+      webDist: config.webDist,
+    }),
+  );
+}
 
 const server = serve({ fetch: app.fetch, port: config.port, hostname: host });
 app.injectWebSocket(server as Parameters<typeof app.injectWebSocket>[0]);

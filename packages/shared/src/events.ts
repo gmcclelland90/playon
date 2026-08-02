@@ -61,6 +61,7 @@ export const WsEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("agent.celebration"),
+    serverId: z.string(),
     persona: z.string(),
     reason: z.string(),
     xpGained: z.number().int().nonnegative(),
@@ -69,10 +70,31 @@ export const WsEventSchema = z.discriminatedUnion("type", [
     leveledUp: z.boolean(),
   }),
   z.object({
-    type: z.literal("host.achievement"),
-    achievementId: z.string(),
-    title: z.string(),
-    description: z.string(),
+    type: z.literal("agent.activity"),
+    serverId: z.string(),
+    conversationId: z.string().optional(),
+    persona: z.string(),
+    phase: z.enum([
+      "thinking",
+      "tool_start",
+      "tool_done",
+      "tool_fail",
+      "confirm_wait",
+      "idle",
+    ]),
+    verb: z.enum([
+      "fetch",
+      "search",
+      "read",
+      "write",
+      "run",
+      "snapshot",
+      "panel",
+      "skill",
+      "other",
+    ]),
+    toolName: z.string().optional(),
+    label: z.string().optional(),
   }),
 ]);
 

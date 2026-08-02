@@ -1,15 +1,17 @@
 # SteamCMD platform skill
 
+PlayOn exposes the agent tool `steamcmd_app_update` which runs a real host SteamCMD binary into the server jail (`+login anonymous +app_update <appId> validate +quit`).
+
+If SteamCMD is missing, the tool fails with `steamcmd_not_found` (set `PLAYON_STEAMCMD` to the binary path, or install SteamCMD on PATH).
+
 ## Linux
 
-1. Download SteamCMD into the server data directory (or a shared tools cache).
-2. Run `steamcmd.sh +login anonymous +app_update <appid> validate +quit`.
-3. Point the game skill at the installed dedicated server binary.
+1. Install SteamCMD system-wide, or download into a known path and export `PLAYON_STEAMCMD=/path/to/steamcmd.sh`.
+2. From chat / tools: `steamcmd_app_update` with `serverId` + `appId`.
+3. Point the game skill at the installed dedicated server binary under `game/`.
 
 ## Windows
 
-1. Fetch `steamcmd.zip` into the server jail via `fetch_url`.
-2. Extract and run `steamcmd.exe` with the same `+app_update` flow.
+1. Install SteamCMD (or set `PLAYON_STEAMCMD` to `steamcmd.exe`).
+2. Same `steamcmd_app_update` tool flow.
 3. Prefer a fixed app build when hosting LAN nights for reproducibility.
-
-This skill documents the path; game skills should call these steps explicitly.

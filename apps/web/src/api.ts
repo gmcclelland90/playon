@@ -18,7 +18,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export type LlmPublic = {
-  provider: "mock" | "openai_compatible" | "ollama";
+  provider: "openai_compatible" | "ollama";
   baseUrl?: string;
   model?: string;
   hasApiKey: boolean;
@@ -53,7 +53,7 @@ export type PlacementPlan = {
 export type ServerDetail = {
   server: ServerRow;
   runtime: {
-    kind: "docker" | "native" | "mock";
+    kind: "docker" | "native";
     containerName?: string;
     containerStatus?: string;
     imageHint?: string;
@@ -80,6 +80,15 @@ export type SkillRow = {
   game?: string;
   description: string;
   tags: string[];
+  scope?: "global" | "server";
+};
+
+export type ConversationRow = {
+  id: string;
+  serverId: string | null;
+  title: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type ToolTrace = {
@@ -102,15 +111,23 @@ export const api = {
     }),
   me: () => request<{ user: PublicUser }>("/api/auth/me"),
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
-  chat: (message: string, conversationId?: string) =>
+  chat: (message: string, opts: { conversationId?: string; serverId?: string } = {}) =>
     request<{
       conversationId: string;
+      serverId?: string;
       reply: string;
       persona: string;
       llmMode: string;
       toolTrace?: ToolTrace[];
-      agentProgress?: { persona: string; xp: number; level: number; title: string };
+      agentProgress?: {
+        serverId: string;
+        persona: string;
+        xp: number;
+        level: number;
+        title: string;
+      };
       celebrations?: Array<{
+        serverId?: string;
         persona: string;
         reason: string;
         xpGained: number;
@@ -118,39 +135,37 @@ export const api = {
         title: string;
         leveledUp: boolean;
       }>;
-      hostAchievements?: Array<{
-        id: string;
-        title: string;
-        description: string;
-      }>;
     }>("/api/chat", {
       method: "POST",
-      body: JSON.stringify({ message, conversationId }),
+      body: JSON.stringify({
+        message,
+        conversationId: opts.conversationId,
+        serverId: opts.serverId,
+      }),
     }),
-  agentProgress: () =>
+  serverConversations: (serverId: string) =>
+    request<{ conversations: ConversationRow[] }>(
+      `/api/servers/${encodeURIComponent(serverId)}/conversations`,
+    ),
+  createServerConversation: (serverId: string, title?: string) =>
+    request<{ conversation: ConversationRow }>(
+      `/api/servers/${encodeURIComponent(serverId)}/conversations`,
+      {
+        method: "POST",
+        body: JSON.stringify(title ? { title } : {}),
+      },
+    ),
+  serverAgents: (serverId: string) =>
     request<{
       agents: Array<{
+        serverId: string;
         persona: string;
         xp: number;
         level: number;
         title: string;
         updatedAt: string;
       }>;
-    }>("/api/agents/progress"),
-  achievements: () =>
-    request<{
-      unlocked: Array<{
-        id: string;
-        title: string;
-        description: string;
-        unlockedAt: string;
-      }>;
-      locked: Array<{
-        id: string;
-        title: string;
-        description: string;
-      }>;
-    }>("/api/achievements"),
+    }>(`/api/servers/${encodeURIComponent(serverId)}/agents`),
   nodes: () =>
     request<{
       nodes: Array<{
@@ -175,7 +190,10 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
-  skills: () => request<{ skills: SkillRow[] }>("/api/skills"),
+  skills: (serverId?: string) =>
+    request<{ skills: SkillRow[] }>(
+      serverId ? `/api/skills?serverId=${encodeURIComponent(serverId)}` : "/api/skills",
+    ),
   snapshots: (serverId?: string) =>
     request<{
       snapshots: Array<{ id: string; serverId: string; label: string; createdAt: string }>;
@@ -424,6 +442,7 @@ export const api = {
     }>("/api/conversations"),
   conversationMessages: (id: string) =>
     request<{
+      conversation?: { id: string; serverId: string | null; title: string | null };
       messages: Array<{
         id: string;
         role: string;
