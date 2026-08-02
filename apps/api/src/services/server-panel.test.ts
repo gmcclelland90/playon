@@ -5,6 +5,7 @@ import {
   defaultConnectCommand,
   defaultSteamConnectUrl,
   enrichJoinInfoBody,
+  isPlayerPanelLiveStatus,
   preservedPanelBlocks,
   sanitizeSteamConnectUrl,
 } from "./server-panel.js";
@@ -109,6 +110,16 @@ describe("enrichJoinInfoBody", () => {
     expect(body.steamConnectUrl).toBe(
       "steam://run/252490//+connect%20172.16.0.155:28015",
     );
+  });
+});
+
+describe("isPlayerPanelLiveStatus", () => {
+  it("treats running and starting as live for the player panel", () => {
+    expect(isPlayerPanelLiveStatus("running")).toBe(true);
+    expect(isPlayerPanelLiveStatus("starting")).toBe(true);
+    expect(isPlayerPanelLiveStatus("stopped")).toBe(false);
+    expect(isPlayerPanelLiveStatus("error")).toBe(false);
+    expect(isPlayerPanelLiveStatus(undefined)).toBe(false);
   });
 });
 

@@ -56,7 +56,7 @@ import { HealthService } from "./services/health.js";
 import { NetToolsService } from "./services/net-tools.js";
 import { PanelService } from "./services/panel.js";
 import { resolvePanelTheme } from "./services/panel-theme.js";
-import { publishServerPanel } from "./services/server-panel.js";
+import { isPlayerPanelLiveStatus, publishServerPanel } from "./services/server-panel.js";
 import { ServerService } from "./services/servers.js";
 import { MigrateService } from "./services/migrate.js";
 import { labelForTool, verbForTool } from "./services/agent-activity.js";
@@ -166,6 +166,22 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   const importSftp = new ImportSftpService(db, config, serverService, snapshotService);
   const agentProgress = new AgentProgressService(db);
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
+
+  // Keep player panel in sync with runtime reconcile/start/stop (not only explicit tool calls).
+  eventHub.subscribe((event: WsEvent) => {
+    if (event.type !== "server.status") return;
+    void (async () => {
+      try {
+        if (event.status === "running" || event.status === "starting") {
+          await publishServerPanel(serverService, panelService, event.serverId, event.status);
+        } else if (event.status === "stopped" || event.status === "error") {
+          await publishServerPanel(serverService, panelService, event.serverId, event.status);
+        }
+      } catch {
+        // panel sync must not break status fan-out
+      }
+    })();
+  });
 
   const corsOrigins =
     config.corsOrigins ??
@@ -808,15 +824,15 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   app.get("/api/panel", async (c) => {
     const serverId = c.req.query("serverId");
     let blocks = await panelService.list(serverId);
-    // Player panel is join-first: only show blocks for currently running servers
+    // Player panel is join-first: only show blocks for live (running/starting) servers
     // (unless a specific serverId filter was requested).
     if (!serverId) {
-      const running = new Set(
+      const live = new Set(
         (await serverService.list())
-          .filter((s) => s.status === "running")
+          .filter((s) => isPlayerPanelLiveStatus(s.status))
           .map((s) => s.id),
       );
-      blocks = blocks.filter((b) => !b.serverId || running.has(b.serverId));
+      blocks = blocks.filter((b) => !b.serverId || live.has(b.serverId));
     }
     const theme = resolvePanelTheme(config, blocks);
     const payload = {

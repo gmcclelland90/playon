@@ -1,0 +1,88 @@
+name: games.rust
+version: 0.1.0
+game: Rust
+description: >
+  Rust dedicated server via SteamCMD + native process. Expands platform.steamcmd;
+  install app 258550 into game/, then start RustDedicated / start.sh.
+tags:
+  - rust
+  - steamcmd
+  - survival
+  - native
+  - reference
+theme:
+  id: ember
+  primaryHue: 18
+os:
+  - linux
+  - windows
+arch:
+  - amd64
+containerSupport: none
+steamAppId: 258550
+adminDialect: rust_web_rcon
+join:
+  connectCommand: "client.connect {{endpoint}}"
+  steamClientAppId: 252490
+  steamUrlStyle: run_connect
+  clientSetupNotes: |
+    1. Install/launch Rust from Steam (same branch as the host).
+    2. From the main menu press F1 to open the console.
+    3. Run: {{connectCommand}}
+    4. Wait for the world to load (first connect after a wipe can take a minute).
+native:
+  binary: RustDedicated
+  binaryWindows: RustDedicated.exe
+  preferStartScript: true
+  libraryPathRelative:
+    - RustDedicated_Data/Plugins
+    - RustDedicated_Data/Plugins/x86_64
+  args:
+    - "-batchmode"
+    - "-logfile"
+    - "{{gameDir}}/logs/server.log"
+    - "+server.hostname"
+    - "Rust Server"
+    - "+server.port"
+    - "28015"
+    - "+server.identity"
+    - "rust1"
+    - "+rcon.port"
+    - "28016"
+    - "+rcon.password"
+    - "changeme"
+    - "+rcon.web"
+    - "1"
+    - "+server.maxplayers"
+    - "50"
+    - "+server.worldsize"
+    - "3000"
+    - "+server.seed"
+    - "12345"
+    - "+server.saveinterval"
+    - "300"
+minRamMb: 8192
+requiredTools:
+  - servers_create_from_skill
+  - steamcmd_app_update
+  - servers_start
+  - panel_publish
+ports:
+  - name: game
+    protocol: udp
+    default: 28015
+  - name: rcon
+    protocol: tcp
+    default: 28016
+dependencies:
+  - platform.steamcmd
+  - platform.native-process
+  - platform.networking-lan
+  - platform.admin-protocols
+  - platform.server-auth
+  - platform.capacity
+  - platform.hostability
+healthChecks:
+  - id: process
+    type: process_running
+    onFail: restart

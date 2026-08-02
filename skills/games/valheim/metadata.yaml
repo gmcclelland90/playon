@@ -1,0 +1,56 @@
+name: games.valheim
+version: 0.1.0
+game: Valheim
+description: >
+  Valheim dedicated server via SteamCMD (app 896660) + native start.sh.
+  Password must be ≥5 characters and not contained in the server name.
+tags:
+  - valheim
+  - steamcmd
+  - survival
+  - native
+  - lan
+theme:
+  id: steel
+  primaryHue: 210
+os:
+  - linux
+  - windows
+arch:
+  - amd64
+containerSupport: none
+steamAppId: 896660
+adminDialect: none
+join:
+  clientSetupNotes: >
+    Steam → Join IP → {{endpoint}} (UDP). Same Valheim branch as the host. Password required (≥5 chars).
+native:
+  binary: valheim_server.x86_64
+  binaryWindows: valheim_server.exe
+  preferStartScript: true
+  env:
+    SteamAppId: "892970"
+minRamMb: 4096
+requiredTools:
+  - servers_create_from_skill
+  - steamcmd_app_update
+  - servers_start
+  - panel_publish
+  - fs_write
+ports:
+  - name: game
+    protocol: udp
+    default: 2456
+  - name: query
+    protocol: udp
+    default: 2457
+dependencies:
+  - platform.steamcmd
+  - platform.native-process
+  - platform.networking-lan
+  - platform.capacity
+  - platform.hostability
+healthChecks:
+  - id: process
+    type: process_running
+    onFail: restart

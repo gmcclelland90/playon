@@ -24,7 +24,9 @@ import { nodeJobService } from "./node-jobs.js";
 import { PanelService } from "./panel.js";
 import { rconExec, rconExecWithSelfHeal } from "./rcon.js";
 import {
+  clientSetupNotes,
   enrichJoinInfoBody,
+  isPlayerPanelLiveStatus,
   publishServerPanel,
   resolveJoin,
 } from "./server-panel.js";
@@ -336,7 +338,7 @@ export function createOrchestrator(
     {
       name: "panel_publish",
       description:
-        "Replace all player panel blocks for a server. Include every block you want to keep (join_info, client_setup, guide, vote, etc.) — omitted blocks are removed. Types: server_status, join_info, client_setup, guide, vote, readiness, announcement, file_drop, discovery. For join_info body: optional connectCommand (in-game paste) and steamConnectUrl (steam:// deep link for an Open in Steam button). Address/port are filled from the control plane; Steam URLs must use the steam:// scheme. Prefer multiple guide/client_setup blocks with body.notes, body.instructions, or body.steps (string array) when players need several instructions.",
+        "Replace all player panel blocks for a server. Always include join_info + client_setup after servers_start so players can connect. Include every block you want to keep — omitted blocks are removed. Types: server_status, join_info, client_setup, guide, vote, readiness, announcement, file_drop, discovery. join_info address/port are filled from the control plane; optional connectCommand / steamConnectUrl (steam:// only). Blocks are only visible on the public player panel while the server is starting or running — start the server first. Prefer body.notes / body.instructions / body.steps for setup.",
       parameters: {
         type: "object",
         properties: {
@@ -806,6 +808,8 @@ export function createOrchestrator(
       status: server.status,
       runtime: detail?.runtime,
       join: detail?.runtime.join,
+      panelPublished: true,
+      playerVisible: isPlayerPanelLiveStatus(server.status),
     };
   });
 
@@ -857,33 +861,92 @@ export function createOrchestrator(
     });
     // Prefer control-plane join (advertise host + skill port) over LLM-invented ports.
     // Preserve agent connectCommand / steamConnectUrl; fill game defaults when missing.
+    let serverStatus: string | undefined;
     if (resolved.serverId) {
       const detail = await servers.detail(resolved.serverId);
+      serverStatus = detail?.server.status;
       const join = detail?.runtime.join;
       if (join && detail) {
         const joinMeta = resolveJoin(servers, detail.server.dataPath);
         parsedBlocks = parsedBlocks.map((block) => {
-          if (block.type !== "join_info") return block;
-          return {
-            ...block,
+          if (block.type === "join_info") {
+            return {
+              ...block,
+              body: enrichJoinInfoBody({
+                body: block.body,
+                address: join.address,
+                port: join.port,
+                join: joinMeta,
+                game: detail.server.game,
+              }),
+            };
+          }
+          if (block.type === "server_status") {
+            return {
+              ...block,
+              body: {
+                ...block.body,
+                status: block.body.status ?? detail.server.status,
+                runtime: block.body.runtime ?? detail.runtime.kind,
+                game: block.body.game ?? detail.server.game,
+              },
+            };
+          }
+          return block;
+        });
+        // Agents sometimes omit join_info — inject control-plane join so players are never blank.
+        if (!parsedBlocks.some((b) => b.type === "join_info")) {
+          parsedBlocks.unshift({
+            type: "join_info",
+            title: detail.server.game ? `Join ${detail.server.game}` : "Join",
             body: enrichJoinInfoBody({
-              body: block.body,
+              body: {},
               address: join.address,
               port: join.port,
               join: joinMeta,
               game: detail.server.game,
             }),
-          };
-        });
+            sortOrder: -1,
+          });
+        }
+        if (!parsedBlocks.some((b) => b.type === "client_setup")) {
+          parsedBlocks.push({
+            type: "client_setup",
+            title: "How to connect",
+            body: {
+              notes: clientSetupNotes({
+                join: joinMeta,
+                address: join.address,
+                port: join.port,
+              }),
+            },
+            sortOrder: parsedBlocks.length,
+          });
+        }
       }
       const published = await panel.replaceForServer(resolved.serverId, parsedBlocks);
-      return { published: published.length, blocks: published, mode: "replace" };
+      const playerVisible = isPlayerPanelLiveStatus(serverStatus);
+      return {
+        published: published.length,
+        blocks: published,
+        mode: "replace",
+        playerVisible,
+        serverStatus,
+        hint: playerVisible
+          ? undefined
+          : "Blocks saved, but the public player panel only shows join info while the server is starting or running. Call servers_start (or wait for start) so players can see it.",
+      };
     }
     const published = await panel.publish({
       serverId: resolved.serverId,
       blocks: parsedBlocks,
     });
-    return { published: published.length, blocks: published, mode: "append" };
+    return {
+      published: published.length,
+      blocks: published,
+      mode: "append",
+      playerVisible: true,
+    };
   });
 
   orch.registerTool(toolDefs[10]!, async (args) => {

@@ -1,0 +1,50 @@
+name: games.terraria
+version: 0.1.0
+game: Terraria
+description: >
+  Terraria dedicated server via Docker (ryshe/terraria — TShock-capable image).
+  Lightweight LAN classic; worlds persist under game/.
+tags:
+  - terraria
+  - docker
+  - lan
+theme:
+  id: grass
+  primaryHue: 120
+os:
+  - linux
+  - windows
+arch:
+  - amd64
+containerSupport: full
+dockerImage: ryshe/terraria:latest
+dockerDataMount: /root/.local/share/Terraria/Worlds
+dockerEnv:
+  WORLD_FILENAME: world.wld
+adminDialect: none
+join:
+  clientSetupNotes: >
+    Terraria → Multiplayer → Join via IP → {{endpoint}}
+minRamMb: 1536
+requiredTools:
+  - servers_create_from_skill
+  - servers_start
+  - panel_publish
+ports:
+  - name: game
+    protocol: tcp
+    default: 7777
+dependencies:
+  - platform.docker-basics
+  - platform.networking-lan
+  - platform.capacity
+  - platform.hostability
+healthChecks:
+  - id: process
+    type: process_running
+    onFail: restart
+  - id: game-port
+    type: tcp_port
+    portName: game
+    port: 7777
+    onFail: restart

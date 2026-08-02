@@ -1,6 +1,7 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   createNativeRuntimeAdapters,
@@ -11,7 +12,14 @@ import {
 } from "@playon/runtime";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db/client.js";
-import { servers } from "../db/schema.js";
+import {
+  conversations,
+  messages,
+  panelBlocks,
+  servers,
+  snapshots,
+  toolInvocations,
+} from "../db/schema.js";
 import type { EventHub } from "./event-hub.js";
 import { PlacementService } from "./placement.js";
 import {
@@ -20,7 +28,9 @@ import {
   writeRconConfig,
   type RconEndpoint,
 } from "./rcon.js";
-import { loadSkillMetadata } from "./skills.js";
+import { nativeGamePort, nativeRconPort, resolveNativeLaunch } from "./native-launch.js";
+import { loadSkillMetadata, type SkillEntry } from "./skills.js";
+import type { SkillMetadata } from "@playon/shared";
 
 export interface ServerRecord {
   id: string;
@@ -66,6 +76,11 @@ export class ServerService {
   private readonly logFollows = new Map<string, LogFollowHandle>();
   private sharedDocker: DockerAdapter | null = null;
   private sharedProcess: ProcessSupervisor | null = null;
+
+  /** Skill roots for panel/join resolution (same as create/start). */
+  get skillsRoots(): string[] {
+    return this.config.skillsRoots;
+  }
 
   constructor(
     private readonly db: Db,
@@ -151,22 +166,44 @@ export class ServerService {
     }
   }
 
-  gamePortForSkill(skillName: string): number {
-    if (skillName === "games.minecraft-paper") return 25565;
-    if (skillName === "games.unreal-tournament-99" || /ut99|unreal-tournament/i.test(skillName)) {
-      return 7777;
-    }
+  private resolveSkill(skillName: string): SkillEntry | null {
+    if (!skillName) return null;
+    return loadSkillMetadata(this.config.skillsRoots, skillName);
+  }
+
+  private portFromSkill(
+    skillName: string,
+    portName: string,
+    fallback: number,
+  ): number {
+    const skill = this.resolveSkill(skillName);
+    const hit = skill?.metadata.ports.find((p) => p.name === portName && p.default);
+    return hit?.default ?? fallback;
+  }
+
+  gamePortForSkill(skillName: string, _game?: string | null): number {
+    const fromMeta = this.portFromSkill(skillName, "game", 0);
+    if (fromMeta > 0) return fromMeta;
+    const native = nativeGamePort(this.resolveSkill(skillName)?.metadata);
+    if (native != null) return native;
     return 25565;
   }
 
-  rconPortForSkill(skillName: string): number {
-    if (skillName === "games.minecraft-paper") return 25575;
+  rconPortForSkill(skillName: string, _game?: string | null): number {
+    const fromMeta = this.portFromSkill(skillName, "rcon", 0);
+    if (fromMeta > 0) return fromMeta;
+    const native = nativeRconPort(this.resolveSkill(skillName)?.metadata);
+    if (native != null) return native;
     return 25575;
   }
 
-  /** Ensure a local RCON endpoint config exists for Paper (password never returned to panels). */
+  private wantsMcRcon(skillName: string): boolean {
+    return this.resolveSkill(skillName)?.metadata.adminDialect === "mc_rcon";
+  }
+
+  /** Ensure a local RCON endpoint config exists when the skill uses Minecraft RCON. */
   ensureRconConfig(server: ServerRecord, skillName: string): RconEndpoint | null {
-    if (skillName !== "games.minecraft-paper") return readRconConfig(server.dataPath);
+    if (!this.wantsMcRcon(skillName)) return readRconConfig(server.dataPath);
     const existing = readRconConfig(server.dataPath);
     if (existing) return existing;
     const endpoint: RconEndpoint = {
@@ -188,68 +225,84 @@ export class ServerService {
   private readSkillMeta(dataPath: string): {
     skillName: string;
     containerSupport?: string;
+    dockerImage?: string;
+    dockerEnv?: Record<string, string>;
+    dockerDataMount?: string;
+    steamAppId?: number;
+    adminDialect?: string;
   } {
     try {
       const raw = JSON.parse(
         fs.readFileSync(path.join(dataPath, "skill.json"), "utf8"),
-      ) as { skillName?: string; containerSupport?: string };
+      ) as {
+        skillName?: string;
+        containerSupport?: string;
+        dockerImage?: string;
+        dockerEnv?: Record<string, string>;
+        dockerDataMount?: string;
+        steamAppId?: number;
+        adminDialect?: string;
+      };
       return {
         skillName: raw.skillName ?? "",
         containerSupport: raw.containerSupport,
+        dockerImage: raw.dockerImage,
+        dockerEnv: raw.dockerEnv,
+        dockerDataMount: raw.dockerDataMount,
+        steamAppId: raw.steamAppId,
+        adminDialect: raw.adminDialect,
       };
     } catch {
       return { skillName: "" };
     }
   }
 
-  private isUt99Skill(skillName: string): boolean {
-    return (
-      skillName === "games.unreal-tournament-99" || /ut99|unreal-tournament/i.test(skillName)
-    );
+  private dockerSpecFromSkill(
+    skillName: string,
+    cached: ReturnType<ServerService["readSkillMeta"]>,
+  ): {
+    image: string;
+    env: Record<string, string>;
+    dataMount: string;
+    ports: SkillMetadata["ports"];
+  } | null {
+    const live = this.resolveSkill(skillName)?.metadata;
+    const image = live?.dockerImage || cached.dockerImage;
+    if (!image) return null;
+    return {
+      image,
+      env: { ...(live?.dockerEnv ?? cached.dockerEnv ?? {}) },
+      dataMount: live?.dockerDataMount || cached.dockerDataMount || "/data",
+      ports: live?.ports ?? [],
+    };
   }
 
   private wantsNativeRuntime(
     server: ServerRecord,
-    skillName: string,
+    _skillName: string,
     containerSupport?: string,
   ): boolean {
     if (server.runtimeMode === "native") return true;
     if (containerSupport === "none") return true;
-    if (this.isUt99Skill(skillName)) return true;
     return false;
   }
 
-  private resolveUt99Launch(
-    gameDir: string,
-  ): { command: string; args: string[] } | null {
-    const isWin = process.platform === "win32";
-    const candidates = isWin
-      ? ["UCC.exe", "System\\UCC.exe", "ucc.exe", "System\\ucc.exe"]
-      : ["ucc-bin", "ucc", "System/ucc-bin", "System/ucc"];
-    for (const rel of candidates) {
-      const full = path.join(gameDir, rel);
-      if (fs.existsSync(full)) {
-        return {
-          command: full,
-          args: isWin
-            ? [
-                "server",
-                "DM-Turbine?game=Botpack.DeathMatchPlus",
-                "ini=UnrealTournament.ini",
-                "port=7777",
-              ]
-            : ["server", "DM-Turbine", "-port=7777"],
-        };
-      }
+  /** Best-effort kill of native game processes for this server (covers orphans after API restart). */
+  private killNativeGameProcesses(serverDataPath: string): void {
+    if (process.platform === "win32") return;
+    const gameDir = path.join(serverDataPath, "game");
+    try {
+      execFileSync("pkill", ["-f", gameDir], { stdio: "ignore" });
+    } catch {
+      // pkill exits 1 when nothing matched
     }
-    return null;
   }
 
   joinInfoFor(server: ServerRecord): { address: string; port: number } {
     const skillName = this.readSkillName(server.dataPath);
     return {
       address: this.config.advertiseHost,
-      port: this.gamePortForSkill(skillName),
+      port: this.gamePortForSkill(skillName, server.game),
     };
   }
 
@@ -276,8 +329,52 @@ export class ServerService {
     return rows[0] ? toRecord(rows[0]) : null;
   }
 
+  private nativeProcessAlive(server: ServerRecord): boolean {
+    if (this.processes.has(server.id)) return true;
+    if (process.platform === "win32") return false;
+    const gameDir = path.join(server.dataPath, "game");
+    const skillName = this.readSkillName(server.dataPath);
+    const native = this.resolveSkill(skillName)?.metadata.native;
+    const binaryBits = [native?.binary, native?.binaryWindows]
+      .filter(Boolean)
+      .map((b) => path.basename(String(b)).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const pattern = ["start\\.sh", "start\\.bat", "run\\.sh", "runds\\.sh", ...binaryBits].join(
+      "|",
+    );
+    // Match start scripts / skill-declared binaries; confirm cwd is this server's game dir.
+    try {
+      const pids = execFileSync("pgrep", ["-f", pattern], { encoding: "utf8" })
+        .trim()
+        .split("\n")
+        .filter(Boolean);
+      for (const pid of pids) {
+        try {
+          const cwd = fs.readlinkSync(`/proc/${pid}/cwd`);
+          if (cwd === gameDir || cwd.startsWith(`${gameDir}${path.sep}`)) return true;
+        } catch {
+          /* process exited */
+        }
+      }
+    } catch {
+      /* no matching processes */
+    }
+    try {
+      execFileSync("pgrep", ["-f", server.id], { stdio: "ignore" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private async reconcileStatus(server: ServerRecord): Promise<void> {
-    if (server.runtimeMode === "native") return;
+    if (server.runtimeMode === "native") {
+      const next = this.nativeProcessAlive(server) ? "running" : "stopped";
+      if (next !== server.status) {
+        await this.db.update(servers).set({ status: next }).where(eq(servers.id, server.id));
+        this.emitStatus(server.id, next);
+      }
+      return;
+    }
     await this.ensureRuntime();
     const adapter = this.adapterFor(server.id);
     try {
@@ -285,10 +382,12 @@ export class ServerService {
       const next = info.status === "running" ? "running" : "stopped";
       if (next !== server.status) {
         await this.db.update(servers).set({ status: next }).where(eq(servers.id, server.id));
+        this.emitStatus(server.id, next);
       }
     } catch {
-      if (server.status === "running") {
+      if (server.status === "running" || server.status === "starting") {
         await this.db.update(servers).set({ status: "stopped" }).where(eq(servers.id, server.id));
+        this.emitStatus(server.id, "stopped");
       }
     }
   }
@@ -299,7 +398,7 @@ export class ServerService {
 
     const skillName = this.readSkillName(server.dataPath);
     const join = this.joinInfoFor(server);
-    const paper = skillName === "games.minecraft-paper";
+    const cached = this.readSkillMeta(server.dataPath);
 
     if (server.runtimeMode === "native") {
       return {
@@ -331,11 +430,49 @@ export class ServerService {
         kind: "docker",
         containerName: name,
         containerStatus,
-        imageHint: paper ? "itzg/minecraft-server:latest" : undefined,
+        imageHint:
+          this.resolveSkill(skillName)?.metadata.dockerImage ?? cached.dockerImage,
         join,
         logs,
       },
     };
+  }
+
+  private runtimeModeForSkill(_skillName: string, containerSupport: string): "native" | "docker" {
+    return containerSupport === "none" ? "native" : "docker";
+  }
+
+  private writeSkillMarker(
+    dataPath: string,
+    skill: NonNullable<ReturnType<typeof loadSkillMetadata>>,
+    runtimeMode: string,
+    nodeId: string | null,
+  ): void {
+    fs.mkdirSync(path.join(dataPath, "game"), { recursive: true });
+    const m = skill.metadata;
+    fs.writeFileSync(
+      path.join(dataPath, "skill.json"),
+      JSON.stringify(
+        {
+          skillName: m.name,
+          version: m.version,
+          runtimeMode,
+          containerSupport: m.containerSupport,
+          dockerImage: m.dockerImage,
+          dockerEnv: m.dockerEnv,
+          dockerDataMount: m.dockerDataMount,
+          steamAppId: m.steamAppId,
+          adminDialect: m.adminDialect,
+          join: m.join,
+          native: m.native,
+          dependencies: m.dependencies,
+          minRamMb: m.minRamMb,
+          nodeId,
+        },
+        null,
+        2,
+      ),
+    );
   }
 
   async createFromSkill(args: {
@@ -351,26 +488,11 @@ export class ServerService {
 
     const id = nanoid();
     const dataPath = path.join(this.config.dataRoot, "servers", id);
-    const useNative =
-      skill.metadata.containerSupport === "none" ||
-      skill.metadata.name === "games.unreal-tournament-99" ||
-      this.isUt99Skill(skill.metadata.name);
-    const runtimeMode = useNative ? "native" : "docker";
-    fs.mkdirSync(path.join(dataPath, "game"), { recursive: true });
-    fs.writeFileSync(
-      path.join(dataPath, "skill.json"),
-      JSON.stringify(
-        {
-          skillName: skill.metadata.name,
-          version: skill.metadata.version,
-          runtimeMode,
-          containerSupport: skill.metadata.containerSupport,
-          nodeId: resolvedNodeId,
-        },
-        null,
-        2,
-      ),
+    const runtimeMode = this.runtimeModeForSkill(
+      skill.metadata.name,
+      skill.metadata.containerSupport,
     );
+    this.writeSkillMarker(dataPath, skill, runtimeMode, resolvedNodeId);
 
     const name = args.serverName ?? skill.metadata.game ?? skill.metadata.name;
     const now = new Date();
@@ -385,6 +507,70 @@ export class ServerService {
       createdAt: now,
     });
 
+    return (await this.getRaw(id))!;
+  }
+
+  /**
+   * Start-over in place: stop/remove runtime, wipe server files, re-bind skill.
+   * Keeps the same server id (and conversation binding). Clears snapshots + panel.
+   */
+  async reinstallFromSkill(
+    id: string,
+    args: { skillName: string; serverName?: string; nodeId?: string },
+  ): Promise<ServerRecord> {
+    const existing = await this.getRaw(id);
+    if (!existing) throw new Error(`unknown_server: ${id}`);
+
+    const skill = loadSkillMetadata(this.config.skillsRoots, args.skillName);
+    if (!skill) throw new Error(`unknown_skill: ${args.skillName}`);
+
+    try {
+      await this.stop(id);
+    } catch {
+      // continue wipe even if stop fails
+    }
+
+    await this.ensureRuntime().catch(() => undefined);
+    const adapter = this.adapters.get(id) ?? this.sharedDocker;
+    if (adapter) {
+      const name = this.containerName(id);
+      await adapter.stop(name).catch(() => undefined);
+      await adapter.remove(name).catch(() => undefined);
+    }
+    this.adapters.delete(id);
+    this.processes.delete(id);
+    this.stopLogFollow(id);
+
+    try {
+      fs.rmSync(existing.dataPath, { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
+
+    const placement = new PlacementService(this.db, this.config);
+    const resolvedNodeId = await placement.resolveNodeId(args.skillName, args.nodeId);
+    const runtimeMode = this.runtimeModeForSkill(
+      skill.metadata.name,
+      skill.metadata.containerSupport,
+    );
+    this.writeSkillMarker(existing.dataPath, skill, runtimeMode, resolvedNodeId);
+
+    await this.db.delete(snapshots).where(eq(snapshots.serverId, id));
+    await this.db.delete(panelBlocks).where(eq(panelBlocks.serverId, id));
+
+    const name = args.serverName ?? skill.metadata.game ?? skill.metadata.name;
+    await this.db
+      .update(servers)
+      .set({
+        name,
+        game: skill.metadata.game ?? skill.metadata.name,
+        nodeId: resolvedNodeId,
+        runtimeMode,
+        status: "stopped",
+      })
+      .where(eq(servers.id, id));
+
+    this.emitStatus(id, "stopped");
     return (await this.getRaw(id))!;
   }
 
@@ -407,44 +593,62 @@ export class ServerService {
           await processSupervisor.stop(existing).catch(() => undefined);
         }
         const gameDir = path.join(server.dataPath, "game");
-
-        if (this.isUt99Skill(skillName)) {
-          const launch = this.resolveUt99Launch(gameDir);
-          if (!launch) {
-            throw new Error(
-              "ut99_binaries_missing: copy OldUnreal dedicated server into game/ (need UCC.exe or ucc-bin), then start again",
-            );
-          }
-          const info = await processSupervisor.start({
-            name: `server-${id}`,
-            command: launch.command,
-            args: launch.args,
-            cwd: gameDir,
-            env: { PLAYON_SERVER_ID: id, PLAYON_GAME: "ut99" },
-          });
-          this.processes.set(id, info.id);
-          await this.db.update(servers).set({ status: "running" }).where(eq(servers.id, id));
-          this.emitStatus(id, "running");
-          return (await this.getRaw(id))!;
+        const skillEntry = this.resolveSkill(skillName);
+        const launch = resolveNativeLaunch({
+          skillName,
+          game: server.game,
+          gameDir,
+          metadata: skillEntry?.metadata,
+        });
+        if (!launch) {
+          const hint = skillEntry?.metadata.steamAppId
+            ? ` Run steamcmd_app_update with appId ${skillEntry.metadata.steamAppId}, then ensure start.sh or native.binary exists.`
+            : " Add start.sh / start.bat or set skill metadata native.binary.";
+          throw new Error(
+            `native_binaries_missing: skill "${skillName}" has no startable process in game/.${hint}`,
+          );
         }
-
-        throw new Error(
-          `native_binaries_missing: skill "${skillName}" is not containerised — place server binaries in game/ or use games.unreal-tournament-99 / a Docker skill`,
-        );
+        const info = await processSupervisor.start({
+          name: `server-${id}`,
+          command: launch.command,
+          args: launch.args,
+          cwd: gameDir,
+          env: { PLAYON_SERVER_ID: id, ...launch.env },
+        });
+        this.processes.set(id, info.id);
+        await this.db.update(servers).set({ status: "running" }).where(eq(servers.id, id));
+        this.emitStatus(id, "running");
+        return (await this.getRaw(id))!;
       }
 
       const adapter = this.adapterFor(id);
       const name = this.containerName(id);
-      const paper = skillName === "games.minecraft-paper";
-      if (!paper) {
+      const docker = this.dockerSpecFromSkill(skillName, skillMeta);
+      if (!docker) {
         throw new Error(
-          `no_container_image: "${skillName || server.game || "unknown"}" is not a Docker skill. Use a native skill (e.g. games.unreal-tournament-99) or games.minecraft-paper.`,
+          `no_container_image: skill "${skillName || server.game || "unknown"}" has containerSupport but no dockerImage in metadata. Add dockerImage to the skill or use a native skill.`,
         );
       }
-      const image = "itzg/minecraft-server:latest";
-      const gamePort = this.gamePortForSkill(skillName);
+      const gamePort = this.gamePortForSkill(skillName, server.game);
       const rcon = this.ensureRconConfig(server, skillName);
-      const rconPort = rcon?.port ?? this.rconPortForSkill(skillName);
+      const rconPort = rcon?.port ?? this.rconPortForSkill(skillName, server.game);
+      const env: Record<string, string> = { ...docker.env };
+      if (this.wantsMcRcon(skillName)) {
+        env.ENABLE_RCON = env.ENABLE_RCON ?? "true";
+        env.RCON_PORT = String(rconPort);
+        env.RCON_PASSWORD = rcon?.password ?? generateRconPassword();
+      }
+
+      const portBindings =
+        docker.ports.length > 0
+          ? docker.ports
+              .filter((p) => p.default)
+              .map((p) => ({
+                host: p.default!,
+                container: p.default!,
+                protocol: p.protocol,
+              }))
+          : [{ host: gamePort, container: gamePort, protocol: "tcp" as const }];
 
       let containerId = name;
       try {
@@ -453,27 +657,15 @@ export class ServerService {
       } catch {
         const created = await adapter.create({
           name,
-          image,
-          env: paper
-            ? {
-                EULA: "TRUE",
-                TYPE: "PAPER",
-                ONLINE_MODE: "FALSE",
-                MAX_PLAYERS: "20",
-                ENABLE_RCON: "true",
-                RCON_PORT: String(rconPort),
-                RCON_PASSWORD: rcon?.password ?? generateRconPassword(),
-              }
-            : undefined,
-          ports: [
-            { host: gamePort, container: gamePort, protocol: "tcp" },
-            ...(paper
-              ? [{ host: rconPort, container: rconPort, protocol: "tcp" as const }]
-              : []),
+          image: docker.image,
+          env,
+          ports: portBindings,
+          binds: [
+            {
+              hostPath: path.join(server.dataPath, "game"),
+              containerPath: docker.dataMount,
+            },
           ],
-          binds: paper
-            ? [{ hostPath: path.join(server.dataPath, "game"), containerPath: "/data" }]
-            : undefined,
         });
         containerId = created.id;
       }
@@ -511,6 +703,9 @@ export class ServerService {
       await this.sharedProcess.stop(processId).catch(() => undefined);
       this.processes.delete(id);
     }
+    if (server.runtimeMode === "native") {
+      this.killNativeGameProcesses(server.dataPath);
+    }
 
     const adapter = this.adapters.get(id) ?? this.sharedDocker;
     if (adapter) {
@@ -520,5 +715,57 @@ export class ServerService {
     await this.db.update(servers).set({ status: "stopped" }).where(eq(servers.id, id));
     this.emitStatus(id, "stopped");
     return (await this.getRaw(id))!;
+  }
+
+  /**
+   * Stop runtime, remove Docker container, wipe data dir + DB rows.
+   * Leaves no server-scoped panel blocks, conversations, snapshots, or agent progress.
+   */
+  async remove(id: string): Promise<{ id: string; name: string }> {
+    const server = await this.getRaw(id);
+    if (!server) throw new Error(`unknown_server: ${id}`);
+
+    try {
+      await this.stop(id);
+    } catch {
+      // continue teardown even if stop fails
+    }
+
+    await this.ensureRuntime().catch(() => undefined);
+    const adapter = this.adapters.get(id) ?? this.sharedDocker;
+    if (adapter) {
+      const name = this.containerName(id);
+      await adapter.stop(name).catch(() => undefined);
+      await adapter.remove(name).catch(() => undefined);
+    }
+    this.adapters.delete(id);
+    this.processes.delete(id);
+    this.stopLogFollow(id);
+
+    const convRows = await this.db
+      .select({ id: conversations.id })
+      .from(conversations)
+      .where(eq(conversations.serverId, id));
+    const convIds = convRows.map((r) => r.id);
+    if (convIds.length) {
+      await this.db.delete(messages).where(inArray(messages.conversationId, convIds));
+      await this.db
+        .delete(toolInvocations)
+        .where(inArray(toolInvocations.conversationId, convIds));
+      await this.db.delete(conversations).where(eq(conversations.serverId, id));
+    }
+
+    await this.db.delete(snapshots).where(eq(snapshots.serverId, id));
+    await this.db.delete(panelBlocks).where(eq(panelBlocks.serverId, id));
+    await this.db.delete(servers).where(eq(servers.id, id));
+
+    try {
+      fs.rmSync(server.dataPath, { recursive: true, force: true });
+    } catch {
+      // best-effort disk wipe
+    }
+
+    this.events?.publish({ type: "server.status", serverId: id, status: "stopped" });
+    return { id: server.id, name: server.name };
   }
 }

@@ -7,7 +7,7 @@ PlayOn creates a jailable server data directory. **You must supply UT99 server f
 1. Create the server from skill `games.unreal-tournament-99`.
 2. Copy OldUnreal dedicated server files into `game/` (so `ucc` / `ucc-bin` or `UCC.exe` is present).
 3. Start the server from PlayOn (native process). Default game port is **UDP 7777**.
-4. Publish the player panel with join IP:port and client setup.
+4. **Required — player panel:** `panel_publish` with `join_info` + `client_setup` (Multiplayer → Open → `host:7777`). Only visible while the server is starting/running.
 
 ## Players — getting the right client
 
