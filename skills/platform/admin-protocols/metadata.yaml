@@ -1,0 +1,18 @@
+name: platform.admin-protocols
+version: 0.1.0
+description: >
+  Choose the right admin channel — Minecraft RCON, Source/Rust RCON, HTTP REST,
+  or stdin/console — and keep secrets off the player panel.
+tags:
+  - platform
+  - rcon
+  - admin
+containerSupport: none
+adminDialect: none
+requiredTools:
+  - rcon_exec
+  - rcon_say
+  - fs_read
+ports: []
+dependencies:
+  - platform.server-auth

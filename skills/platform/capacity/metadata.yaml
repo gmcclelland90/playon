@@ -1,0 +1,16 @@
+name: platform.capacity
+version: 0.1.0
+description: >
+  Party-box RAM/CPU/disk budgeting — read skill minRamMb, avoid stacking Rust+Palworld
+  on a small host, warn before start.
+tags:
+  - platform
+  - capacity
+  - lan
+containerSupport: none
+adminDialect: none
+requiredTools:
+  - skill_list
+  - servers_list
+ports: []
+dependencies: []

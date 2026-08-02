@@ -271,9 +271,12 @@ export async function steamcmdAppUpdate(args: {
   );
 
   if (exitCode !== 0) {
-    throw new Error(
-      `steamcmd_failed: exit=${exitCode} appId=${args.appId} stderr=${stderr.slice(-400)}`,
-    );
+    const detail = `steamcmd_failed: exit=${exitCode} appId=${args.appId} stderr=${stderr.slice(-400)}`;
+    // 127 = command not found (broken PATH / missing binary after resolve)
+    if (exitCode === 127) {
+      throw new SteamcmdNotFoundError(detail);
+    }
+    throw new Error(detail);
   }
 
   return {

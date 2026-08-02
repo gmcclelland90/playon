@@ -1,0 +1,17 @@
+name: platform.server-auth
+version: 0.1.0
+description: >
+  Game-side auth and secrets: EULA, tokens (GSLT), device login, whitelist/ops,
+  and never leaking passwords onto the player panel.
+tags:
+  - platform
+  - auth
+  - secrets
+containerSupport: none
+adminDialect: none
+requiredTools:
+  - fs_read
+  - fs_write
+  - panel_publish
+ports: []
+dependencies: []

@@ -1,0 +1,15 @@
+name: platform.hostability
+version: 0.1.0
+description: >
+  Decide whether a game can be self-hosted as a dedicated server, is listen/P2P-only,
+  or is publisher-cloud-only — and refuse cleanly when PlayOn cannot help.
+tags:
+  - platform
+  - hostability
+containerSupport: none
+adminDialect: none
+requiredTools:
+  - skill_list
+  - skill_read
+ports: []
+dependencies: []

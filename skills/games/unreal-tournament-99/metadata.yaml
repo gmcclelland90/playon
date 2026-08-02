@@ -19,6 +19,20 @@ os:
 arch:
   - amd64
 containerSupport: none
+adminDialect: none
+join:
+  clientSetupNotes: >
+    Launch Unreal Tournament 99 → Multiplayer → Open → {{endpoint}}
+native:
+  binary: ucc-bin
+  binaryWindows: UCC.exe
+  preferStartScript: true
+  args:
+    - "server"
+    - "DM-Turbine?game=Botpack.DeathMatchPlus"
+    - "ini=UnrealTournament.ini"
+    - "port=7777"
+minRamMb: 512
 requiredTools:
   - servers_create_from_skill
   - servers_start
@@ -31,7 +45,11 @@ ports:
   - name: query
     protocol: udp
     default: 7778
-dependencies: []
+dependencies:
+  - platform.native-process
+  - platform.networking-lan
+  - platform.capacity
+  - platform.hostability
 healthChecks:
   - id: process
     type: process_running

@@ -6,6 +6,7 @@ tags:
   - minecraft
   - paper
   - reference
+  - docker
 theme:
   id: paper
   primaryHue: 145
@@ -15,6 +16,19 @@ os:
 arch:
   - amd64
 containerSupport: full
+dockerImage: itzg/minecraft-server:latest
+dockerDataMount: /data
+dockerEnv:
+  EULA: "TRUE"
+  TYPE: PAPER
+  ONLINE_MODE: "FALSE"
+  MAX_PLAYERS: "20"
+  ENABLE_RCON: "true"
+adminDialect: mc_rcon
+join:
+  clientSetupNotes: >
+    Open Minecraft Java Edition → Multiplayer → Direct Connection → {{endpoint}}
+minRamMb: 2048
 requiredTools:
   - servers_create_from_skill
   - servers_start
@@ -28,7 +42,13 @@ ports:
   - name: rcon
     protocol: tcp
     default: 25575
-dependencies: []
+dependencies:
+  - platform.docker-basics
+  - platform.networking-lan
+  - platform.admin-protocols
+  - platform.server-auth
+  - platform.capacity
+  - platform.hostability
 healthChecks:
   - id: process
     type: process_running
