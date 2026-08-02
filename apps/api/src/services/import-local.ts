@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
+import yaml from "js-yaml";
 import { nanoid } from "nanoid";
+import { z } from "zod";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db/client.js";
 import { servers } from "../db/schema.js";
@@ -9,6 +11,49 @@ import { SkillDraftService } from "./skill-drafts.js";
 import { loadSkillMetadata, listSkills } from "./skills.js";
 import type { ServerRecord, ServerService } from "./servers.js";
 import type { SnapshotService } from "./snapshots.js";
+
+const ImportHintRuleSchema = z.object({
+  id: z.string().min(1),
+  anyFiles: z.array(z.string().min(1)).default([]),
+  suggestedGame: z.string().optional(),
+  suggestedSkillName: z.string().optional(),
+});
+
+const ImportHintsFileSchema = z.object({
+  version: z.number().int().positive().default(1),
+  hints: z.array(ImportHintRuleSchema).default([]),
+});
+
+type ImportHintRule = z.infer<typeof ImportHintRuleSchema>;
+
+function resolveImportHintsPath(skillsRoots: string[]): string | null {
+  for (const root of skillsRoots) {
+    const beside = path.join(path.dirname(root), "import-hints.yaml");
+    if (fs.existsSync(beside)) return beside;
+    const inside = path.join(root, "import-hints.yaml");
+    if (fs.existsSync(inside)) return inside;
+  }
+  return null;
+}
+
+function loadImportHintRules(skillsRoots: string[]): ImportHintRule[] {
+  const file = resolveImportHintsPath(skillsRoots);
+  if (!file) return [];
+  try {
+    const raw = yaml.load(fs.readFileSync(file, "utf8"));
+    return ImportHintsFileSchema.parse(raw).hints;
+  } catch {
+    return [];
+  }
+}
+
+function sourceHasAnyFile(sourcePath: string, relPaths: string[]): boolean {
+  for (const rel of relPaths) {
+    const abs = path.join(sourcePath, ...rel.split(/[/\\]/).filter(Boolean));
+    if (fs.existsSync(abs)) return true;
+  }
+  return false;
+}
 
 export type ImportLocalArgs = {
   sourcePath: string;
@@ -58,8 +103,14 @@ function dirSizeBytes(root: string): number {
   return total;
 }
 
-/** Lightweight layout sniffers — not a full game detector. */
-export function detectImportHints(sourcePath: string): {
+/**
+ * Lightweight layout sniffers driven by skills/import-hints.yaml.
+ * Generic tree markers stay here; game → skill mapping lives in the data file.
+ */
+export function detectImportHints(
+  sourcePath: string,
+  skillsRoots: string[] = [],
+): {
   hints: string[];
   suggestedGame?: string;
   suggestedSkillName?: string;
@@ -67,18 +118,16 @@ export function detectImportHints(sourcePath: string): {
   const hints: string[] = [];
   const names = new Set(fs.readdirSync(sourcePath).map((n) => n.toLowerCase()));
 
-  if (names.has("server.properties") || names.has("paper.yml") || names.has("spigot.yml")) {
-    hints.push("minecraft_java_layout");
+  for (const rule of loadImportHintRules(skillsRoots)) {
+    if (!sourceHasAnyFile(sourcePath, rule.anyFiles)) continue;
+    hints.push(rule.id);
     return {
       hints,
-      suggestedGame: "Minecraft",
-      suggestedSkillName: "games.minecraft-paper",
+      suggestedGame: rule.suggestedGame,
+      suggestedSkillName: rule.suggestedSkillName,
     };
   }
-  if (names.has("valheim_server") || (names.has("start_server.sh") && names.has("steamapps"))) {
-    hints.push("valheimish_layout");
-    return { hints, suggestedGame: "Valheim" };
-  }
+
   if (names.has("game") && fs.existsSync(path.join(sourcePath, "skill.json"))) {
     hints.push("playon_server_tree");
   }
@@ -99,7 +148,7 @@ export class ImportLocalService {
 
   async importFromPath(args: ImportLocalArgs): Promise<ImportLocalReport> {
     const source = assertImportableSource(args.sourcePath, this.config.dataRoot);
-    const detection = detectImportHints(source);
+    const detection = detectImportHints(source, this.config.skillsRoots);
     const followUp: string[] = [];
 
     let skillName = args.skillName?.trim() || detection.suggestedSkillName;

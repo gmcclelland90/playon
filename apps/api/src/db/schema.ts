@@ -1,4 +1,4 @@
-import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable("users", {
   id: text("id").primaryKey(),
@@ -104,19 +104,10 @@ export const settings = sqliteTable("settings", {
   valueJson: text("value_json").notNull(),
 });
 
-export const agentProgress = sqliteTable(
-  "agent_progress",
-  {
-    serverId: text("server_id")
-      .notNull()
-      .references(() => servers.id),
-    persona: text("persona").notNull(),
-    xp: integer("xp").notNull().default(0),
-    level: integer("level").notNull().default(1),
-    title: text("title").notNull().default("Rookie"),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
-  },
-  (t) => ({
-    pk: primaryKey({ columns: [t.serverId, t.persona] }),
-  }),
-);
+export const agentProgress = sqliteTable("agent_progress", {
+  persona: text("persona").primaryKey(),
+  xp: integer("xp").notNull().default(0),
+  level: integer("level").notNull().default(1),
+  title: text("title").notNull().default("Rookie"),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});

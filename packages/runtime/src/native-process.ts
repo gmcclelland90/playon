@@ -27,7 +27,12 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
       shell: false,
       windowsHide: true,
       stdio: "ignore",
+      // Detach long-running game servers so start() cannot stall on child I/O/session.
+      detached: process.platform !== "win32",
     });
+    if (process.platform !== "win32") {
+      child.unref();
+    }
 
     const info: ProcessInfo = {
       id,
@@ -51,7 +56,17 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
   async stop(id: string): Promise<void> {
     const tracked = this.require(id);
     if (tracked.info.status !== "running") return;
-    tracked.child.kill();
+    const pid = tracked.child.pid;
+    if (pid && process.platform !== "win32") {
+      try {
+        // Detached spawns get their own process group — kill the group, not only the shell.
+        process.kill(-pid, "SIGTERM");
+      } catch {
+        tracked.child.kill("SIGTERM");
+      }
+    } else {
+      tracked.child.kill();
+    }
     tracked.info.status = "stopped";
     tracked.info.pid = undefined;
   }

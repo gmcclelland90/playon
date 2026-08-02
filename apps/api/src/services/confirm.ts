@@ -25,6 +25,7 @@ export class ConfirmService implements ConfirmGate {
     this.events.publish({
       type: "confirm.required",
       requestId,
+      toolName: request.toolName,
       summary: request.summary,
     });
 

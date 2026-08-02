@@ -95,15 +95,30 @@ export class PanelService {
     return published;
   }
 
-  /** Replace all panel blocks for a server (used on start/stop status updates). */
+  /** Replace all panel blocks for a server (used on start/status updates). */
   async replaceForServer(
     serverId: string,
     blocks: Array<z.infer<typeof PublishBlockSchema>>,
   ): Promise<PanelBlockRecord[]> {
     await this.db.delete(panelBlocks).where(eq(panelBlocks.serverId, serverId));
+    if (blocks.length === 0) {
+      await this.notifyUpdated();
+      return [];
+    }
     return this.publish({ serverId, blocks });
   }
 
+  /** Remove every panel block for a server (stop / delete). */
+  async clearForServer(serverId: string): Promise<void> {
+    await this.db.delete(panelBlocks).where(eq(panelBlocks.serverId, serverId));
+    await this.notifyUpdated();
+  }
+
+  /** Wipe the entire player panel (lab reset / host cleanup). */
+  async clearAll(): Promise<void> {
+    await this.db.delete(panelBlocks);
+    await this.notifyUpdated();
+  }
 
   async recordInput(_args: {
     blockId?: string;

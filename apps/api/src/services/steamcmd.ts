@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
+import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 import { resolveInJail } from "@playon/runtime";
@@ -12,7 +13,12 @@ export interface SteamcmdRunResult {
   stderr: string;
   installDir: string;
   appId: number;
+  /** True when PlayOn downloaded SteamCMD this call. */
+  provisioned?: boolean;
 }
+
+const STEAMCMD_LINUX_URL =
+  "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz";
 
 function candidateBinaries(env: NodeJS.ProcessEnv = process.env): string[] {
   const fromEnv = [
@@ -21,7 +27,7 @@ function candidateBinaries(env: NodeJS.ProcessEnv = process.env): string[] {
     env.STEAMCMD_PATH?.trim(),
   ].filter(Boolean) as string[];
 
-  const home = os.homedir();
+  const home = env.HOME?.trim() || env.USERPROFILE?.trim() || os.homedir();
   const extras =
     process.platform === "win32"
       ? [
@@ -31,6 +37,7 @@ function candidateBinaries(env: NodeJS.ProcessEnv = process.env): string[] {
         ]
       : [
           path.join(home, "steamcmd", "steamcmd.sh"),
+          // System packages only — do not hardcode a specific user home.
           "/usr/games/steamcmd",
           "/usr/bin/steamcmd",
           "/opt/steamcmd/steamcmd.sh",
@@ -61,9 +68,10 @@ export function findSteamcmdBinary(env: NodeJS.ProcessEnv = process.env): string
 
 export class SteamcmdNotFoundError extends Error {
   readonly code = "steamcmd_not_found";
-  constructor() {
+  constructor(detail?: string) {
     super(
-      "steamcmd_not_found: install SteamCMD on this host (or set PLAYON_STEAMCMD to the binary path), then retry",
+      detail ??
+        "steamcmd_not_found: install SteamCMD on this host (or set PLAYON_STEAMCMD to the binary path), then retry",
     );
     this.name = "SteamcmdNotFoundError";
   }
@@ -74,11 +82,12 @@ function runProcess(
   args: string[],
   cwd: string,
   timeoutMs: number,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
-      env: process.env,
+      env,
       shell: false,
       windowsHide: true,
     });
@@ -107,9 +116,119 @@ function runProcess(
   });
 }
 
+function downloadFile(url: string, dest: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const file = fs.createWriteStream(dest);
+    https
+      .get(url, (res) => {
+        if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          file.close();
+          fs.unlinkSync(dest);
+          downloadFile(res.headers.location, dest).then(resolve, reject);
+          return;
+        }
+        if (res.statusCode !== 200) {
+          file.close();
+          fs.unlinkSync(dest);
+          reject(new Error(`steamcmd_download_failed: HTTP ${res.statusCode}`));
+          return;
+        }
+        res.pipe(file);
+        file.on("finish", () => file.close(() => resolve()));
+      })
+      .on("error", (err) => {
+        file.close();
+        try {
+          fs.unlinkSync(dest);
+        } catch {
+          /* ignore */
+        }
+        reject(err);
+      });
+  });
+}
+
+function defaultInstallRoot(env: NodeJS.ProcessEnv): string {
+  const fromEnv = env.PLAYON_STEAMCMD_HOME?.trim();
+  if (fromEnv) return path.resolve(fromEnv);
+  const home = env.HOME?.trim() || env.USERPROFILE?.trim() || os.homedir();
+  return path.join(home, "steamcmd");
+}
+
+/**
+ * Download + extract official Linux SteamCMD into installRoot.
+ * Returns path to steamcmd.sh after a self-update `+quit`.
+ */
+export async function installSteamcmdLinux(opts?: {
+  installRoot?: string;
+  env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+}): Promise<string> {
+  if (process.platform === "win32") {
+    throw new SteamcmdNotFoundError(
+      "steamcmd_not_found: auto-install is Linux-only; install SteamCMD and set PLAYON_STEAMCMD",
+    );
+  }
+  const env = opts?.env ?? process.env;
+  const installRoot = opts?.installRoot ?? defaultInstallRoot(env);
+  fs.mkdirSync(installRoot, { recursive: true });
+  const archive = path.join(installRoot, "steamcmd_linux.tar.gz");
+  await downloadFile(STEAMCMD_LINUX_URL, archive);
+  const extract = await runProcess("tar", ["-xzf", archive, "-C", installRoot], installRoot, 120_000, env);
+  if (extract.exitCode !== 0) {
+    throw new Error(`steamcmd_extract_failed: ${extract.stderr.slice(-300)}`);
+  }
+  try {
+    fs.unlinkSync(archive);
+  } catch {
+    /* ignore */
+  }
+  const binary = path.join(installRoot, "steamcmd.sh");
+  if (!fs.existsSync(binary)) {
+    throw new Error(`steamcmd_install_failed: missing ${binary}`);
+  }
+  fs.chmodSync(binary, 0o755);
+  // First run self-updates the client (may exit non-zero once — still OK if binary stays).
+  await runProcess(binary, ["+quit"], installRoot, opts?.timeoutMs ?? 180_000, env).catch(() => undefined);
+  if (!fs.existsSync(binary)) {
+    throw new Error("steamcmd_install_failed: steamcmd.sh disappeared after bootstrap");
+  }
+  return path.resolve(binary);
+}
+
+function autoInstallEnabled(env: NodeJS.ProcessEnv): boolean {
+  const raw = env.PLAYON_STEAMCMD_AUTO?.trim().toLowerCase();
+  if (raw === "0" || raw === "false" || raw === "off" || raw === "no") return false;
+  return true;
+}
+
+/**
+ * Find SteamCMD, or on Linux download it into ~/steamcmd (or PLAYON_STEAMCMD_HOME).
+ */
+export async function ensureSteamcmdBinary(opts?: {
+  env?: NodeJS.ProcessEnv;
+  autoInstall?: boolean;
+  installRoot?: string;
+}): Promise<{ binary: string; provisioned: boolean }> {
+  const env = opts?.env ?? process.env;
+  const existing = findSteamcmdBinary(env);
+  if (existing) return { binary: existing, provisioned: false };
+
+  const allowAuto = opts?.autoInstall ?? autoInstallEnabled(env);
+  if (!allowAuto || process.platform === "win32") {
+    throw new SteamcmdNotFoundError();
+  }
+
+  const binary = await installSteamcmdLinux({
+    installRoot: opts?.installRoot ?? defaultInstallRoot(env),
+    env,
+  });
+  return { binary, provisioned: true };
+}
+
 /**
  * Run SteamCMD `+app_update` into a jailed install directory under the server data path.
- * Fails loud with `steamcmd_not_found` when the binary is missing — never fakes success.
+ * Auto-provisions SteamCMD on Linux when missing (disable with PLAYON_STEAMCMD_AUTO=0).
  */
 export async function steamcmdAppUpdate(args: {
   serverDataPath: string;
@@ -119,9 +238,13 @@ export async function steamcmdAppUpdate(args: {
   validate?: boolean;
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
+  autoInstall?: boolean;
 }): Promise<SteamcmdRunResult> {
-  const binary = findSteamcmdBinary(args.env);
-  if (!binary) throw new SteamcmdNotFoundError();
+  const env = args.env ?? process.env;
+  const { binary, provisioned } = await ensureSteamcmdBinary({
+    env,
+    autoInstall: args.autoInstall,
+  });
 
   const installRel = args.installDirRel?.trim() || "game";
   const installDir = resolveInJail(args.serverDataPath, installRel);
@@ -144,6 +267,7 @@ export async function steamcmdAppUpdate(args: {
     cmdArgs,
     cwd,
     args.timeoutMs ?? 600_000,
+    env,
   );
 
   if (exitCode !== 0) {
@@ -160,6 +284,7 @@ export async function steamcmdAppUpdate(args: {
     stderr: stderr.slice(-2_000),
     installDir,
     appId: args.appId,
+    provisioned,
   };
 }
 
@@ -167,9 +292,8 @@ export async function steamcmdAppUpdate(args: {
 export async function steamcmdProbe(
   env: NodeJS.ProcessEnv = process.env,
   timeoutMs = 60_000,
-): Promise<{ ok: true; binary: string; exitCode: number }> {
-  const binary = findSteamcmdBinary(env);
-  if (!binary) throw new SteamcmdNotFoundError();
-  const { exitCode } = await runProcess(binary, ["+quit"], path.dirname(binary), timeoutMs);
-  return { ok: true, binary, exitCode };
+): Promise<{ ok: true; binary: string; exitCode: number; provisioned?: boolean }> {
+  const { binary, provisioned } = await ensureSteamcmdBinary({ env });
+  const { exitCode } = await runProcess(binary, ["+quit"], path.dirname(binary), timeoutMs, env);
+  return { ok: true, binary, exitCode, provisioned };
 }

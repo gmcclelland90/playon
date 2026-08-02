@@ -37,6 +37,8 @@ export interface DockerAdapter {
   create(spec: ContainerSpec): Promise<ContainerInfo>;
   start(id: string): Promise<void>;
   stop(id: string): Promise<void>;
+  /** Remove container (and optionally volumes). Id may be name or hash. */
+  remove(id: string): Promise<void>;
   inspect(id: string): Promise<ContainerInfo>;
   logs(id: string, tail?: number): Promise<string[]>;
   /** Stream new log lines until abort(). Optional for adapters that only support snapshots. */

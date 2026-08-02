@@ -8,6 +8,7 @@ Canonical automated build/test host for PlayOn (Docker + Node).
 - User: `playon`
 - Workspace: `/home/playon/src/playon`
 - Sync: **git** (`git pull --ff-only` from `origin`)
+- Remote: `git@github.com:gmcclelland90/playon.git` (read-only deploy key `~/.ssh/playon_deploy`)
 
 ## Toolchain
 

@@ -49,13 +49,25 @@ function tempEnv(): {
   return { db, config, importer, root };
 }
 
+function findRepoRoot(start: string): string {
+  let dir = path.resolve(start);
+  for (let i = 0; i < 8; i++) {
+    if (fs.existsSync(path.join(dir, "pnpm-workspace.yaml"))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return path.resolve(start, "../../..");
+}
+
 describe("detectImportHints", () => {
-  it("detects minecraft paper layouts", () => {
+  it("detects minecraft paper layouts via import-hints.yaml", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mc-"));
     try {
       fs.writeFileSync(path.join(dir, "server.properties"), "motd=hi\n");
       fs.writeFileSync(path.join(dir, "paper.yml"), "x: 1\n");
-      const hints = detectImportHints(dir);
+      const gamesRoot = path.join(findRepoRoot(process.cwd()), "skills", "games");
+      const hints = detectImportHints(dir, [gamesRoot]);
       expect(hints.suggestedSkillName).toBe("games.minecraft-paper");
       expect(hints.hints).toContain("minecraft_java_layout");
     } finally {

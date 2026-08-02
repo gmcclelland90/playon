@@ -17,20 +17,31 @@ class PlayOnSocket {
   private status: WsStatus = "closed";
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private shouldRun = false;
+  /** Bumps on each intentional disconnect so stale onclose handlers cannot reconnect. */
+  private generation = 0;
 
   connect(): void {
     this.shouldRun = true;
-    if (this.socket && (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)) {
+    if (
+      this.socket &&
+      (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING)
+    ) {
       return;
     }
     this.setStatus("connecting");
+    const generation = this.generation;
     const socket = new WebSocket(wsUrl());
     this.socket = socket;
 
     socket.onopen = () => {
+      if (this.socket !== socket || this.generation !== generation) {
+        socket.close();
+        return;
+      }
       this.setStatus("open");
     };
     socket.onmessage = (msg) => {
+      if (this.socket !== socket || this.generation !== generation) return;
       if (typeof msg.data !== "string") return;
       try {
         const parsed = WsEventSchema.safeParse(JSON.parse(msg.data));
@@ -41,22 +52,33 @@ class PlayOnSocket {
       }
     };
     socket.onclose = () => {
+      // Ignore close from a superseded socket (Strict Mode remount / rapid reconnect races).
+      if (this.socket !== socket && this.generation === generation) {
+        // socket was replaced; nothing to do
+        return;
+      }
+      if (this.generation !== generation) return;
       this.setStatus("closed");
-      this.socket = null;
+      if (this.socket === socket) this.socket = null;
       if (this.shouldRun) {
         this.reconnectTimer = setTimeout(() => this.connect(), 1500);
       }
     };
     socket.onerror = () => {
-      socket.close();
+      if (this.socket === socket) socket.close();
     };
   }
 
   disconnect(): void {
     this.shouldRun = false;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.socket?.close();
+    this.generation += 1;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    const socket = this.socket;
     this.socket = null;
+    socket?.close();
     this.setStatus("closed");
   }
 

@@ -26,6 +26,7 @@
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium",
     "package:mvp": "node scripts/package-mvp.mjs",
+    "skills:export": "node scripts/export-skill-seeds.mjs",
     "smoke:venice": "pnpm --filter @playon/api smoke:venice",
     "smoke:paper-docker": "node scripts/paper-docker-smoke.mjs",
     "lint": "turbo run lint",

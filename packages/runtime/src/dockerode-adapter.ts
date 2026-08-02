@@ -62,6 +62,15 @@ export class DockerodeAdapter implements DockerAdapter {
     }
   }
 
+  async remove(id: string): Promise<void> {
+    try {
+      await this.docker.getContainer(id).remove({ force: true, v: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/no such container|404/i.test(message)) throw err;
+    }
+  }
+
   async inspect(id: string): Promise<ContainerInfo> {
     const info = await this.docker.getContainer(id).inspect();
     return {

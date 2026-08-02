@@ -1,20 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type { SkillMetadata } from "@playon/shared";
+import { SkillMetadataSchema } from "@playon/shared";
 import { scoreNodeForSkill } from "./placement.js";
 
-const baseSkill: SkillMetadata = {
+const baseSkill = SkillMetadataSchema.parse({
   name: "games.demo",
   version: "1.0.0",
   description: "demo",
-  tags: [],
   os: ["linux"],
   arch: ["amd64"],
   containerSupport: "full",
-  requiredTools: [],
   ports: [{ name: "game", protocol: "tcp", default: 25565 }],
-  dependencies: [],
-  healthChecks: [],
-};
+});
 
 describe("scoreNodeForSkill", () => {
   const now = Date.now();

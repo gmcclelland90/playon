@@ -133,6 +133,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ? env.PLAYON_ADVERTISE_HOST!.trim()
     : detectAdvertiseHost(env);
   const extraCors = parseCorsExtra(env.PLAYON_CORS_ORIGINS);
+  /** `minimal` = platform skills only (library-shaped). `dev` (default) also mounts repo games. */
+  const skillsProfile = (env.PLAYON_SKILLS_PROFILE?.trim() || "dev").toLowerCase();
+  const skillsRoots = [
+    path.join(repoRoot, "skills", "platform"),
+    path.join(dataRoot, "skills"),
+  ];
+  if (skillsProfile !== "minimal") {
+    skillsRoots.unshift(path.join(repoRoot, "skills", "games"));
+  }
 
   return {
     port,
@@ -142,11 +151,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     sessionSecret: env.PLAYON_SESSION_SECRET?.trim() || `dev-${os.hostname()}-playon`,
     llmMode: parseLlmMode(env.PLAYON_LLM_MODE),
     runtimeMode: parseRuntimeMode(env.PLAYON_RUNTIME),
-    skillsRoots: [
-      path.join(repoRoot, "skills", "games"),
-      path.join(repoRoot, "skills", "platform"),
-      path.join(dataRoot, "skills"),
-    ],
+    skillsRoots,
     advertiseHost,
     nodeToken: env.PLAYON_NODE_TOKEN?.trim() || undefined,
     backupRoot: env.PLAYON_BACKUP_ROOT?.trim() || undefined,

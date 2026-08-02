@@ -5,23 +5,27 @@ import { EventHub } from "./event-hub.js";
 describe("ConfirmService", () => {
   it("publishes confirm.required and resolves on approve", async () => {
     const hub = new EventHub();
-    let requestId = "";
+    let published: { requestId: string; toolName: string; summary: string } | undefined;
     hub.subscribe((e) => {
-      if (e.type === "confirm.required") requestId = e.requestId;
+      if (e.type === "confirm.required") {
+        published = { requestId: e.requestId, toolName: e.toolName, summary: e.summary };
+      }
     });
     const confirms = new ConfirmService(hub, 5_000);
 
     const wait = confirms.requestConfirmation({
       toolName: "servers_stop",
-      summary: "stop?",
+      summary: "An agent wants to stop this server.",
       arguments: { serverId: "s1" },
     });
 
     await new Promise((r) => setTimeout(r, 10));
-    expect(requestId).toBeTruthy();
+    expect(published?.requestId).toBeTruthy();
+    expect(published?.toolName).toBe("servers_stop");
+    expect(published?.summary).toBe("An agent wants to stop this server.");
     expect(confirms.size).toBe(1);
-    expect(confirms.resolve(requestId, true)).toBe(true);
-    await expect(wait).resolves.toEqual({ requestId, approved: true });
+    expect(confirms.resolve(published!.requestId, true)).toBe(true);
+    await expect(wait).resolves.toEqual({ requestId: published!.requestId, approved: true });
     expect(confirms.size).toBe(0);
   });
 

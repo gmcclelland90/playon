@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { resolveWorkspaceServerId, workspaceCreateForbidden } from "./tools.js";
 
 describe("workspaceCreateForbidden", () => {
-  it("allows create when unbound", () => {
+  it("allows import/create of a new identity when unbound", () => {
     expect(workspaceCreateForbidden(undefined, "hint")).toBeNull();
   });
 
-  it("blocks create inside a workspace", () => {
+  it("blocks importing a sibling identity inside a workspace", () => {
     const blocked = workspaceCreateForbidden("srv-a", "use install chat");
     expect(blocked).toMatchObject({
       error: "workspace_create_forbidden",

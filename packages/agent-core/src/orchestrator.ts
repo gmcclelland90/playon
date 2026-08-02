@@ -1,3 +1,4 @@
+import { confirmSummary } from "./confirm-summary.js";
 import type { LlmClient, LlmMessage } from "./llm.js";
 import {
   PERSONA_SYSTEM_PROMPTS,
@@ -5,6 +6,8 @@ import {
   type AgentPersona,
 } from "./personas.js";
 import { toLlmToolDefinition, type ToolDefinition, type ToolHandler } from "./tools.js";
+
+export { confirmActionLabel, confirmSummary } from "./confirm-summary.js";
 
 export type { AgentPersona };
 
@@ -65,17 +68,51 @@ export function workspaceSystemPrompt(serverId: string): string {
     `You are working inside PlayOn server workspace workspaceServerId=${serverId}.`,
     "All server-scoped tools default to this server. Do not target other serverIds.",
     "Prefer configuring, starting, stopping, and publishing the panel for this workspace server.",
-    "Creating additional servers from this chat is discouraged unless the host explicitly asks.",
+    "Do not create a sibling server. If you need to start over, call servers_create_from_skill again — it wipes and reinstalls this same server id, then servers_start and panel_publish.",
   ].join(" ");
 }
 
-/** LLM rounds that may include tool calls. Draft→create→start→panel often needs >8. */
-const MAX_TOOL_ITERATIONS = 16;
+/**
+ * LLM rounds that may include tool calls (each round may batch several tools).
+ * Happy-path install should finish in ~4–6; headroom covers confirm gates + one recovery.
+ */
+const MAX_TOOL_ITERATIONS = 24;
 
-function defaultSummary(toolName: string, args: Record<string, unknown>): string {
-  const compact = JSON.stringify(args);
-  const clipped = compact.length > 180 ? `${compact.slice(0, 180)}…` : compact;
-  return `Allow tool \`${toolName}\` with ${clipped}?`;
+const RESUME_USER_RE =
+  /^(continue|resume|keep going|go ahead|go on|proceed)([.!?]|\s+please)?$/i;
+
+const RESUME_SYSTEM_PROMPT = [
+  "The host asked to resume an unfinished install.",
+  "Do only: servers_list (if you lack the server id) → servers_start → panel_publish with join_info + client_setup → brief reply with the join address.",
+  "Do not draft/promote skills, fetch URLs, or browse the filesystem unless servers_start fails.",
+].join(" ");
+
+const SELF_HEAL_SYSTEM_PROMPT = [
+  "A tool just failed. Self-heal: read the error/hint, correct the approach once (different args, alternate skill/command, or a targeted inspect), then finish or explain clearly.",
+  "Do not repeat the same failing tool call with the same arguments.",
+].join(" ");
+
+export function toolResultFailed(result: unknown): boolean {
+  if (!result || typeof result !== "object") return false;
+  const rec = result as Record<string, unknown>;
+  if (typeof rec.error === "string" && rec.error) return true;
+  if (rec.ok === false) return true;
+  return false;
+}
+
+function toolCallKey(name: string, args: Record<string, unknown>): string {
+  return `${name}:${JSON.stringify(args)}`;
+}
+
+function countFailedIdenticalCalls(
+  toolTrace: ToolTraceEntry[],
+  name: string,
+  args: Record<string, unknown>,
+): number {
+  const key = toolCallKey(name, args);
+  return toolTrace.filter(
+    (t) => toolCallKey(t.name, t.arguments) === key && toolResultFailed(t.result),
+  ).length;
 }
 
 function summarizeMaxIterations(toolTrace: ToolTraceEntry[]): string {
@@ -142,6 +179,9 @@ export class Orchestrator {
         content: workspaceSystemPrompt(this.options.workspaceServerId),
       });
     }
+    if (RESUME_USER_RE.test(userMessage.trim())) {
+      systemMessages.push({ role: "system", content: RESUME_SYSTEM_PROMPT });
+    }
     const messages: LlmMessage[] = [
       ...systemMessages,
       ...history,
@@ -151,6 +191,7 @@ export class Orchestrator {
     const toolDefs = this.getToolDefinitions(persona).map(toLlmToolDefinition);
 
     const stream = this.options.stream;
+    let selfHealNudged = false;
 
     for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
       const completion = await this.llm.complete(messages, toolDefs.length ? toolDefs : undefined);
@@ -160,15 +201,15 @@ export class Orchestrator {
         return { persona, content: completion.content, toolTrace };
       }
 
-      if (completion.content) {
-        emitContentTokens(stream, completion.content);
-      }
-
+      // Do not stream interim "thinking" text that accompanies tool calls — models often
+      // restate the plan each round, and concatenating those fragments garbles the UI.
       messages.push({
         role: "assistant",
         content: completion.content,
         toolCalls: completion.toolCalls,
       });
+
+      let roundHadFailure = false;
 
       for (const call of completion.toolCalls) {
         if (!toolsAllowedForPersona(persona, call.name)) {
@@ -181,6 +222,7 @@ export class Orchestrator {
             content: JSON.stringify(err),
             toolCallId: call.id,
           });
+          roundHadFailure = true;
           continue;
         }
 
@@ -201,6 +243,25 @@ export class Orchestrator {
             content: JSON.stringify(err),
             toolCallId: call.id,
           });
+          roundHadFailure = true;
+          continue;
+        }
+
+        if (countFailedIdenticalCalls(toolTrace, call.name, call.arguments) >= 1) {
+          const err = {
+            error: "repeated_failing_tool_call",
+            toolName: call.name,
+            hint: "This exact tool call already failed. Self-heal with a different command/args, inspect once, or explain to the host.",
+          };
+          toolTrace.push({ name: call.name, arguments: call.arguments, result: err });
+          stream?.onTool({ toolName: call.name, status: "failed", detail: err });
+          messages.push({
+            role: "tool",
+            name: call.name,
+            content: JSON.stringify(err),
+            toolCallId: call.id,
+          });
+          roundHadFailure = true;
           continue;
         }
 
@@ -219,7 +280,7 @@ export class Orchestrator {
             } else {
               const decision = await gate.requestConfirmation({
                 toolName: call.name,
-                summary: defaultSummary(call.name, call.arguments),
+                summary: confirmSummary(call.name, call.arguments),
                 arguments: call.arguments,
               });
               if (!decision.approved) {
@@ -244,6 +305,9 @@ export class Orchestrator {
           result = { error: err instanceof Error ? err.message : "tool_failed" };
         }
 
+        if (!failed && toolResultFailed(result)) failed = true;
+        if (failed) roundHadFailure = true;
+
         toolTrace.push({ name: call.name, arguments: call.arguments, result });
         stream?.onTool({
           toolName: call.name,
@@ -256,6 +320,11 @@ export class Orchestrator {
           content: JSON.stringify(result),
           toolCallId: call.id,
         });
+      }
+
+      if (roundHadFailure && !selfHealNudged) {
+        selfHealNudged = true;
+        messages.push({ role: "system", content: SELF_HEAL_SYSTEM_PROMPT });
       }
     }
 

@@ -94,11 +94,9 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 CREATE TABLE IF NOT EXISTS agent_progress (
-  server_id TEXT NOT NULL REFERENCES servers(id),
-  persona TEXT NOT NULL,
+  persona TEXT NOT NULL PRIMARY KEY,
   xp INTEGER NOT NULL DEFAULT 0,
   level INTEGER NOT NULL DEFAULT 1,
   title TEXT NOT NULL DEFAULT 'Rookie',
-  updated_at INTEGER NOT NULL,
-  PRIMARY KEY (server_id, persona)
+  updated_at INTEGER NOT NULL
 );

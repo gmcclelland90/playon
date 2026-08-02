@@ -26,6 +26,9 @@ export class UnavailableDockerAdapter implements DockerAdapter {
   async stop(_id: string): Promise<void> {
     this.fail();
   }
+  async remove(_id: string): Promise<void> {
+    this.fail();
+  }
   async inspect(_id: string): Promise<ContainerInfo> {
     this.fail();
   }

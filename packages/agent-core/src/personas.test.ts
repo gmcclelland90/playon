@@ -18,10 +18,19 @@ describe("personas", () => {
     expect(pickPersona("update the player panel join info")).toBe("player_panel");
     expect(pickPersona("install a fabric mod")).toBe("modder");
     expect(pickPersona("tune server.properties difficulty")).toBe("configurer");
+    expect(pickPersona("perfect. can you now make it always day time")).toBe("configurer");
+    expect(pickPersona("set gamerule keep inventory")).toBe("configurer");
     expect(pickPersona("server won't start diagnose please")).toBe("troubleshooter");
     expect(pickPersona("run a health check / monitor")).toBe("monitor");
     expect(pickPersona("take a backup snapshot")).toBe("backup");
     expect(pickPersona("what can you do?")).toBe("orchestrator");
+    expect(
+      pickPersona(
+        "continue",
+        "I hit the tool step limit before finishing a final reply.\nA server was created but not started — say **continue**",
+      ),
+    ).toBe("installer");
+    expect(pickPersona("continue")).toBe("installer");
   });
 
   it("scopes specialised personas", () => {
