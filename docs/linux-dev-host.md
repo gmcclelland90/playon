@@ -29,6 +29,7 @@ git push origin HEAD
 cd /home/playon/src/playon
 git pull --ff-only
 pnpm install
+set -a && . /etc/playon/playon.env && set +a   # Venice key + runtime (systemd EnvironmentFile)
 pnpm loop:verify              # merge bar (real Venice + Docker)
 pnpm loop:verify:runtime      # + real Paper Docker smoke
 ```
