@@ -17,4 +17,9 @@ describe("agent activity verbs", () => {
   it("provides short labels", () => {
     expect(labelForTool("net_fetch_url", "fetch")).toMatch(/fetch/i);
   });
+
+  it("distinguishes panel list vs publish labels", () => {
+    expect(labelForTool("panel_list", "panel")).toBe("Checking panel…");
+    expect(labelForTool("panel_publish", "panel")).toBe("Updating panel…");
+  });
 });

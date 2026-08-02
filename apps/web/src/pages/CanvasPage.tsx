@@ -3,6 +3,13 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { PublicUser } from "@playon/shared";
 import { api, type ToolTrace } from "../api";
 import {
+  clearConfirmPrefs,
+  hasConfirmPrefs,
+  setAlwaysApproveAll,
+  setAlwaysApproveTool,
+  shouldAutoApprove,
+} from "../confirm-prefs";
+import {
   AgentCanvas,
   type AgentActivityView,
 } from "../components/agent-canvas/AgentCanvas";
@@ -35,27 +42,31 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [message, setMessage] = useState("");
-  const [activityByServer, setActivityByServer] = useState<
+  const [activityByPersona, setActivityByPersona] = useState<
     Record<string, AgentActivityView | undefined>
   >({});
+  /** Persona → last activity event timestamp (for stale idle clear). */
+  const activityUpdatedAtRef = useRef<Record<string, number>>({});
   const [pendingConfirm, setPendingConfirm] = useState<{
     requestId: string;
+    toolName: string;
     summary: string;
   } | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
+  const [autoApproveActive, setAutoApproveActive] = useState(() => hasConfirmPrefs());
   const [celebration, setCelebration] = useState<string | null>(null);
   const [liveConversationId, setLiveConversationId] = useState<string | undefined>();
   const [opsError, setOpsError] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState(false);
   const [dockTab, setDockTab] = useState<DockTab>("chat");
   const chatLogRef = useRef<HTMLDivElement>(null);
 
   const servers = useQuery({ queryKey: ["servers"], queryFn: api.servers, refetchInterval: 4000 });
   const agents = useQuery({
-    queryKey: ["server-agents", selectedId],
-    queryFn: () => api.serverAgents(selectedId!),
-    enabled: Boolean(selectedId),
+    queryKey: ["agents"],
+    queryFn: api.agents,
     refetchInterval: 8000,
   });
   const detail = useQuery({
@@ -111,9 +122,10 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         return;
       }
       if (event.type === "agent.activity") {
-        setActivityByServer((prev) => ({
+        activityUpdatedAtRef.current[event.persona] = Date.now();
+        setActivityByPersona((prev) => ({
           ...prev,
-          [event.serverId]: {
+          [event.persona]: {
             serverId: event.serverId,
             persona: event.persona,
             phase: event.phase,
@@ -124,21 +136,40 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         return;
       }
       if (event.type === "agent.celebration") {
-        if (selectedId && event.serverId !== selectedId) return;
         const msg = event.leveledUp
           ? `${event.title} hit level ${event.level}`
           : `${event.title} +${event.xpGained} XP`;
         setCelebration(msg);
         window.setTimeout(() => setCelebration(null), 4000);
-        void qc.invalidateQueries({ queryKey: ["server-agents", event.serverId] });
+        void qc.invalidateQueries({ queryKey: ["agents"] });
         return;
       }
       if (event.type === "confirm.required") {
-        setPendingConfirm({ requestId: event.requestId, summary: event.summary });
+        if (shouldAutoApprove(event.toolName)) {
+          void api.confirm(event.requestId, true).catch(() => {
+            setPendingConfirm({
+              requestId: event.requestId,
+              toolName: event.toolName,
+              summary: event.summary,
+            });
+            setConfirmError("Could not auto-approve — please confirm manually.");
+          });
+          return;
+        }
+        setPendingConfirm({
+          requestId: event.requestId,
+          toolName: event.toolName,
+          summary: event.summary,
+        });
+        setConfirmError(null);
         return;
       }
       if (event.type === "chat.token") {
         if (liveConversationId && event.conversationId !== liveConversationId) return;
+        // Adopt id from first streamed token when install chat created the conversation mid-turn.
+        if (!liveConversationId && event.conversationId) {
+          setLiveConversationId(event.conversationId);
+        }
         setLines((prev) => {
           const next = [...prev];
           const last = next[next.length - 1];
@@ -146,9 +177,44 @@ export function CanvasPage({ user }: { user: PublicUser }) {
           next[next.length - 1] = { ...last, content: `${last.content}${event.token}` };
           return next;
         });
+        return;
+      }
+      if (event.type === "chat.tool") {
+        if (liveConversationId && event.conversationId !== liveConversationId) return;
+        // Clear any leaked interim text when tools start so the bubble stays clean until the final reply.
+        if (event.status === "started") {
+          setLines((prev) => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            if (!last || last.role !== "assistant" || !last.content) return prev;
+            next[next.length - 1] = { ...last, content: "" };
+            return next;
+          });
+        }
       }
     });
-  }, [liveConversationId, selectedId, qc]);
+  }, [liveConversationId, qc]);
+
+  /** Clear stuck busy labels if idle was dropped (WS gap / crash). */
+  useEffect(() => {
+    const STALE_MS = 90_000;
+    const id = window.setInterval(() => {
+      const now = Date.now();
+      setActivityByPersona((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const [persona, activity] of Object.entries(prev)) {
+          if (!activity || activity.phase === "idle") continue;
+          const updatedAt = activityUpdatedAtRef.current[persona] ?? 0;
+          if (now - updatedAt < STALE_MS) continue;
+          next[persona] = { ...activity, phase: "idle", label: "Idle" };
+          changed = true;
+        }
+        return changed ? next : prev;
+      });
+    }, 15_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   useEffect(() => {
     if (!selectedId) {
@@ -222,8 +288,27 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     },
     onError: (err) => setOpsError((err as Error).message),
   });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteServer(id),
+    onMutate: () => setOpsError(null),
+    onSuccess: async () => {
+      setPendingDelete(false);
+      setSelectedId(undefined);
+      setInstallOpen(false);
+      setConversationId(undefined);
+      setLines([]);
+      await qc.invalidateQueries({ queryKey: ["servers"] });
+      try {
+        localStorage.removeItem("playon.lastServerId");
+      } catch {
+        /* ignore */
+      }
+    },
+    onError: (err) => setOpsError((err as Error).message),
+  });
 
-  const opsBusy = start.isPending || stop.isPending || restart.isPending;
+  const opsBusy =
+    start.isPending || stop.isPending || restart.isPending || remove.isPending;
 
   const chat = useMutation({
     mutationFn: (text: string) => {
@@ -250,7 +335,8 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         if (last?.role === "assistant") {
           next[next.length - 1] = {
             role: "assistant",
-            content: data.reply || last.content,
+            // Prefer the HTTP final reply; streamed interim text must not win if reply is empty.
+            content: typeof data.reply === "string" ? data.reply : last.content,
             tools: data.toolTrace?.length ? data.toolTrace : last.tools,
           };
         }
@@ -264,8 +350,8 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         window.setTimeout(() => setCelebration(null), 4000);
       }
       await qc.invalidateQueries({ queryKey: ["servers"] });
+      await qc.invalidateQueries({ queryKey: ["agents"] });
       if (data.serverId) {
-        await qc.invalidateQueries({ queryKey: ["server-agents", data.serverId] });
         await qc.invalidateQueries({ queryKey: ["server-detail", data.serverId] });
       }
       if (data.serverId && data.serverId !== selectedId) {
@@ -306,11 +392,19 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     chat.mutate(text);
   }
 
-  async function answerConfirm(approved: boolean) {
+  async function answerConfirm(decision: "approve" | "deny" | "always-tool" | "always-all") {
     if (!pendingConfirm || confirmBusy) return;
     setConfirmBusy(true);
     setConfirmError(null);
     try {
+      if (decision === "always-tool") {
+        setAlwaysApproveTool(pendingConfirm.toolName);
+        setAutoApproveActive(true);
+      } else if (decision === "always-all") {
+        setAlwaysApproveAll();
+        setAutoApproveActive(true);
+      }
+      const approved = decision !== "deny";
       await api.confirm(pendingConfirm.requestId, approved);
       setPendingConfirm(null);
     } catch (err) {
@@ -320,10 +414,20 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     }
   }
 
+  function resetAutoApprovals() {
+    clearConfirmPrefs();
+    setAutoApproveActive(false);
+  }
+
   const selected = servers.data?.servers.find((s) => s.id === selectedId);
   const status = detail.data?.server.status ?? selected?.status ?? "unknown";
   const join = detail.data?.runtime.join;
-  const activity = selectedId ? activityByServer[selectedId] : undefined;
+  const activityOnSelected = selectedId
+    ? Object.values(activityByPersona).find(
+        (a) => a && a.serverId === selectedId && a.phase !== "idle",
+      )
+    : undefined;
+  const cast = agents.data?.agents ?? [];
   const dockTitle = selected?.name ?? "New server";
   const dockHint = unbound
     ? `${user.displayName} · tell agents what to install`
@@ -337,7 +441,12 @@ export function CanvasPage({ user }: { user: PublicUser }) {
       <AgentCanvas
         servers={servers.data?.servers ?? []}
         selectedId={selectedId}
-        activityByServer={activityByServer}
+        activityByPersona={activityByPersona}
+        cast={cast.map((a) => ({
+          persona: a.persona,
+          level: a.level,
+          title: a.title,
+        }))}
         onSelect={selectServer}
         onDescribe={openInstallChat}
         onAddServer={openInstallChat}
@@ -472,15 +581,55 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                 >
                   {restart.isPending ? "Restarting…" : "Restart"}
                 </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-compact btn-danger"
+                  disabled={opsBusy}
+                  onClick={() => setPendingDelete(true)}
+                >
+                  Remove
+                </button>
               </div>
+              {pendingDelete ? (
+                <div
+                  className="confirm-banner panel stack"
+                  role="alertdialog"
+                  aria-label="Confirm server removal"
+                >
+                  <p className="status-inline">
+                    Permanently remove <strong>{dockTitle}</strong>? This stops the game, deletes the
+                    Docker container, wipes server files, chats, snapshots, and clears the player
+                    panel for this server.
+                  </p>
+                  <div className="btn-row">
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={remove.isPending}
+                      onClick={() => remove.mutate(selectedId)}
+                    >
+                      {remove.isPending ? "Removing…" : "Yes, remove"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={remove.isPending}
+                      onClick={() => setPendingDelete(false)}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : null}
               {opsError ? <p className="error">{opsError}</p> : null}
 
               <div className="agent-cast">
                 <div className="dash-section-head">
                   <h4>Agent cast</h4>
-                  {activity && activity.phase !== "idle" ? (
+                  {activityOnSelected ? (
                     <span className="muted canvas-busy-hint">
-                      {personaLabel(activity.persona)} · {activity.label ?? activity.verb}
+                      {personaLabel(activityOnSelected.persona)} ·{" "}
+                      {activityOnSelected.label ?? activityOnSelected.verb}
                     </span>
                   ) : null}
                 </div>
@@ -489,15 +638,15 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                     <div className="skeleton-row compact" />
                     <div className="skeleton-row compact" />
                   </div>
-                ) : (agents.data?.agents ?? []).length === 0 ? (
-                  <p className="muted canvas-dock-hint">Agents appear once this server is claimed.</p>
+                ) : cast.length === 0 ? (
+                  <p className="muted canvas-dock-hint">Loading the host cast…</p>
                 ) : (
                   <ul className="agent-cast-list">
-                    {(agents.data?.agents ?? []).map((agent) => {
-                      const busy =
-                        activity &&
-                        activity.persona === agent.persona &&
-                        activity.phase !== "idle";
+                    {cast.map((agent) => {
+                      const personaActivity = activityByPersona[agent.persona];
+                      const busy = Boolean(
+                        personaActivity && personaActivity.phase !== "idle",
+                      );
                       return (
                         <li
                           key={agent.persona}
@@ -520,20 +669,58 @@ export function CanvasPage({ user }: { user: PublicUser }) {
             </div>
           ) : null}
 
+          {unbound ? (
+            <div className="agent-cast">
+              <div className="dash-section-head">
+                <h4>Agent cast</h4>
+              </div>
+              {agents.isLoading ? (
+                <div className="skeleton" aria-hidden>
+                  <div className="skeleton-row compact" />
+                </div>
+              ) : (
+                <ul className="agent-cast-list">
+                  {cast.map((agent) => {
+                    const personaActivity = activityByPersona[agent.persona];
+                    const busy = Boolean(
+                      personaActivity && personaActivity.phase !== "idle",
+                    );
+                    return (
+                      <li
+                        key={agent.persona}
+                        className={busy ? "agent-cast-item busy" : "agent-cast-item"}
+                      >
+                        <div>
+                          <strong>{personaLabel(agent.persona)}</strong>
+                          <div className="muted">{agent.title}</div>
+                        </div>
+                        <div className="agent-cast-stats">
+                          <span>Lv {agent.level}</span>
+                          <span className="muted">{agent.xp} XP</span>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          ) : null}
+
           {pendingConfirm ? (
             <div
               className="confirm-banner panel stack"
               role="alertdialog"
-              aria-label="Confirmation required"
+              aria-label="Permission needed"
               aria-busy={confirmBusy || undefined}
             >
+              <strong className="confirm-banner-title">Permission needed</strong>
               <p className="status-inline">{pendingConfirm.summary}</p>
-              <div className="btn-row">
+              <div className="btn-row confirm-actions">
                 <button
                   type="button"
                   className="btn btn-primary"
                   disabled={confirmBusy}
-                  onClick={() => void answerConfirm(true)}
+                  onClick={() => void answerConfirm("approve")}
                 >
                   {confirmBusy ? "Sending…" : "Approve"}
                 </button>
@@ -541,13 +728,38 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                   type="button"
                   className="btn btn-ghost"
                   disabled={confirmBusy}
-                  onClick={() => void answerConfirm(false)}
+                  onClick={() => void answerConfirm("always-tool")}
+                >
+                  Always allow this
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={confirmBusy}
+                  onClick={() => void answerConfirm("always-all")}
+                >
+                  Always allow all tools
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={confirmBusy}
+                  onClick={() => void answerConfirm("deny")}
                 >
                   Deny
                 </button>
               </div>
               {confirmError ? <p className="error">{confirmError}</p> : null}
             </div>
+          ) : null}
+
+          {autoApproveActive && !pendingConfirm ? (
+            <p className="confirm-prefs-note muted">
+              Some agent actions are auto-approved.{" "}
+              <button type="button" className="linkish" onClick={resetAutoApprovals}>
+                Reset
+              </button>
+            </p>
           ) : null}
 
           <div

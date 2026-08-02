@@ -7,7 +7,7 @@ import { cors } from "hono/cors";
 import { and, asc, count, desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import type { LlmMessage } from "@playon/agent-core";
+import type { ConfirmGate, LlmMessage } from "@playon/agent-core";
 import { pickPersona } from "@playon/agent-core";
 import {
   BootstrapOwnerSchema,
@@ -745,6 +745,22 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     }
   });
 
+  app.delete("/api/servers/:id", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "servers.manage")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    try {
+      const removed = await serverService.remove(c.req.param("id"));
+      await panelService.clearForServer(removed.id);
+      return c.json({ ok: true, removed });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "delete_failed";
+      const status = message.startsWith("unknown_server") ? 404 : 400;
+      return c.json({ error: message }, status);
+    }
+  });
+
   app.post("/api/servers/:id/restart", async (c) => {
     const user = c.get("user");
     if (!user || !roleAtLeast(user.role, "operator")) {
@@ -791,7 +807,17 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
 
   app.get("/api/panel", async (c) => {
     const serverId = c.req.query("serverId");
-    const blocks = await panelService.list(serverId);
+    let blocks = await panelService.list(serverId);
+    // Player panel is join-first: only show blocks for currently running servers
+    // (unless a specific serverId filter was requested).
+    if (!serverId) {
+      const running = new Set(
+        (await serverService.list())
+          .filter((s) => s.status === "running")
+          .map((s) => s.id),
+      );
+      blocks = blocks.filter((b) => !b.serverId || running.has(b.serverId));
+    }
     const theme = resolvePanelTheme(config, blocks);
     const payload = {
       blocks: blocks.map((b) => ({
@@ -1030,18 +1056,14 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       return c.json({ error: message }, status);
     }
   });
-  app.get("/api/servers/:id/agents", async (c) => {
+  app.get("/api/agents", async (c) => {
     const user = c.get("user");
     if (!user || !can(user.role, "servers.manage")) {
       return c.json({ error: "forbidden" }, 403);
     }
-    const serverId = c.req.param("id");
-    const server = await serverService.get(serverId);
-    if (!server) return c.json({ error: "not_found" }, 404);
-    const list = await agentProgress.listCast(serverId);
+    const list = await agentProgress.listCast();
     return c.json({
       agents: list.map((a) => ({
-        serverId: a.serverId,
         persona: a.persona,
         xp: a.xp,
         level: a.level,
@@ -1415,6 +1437,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         role: row.role as "user" | "assistant",
         content: row.content,
       }));
+    const conversationContext = priorMessages.map((m) => m.content).join("\n");
 
     await db.insert(messages).values({
       id: nanoid(),
@@ -1424,31 +1447,55 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       createdAt: now,
     });
 
+    const persona = pickPersona(body.message, conversationContext);
+    /** Mutable: unbound create binds activity to the new server mid-turn. */
+    let activityServerId = workspaceServerId;
+    const publishActivity = (
+      phase: "thinking" | "tool_start" | "tool_done" | "tool_fail" | "confirm_wait" | "idle",
+      opts?: { toolName?: string; verb?: ReturnType<typeof verbForTool>; label?: string },
+    ) => {
+      if (!activityServerId) return;
+      const verb = opts?.verb ?? "other";
+      eventHub.publish({
+        type: "agent.activity",
+        serverId: activityServerId,
+        conversationId,
+        persona,
+        phase,
+        verb,
+        toolName: opts?.toolName,
+        label:
+          opts?.label ??
+          (phase === "thinking"
+            ? "Thinking…"
+            : phase === "idle"
+              ? "Idle"
+              : phase === "confirm_wait"
+                ? "Waiting for confirm…"
+                : undefined),
+      });
+    };
+
     try {
       const llm = await createLlmClient(db, config);
-      const persona = pickPersona(body.message);
-      /** Mutable: unbound create binds activity to the new server mid-turn. */
-      let activityServerId = workspaceServerId;
-      const publishActivity = (
-        phase: "thinking" | "tool_start" | "tool_done" | "tool_fail" | "idle",
-        opts?: { toolName?: string; verb?: ReturnType<typeof verbForTool>; label?: string },
-      ) => {
-        if (!activityServerId) return;
-        const verb = opts?.verb ?? "other";
-        eventHub.publish({
-          type: "agent.activity",
-          serverId: activityServerId,
-          conversationId,
-          persona,
-          phase,
-          verb,
-          toolName: opts?.toolName,
-          label: opts?.label ?? (phase === "thinking" ? "Thinking…" : phase === "idle" ? "Idle" : undefined),
-        });
+
+      const confirmGate: ConfirmGate = {
+        async requestConfirmation(request) {
+          publishActivity("confirm_wait", {
+            toolName: request.toolName,
+            verb: verbForTool(request.toolName),
+            label: "Waiting for confirm…",
+          });
+          try {
+            return await confirmService.requestConfirmation(request);
+          } finally {
+            publishActivity("thinking", { label: "Thinking…", verb: "other" });
+          }
+        },
       };
 
       const orchestrator = createOrchestrator(db, config, llm, {
-        confirmGate: confirmService,
+        confirmGate,
         eventHub,
         workspaceServerId,
         stream: {
@@ -1485,6 +1532,10 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
               verb,
               label: labelForTool(toolName, verb),
             });
+            // Don't leave the last tool label stuck while the LLM continues.
+            if (status === "completed" || status === "failed") {
+              publishActivity("thinking", { label: "Thinking…", verb: "other" });
+            }
           },
         },
       });
@@ -1521,13 +1572,13 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       }
 
       const awards = boundServerId
-        ? await agentProgress.awardForTools(boundServerId, result.persona, result.toolTrace)
+        ? await agentProgress.awardForTools(result.persona, result.toolTrace)
         : [];
       const celebrations = awards.filter((a) => a.celebrate);
       for (const award of celebrations) {
         eventHub.publish({
           type: "agent.celebration",
-          serverId: award.serverId,
+          serverId: boundServerId!,
           persona: award.persona,
           reason: award.reason,
           xpGained: award.xpGained,
@@ -1535,11 +1586,6 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           title: award.progress.title,
           leveledUp: award.leveledUp,
         });
-      }
-
-      if (boundServerId) {
-        activityServerId = boundServerId;
-        publishActivity("idle");
       }
 
       const safeReply = redactString(result.content);
@@ -1552,9 +1598,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       });
 
       const stored = await getSetting<LlmSettings>(db, LLM_SETTINGS_KEY);
-      const progress = boundServerId
-        ? await agentProgress.get(boundServerId, result.persona)
-        : undefined;
+      const progress = boundServerId ? await agentProgress.get(result.persona) : undefined;
 
       return c.json({
         conversationId,
@@ -1565,7 +1609,6 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         toolTrace: result.toolTrace,
         agentProgress: progress
           ? {
-              serverId: progress.serverId,
               persona: progress.persona,
               xp: progress.xp,
               level: progress.level,
@@ -1573,7 +1616,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
             }
           : undefined,
         celebrations: celebrations.map((a) => ({
-          serverId: a.serverId,
+          serverId: boundServerId,
           persona: a.persona,
           reason: a.reason,
           xpGained: a.xpGained,
@@ -1582,12 +1625,13 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           leveledUp: a.leveledUp,
         })),
       });
-
     } catch (err) {
       const messageText = err instanceof Error ? err.message : "chat_failed";
       console.error("chat failed:", messageText);
       const status = messageText.includes("llm_api_key_required") ? 400 : 502;
       return c.json({ error: messageText }, status);
+    } finally {
+      publishActivity("idle");
     }
   });
 

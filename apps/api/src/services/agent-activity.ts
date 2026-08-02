@@ -58,6 +58,10 @@ export function verbForTool(toolName: string): AgentActivityVerb {
 }
 
 export function labelForTool(toolName: string, verb: AgentActivityVerb): string {
+  if (toolName === "panel_list") return "Checking panel…";
+  if (toolName === "panel_publish" || toolName.startsWith("panel_")) {
+    return "Updating panel…";
+  }
   const map: Record<AgentActivityVerb, string> = {
     fetch: "Fetching…",
     search: "Searching…",
