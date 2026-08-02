@@ -19,6 +19,8 @@ export type AgentCastView = {
 
 type Props = {
   servers: ServerRow[];
+  /** True while the servers query has not settled — avoid false empty CTA. */
+  serversLoading?: boolean;
   selectedId?: string;
   /** Latest activity keyed by persona (global cast). */
   activityByPersona: Record<string, AgentActivityView | undefined>;
@@ -146,11 +148,21 @@ function drawCrate(g: Graphics, selected: boolean, running: boolean) {
   g.rect(-30, -18, 60, 8).fill({ color: 0x2a1f28, alpha: 0.5 });
 }
 
-function drawPersonaBody(g: Graphics, persona: string, busy: boolean) {
+function phaseRingColor(phase: string | undefined): number {
+  if (phase === "working" || phase === "tool") return 0x5ed4c8;
+  if (phase === "waiting" || phase === "confirm") return 0xc4a35a;
+  if (phase === "error" || phase === "failed") return 0xe05a5a;
+  return 0xe05a9c;
+}
+
+function drawPersonaBody(g: Graphics, persona: string, busy: boolean, phase?: string) {
   g.clear();
   const color = PERSONA_COLORS[persona] ?? 0x5ed4c8;
-  const body = busy ? 0xe05a9c : color;
-  g.circle(0, 0, 12).fill({ color: body });
+  // Keep persona identity; encode busy with a status ring (not a pink blob).
+  g.circle(0, 0, 12).fill({ color, alpha: busy ? 1 : 0.55 });
+  if (busy) {
+    g.circle(0, 0, 16).stroke({ width: 2.5, color: phaseRingColor(phase), alpha: 0.95 });
+  }
   g.circle(-4, -2.5, 2).fill({ color: 0x111111 });
   g.circle(4, -2.5, 2).fill({ color: 0x111111 });
   // Tiny hat / accent so personas read apart at a glance
@@ -165,11 +177,20 @@ function drawPersonaBody(g: Graphics, persona: string, busy: boolean) {
   }
 }
 
+function prefersReducedMotion(): boolean {
+  try {
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Sparse Pixi stage: flat pan/zoom floor, server crates, global persona sprites.
  */
 export function AgentCanvas({
   servers,
+  serversLoading = false,
   selectedId,
   activityByPersona,
   cast,
@@ -259,7 +280,17 @@ export function AgentCanvas({
         world.y = host.clientHeight / 2;
       };
 
+      const reduceMotion = prefersReducedMotion();
       const tickerFn = () => {
+        if (reduceMotion) {
+          for (const sprite of personasRef.current.values()) {
+            sprite.x = sprite.targetX;
+            sprite.y = sprite.targetY;
+            sprite.root.x = sprite.x;
+            sprite.root.y = sprite.y;
+          }
+          return;
+        }
         const dt = Math.min(app.ticker.deltaMS / 1000, 0.05);
         const t = 1 - Math.exp(-LERP_SPEED * dt);
         for (const sprite of personasRef.current.values()) {
@@ -359,7 +390,9 @@ export function AgentCanvas({
       );
       drawCrate(crate, selected, server.status === "running");
       name.text = server.name;
-      status.text = busyActivity?.label || statusLabel(server.status);
+      status.text = busyActivity
+        ? `${statusLabel(server.status)} · ${busyActivity.label || busyActivity.verb}`
+        : statusLabel(server.status);
     });
 
     for (const [id, node] of nodesRef.current) {
@@ -376,21 +409,22 @@ export function AgentCanvas({
     const world = worldRef.current;
     if (!world || !stageReady) return;
 
-    const roster = cast.length
-      ? cast
-      : [
-          "installer",
-          "monitor",
-          "configurer",
-          "troubleshooter",
-          "backup",
-          "player_panel",
-          "modder",
-          "orchestrator",
-        ].map((persona) => ({ persona, level: 1, title: `Rookie ${persona}` }));
+    // Only draw real cast — never invent placeholder rookies (fake presence).
+    const roster = cast;
+    const busyPersonas = roster.filter((agent) => {
+      const activity = activityByPersona[agent.persona];
+      return Boolean(activity && activity.phase !== "idle");
+    });
+    // Idle cast stays off-map when someone is working; otherwise park at home ring.
+    const showIdleOnMap = busyPersonas.length === 0;
 
     const seen = new Set<string>();
     roster.forEach((agent, index) => {
+      const activity = activityByPersona[agent.persona];
+      const busy = Boolean(activity && activity.phase !== "idle");
+      if (!busy && !showIdleOnMap) {
+        return;
+      }
       seen.add(agent.persona);
       let sprite = personasRef.current.get(agent.persona);
       if (!sprite) {
@@ -413,7 +447,7 @@ export function AgentCanvas({
         root.addChild(label);
 
         const levelText = new Text({
-          text: `Lv${agent.level}`,
+          text: "",
           style: { fill: 0xa898a0, fontSize: 9, fontFamily: "DM Sans, sans-serif" },
         });
         levelText.anchor.set(0.5, 0);
@@ -435,29 +469,38 @@ export function AgentCanvas({
         personasRef.current.set(agent.persona, sprite);
       }
 
-      const activity = activityByPersona[agent.persona];
-      const busy = Boolean(activity && activity.phase !== "idle");
-      drawPersonaBody(sprite.body, agent.persona, busy);
-      sprite.levelText.text = `Lv${agent.level}`;
+      drawPersonaBody(sprite.body, agent.persona, busy, activity?.phase);
+      // Status text encodes verb/phase; level stays in the dock cast list.
+      sprite.levelText.text = busy
+        ? (activity?.label ?? activity?.verb ?? "busy").slice(0, 18)
+        : "";
+      sprite.label.alpha = busy ? 1 : 0.7;
 
-      if (activity && activity.phase !== "idle" && activity.serverId) {
+      if (busy && activity?.serverId) {
         const node = nodesRef.current.get(activity.serverId);
         if (node) {
           const off = verbOffset(activity.verb);
           sprite.targetX = node.x + off.x;
           sprite.targetY = node.y + off.y;
           sprite.lastServerId = activity.serverId;
-        }
-      } else if (sprite.lastServerId) {
-        const node = nodesRef.current.get(sprite.lastServerId);
-        if (node) {
-          sprite.targetX = node.x + 64;
-          sprite.targetY = node.y + (index % 3) * 18 - 18;
+          if (prefersReducedMotion()) {
+            sprite.x = sprite.targetX;
+            sprite.y = sprite.targetY;
+            sprite.root.x = sprite.x;
+            sprite.root.y = sprite.y;
+          }
         }
       } else {
         const home = homeSlot(index, roster.length);
         sprite.targetX = home.x;
         sprite.targetY = home.y;
+        sprite.lastServerId = undefined;
+        if (prefersReducedMotion()) {
+          sprite.x = sprite.targetX;
+          sprite.y = sprite.targetY;
+          sprite.root.x = sprite.x;
+          sprite.root.y = sprite.y;
+        }
       }
     });
 
@@ -479,10 +522,34 @@ export function AgentCanvas({
     return hit?.label;
   };
 
+  const liveActivity = Object.values(activityByPersona).find(
+    (a) => a && a.phase !== "idle",
+  );
+
   return (
     <div className="agent-canvas-host">
-      <div ref={hostRef} className="agent-canvas-stage" aria-hidden={servers.length > 0} />
-      {servers.length === 0 ? (
+      <div
+        ref={hostRef}
+        className="agent-canvas-stage"
+        role="img"
+        aria-label={
+          servers.length === 0
+            ? "Empty LAN map"
+            : `LAN map with ${servers.length} server${servers.length === 1 ? "" : "s"}`
+        }
+      />
+      {serversLoading && servers.length === 0 ? (
+        <div className="agent-canvas-empty" aria-busy="true">
+          <div className="empty-hint">
+            <strong>Loading map…</strong>
+            <p className="muted status-inline">Checking for servers on this host.</p>
+          </div>
+          <div className="skeleton" aria-hidden>
+            <div className="skeleton-row compact" />
+            <div className="skeleton-row" />
+          </div>
+        </div>
+      ) : servers.length === 0 ? (
         <div className="agent-canvas-empty">
           <div className="empty-hint">
             <strong>Your LAN map is empty</strong>
@@ -498,6 +565,14 @@ export function AgentCanvas({
         </div>
       ) : (
         <>
+          <p className="agent-canvas-map-hint muted" aria-hidden>
+            Drag to pan · Scroll to zoom
+          </p>
+          {liveActivity ? (
+            <p className="agent-canvas-live-chip" role="status">
+              {shortPersona(liveActivity.persona)} · {liveActivity.label ?? liveActivity.verb}
+            </p>
+          ) : null}
           <div className="agent-canvas-rail">
             <p className="agent-canvas-rail-label" id="server-list-label">
               Servers

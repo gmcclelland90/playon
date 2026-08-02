@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { PublicUser } from "@playon/shared";
 import { api, type ToolTrace } from "../api";
@@ -55,6 +61,8 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [autoApproveActive, setAutoApproveActive] = useState(() => hasConfirmPrefs());
   const [celebration, setCelebration] = useState<string | null>(null);
+  const [joinCopied, setJoinCopied] = useState(false);
+  const confirmApproveRef = useRef<HTMLButtonElement>(null);
   const [liveConversationId, setLiveConversationId] = useState<string | undefined>();
   const [opsError, setOpsError] = useState<string | null>(null);
   const [sessionError, setSessionError] = useState<string | null>(null);
@@ -419,6 +427,11 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     setAutoApproveActive(false);
   }
 
+  useEffect(() => {
+    if (!pendingConfirm) return;
+    confirmApproveRef.current?.focus();
+  }, [pendingConfirm]);
+
   const selected = servers.data?.servers.find((s) => s.id === selectedId);
   const status = detail.data?.server.status ?? selected?.status ?? "unknown";
   const join = detail.data?.runtime.join;
@@ -440,6 +453,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     <div className="canvas-page">
       <AgentCanvas
         servers={servers.data?.servers ?? []}
+        serversLoading={servers.isLoading || (servers.isFetching && !servers.data)}
         selectedId={selectedId}
         activityByPersona={activityByPersona}
         cast={cast.map((a) => ({
@@ -490,6 +504,46 @@ export function CanvasPage({ user }: { user: PublicUser }) {
             {servers.isError ? (
               <p className="error">{(servers.error as Error).message}</p>
             ) : null}
+            {selected && selectedId ? (
+              <>
+                <div className="canvas-status-row">
+                  <span className={`server-status-pill status-${status}`}>{statusLabel(status)}</span>
+                  {selected.game ? <span className="muted">{selected.game}</span> : null}
+                  {activityOnSelected ? (
+                    <span className="muted canvas-busy-hint">
+                      {personaLabel(activityOnSelected.persona)} ·{" "}
+                      {activityOnSelected.label ?? activityOnSelected.verb}
+                    </span>
+                  ) : null}
+                </div>
+                {join ? (
+                  <div className="canvas-join-card">
+                    <div className="dash-section-head">
+                      <span className="chip">Join</span>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-compact"
+                        onClick={() => {
+                          const endpoint = `${join.address}:${join.port}`;
+                          void navigator.clipboard.writeText(endpoint).then(
+                            () => {
+                              setJoinCopied(true);
+                              window.setTimeout(() => setJoinCopied(false), 2000);
+                            },
+                            () => setJoinCopied(false),
+                          );
+                        }}
+                      >
+                        {joinCopied ? "Copied" : "Copy"}
+                      </button>
+                    </div>
+                    <p className="canvas-join-endpoint">
+                      {join.address}:{join.port}
+                    </p>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
             {selectedId ? (
               <div
                 className="canvas-dock-tabs"
@@ -535,26 +589,10 @@ export function CanvasPage({ user }: { user: PublicUser }) {
               id="dock-panel-ops"
               role="tabpanel"
               aria-labelledby="dock-tab-ops"
+              hidden={dockTab !== "ops"}
             >
-              <div className="canvas-status-row">
-                <span className={`server-status-pill status-${status}`}>{statusLabel(status)}</span>
-                {selected.game ? <span className="muted">{selected.game}</span> : null}
-                {selected.runtimeMode ? (
-                  <span className="muted">
-                    <code>{selected.runtimeMode}</code>
-                  </span>
-                ) : null}
-              </div>
               {statusHint(status) ? (
                 <p className="muted canvas-dock-hint">{statusHint(status)}</p>
-              ) : null}
-              {join ? (
-                <div className="canvas-join-card">
-                  <span className="chip">Join</span>
-                  <p className="canvas-join-endpoint">
-                    {join.address}:{join.port}
-                  </p>
-                </div>
               ) : null}
               <div className="btn-row">
                 <button
@@ -626,12 +664,6 @@ export function CanvasPage({ user }: { user: PublicUser }) {
               <div className="agent-cast">
                 <div className="dash-section-head">
                   <h4>Agent cast</h4>
-                  {activityOnSelected ? (
-                    <span className="muted canvas-busy-hint">
-                      {personaLabel(activityOnSelected.persona)} ·{" "}
-                      {activityOnSelected.label ?? activityOnSelected.verb}
-                    </span>
-                  ) : null}
                 </div>
                 {agents.isLoading ? (
                   <div className="skeleton" aria-hidden>
@@ -712,6 +744,12 @@ export function CanvasPage({ user }: { user: PublicUser }) {
               role="alertdialog"
               aria-label="Permission needed"
               aria-busy={confirmBusy || undefined}
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && !confirmBusy) {
+                  e.preventDefault();
+                  void answerConfirm("deny");
+                }
+              }}
             >
               <strong className="confirm-banner-title">Permission needed</strong>
               <p className="status-inline">{pendingConfirm.summary}</p>
@@ -719,26 +757,11 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                 <button
                   type="button"
                   className="btn btn-primary"
+                  ref={confirmApproveRef}
                   disabled={confirmBusy}
                   onClick={() => void answerConfirm("approve")}
                 >
                   {confirmBusy ? "Sending…" : "Approve"}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  disabled={confirmBusy}
-                  onClick={() => void answerConfirm("always-tool")}
-                >
-                  Always allow this
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  disabled={confirmBusy}
-                  onClick={() => void answerConfirm("always-all")}
-                >
-                  Always allow all tools
                 </button>
                 <button
                   type="button"
@@ -749,6 +772,27 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                   Deny
                 </button>
               </div>
+              <details className="confirm-always-details">
+                <summary>Remember for later</summary>
+                <div className="btn-row confirm-actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-compact"
+                    disabled={confirmBusy}
+                    onClick={() => void answerConfirm("always-tool")}
+                  >
+                    Always allow this tool
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-compact btn-danger"
+                    disabled={confirmBusy}
+                    onClick={() => void answerConfirm("always-all")}
+                  >
+                    Always allow all tools
+                  </button>
+                </div>
+              </details>
               {confirmError ? <p className="error">{confirmError}</p> : null}
             </div>
           ) : null}
@@ -767,6 +811,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
             id="dock-panel-chat"
             role="tabpanel"
             aria-labelledby="dock-tab-chat"
+            hidden={Boolean(selectedId) && dockTab !== "chat"}
             ref={chatLogRef}
             aria-live="polite"
           >

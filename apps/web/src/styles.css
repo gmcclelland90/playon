@@ -492,10 +492,74 @@ p {
   max-width: min(420px, 90vw);
 }
 
+.agent-canvas-map-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 1rem;
+  transform: translateX(-50%);
+  z-index: 2;
+  margin: 0;
+  font-size: 0.75rem;
+  pointer-events: none;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  background: oklch(0.11 0 0 / 0.72);
+  border: 1px solid var(--line);
+}
+
+.agent-canvas-live-chip {
+  position: absolute;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  color: var(--ink);
+  background: oklch(0.78 0.12 185 / 0.14);
+  border: 1px solid oklch(0.78 0.12 185 / 0.45);
+  max-width: min(22rem, calc(100vw - 2rem));
+  text-align: center;
+}
+
 .canvas-dock-tabs {
-  display: none;
+  display: flex;
   gap: 0.35rem;
   margin-top: var(--space-2);
+}
+
+/* Desktop + mobile: Chat is the default focus; Controls is progressive disclosure. */
+.canvas-chat-dock.dock-tab-chat .canvas-maintain {
+  display: none;
+}
+
+.canvas-chat-dock.dock-tab-ops .canvas-chat-log,
+.canvas-chat-dock.dock-tab-ops .canvas-chat-composer {
+  display: none;
+}
+
+.canvas-chat-dock.dock-tab-ops .canvas-maintain {
+  flex: 1 1 auto;
+  overflow: auto;
+  border-bottom: 0;
+}
+
+.confirm-always-details {
+  margin: 0;
+}
+
+.confirm-always-details summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.confirm-always-details[open] summary {
+  margin-bottom: var(--space-2);
 }
 
 .canvas-dock-tabs button {
@@ -518,6 +582,11 @@ p {
 }
 
 @media (max-width: 720px) {
+  .agent-canvas-map-hint {
+    bottom: 0.65rem;
+    font-size: 0.7rem;
+  }
+
   .canvas-chat-dock {
     top: 0;
     left: 0;
@@ -528,25 +597,6 @@ p {
     border-radius: 0;
     border: 0;
     border-top: 1px solid var(--line);
-  }
-
-  .canvas-dock-tabs {
-    display: flex;
-  }
-
-  .canvas-chat-dock.dock-tab-chat .canvas-maintain {
-    display: none;
-  }
-
-  .canvas-chat-dock.dock-tab-ops .canvas-chat-log,
-  .canvas-chat-dock.dock-tab-ops .canvas-chat-composer {
-    display: none;
-  }
-
-  .canvas-chat-dock.dock-tab-ops .canvas-maintain {
-    flex: 1 1 auto;
-    overflow: auto;
-    border-bottom: 0;
   }
 
   .agent-canvas-add {
@@ -1218,11 +1268,7 @@ a.btn {
   padding: 0.75rem 1rem;
   border: 1px solid oklch(0.78 0.12 185 / 0.45);
   border-radius: var(--radius);
-  background: linear-gradient(
-    120deg,
-    oklch(0.62 0.16 353 / 0.22),
-    oklch(0.78 0.12 185 / 0.14)
-  );
+  background: oklch(0.78 0.12 185 / 0.12);
   font-weight: 650;
   letter-spacing: -0.01em;
   animation: celebrate-in 420ms var(--ease);

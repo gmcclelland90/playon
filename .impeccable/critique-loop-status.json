@@ -1,0 +1,63 @@
+{
+  "gate": 30,
+  "updatedAt": "2026-08-02T08:30:00.000Z",
+  "surfaces": {
+    "apps-web-src-pages-canvaspage-tsx": {
+      "target": "apps/web/src/pages/CanvasPage.tsx",
+      "related": ["apps/web/src/components/agent-canvas/AgentCanvas.tsx"],
+      "score": 30,
+      "rounds": 2,
+      "status": "done",
+      "latestSnapshot": null,
+      "lastCommitSha": null
+    },
+    "apps-web-src-pages-playerpage-tsx": {
+      "target": "apps/web/src/pages/PlayerPage.tsx",
+      "score": null,
+      "rounds": 0,
+      "status": "pending",
+      "latestSnapshot": null,
+      "lastCommitSha": null
+    },
+    "apps-web-src-pages-dashboardpage-tsx": {
+      "target": "apps/web/src/pages/DashboardPage.tsx",
+      "score": null,
+      "rounds": 0,
+      "status": "pending",
+      "latestSnapshot": null,
+      "lastCommitSha": null
+    },
+    "apps-web-src-pages-settingspage-tsx": {
+      "target": "apps/web/src/pages/SettingsPage.tsx",
+      "score": null,
+      "rounds": 0,
+      "status": "pending",
+      "latestSnapshot": null,
+      "lastCommitSha": null
+    },
+    "apps-web-src-pages-setuppage-tsx": {
+      "target": "apps/web/src/pages/SetupPage.tsx",
+      "score": null,
+      "rounds": 0,
+      "status": "pending",
+      "latestSnapshot": null,
+      "lastCommitSha": null
+    },
+    "apps-web-src-pages-loginpage-tsx": {
+      "target": "apps/web/src/pages/LoginPage.tsx",
+      "score": null,
+      "rounds": 0,
+      "status": "pending",
+      "latestSnapshot": null,
+      "lastCommitSha": null
+    },
+    "apps-web-src-pages-adminshell-tsx": {
+      "target": "apps/web/src/pages/AdminShell.tsx",
+      "score": null,
+      "rounds": 0,
+      "status": "pending",
+      "latestSnapshot": null,
+      "lastCommitSha": null
+    }
+  }
+}

@@ -1,0 +1,234 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-02T07:56:00.000Z",
+  "title": "Design System: PlayOn",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Stage Rose",
+        "canonical": "oklch(0.62 0.16 353)",
+        "tonalRamp": [
+          "oklch(0.18 0.06 353)",
+          "oklch(0.28 0.09 353)",
+          "oklch(0.38 0.12 353)",
+          "oklch(0.50 0.14 353)",
+          "oklch(0.62 0.16 353)",
+          "oklch(0.72 0.12 353)",
+          "oklch(0.84 0.06 353)",
+          "oklch(0.94 0.02 353)"
+        ]
+      },
+      "accent": {
+        "role": "secondary",
+        "displayName": "Live Cyan",
+        "canonical": "oklch(0.78 0.12 185)",
+        "tonalRamp": [
+          "oklch(0.20 0.04 185)",
+          "oklch(0.32 0.06 185)",
+          "oklch(0.44 0.08 185)",
+          "oklch(0.56 0.10 185)",
+          "oklch(0.68 0.11 185)",
+          "oklch(0.78 0.12 185)",
+          "oklch(0.88 0.06 185)",
+          "oklch(0.95 0.02 185)"
+        ]
+      },
+      "danger": {
+        "role": "tertiary",
+        "displayName": "Alert Ember",
+        "canonical": "oklch(0.68 0.18 25)",
+        "tonalRamp": [
+          "oklch(0.22 0.08 25)",
+          "oklch(0.34 0.12 25)",
+          "oklch(0.46 0.15 25)",
+          "oklch(0.56 0.17 25)",
+          "oklch(0.68 0.18 25)",
+          "oklch(0.78 0.12 25)",
+          "oklch(0.88 0.06 25)",
+          "oklch(0.95 0.02 25)"
+        ]
+      },
+      "bg": {
+        "role": "neutral",
+        "displayName": "Booth Black",
+        "canonical": "oklch(0.11 0 0)",
+        "tonalRamp": [
+          "oklch(0.08 0 0)",
+          "oklch(0.11 0 0)",
+          "oklch(0.16 0.012 353)",
+          "oklch(0.20 0.014 353)",
+          "oklch(0.35 0.01 353)",
+          "oklch(0.55 0.015 353)",
+          "oklch(0.84 0.02 353)",
+          "oklch(0.96 0.012 353)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Panel Matte",
+        "canonical": "oklch(0.16 0.012 353)",
+        "tonalRamp": [
+          "oklch(0.11 0 0)",
+          "oklch(0.14 0.01 353)",
+          "oklch(0.16 0.012 353)",
+          "oklch(0.20 0.014 353)",
+          "oklch(0.28 0.014 353)",
+          "oklch(0.40 0.014 353)",
+          "oklch(0.70 0.02 353)",
+          "oklch(0.96 0.012 353)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "canonical": "oklch(0.96 0.012 353)",
+        "tonalRamp": [
+          "oklch(0.30 0.02 353)",
+          "oklch(0.45 0.02 353)",
+          "oklch(0.60 0.02 353)",
+          "oklch(0.72 0.02 353)",
+          "oklch(0.84 0.02 353)",
+          "oklch(0.90 0.015 353)",
+          "oklch(0.96 0.012 353)",
+          "oklch(0.99 0.005 353)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "PlayOn wordmark only (Syne)." },
+      "headline": { "displayName": "Headline", "purpose": "Page titles." },
+      "title": { "displayName": "Title", "purpose": "Panel headings." },
+      "body": { "displayName": "Body", "purpose": "Prose, chat, general UI copy." },
+      "label": { "displayName": "Label", "purpose": "Field labels and compact UI chrome." },
+      "mono": { "displayName": "Mono", "purpose": "Logs and technical strings." }
+    },
+    "shadows": [
+      {
+        "name": "hairline-lift",
+        "value": "0 1px 0 oklch(0.9 0.02 353 / 0.04)",
+        "purpose": "Optional micro-separator on dense rows — not card elevation."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-standard",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Default ease-out for state transitions (150–220ms)."
+      }
+    ],
+    "breakpoints": [
+      { "name": "phone", "value": "720px" },
+      { "name": "desktop", "value": "960px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Pill CTA — Stage Rose hit for primary host actions.",
+      "html": "<button class=\"ds-btn-primary\" type=\"button\">Start server</button>",
+      "css": ".ds-btn-primary { appearance: none; border: 0; border-radius: 999px; padding: 0.65rem 1.1rem; min-height: 2.75rem; font: 700 1rem/1.2 \"DM Sans\", system-ui, sans-serif; background: oklch(0.62 0.16 353); color: oklch(0.98 0.01 353); cursor: pointer; transition: transform 150ms cubic-bezier(0.16, 1, 0.3, 1), filter 150ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-btn-primary:hover { filter: brightness(1.06); } .ds-btn-primary:active { transform: translateY(1px); } .ds-btn-primary:focus-visible { outline: 2px solid oklch(0.78 0.12 185); outline-offset: 2px; }"
+    },
+    {
+      "name": "Ghost Button",
+      "kind": "button",
+      "refersTo": "button-ghost",
+      "description": "Secondary pill with hairline border.",
+      "html": "<button class=\"ds-btn-ghost\" type=\"button\">Cancel</button>",
+      "css": ".ds-btn-ghost { appearance: none; border-radius: 999px; padding: 0.65rem 1.1rem; min-height: 2.75rem; font: 700 1rem/1.2 \"DM Sans\", system-ui, sans-serif; background: transparent; color: oklch(0.96 0.012 353); border: 1px solid oklch(0.96 0.01 353 / 0.12); cursor: pointer; transition: background 150ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-btn-ghost:hover { background: oklch(0.20 0.014 353); } .ds-btn-ghost:focus-visible { outline: 2px solid oklch(0.78 0.12 185); outline-offset: 2px; }"
+    },
+    {
+      "name": "Text Field",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Well-black input with hairline border.",
+      "html": "<label class=\"ds-field\"><span>Server name</span><input class=\"ds-input\" type=\"text\" placeholder=\"Friday LAN\" /></label>",
+      "css": ".ds-field { display: grid; gap: 0.35rem; font-family: \"DM Sans\", system-ui, sans-serif; color: oklch(0.96 0.012 353); } .ds-field > span { font-size: 0.875rem; font-weight: 600; color: oklch(0.84 0.02 353); } .ds-input { width: 100%; border-radius: 10px; border: 1px solid oklch(0.96 0.01 353 / 0.12); background: oklch(0.08 0 0); color: oklch(0.96 0.012 353); padding: 0.7rem 0.85rem; font: inherit; } .ds-input::placeholder { color: oklch(0.72 0.02 353); opacity: 1; } .ds-input:focus-visible { outline: 2px solid oklch(0.78 0.12 185); outline-offset: 2px; }"
+    },
+    {
+      "name": "Panel",
+      "kind": "card",
+      "refersTo": "panel",
+      "description": "Matte booth panel — border + tonal fill, no ghost shadow.",
+      "html": "<section class=\"ds-panel\"><h3>Nodes</h3><p>1 online · Docker ready</p></section>",
+      "css": ".ds-panel { background: oklch(0.16 0.012 353); color: oklch(0.96 0.012 353); border: 1px solid oklch(0.96 0.01 353 / 0.12); border-radius: 12px; padding: 1rem 1.1rem; font-family: \"DM Sans\", system-ui, sans-serif; } .ds-panel h3 { margin: 0 0 0.35rem; font-size: 1.125rem; letter-spacing: -0.02em; } .ds-panel p { margin: 0; color: oklch(0.84 0.02 353); font-size: 0.9rem; }"
+    },
+    {
+      "name": "Role Chip",
+      "kind": "chip",
+      "refersTo": "chip",
+      "description": "Compact pill for role/status chrome.",
+      "html": "<span class=\"ds-chip\">owner</span>",
+      "css": ".ds-chip { display: inline-flex; align-items: center; font: 600 0.7rem/1 \"DM Sans\", system-ui, sans-serif; color: oklch(0.84 0.02 353); background: oklch(0.20 0.014 353); border: 1px solid oklch(0.96 0.01 353 / 0.12); border-radius: 999px; padding: 0.2rem 0.55rem; }"
+    },
+    {
+      "name": "Top Nav Link",
+      "kind": "nav",
+      "refersTo": "nav-link-active",
+      "description": "Pill nav — active uses Panel Lift.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"Admin\"><a class=\"ds-nav-link\" href=\"#\">Dashboard</a><a class=\"ds-nav-link is-active\" href=\"#\">Map</a></nav>",
+      "css": ".ds-nav { display: flex; gap: 0.35rem; font-family: \"DM Sans\", system-ui, sans-serif; } .ds-nav-link { color: oklch(0.84 0.02 353); text-decoration: none; font-size: 0.9rem; padding: 0.45rem 0.75rem; border-radius: 999px; transition: color 180ms cubic-bezier(0.16, 1, 0.3, 1), background 180ms cubic-bezier(0.16, 1, 0.3, 1); } .ds-nav-link:hover { color: oklch(0.96 0.012 353); background: oklch(0.20 0.014 353); } .ds-nav-link.is-active { color: oklch(0.96 0.012 353); background: oklch(0.20 0.014 353); font-weight: 700; } .ds-nav-link:focus-visible { outline: 2px solid oklch(0.78 0.12 185); outline-offset: 2px; }"
+    },
+    {
+      "name": "Brand Mark",
+      "kind": "custom",
+      "refersTo": null,
+      "description": "Syne wordmark — only place display type is allowed.",
+      "html": "<p class=\"ds-brand\">Play<span>On</span></p>",
+      "css": ".ds-brand { margin: 0; font-family: Syne, \"DM Sans\", system-ui, sans-serif; font-weight: 800; letter-spacing: -0.03em; font-size: 1.5rem; color: oklch(0.96 0.012 353); } .ds-brand span { color: oklch(0.62 0.16 353); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The LAN Control Booth",
+    "overview": "PlayOn’s UI is a LAN control booth after midnight: matte black gear, rose stage light, cyan live indicators. It is a product tool first — dense host surfaces for same-night ops, and a calmer scan-first `/play` panel for phones. Personality stays sharp, playful, trustworthy: fun without toyish, dense without SaaS-cream.\n\nDepth comes from tonal surface steps and hairline borders, not glass stacks or ambient drop shadows. Interaction chroma should punch like arcade hits on CTAs and live state — rose and cyan used as deliberate hits against the dark booth, not as wallpaper.\n\nThis system explicitly rejects purple-on-white AI dashboards, cream/terracotta editorial kits, neon cyberpunk glassmorphism, generic “admin admin” Bootstrap panels, and hero-metric SaaS cards.",
+    "keyCharacteristics": [
+      "Restrained matte surfaces; rose primary and cyan accent as high-impact hits",
+      "Single UI family (DM Sans) with Syne reserved for the PlayOn wordmark",
+      "Pill CTAs, 12px panels, tonal elevation (borders over shadows)",
+      "Host booth density vs calm player panel tempo",
+      "State-change motion only (150–220ms ease-out); reduced-motion respected"
+    ],
+    "rules": [
+      {
+        "name": "The Stage-Light Rule",
+        "body": "Rose and cyan are arcade hits, not atmosphere. Keep saturated color on CTAs, status, focus, and brand marks — roughly ≤10–15% of any host screen. If the whole surface glows, turn it down.",
+        "section": "colors"
+      },
+      {
+        "name": "The AA Mute Rule",
+        "body": "Never drop muted body text below AA against `--bg`. If it feels elegant but hard to read, brighten `--muted` toward ink.",
+        "section": "colors"
+      },
+      {
+        "name": "The Wordmark Fence",
+        "body": "Syne appears only on the PlayOn mark. Buttons, nav, fields, and data stay DM Sans.",
+        "section": "typography"
+      },
+      {
+        "name": "The One Edge Rule",
+        "body": "Use a border or a soft shadow for decoration — never both on the same element. Prefer border + tonal fill.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep the booth dark and matte; let Stage Rose and Live Cyan land as deliberate hits.",
+      "Do put conversation/map first for hosts; keep `/play` calmer and scan-first on phones.",
+      "Do use pill primary CTAs and 12px panels consistently across admin surfaces.",
+      "Do reserve Syne for the PlayOn wordmark only.",
+      "Do animate state changes only (≈150–220ms, `--ease`); honor `prefers-reduced-motion`.",
+      "Do meet WCAG AA for body/muted text and keep keyboard focus visible (cyan ring)."
+    ],
+    "donts": [
+      "Don't ship purple-on-white AI dashboards.",
+      "Don't drift into cream/terracotta editorial kits.",
+      "Don't use neon cyberpunk glassmorphism (blur stacks, glow soup, holographic panels).",
+      "Don't fall back to generic “admin admin” Bootstrap panels.",
+      "Don't use hero-metric SaaS cards as layout scaffolding.",
+      "Don't pair `1px` decorative borders with wide soft drop shadows on the same element.",
+      "Don't put Syne (or any display face) on buttons, labels, or data.",
+      "Don't paint large surfaces in saturated rose/cyan — hits, not wallpaper."
+    ]
+  }
+}
