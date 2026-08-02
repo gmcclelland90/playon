@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { can, type PublicUser } from "@playon/shared";
 import { api, type LlmPublic } from "../api";
@@ -12,6 +12,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [saved, setSaved] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<{ model?: string; apiKey?: string }>({});
 
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -34,6 +35,26 @@ export function SettingsPage({ user }: { user: PublicUser }) {
     setModel(llm.data.llm.model ?? "");
   }, [llm.data]);
 
+  const dirty = useMemo(() => {
+    const loaded = llm.data?.llm;
+    if (!loaded) return false;
+    return (
+      provider !== loaded.provider ||
+      baseUrl !== (loaded.baseUrl ?? "") ||
+      model !== (loaded.model ?? "") ||
+      apiKey !== ""
+    );
+  }, [llm.data, provider, baseUrl, model, apiKey]);
+
+  useEffect(() => {
+    if (!dirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
+
   useEffect(() => {
     if (backupTarget.data?.target?.rootPath) {
       setBackupRoot(backupTarget.data.target.rootPath);
@@ -50,9 +71,10 @@ export function SettingsPage({ user }: { user: PublicUser }) {
       }),
     onSuccess: async () => {
       setApiKey("");
+      setFieldErrors({});
       setSaved(true);
       await qc.invalidateQueries({ queryKey: ["llm"] });
-      window.setTimeout(() => setSaved(false), 2000);
+      window.setTimeout(() => setSaved(false), 4000);
     },
   });
 
@@ -82,11 +104,27 @@ export function SettingsPage({ user }: { user: PublicUser }) {
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
+    const errors: { model?: string; apiKey?: string } = {};
+    if (!model.trim()) errors.model = "Model is required";
+    if (
+      provider === "openai_compatible" &&
+      !llm.data?.llm.hasApiKey &&
+      !apiKey.trim()
+    ) {
+      errors.apiKey = "API key required for Venice / OpenAI-compatible";
+    }
+    if (Object.keys(errors).length) {
+      setFieldErrors(errors);
+      return;
+    }
+    setFieldErrors({});
     save.mutate();
   }
 
   function onCreateUser(e: FormEvent) {
     e.preventDefault();
+    const roleLabel = newRole === "admin" ? "Admin" : "Operator";
+    if (!window.confirm(`Create account "${newUsername}" as ${roleLabel}?`)) return;
     createUser.mutate();
   }
 
@@ -133,7 +171,12 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
                 placeholder={provider === "ollama" ? "llama3.2" : "llama-3.3-70b"}
+                required
+                aria-invalid={Boolean(fieldErrors.model) || undefined}
               />
+              {fieldErrors.model ? (
+                <span className="field-error">{fieldErrors.model}</span>
+              ) : null}
             </label>
             <label className="field">
               <span>API key {llm.data?.llm.hasApiKey ? "(saved — leave blank to keep)" : ""}</span>
@@ -143,14 +186,20 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                 onChange={(e) => setApiKey(e.target.value)}
                 autoComplete="off"
                 placeholder={provider === "ollama" ? "optional" : "Venice API key"}
+                aria-invalid={Boolean(fieldErrors.apiKey) || undefined}
               />
+              {fieldErrors.apiKey ? (
+                <span className="field-error">{fieldErrors.apiKey}</span>
+              ) : null}
             </label>
 
             <div className="btn-row">
               <button className="btn btn-primary" type="submit" disabled={save.isPending}>
                 {save.isPending ? "Saving…" : "Save settings"}
               </button>
-              {saved ? <span className="ok">Saved</span> : null}
+              {saved ? (
+                <span className="ok">Saved. Open Map and send a chat to verify the model.</span>
+              ) : null}
             </div>
             {save.isError ? <p className="error">{(save.error as Error).message}</p> : null}
           </div>
