@@ -58,7 +58,7 @@ describe("ServerFsService", () => {
   it("reads and writes inside the server jail", async () => {
     const { fsTools, servers } = tempEnv();
     const server = await servers.createFromSkill({
-      skillName: "fixtures.lab-docker-server",
+      skillName: LAB_DOCKER_SKILL,
       serverName: "FS Test",
     });
 
@@ -73,7 +73,7 @@ describe("ServerFsService", () => {
   it("blocks path escape attempts", async () => {
     const { fsTools, servers } = tempEnv();
     const server = await servers.createFromSkill({
-      skillName: "fixtures.lab-docker-server",
+      skillName: LAB_DOCKER_SKILL,
     });
 
     await expect(fsTools.read(server.id, "../escape.txt")).rejects.toBeInstanceOf(PathJailError);
@@ -86,7 +86,7 @@ describe("ServerFsService", () => {
   it("deletes, renames, and copies inside the jail", async () => {
     const { fsTools, servers } = tempEnv();
     const server = await servers.createFromSkill({
-      skillName: "fixtures.lab-docker-server",
+      skillName: LAB_DOCKER_SKILL,
       serverName: "FS Mutate",
     });
 
@@ -119,7 +119,7 @@ describe("ServerFsService", () => {
 
   it("reads with offset and maxBytes", async () => {
     const { fsTools, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "fixtures.lab-docker-server" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
     await fsTools.write(server.id, "game/chunk.txt", "abcdefghij");
 
     const mid = await fsTools.read(server.id, "game/chunk.txt", { offset: 3, maxBytes: 4 });

@@ -74,7 +74,7 @@ describe("NetToolsService", () => {
 
   it("fetches a URL into the server jail", async () => {
     const { net, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "fixtures.lab-docker-server" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
 
     const httpServer = http.createServer((_req, res) => {
       res.writeHead(200, { "content-type": "text/plain" });
@@ -99,7 +99,7 @@ describe("NetToolsService", () => {
 
   it("follows redirects within the hop limit", async () => {
     const { net, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "fixtures.lab-docker-server" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
 
     const httpServer = http.createServer((req, res) => {
       if (req.url === "/start") {
@@ -128,7 +128,7 @@ describe("NetToolsService", () => {
 
   it("rejects blocked private destinations", async () => {
     const { net, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "fixtures.lab-docker-server" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
     await expect(
       net.fetchUrl({
         serverId: server.id,
@@ -140,7 +140,7 @@ describe("NetToolsService", () => {
 
   it("rejects oversized payloads", async () => {
     const { net, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "fixtures.lab-docker-server" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
 
     const chunk = Buffer.alloc(1024 * 1024, 1); // 1 MiB
     const httpServer = http.createServer((_req, res) => {

@@ -67,7 +67,7 @@ describe("HealthService", () => {
     const health = new HealthService(servers, net, config);
 
     const created = await servers.createFromSkill({
-      skillName: "fixtures.lab-docker-server",
+      skillName: LAB_DOCKER_SKILL,
       serverName: "Health Paper",
     });
     expect(created.status).toBe("stopped");

@@ -100,7 +100,7 @@ describe("api integration (real Venice + Docker)", () => {
     expect(cookie).toContain("playon_session=");
 
     const skills = listSkills(config.skillsRoots);
-    expect(skills.some((s) => s.metadata.name === "fixtures.lab-docker-server")).toBe(true);
+    expect(skills.some((s) => s.metadata.name === LAB_DOCKER_SKILL)).toBe(true);
     expect(skills.some((s) => s.metadata.name.includes("fake-http"))).toBe(false);
   });
 
@@ -108,7 +108,7 @@ describe("api integration (real Venice + Docker)", () => {
     const { db, config } = tempConfig();
     const servers = new ServerService(db, config);
     const created = await servers.createFromSkill({
-      skillName: "fixtures.lab-docker-server",
+      skillName: LAB_DOCKER_SKILL,
       serverName: "LAN Paper",
     });
     expect(created.runtimeMode).toBe("docker");
@@ -165,7 +165,7 @@ describe("api integration (real Venice + Docker)", () => {
       method: "POST",
       headers: { "content-type": "application/json", cookie },
       body: JSON.stringify({
-        skillName: "fixtures.lab-docker-server",
+        skillName: LAB_DOCKER_SKILL,
         serverName: "Maintain Me",
       }),
     });
@@ -228,7 +228,7 @@ describe("api integration (real Venice + Docker)", () => {
     const { db, config } = tempConfig();
     const servers = new ServerService(db, config);
     const created = await servers.createFromSkill({
-      skillName: "fixtures.lab-docker-server",
+      skillName: LAB_DOCKER_SKILL,
       serverName: "RCON Paper",
     });
     const started = await servers.start(created.id);
@@ -259,7 +259,7 @@ describe("api integration (real Venice + Docker)", () => {
     const { db, config } = tempConfig();
     const servers = new ServerService(db, config);
     const created = await servers.createFromSkill({
-      skillName: "fixtures.lab-docker-server",
+      skillName: LAB_DOCKER_SKILL,
       serverName: "Steam Jail",
     });
     await expect(

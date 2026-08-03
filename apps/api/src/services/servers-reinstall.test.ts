@@ -53,13 +53,13 @@ describe("reinstallFromSkill / createOrReinstallFromSkill", () => {
   it("keeps the same server id when switching skills", async () => {
     const { servers } = tempEnv();
     const first = await servers.createFromSkill({
-      skillName: "fixtures.lab-docker-server",
+      skillName: LAB_DOCKER_SKILL,
       serverName: "LAN MC",
     });
     fs.writeFileSync(path.join(first.dataPath, "game", "marker.txt"), "old");
 
     const second = await servers.reinstallFromSkill(first.id, {
-      skillName: "fixtures.lab-docker-server",
+      skillName: LAB_DOCKER_SKILL,
       serverName: "LAN MC 2",
     });
 
@@ -75,14 +75,14 @@ describe("reinstallFromSkill / createOrReinstallFromSkill", () => {
     const workspace = { serverId: undefined as string | undefined };
 
     const a = await createOrReinstallFromSkill(servers, workspace, {
-      skillName: "fixtures.lab-docker-server",
+      skillName: LAB_DOCKER_SKILL,
       serverName: "One",
     });
     expect(a.mode).toBe("created");
     expect(workspace.serverId).toBe(a.server.id);
 
     const b = await createOrReinstallFromSkill(servers, workspace, {
-      skillName: "fixtures.lab-docker-server",
+      skillName: LAB_DOCKER_SKILL,
       serverName: "Two",
     });
     expect(b.mode).toBe("reinstalled");

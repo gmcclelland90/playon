@@ -64,7 +64,7 @@ afterEach(() => {
 describe("ServerArchiveService", () => {
   it("extracts a zip into the server jail", async () => {
     const { archives, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "fixtures.lab-docker-server" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
     const zipPath = path.join(server.dataPath, "mods.zip");
     fs.writeFileSync(
       zipPath,
@@ -88,7 +88,7 @@ describe("ServerArchiveService", () => {
 
   it("strips leading path components from zip entries", async () => {
     const { archives, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "fixtures.lab-docker-server" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
     fs.writeFileSync(
       path.join(server.dataPath, "pack.zip"),
       buildTestZip({ "ModPack-1.0/mods/foo.jar": "jar-bytes" }),
@@ -107,7 +107,7 @@ describe("ServerArchiveService", () => {
 
   it("rejects zip-slip paths", async () => {
     const { archives, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "fixtures.lab-docker-server" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
     fs.writeFileSync(
       path.join(server.dataPath, "evil.zip"),
       buildTestZip({ "../escape.txt": "nope" }),
@@ -124,7 +124,7 @@ describe("ServerArchiveService", () => {
 
   it("rejects archive paths outside the jail", async () => {
     const { archives, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "fixtures.lab-docker-server" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
     await expect(
       archives.extract({
         serverId: server.id,
@@ -136,7 +136,7 @@ describe("ServerArchiveService", () => {
 
   it.runIf(tarAvailable())("extracts a tar.gz into the server jail", async () => {
     const { archives, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "fixtures.lab-docker-server" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
     const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-tarfix-"));
     try {
       fs.mkdirSync(path.join(staging, "payload"), { recursive: true });
