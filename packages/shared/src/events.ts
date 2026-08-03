@@ -65,7 +65,7 @@ export const WsEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("agent.celebration"),
     serverId: z.string(),
-    persona: z.string(),
+    skill: z.string(),
     reason: z.string(),
     xpGained: z.number().int().nonnegative(),
     level: z.number().int().positive(),
@@ -76,7 +76,7 @@ export const WsEventSchema = z.discriminatedUnion("type", [
     type: z.literal("agent.activity"),
     serverId: z.string(),
     conversationId: z.string().optional(),
-    persona: z.string(),
+    skill: z.string(),
     phase: z.enum([
       "thinking",
       "tool_start",

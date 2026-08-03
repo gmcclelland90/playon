@@ -1,15 +1,9 @@
+import { AGENT_SYSTEM_PROMPT } from "./agent-prompt.js";
 import { confirmSummary } from "./confirm-summary.js";
 import type { LlmClient, LlmMessage } from "./llm.js";
-import {
-  PERSONA_SYSTEM_PROMPTS,
-  toolsAllowedForPersona,
-  type AgentPersona,
-} from "./personas.js";
 import { toLlmToolDefinition, type ToolDefinition, type ToolHandler } from "./tools.js";
 
 export { confirmActionLabel, confirmSummary } from "./confirm-summary.js";
-
-export type { AgentPersona };
 
 export interface ToolTraceEntry {
   name: string;
@@ -18,7 +12,6 @@ export interface ToolTraceEntry {
 }
 
 export interface OrchestratorResult {
-  persona: AgentPersona;
   content: string;
   toolTrace: ToolTraceEntry[];
 }
@@ -156,14 +149,11 @@ export class Orchestrator {
     this.tools.set(def.name, { def, handler });
   }
 
-  getToolDefinitions(persona?: AgentPersona): ToolDefinition[] {
-    return [...this.tools.values()]
-      .map((t) => t.def)
-      .filter((def) => (persona ? toolsAllowedForPersona(persona, def.name) : true));
+  getToolDefinitions(): ToolDefinition[] {
+    return [...this.tools.values()].map((t) => t.def);
   }
 
   async handle(
-    persona: AgentPersona,
     userMessage: string,
     priorMessages: LlmMessage[] = [],
   ): Promise<OrchestratorResult> {
@@ -171,7 +161,7 @@ export class Orchestrator {
       (m) => m.role === "user" || m.role === "assistant" || m.role === "tool",
     );
     const systemMessages: LlmMessage[] = [
-      { role: "system", content: PERSONA_SYSTEM_PROMPTS[persona] },
+      { role: "system", content: AGENT_SYSTEM_PROMPT },
     ];
     if (this.options.workspaceServerId) {
       systemMessages.push({
@@ -188,7 +178,7 @@ export class Orchestrator {
       { role: "user", content: userMessage },
     ];
     const toolTrace: ToolTraceEntry[] = [];
-    const toolDefs = this.getToolDefinitions(persona).map(toLlmToolDefinition);
+    const toolDefs = this.getToolDefinitions().map(toLlmToolDefinition);
 
     const stream = this.options.stream;
     let selfHealNudged = false;
@@ -198,7 +188,7 @@ export class Orchestrator {
 
       if (!completion.toolCalls?.length) {
         emitContentTokens(stream, completion.content);
-        return { persona, content: completion.content, toolTrace };
+        return { content: completion.content, toolTrace };
       }
 
       // Do not stream interim "thinking" text that accompanies tool calls — models often
@@ -212,20 +202,6 @@ export class Orchestrator {
       let roundHadFailure = false;
 
       for (const call of completion.toolCalls) {
-        if (!toolsAllowedForPersona(persona, call.name)) {
-          const err = { error: `tool_not_allowed_for_persona`, persona, toolName: call.name };
-          toolTrace.push({ name: call.name, arguments: call.arguments, result: err });
-          stream?.onTool({ toolName: call.name, status: "failed", detail: err });
-          messages.push({
-            role: "tool",
-            name: call.name,
-            content: JSON.stringify(err),
-            toolCallId: call.id,
-          });
-          roundHadFailure = true;
-          continue;
-        }
-
         const entry = this.tools.get(call.name);
         stream?.onTool({
           toolName: call.name,
@@ -331,7 +307,6 @@ export class Orchestrator {
     const stopped = summarizeMaxIterations(toolTrace);
     emitContentTokens(stream, stopped);
     return {
-      persona,
       content: stopped,
       toolTrace,
     };

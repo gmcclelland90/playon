@@ -5,7 +5,7 @@
 - New games are added primarily by creating skills (seeded as library-ready `.skill.zip` packages)
 - Platform skills stay in the core bundle; game skills are catalog/library content (see [15](15-playon-games-site-and-skill-library.md))
 - Community skill sharing (export/import packages) as a natural next step; hosted library on playon.games is a separate site track
-- Additional specialised agents can be introduced without changing the core architecture
+- New agent-skill XP tracks or map flair can extend gamification without splitting the chat agent
 - New content block types for the player-facing panel
 
 ## Medium-Term Ideas

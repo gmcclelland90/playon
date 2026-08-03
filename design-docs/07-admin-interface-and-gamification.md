@@ -2,41 +2,42 @@
 
 ## Dual Interface
 
-1. **Primary: Canvas + Conversational Agents**  
+1. **Primary: Canvas + Conversational Agent**  
    A sparse 2.5D canvas (2D sprites on a pannable plane) shows servers that already exist. Chat is how servers appear and how they are maintained.
 
 2. **Secondary: Dashboard**  
-   Ops visibility — nodes, skills, snapshots, backups. Not a second home for creating servers.
+   Ops visibility — nodes, game skills, snapshots, backups. Not a second home for creating servers.
 
 The canvas is where you *watch*; chat is where you *direct*.
 
 ## Chat-first provisioning
 
 - Empty map → **Describe a server** opens unbound install chat (no silent `POST /api/servers`).
-- Agents create via tools (`servers_create_from_skill`, imports). The new crate appears on the map; the conversation binds to that server.
+- The agent creates via tools (`servers_create_from_skill`, imports). The new crate appears on the map; the conversation binds to that server.
 - **+ Add server** deselects the current crate and opens a fresh install chat.
 - Selecting a crate opens **maintain-only** chat. Creating/importing siblings is hard-blocked while a workspace is bound.
 
 ## Agent progression (not host trophies)
 
-Agents are named personas **per server** (installer, monitor, configurer, …).
+One agent helps with every server. Fun progression is **host-global agent skills** (Install, Monitor, Config, Fix, Backup, Panel, Mod, Lead):
 
-- Agents gain XP and levels from successful tools on that server
+- Skills gain XP and levels from successful tools (tool → skill mapping)
 - Titles evolve with level
-- Celebrations are scoped to the server’s cast
+- Celebrations and map accents reflect the active skill
+- The Controls dock shows skill bars for the single agent
 - There is **no** host XP / achievement / trophy cabinet
 
 ## Visual stage
 
-- PixiJS stage: server crates + agent sprites
-- `agent.activity` events drive motion (fetch, write, run, …)
-- Confirm gates can pause an agent at a “wait” pose
+- PixiJS stage: server crates + **one** agent sprite
+- `agent.activity` events drive motion and skill accent (fetch, write, run, …)
+- Confirm gates can pause the agent at a “wait” pose
 
 ## UX Tone
 
 - Powerful and trustworthy
 - Entertaining without becoming childish or obstructive
-- Celebrates the agents’ competence on the map
+- Celebrates the agent’s competence on the map — video-game map energy, not a second ops dashboard
 
 ## Design Goal
 

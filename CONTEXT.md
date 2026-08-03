@@ -1,0 +1,45 @@
+# PlayOn domain glossary
+
+Terms used by architecture and product docs. Prefer these names over file-local jargon.
+
+## Control Plane
+
+The in-process service graph shared by HTTP routes, agent tools, and background schedulers. Constructed once via `createControlPlane` — one `ServerService`, one `PanelService`, one event hub, etc. Agents and REST must not each build a parallel graph.
+
+## Server
+
+A managed game-server instance with its own data directory, skill marker (`skill.json`), runtime handle, and player panel blocks.
+
+## Skill (game skill)
+
+Versioned game/platform knowledge package (metadata, guides, optional query connector). Installed servers pin a Skill via the Skill Marker. Distinct from **agent skills** (fun XP tracks: Install, Monitor, Config, Fix, Backup, Panel, Mod, Lead).
+
+## Skill Marker
+
+Per-server `skill.json` under the server data path. Single read/write/validate contract (`apps/api/src/services/skill-marker.ts`) for provision, import, panel join, query dialect, and runtime start. Create and import both write the full marker from skill metadata; import may add `importedFrom` / `importedAt`.
+
+## Player Panel
+
+Agent-pushed, player-facing surface: join info, status, guides, votes. Owned by the `PlayerPanel` service on the Control Plane (publish for status / from agent, list for players, theme). Only live while the server is starting/running for public visibility of join blocks.
+
+## Tool Surface
+
+Canonical catalog of agent tools: LLM defs in the API merged with `TOOL_SURFACE_OVERLAY` (skill, confirmAction, activityVerb, XP). Handlers bind to the Control Plane; projections feed agent-skill XP, confirm copy, and activity verbs.
+
+## Query Dialect
+
+Read-only live discovery protocol for a Skill (`minecraft_status`, `a2s`, `skill_module`, …). Owned by the Connector registry (`DialectDescriptor` + `builtInDialectIds`); distinct from admin/RCON dialects. Built-ins carry `portPreference` (`game` | `query`); `none` and `skill_module` stay outside the built-in set.
+
+## Live Server State
+
+Uniform result of a Query Dialect connector (online, players, map, …). Projected once via `liveStateToPanelBody` into player panel `server_status` fields.
+
+## Runtime Selection
+
+How a Server starts: Docker container vs OS process. Host `PLAYON_RUNTIME` (`docker` | `native`) is authoritative for adapter construction and mode labels — native hosts never pretend to be Docker. Skill `containerSupport` is colocated with that host capability:
+
+- `containerSupport=none` → process supervisor
+- `containerSupport=full` (or `partial`) → Docker when the host is in docker mode
+- Host `PLAYON_RUNTIME=native` → always process, even for container-capable skills
+
+See [docs/adr/0002-real-runtime-and-llm.md](docs/adr/0002-real-runtime-and-llm.md).

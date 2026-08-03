@@ -17,6 +17,7 @@ import {
 } from "../confirm-prefs";
 import {
   AgentCanvas,
+  skillShortLabel,
   type AgentActivityView,
 } from "../components/agent-canvas/AgentCanvas";
 import { statusHint, statusLabel } from "../status";
@@ -30,8 +31,84 @@ type ChatLine = {
 
 type DockTab = "chat" | "ops";
 
-function personaLabel(persona: string): string {
-  return persona.replace(/_/g, " ");
+type SkillRow = {
+  skill: string;
+  xp: number;
+  level: number;
+  title: string;
+};
+
+/** Fraction of XP earned toward the next level (same curve as the API). */
+function xpBarFraction(xp: number): number {
+  let need = 100;
+  let remaining = Math.max(0, xp);
+  let level = 1;
+  while (remaining >= need && level < 99) {
+    remaining -= need;
+    level += 1;
+    need = Math.floor(need * 1.35);
+  }
+  return need > 0 ? Math.min(1, remaining / need) : 0;
+}
+
+function AgentSkillsPanel({
+  skills,
+  loading,
+  activeSkill,
+}: {
+  skills: SkillRow[];
+  loading: boolean;
+  activeSkill?: string;
+}) {
+  return (
+    <div className="agent-skills">
+      <div className="dash-section-head">
+        <h4>Agent</h4>
+        <span className="muted agent-skills-status">
+          {activeSkill ? `Working · ${skillShortLabel(activeSkill)}` : "Idle"}
+        </span>
+      </div>
+      {loading ? (
+        <div className="skeleton" aria-hidden>
+          <div className="skeleton-row compact" />
+          <div className="skeleton-row compact" />
+        </div>
+      ) : skills.length === 0 ? (
+        <p className="muted canvas-dock-hint">Loading skills…</p>
+      ) : (
+        <ul className="agent-skills-list">
+          {skills.map((row) => {
+            const busy = activeSkill === row.skill;
+            const frac = xpBarFraction(row.xp);
+            return (
+              <li
+                key={row.skill}
+                className={busy ? "agent-skill-item busy" : "agent-skill-item"}
+              >
+                <span className={`agent-skill-pip skill-${row.skill}`} aria-hidden />
+                <div className="agent-skill-meta">
+                  <div className="agent-skill-head">
+                    <strong>{skillShortLabel(row.skill)}</strong>
+                    <span className="muted">Lv {row.level}</span>
+                  </div>
+                  <div
+                    className="agent-skill-bar"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(frac * 100)}
+                    aria-label={`${skillShortLabel(row.skill)} XP`}
+                  >
+                    <span style={{ width: `${Math.round(frac * 100)}%` }} />
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 export function CanvasPage({ user }: { user: PublicUser }) {
@@ -48,11 +125,9 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [message, setMessage] = useState("");
-  const [activityByPersona, setActivityByPersona] = useState<
-    Record<string, AgentActivityView | undefined>
-  >({});
-  /** Persona → last activity event timestamp (for stale idle clear). */
-  const activityUpdatedAtRef = useRef<Record<string, number>>({});
+  const [activity, setActivity] = useState<AgentActivityView | undefined>();
+  /** Last activity event timestamp (for stale idle clear). */
+  const activityUpdatedAtRef = useRef(0);
   const [pendingConfirm, setPendingConfirm] = useState<{
     requestId: string;
     toolName: string;
@@ -130,17 +205,14 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         return;
       }
       if (event.type === "agent.activity") {
-        activityUpdatedAtRef.current[event.persona] = Date.now();
-        setActivityByPersona((prev) => ({
-          ...prev,
-          [event.persona]: {
-            serverId: event.serverId,
-            persona: event.persona,
-            phase: event.phase,
-            verb: event.verb,
-            label: event.label,
-          },
-        }));
+        activityUpdatedAtRef.current = Date.now();
+        setActivity({
+          serverId: event.serverId,
+          skill: event.skill,
+          phase: event.phase,
+          verb: event.verb,
+          label: event.label,
+        });
         return;
       }
       if (event.type === "agent.celebration") {
@@ -208,17 +280,10 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     const STALE_MS = 90_000;
     const id = window.setInterval(() => {
       const now = Date.now();
-      setActivityByPersona((prev) => {
-        let changed = false;
-        const next = { ...prev };
-        for (const [persona, activity] of Object.entries(prev)) {
-          if (!activity || activity.phase === "idle") continue;
-          const updatedAt = activityUpdatedAtRef.current[persona] ?? 0;
-          if (now - updatedAt < STALE_MS) continue;
-          next[persona] = { ...activity, phase: "idle", label: "Idle" };
-          changed = true;
-        }
-        return changed ? next : prev;
+      setActivity((prev) => {
+        if (!prev || prev.phase === "idle") return prev;
+        if (now - activityUpdatedAtRef.current < STALE_MS) return prev;
+        return { ...prev, phase: "idle", label: "Idle" };
       });
     }, 15_000);
     return () => window.clearInterval(id);
@@ -435,16 +500,17 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const selected = servers.data?.servers.find((s) => s.id === selectedId);
   const status = detail.data?.server.status ?? selected?.status ?? "unknown";
   const join = detail.data?.runtime.join;
-  const activityOnSelected = selectedId
-    ? Object.values(activityByPersona).find(
-        (a) => a && a.serverId === selectedId && a.phase !== "idle",
-      )
-    : undefined;
-  const cast = agents.data?.agents ?? [];
+  const activityOnSelected =
+    selectedId && activity && activity.serverId === selectedId && activity.phase !== "idle"
+      ? activity
+      : undefined;
+  const skills = agents.data?.skills ?? [];
+  const activeSkill =
+    activity && activity.phase !== "idle" ? activity.skill : undefined;
   const dockTitle = selected?.name ?? "New server";
   const dockHint = unbound
-    ? `${user.displayName} · tell agents what to install`
-    : `${user.displayName} · ask agents to maintain this server`;
+    ? `${user.displayName} · tell the agent what to install`
+    : `${user.displayName} · ask the agent to maintain this server`;
   const emptyHint = unbound
     ? "Try “I want a vanilla Minecraft server”."
     : "Ask about status, config, restarts, snapshots…";
@@ -455,11 +521,11 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         servers={servers.data?.servers ?? []}
         serversLoading={servers.isLoading || (servers.isFetching && !servers.data)}
         selectedId={selectedId}
-        activityByPersona={activityByPersona}
-        cast={cast.map((a) => ({
-          persona: a.persona,
-          level: a.level,
-          title: a.title,
+        activity={activity}
+        skills={skills.map((s) => ({
+          skill: s.skill,
+          level: s.level,
+          title: s.title,
         }))}
         onSelect={selectServer}
         onDescribe={openInstallChat}
@@ -511,7 +577,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                   {selected.game ? <span className="muted">{selected.game}</span> : null}
                   {activityOnSelected ? (
                     <span className="muted canvas-busy-hint">
-                      {personaLabel(activityOnSelected.persona)} ·{" "}
+                      {skillShortLabel(activityOnSelected.skill)} ·{" "}
                       {activityOnSelected.label ?? activityOnSelected.verb}
                     </span>
                   ) : null}
@@ -661,81 +727,20 @@ export function CanvasPage({ user }: { user: PublicUser }) {
               ) : null}
               {opsError ? <p className="error">{opsError}</p> : null}
 
-              <div className="agent-cast">
-                <div className="dash-section-head">
-                  <h4>Agent cast</h4>
-                </div>
-                {agents.isLoading ? (
-                  <div className="skeleton" aria-hidden>
-                    <div className="skeleton-row compact" />
-                    <div className="skeleton-row compact" />
-                  </div>
-                ) : cast.length === 0 ? (
-                  <p className="muted canvas-dock-hint">Loading the host cast…</p>
-                ) : (
-                  <ul className="agent-cast-list">
-                    {cast.map((agent) => {
-                      const personaActivity = activityByPersona[agent.persona];
-                      const busy = Boolean(
-                        personaActivity && personaActivity.phase !== "idle",
-                      );
-                      return (
-                        <li
-                          key={agent.persona}
-                          className={busy ? "agent-cast-item busy" : "agent-cast-item"}
-                        >
-                          <div>
-                            <strong>{personaLabel(agent.persona)}</strong>
-                            <div className="muted">{agent.title}</div>
-                          </div>
-                          <div className="agent-cast-stats">
-                            <span>Lv {agent.level}</span>
-                            <span className="muted">{agent.xp} XP</span>
-                          </div>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </div>
+              <AgentSkillsPanel
+                skills={skills}
+                loading={agents.isLoading}
+                activeSkill={activeSkill}
+              />
             </div>
           ) : null}
 
           {unbound ? (
-            <div className="agent-cast">
-              <div className="dash-section-head">
-                <h4>Agent cast</h4>
-              </div>
-              {agents.isLoading ? (
-                <div className="skeleton" aria-hidden>
-                  <div className="skeleton-row compact" />
-                </div>
-              ) : (
-                <ul className="agent-cast-list">
-                  {cast.map((agent) => {
-                    const personaActivity = activityByPersona[agent.persona];
-                    const busy = Boolean(
-                      personaActivity && personaActivity.phase !== "idle",
-                    );
-                    return (
-                      <li
-                        key={agent.persona}
-                        className={busy ? "agent-cast-item busy" : "agent-cast-item"}
-                      >
-                        <div>
-                          <strong>{personaLabel(agent.persona)}</strong>
-                          <div className="muted">{agent.title}</div>
-                        </div>
-                        <div className="agent-cast-stats">
-                          <span>Lv {agent.level}</span>
-                          <span className="muted">{agent.xp} XP</span>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
+            <AgentSkillsPanel
+              skills={skills}
+              loading={agents.isLoading}
+              activeSkill={activeSkill}
+            />
           ) : null}
 
           {pendingConfirm ? (

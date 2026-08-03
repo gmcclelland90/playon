@@ -8,7 +8,7 @@ import { and, asc, count, desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import type { ConfirmGate, LlmMessage } from "@playon/agent-core";
-import { pickPersona } from "@playon/agent-core";
+import { surfaceSkill } from "@playon/agent-core";
 import {
   BootstrapOwnerSchema,
   LoginSchema,
@@ -1261,14 +1261,15 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     if (!user || !can(user.role, "servers.manage")) {
       return c.json({ error: "forbidden" }, 403);
     }
-    const list = await agentProgress.listCast();
+    const skills = await agentProgress.listSkills();
     return c.json({
-      agents: list.map((a) => ({
-        persona: a.persona,
-        xp: a.xp,
-        level: a.level,
-        title: a.title,
-        updatedAt: a.updatedAt.toISOString(),
+      agent: { name: "Agent" },
+      skills: skills.map((s) => ({
+        skill: s.skill,
+        xp: s.xp,
+        level: s.level,
+        title: s.title,
+        updatedAt: s.updatedAt.toISOString(),
       })),
     });
   });
@@ -1643,8 +1644,6 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         role: row.role as "user" | "assistant",
         content: row.content,
       }));
-    const conversationContext = priorMessages.map((m) => m.content).join("\n");
-
     await db.insert(messages).values({
       id: nanoid(),
       conversationId,
@@ -1653,20 +1652,27 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       createdAt: now,
     });
 
-    const persona = pickPersona(body.message, conversationContext);
     /** Mutable: unbound create binds activity to the new server mid-turn. */
     let activityServerId = workspaceServerId;
+    let activitySkill = "orchestrator";
     const publishActivity = (
       phase: "thinking" | "tool_start" | "tool_done" | "tool_fail" | "confirm_wait" | "idle",
-      opts?: { toolName?: string; verb?: ReturnType<typeof verbForTool>; label?: string },
+      opts?: {
+        toolName?: string;
+        verb?: ReturnType<typeof verbForTool>;
+        label?: string;
+        skill?: string;
+      },
     ) => {
       if (!activityServerId) return;
       const verb = opts?.verb ?? "other";
+      if (opts?.skill) activitySkill = opts.skill;
+      else if (opts?.toolName) activitySkill = surfaceSkill(opts.toolName);
       eventHub.publish({
         type: "agent.activity",
         serverId: activityServerId,
         conversationId,
-        persona,
+        skill: activitySkill,
         phase,
         verb,
         toolName: opts?.toolName,
@@ -1745,7 +1751,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         },
       });
       publishActivity("thinking");
-      const result = await orchestrator.handle(persona, body.message, priorMessages);
+      const result = await orchestrator.handle(body.message, priorMessages);
 
       for (const trace of result.toolTrace) {
         const failed =
@@ -1777,14 +1783,14 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       }
 
       const awards = boundServerId
-        ? await agentProgress.awardForTools(result.persona, result.toolTrace)
+        ? await agentProgress.awardForTools(result.toolTrace)
         : [];
       const celebrations = awards.filter((a) => a.celebrate);
       for (const award of celebrations) {
         eventHub.publish({
           type: "agent.celebration",
           serverId: boundServerId!,
-          persona: award.persona,
+          skill: award.skill,
           reason: award.reason,
           xpGained: award.xpGained,
           level: award.progress.level,
@@ -1803,26 +1809,25 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       });
 
       const stored = await getSetting<LlmSettings>(db, LLM_SETTINGS_KEY);
-      const progress = boundServerId ? await agentProgress.get(result.persona) : undefined;
+      const lastAward = awards.length ? awards[awards.length - 1] : undefined;
 
       return c.json({
         conversationId,
         serverId: boundServerId,
         reply: safeReply,
-        persona: result.persona,
         llmMode: stored?.provider ?? config.llmMode,
         toolTrace: result.toolTrace,
-        agentProgress: progress
+        agentProgress: lastAward
           ? {
-              persona: progress.persona,
-              xp: progress.xp,
-              level: progress.level,
-              title: progress.title,
+              skill: lastAward.progress.skill,
+              xp: lastAward.progress.xp,
+              level: lastAward.progress.level,
+              title: lastAward.progress.title,
             }
           : undefined,
         celebrations: celebrations.map((a) => ({
           serverId: boundServerId,
-          persona: a.persona,
+          skill: a.skill,
           reason: a.reason,
           xpGained: a.xpGained,
           level: a.progress.level,

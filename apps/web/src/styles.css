@@ -437,10 +437,14 @@ a.brand-mark:hover {
   color: var(--ink);
 }
 
-.agent-cast h4 {
+.agent-skills h4 {
   margin: 0;
   font-size: 0.85rem;
   font-weight: 700;
+}
+
+.agent-skills-status {
+  font-size: 0.75rem;
 }
 
 .sr-only {
@@ -463,43 +467,81 @@ a.brand-mark:hover {
   font-size: 0.75rem;
 }
 
-.agent-cast-list {
+.agent-skills-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 0.35rem;
-  max-height: 9.5rem;
+  gap: 0.3rem;
+  max-height: 12rem;
   overflow: auto;
 }
 
-.agent-cast-item {
+.agent-skill-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  padding: 0.35rem 0.45rem;
+  gap: 0.45rem;
+  padding: 0.3rem 0.4rem;
   border-radius: 8px;
   border: 1px solid transparent;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
 }
 
-.agent-cast-item strong {
-  text-transform: capitalize;
-  font-size: 0.82rem;
+.agent-skill-item.busy {
+  border-color: oklch(0.78 0.12 185 / 0.45);
+  background: oklch(0.78 0.12 185 / 0.1);
 }
 
-.agent-cast-item.busy {
-  border-color: oklch(0.78 0.12 185 / 0.4);
-  background: oklch(0.78 0.12 185 / 0.08);
+.agent-skill-pip {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: oklch(0.78 0.12 185);
 }
 
-.agent-cast-stats {
+.agent-skill-pip.skill-installer { background: #5ed4c8; }
+.agent-skill-pip.skill-monitor { background: #6aa8e8; }
+.agent-skill-pip.skill-configurer { background: #c4a35a; }
+.agent-skill-pip.skill-troubleshooter { background: #e08a4a; }
+.agent-skill-pip.skill-backup { background: #8a7fd4; }
+.agent-skill-pip.skill-player_panel { background: #e05a9c; }
+.agent-skill-pip.skill-modder { background: #7bc96f; }
+.agent-skill-pip.skill-orchestrator { background: #f2e8ee; }
+
+.agent-skill-meta {
+  flex: 1;
+  min-width: 0;
   display: grid;
-  justify-items: end;
+  gap: 0.2rem;
+}
+
+.agent-skill-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
   font-variant-numeric: tabular-nums;
-  font-size: 0.75rem;
-  gap: 0.1rem;
+}
+
+.agent-skill-head strong {
+  font-size: 0.8rem;
+  font-weight: 650;
+}
+
+.agent-skill-bar {
+  height: 0.28rem;
+  border-radius: 999px;
+  background: oklch(0.35 0.02 340 / 0.55);
+  overflow: hidden;
+}
+
+.agent-skill-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, oklch(0.72 0.1 185), oklch(0.8 0.12 170));
+  transition: width 0.25s ease;
 }
 
 .canvas-toast {

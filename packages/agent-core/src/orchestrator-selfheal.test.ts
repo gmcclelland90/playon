@@ -49,7 +49,7 @@ describe("Orchestrator self-heal", () => {
       async () => ({ error: "rcon_command_failed", body: "Incorrect argument" }),
     );
 
-    const result = await orch.handle("configurer", "make it always day");
+    const result = await orch.handle("make it always day");
     expect(result.toolTrace).toHaveLength(2);
     expect(toolResultFailed(result.toolTrace[0]?.result)).toBe(true);
     expect((result.toolTrace[1]?.result as { error?: string }).error).toBe(

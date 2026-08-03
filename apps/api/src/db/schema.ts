@@ -107,7 +107,7 @@ export const settings = sqliteTable("settings", {
 });
 
 export const agentProgress = sqliteTable("agent_progress", {
-  persona: text("persona").primaryKey(),
+  skill: text("skill").primaryKey(),
   xp: integer("xp").notNull().default(0),
   level: integer("level").notNull().default(1),
   title: text("title").notNull().default("Rookie"),

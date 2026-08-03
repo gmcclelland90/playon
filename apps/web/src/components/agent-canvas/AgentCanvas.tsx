@@ -5,14 +5,14 @@ import { statusLabel } from "../../status";
 
 export type AgentActivityView = {
   serverId: string;
-  persona: string;
+  skill: string;
   phase: string;
   verb: string;
   label?: string;
 };
 
-export type AgentCastView = {
-  persona: string;
+export type AgentSkillView = {
+  skill: string;
   level: number;
   title: string;
 };
@@ -22,10 +22,10 @@ type Props = {
   /** True while the servers query has not settled — avoid false empty CTA. */
   serversLoading?: boolean;
   selectedId?: string;
-  /** Latest activity keyed by persona (global cast). */
-  activityByPersona: Record<string, AgentActivityView | undefined>;
-  /** Global cast for map sprites. */
-  cast: AgentCastView[];
+  /** Latest agent activity (one agent). */
+  activity?: AgentActivityView;
+  /** Skill roster for accent colors while busy. */
+  skills: AgentSkillView[];
   onSelect: (serverId: string | undefined) => void;
   /** Empty map: open unbound install chat. */
   onDescribe: () => void;
@@ -42,17 +42,16 @@ type ServerNode = {
   root: Container;
 };
 
-type PersonaSprite = {
-  persona: string;
+type AgentSprite = {
   root: Container;
   body: Graphics;
   label: Text;
-  levelText: Text;
+  statusText: Text;
   x: number;
   y: number;
   targetX: number;
   targetY: number;
-  lastServerId?: string;
+  bobPhase: number;
 };
 
 /** Classic 2:1 isometric tile half-size — angled floor, not top-down. */
@@ -62,7 +61,7 @@ const ISO_TILE_H = 28;
 const ISO_RANGE = 48;
 const LERP_SPEED = 8;
 
-const PERSONA_COLORS: Record<string, number> = {
+const SKILL_COLORS: Record<string, number> = {
   installer: 0x5ed4c8,
   monitor: 0x6aa8e8,
   configurer: 0xc4a35a,
@@ -73,30 +72,35 @@ const PERSONA_COLORS: Record<string, number> = {
   orchestrator: 0xf2e8ee,
 };
 
+const IDLE_COLOR = 0x5ed4c8;
+
+const SKILL_SHORT: Record<string, string> = {
+  installer: "Install",
+  monitor: "Monitor",
+  configurer: "Config",
+  troubleshooter: "Fix",
+  backup: "Backup",
+  player_panel: "Panel",
+  modder: "Mod",
+  orchestrator: "Lead",
+};
+
+export function skillShortLabel(skill: string): string {
+  return SKILL_SHORT[skill] ?? skill.replace(/_/g, " ");
+}
+
+export function skillColor(skill: string): number {
+  return SKILL_COLORS[skill] ?? IDLE_COLOR;
+}
+
 function layoutPosition(index: number): { x: number; y: number } {
   const col = index % 3;
   const row = Math.floor(index / 3);
   return { x: col * 280 - 280, y: row * 200 - 40 };
 }
 
-function homeSlot(index: number, total: number): { x: number; y: number } {
-  const angle = (index / Math.max(total, 1)) * Math.PI * 2 - Math.PI / 2;
-  const radius = 160;
-  return { x: Math.cos(angle) * radius, y: Math.sin(angle) * radius + 120 };
-}
-
-function shortPersona(persona: string): string {
-  const map: Record<string, string> = {
-    installer: "install",
-    monitor: "monitor",
-    configurer: "config",
-    troubleshooter: "fix",
-    backup: "backup",
-    player_panel: "panel",
-    modder: "mod",
-    orchestrator: "orch",
-  };
-  return map[persona] ?? persona.slice(0, 6);
+function homeSpot(): { x: number; y: number } {
+  return { x: 0, y: 140 };
 }
 
 function verbOffset(verb: string): { x: number; y: number } {
@@ -114,21 +118,14 @@ function isoPoint(i: number, j: number): { x: number; y: number } {
   };
 }
 
-/**
- * Proper parallelogram / 2:1 isometric floor — same “looking at an angle”
- * feel as before, but both line families share consistent slopes so the
- * lattice tiles cleanly and spans a large pan/zoom range.
- */
 function drawFloorGrid(g: Graphics) {
   g.clear();
   const n = ISO_RANGE;
-  // Lines of constant i (run along +j): direction (-W, H)
   for (let i = -n; i <= n; i++) {
     const a = isoPoint(i, -n);
     const b = isoPoint(i, n);
     g.moveTo(a.x, a.y).lineTo(b.x, b.y);
   }
-  // Lines of constant j (run along +i): direction (+W, H)
   for (let j = -n; j <= n; j++) {
     const a = isoPoint(-n, j);
     const b = isoPoint(n, j);
@@ -149,31 +146,34 @@ function drawCrate(g: Graphics, selected: boolean, running: boolean) {
 }
 
 function phaseRingColor(phase: string | undefined): number {
-  if (phase === "working" || phase === "tool") return 0x5ed4c8;
-  if (phase === "waiting" || phase === "confirm") return 0xc4a35a;
-  if (phase === "error" || phase === "failed") return 0xe05a5a;
+  if (phase === "working" || phase === "tool" || phase === "tool_start" || phase === "tool_done") {
+    return 0x5ed4c8;
+  }
+  if (phase === "waiting" || phase === "confirm" || phase === "confirm_wait") return 0xc4a35a;
+  if (phase === "error" || phase === "failed" || phase === "tool_fail") return 0xe05a5a;
+  if (phase === "thinking") return 0x6aa8e8;
   return 0xe05a9c;
 }
 
-function drawPersonaBody(g: Graphics, persona: string, busy: boolean, phase?: string) {
+function drawAgentBody(
+  g: Graphics,
+  opts: { busy: boolean; phase?: string; skill?: string },
+) {
   g.clear();
-  const color = PERSONA_COLORS[persona] ?? 0x5ed4c8;
-  // Keep persona identity; encode busy with a status ring (not a pink blob).
-  g.circle(0, 0, 12).fill({ color, alpha: busy ? 1 : 0.55 });
-  if (busy) {
-    g.circle(0, 0, 16).stroke({ width: 2.5, color: phaseRingColor(phase), alpha: 0.95 });
+  const color = opts.busy && opts.skill ? skillColor(opts.skill) : IDLE_COLOR;
+  const r = 18;
+  g.circle(0, 0, r).fill({ color, alpha: opts.busy ? 1 : 0.75 });
+  if (opts.busy) {
+    g.circle(0, 0, r + 5).stroke({ width: 2.5, color: phaseRingColor(opts.phase), alpha: 0.95 });
   }
-  g.circle(-4, -2.5, 2).fill({ color: 0x111111 });
-  g.circle(4, -2.5, 2).fill({ color: 0x111111 });
-  // Tiny hat / accent so personas read apart at a glance
-  if (persona === "installer") {
-    g.rect(-7, -14, 14, 4).fill({ color: 0x2a1f28 });
-  } else if (persona === "monitor") {
-    g.circle(0, -13, 3).fill({ color: 0x2a1f28 });
-  } else if (persona === "troubleshooter") {
-    g.moveTo(-6, -12).lineTo(0, -17).lineTo(6, -12).fill({ color: 0x2a1f28 });
-  } else if (persona === "orchestrator") {
-    g.circle(0, -13, 3.5).stroke({ width: 1.5, color: 0x2a1f28 });
+  // Eyes
+  g.circle(-5, -3, 2.4).fill({ color: 0x111111 });
+  g.circle(5, -3, 2.4).fill({ color: 0x111111 });
+  // Soft highlight
+  g.circle(-7, -8, 3).fill({ color: 0xffffff, alpha: 0.18 });
+  // Cap accent when busy on a skill
+  if (opts.busy && opts.skill) {
+    g.roundRect(-10, -r - 4, 20, 5, 2).fill({ color: 0x2a1f28, alpha: 0.85 });
   }
 }
 
@@ -186,24 +186,25 @@ function prefersReducedMotion(): boolean {
 }
 
 /**
- * Sparse Pixi stage: flat pan/zoom floor, server crates, global persona sprites.
+ * Sparse Pixi stage: isometric floor, server crates, one agent sprite.
  */
 export function AgentCanvas({
   servers,
   serversLoading = false,
   selectedId,
-  activityByPersona,
-  cast,
+  activity,
+  skills: _skills,
   onSelect,
   onDescribe,
   onAddServer,
   showAddButton = true,
 }: Props) {
+  void _skills;
   const hostRef = useRef<HTMLDivElement>(null);
   const appRef = useRef<Application | null>(null);
   const worldRef = useRef<Container | null>(null);
   const nodesRef = useRef<Map<string, ServerNode>>(new Map());
-  const personasRef = useRef<Map<string, PersonaSprite>>(new Map());
+  const agentRef = useRef<AgentSprite | null>(null);
   const onSelectRef = useRef(onSelect);
   const onDescribeRef = useRef(onDescribe);
   const onAddServerRef = useRef(onAddServer);
@@ -282,23 +283,23 @@ export function AgentCanvas({
 
       const reduceMotion = prefersReducedMotion();
       const tickerFn = () => {
+        const sprite = agentRef.current;
+        if (!sprite) return;
         if (reduceMotion) {
-          for (const sprite of personasRef.current.values()) {
-            sprite.x = sprite.targetX;
-            sprite.y = sprite.targetY;
-            sprite.root.x = sprite.x;
-            sprite.root.y = sprite.y;
-          }
+          sprite.x = sprite.targetX;
+          sprite.y = sprite.targetY;
+          sprite.root.x = sprite.x;
+          sprite.root.y = sprite.y;
           return;
         }
         const dt = Math.min(app.ticker.deltaMS / 1000, 0.05);
         const t = 1 - Math.exp(-LERP_SPEED * dt);
-        for (const sprite of personasRef.current.values()) {
-          sprite.x += (sprite.targetX - sprite.x) * t;
-          sprite.y += (sprite.targetY - sprite.y) * t;
-          sprite.root.x = sprite.x;
-          sprite.root.y = sprite.y;
-        }
+        sprite.x += (sprite.targetX - sprite.x) * t;
+        sprite.y += (sprite.targetY - sprite.y) * t;
+        sprite.bobPhase += dt * 3.2;
+        const bob = Math.sin(sprite.bobPhase) * 2.2;
+        sprite.root.x = sprite.x;
+        sprite.root.y = sprite.y + bob;
       };
       app.ticker.add(tickerFn);
 
@@ -329,7 +330,7 @@ export function AgentCanvas({
       appRef.current = null;
       worldRef.current = null;
       nodesRef.current.clear();
-      personasRef.current.clear();
+      agentRef.current = null;
     };
   }, []);
 
@@ -385,13 +386,14 @@ export function AgentCanvas({
       const name = node.root.getChildByLabel("name") as Text;
       const status = node.root.getChildByLabel("status") as Text;
       const selected = server.id === selectedId;
-      const busyActivity = Object.values(activityByPersona).find(
-        (a) => a && a.serverId === server.id && a.phase !== "idle",
-      );
+      const busyHere =
+        activity && activity.serverId === server.id && activity.phase !== "idle"
+          ? activity
+          : undefined;
       drawCrate(crate, selected, server.status === "running");
       name.text = server.name;
-      status.text = busyActivity
-        ? `${statusLabel(server.status)} · ${busyActivity.label || busyActivity.verb}`
+      status.text = busyHere
+        ? `${statusLabel(server.status)} · ${busyHere.label || busyHere.verb}`
         : statusLabel(server.status);
     });
 
@@ -402,129 +404,108 @@ export function AgentCanvas({
         nodesRef.current.delete(id);
       }
     }
-  }, [servers, selectedId, activityByPersona, stageReady]);
+  }, [servers, selectedId, activity, stageReady]);
 
-  // Sync global persona sprites + movement targets
+  // Sync single agent sprite
   useEffect(() => {
     const world = worldRef.current;
     if (!world || !stageReady) return;
 
-    // Only draw real cast — never invent placeholder rookies (fake presence).
-    const roster = cast;
-    const busyPersonas = roster.filter((agent) => {
-      const activity = activityByPersona[agent.persona];
-      return Boolean(activity && activity.phase !== "idle");
+    let sprite = agentRef.current;
+    if (!sprite) {
+      const home = homeSpot();
+      const root = new Container();
+      root.x = home.x;
+      root.y = home.y;
+      root.zIndex = 10;
+
+      const body = new Graphics();
+      body.label = "body";
+      root.addChild(body);
+
+      const label = new Text({
+        text: "Agent",
+        style: { fill: 0xf2e8ee, fontSize: 11, fontFamily: "DM Sans, sans-serif" },
+      });
+      label.anchor.set(0.5, 0);
+      label.y = 22;
+      root.addChild(label);
+
+      const statusText = new Text({
+        text: "",
+        style: { fill: 0xa898a0, fontSize: 9, fontFamily: "DM Sans, sans-serif" },
+      });
+      statusText.anchor.set(0.5, 0);
+      statusText.y = 34;
+      root.addChild(statusText);
+
+      world.addChild(root);
+      sprite = {
+        root,
+        body,
+        label,
+        statusText,
+        x: home.x,
+        y: home.y,
+        targetX: home.x,
+        targetY: home.y,
+        bobPhase: 0,
+      };
+      agentRef.current = sprite;
+    }
+
+    const busy = Boolean(activity && activity.phase !== "idle");
+    drawAgentBody(sprite.body, {
+      busy,
+      phase: activity?.phase,
+      skill: activity?.skill,
     });
-    // Idle cast stays off-map when someone is working; otherwise park at home ring.
-    const showIdleOnMap = busyPersonas.length === 0;
+    sprite.statusText.text = busy
+      ? (activity?.label ?? activity?.verb ?? "busy").slice(0, 18)
+      : "";
+    sprite.label.alpha = busy ? 1 : 0.85;
 
-    const seen = new Set<string>();
-    roster.forEach((agent, index) => {
-      const activity = activityByPersona[agent.persona];
-      const busy = Boolean(activity && activity.phase !== "idle");
-      if (!busy && !showIdleOnMap) {
-        return;
+    if (busy && activity?.serverId) {
+      const node = nodesRef.current.get(activity.serverId);
+      if (node) {
+        const off = verbOffset(activity.verb);
+        sprite.targetX = node.x + off.x;
+        sprite.targetY = node.y + off.y;
       }
-      seen.add(agent.persona);
-      let sprite = personasRef.current.get(agent.persona);
-      if (!sprite) {
-        const home = homeSlot(index, roster.length);
-        const root = new Container();
-        root.x = home.x;
-        root.y = home.y;
-        root.zIndex = 10;
-
-        const body = new Graphics();
-        body.label = "body";
-        root.addChild(body);
-
-        const label = new Text({
-          text: shortPersona(agent.persona),
-          style: { fill: 0xf2e8ee, fontSize: 10, fontFamily: "DM Sans, sans-serif" },
-        });
-        label.anchor.set(0.5, 0);
-        label.y = 14;
-        root.addChild(label);
-
-        const levelText = new Text({
-          text: "",
-          style: { fill: 0xa898a0, fontSize: 9, fontFamily: "DM Sans, sans-serif" },
-        });
-        levelText.anchor.set(0.5, 0);
-        levelText.y = 25;
-        root.addChild(levelText);
-
-        world.addChild(root);
-        sprite = {
-          persona: agent.persona,
-          root,
-          body,
-          label,
-          levelText,
-          x: home.x,
-          y: home.y,
-          targetX: home.x,
-          targetY: home.y,
-        };
-        personasRef.current.set(agent.persona, sprite);
-      }
-
-      drawPersonaBody(sprite.body, agent.persona, busy, activity?.phase);
-      // Status text encodes verb/phase; level stays in the dock cast list.
-      sprite.levelText.text = busy
-        ? (activity?.label ?? activity?.verb ?? "busy").slice(0, 18)
-        : "";
-      sprite.label.alpha = busy ? 1 : 0.7;
-
-      if (busy && activity?.serverId) {
-        const node = nodesRef.current.get(activity.serverId);
-        if (node) {
-          const off = verbOffset(activity.verb);
-          sprite.targetX = node.x + off.x;
-          sprite.targetY = node.y + off.y;
-          sprite.lastServerId = activity.serverId;
-          if (prefersReducedMotion()) {
-            sprite.x = sprite.targetX;
-            sprite.y = sprite.targetY;
-            sprite.root.x = sprite.x;
-            sprite.root.y = sprite.y;
-          }
-        }
+    } else if (selectedId) {
+      const node = nodesRef.current.get(selectedId);
+      if (node) {
+        sprite.targetX = node.x + 64;
+        sprite.targetY = node.y;
       } else {
-        const home = homeSlot(index, roster.length);
+        const home = homeSpot();
         sprite.targetX = home.x;
         sprite.targetY = home.y;
-        sprite.lastServerId = undefined;
-        if (prefersReducedMotion()) {
-          sprite.x = sprite.targetX;
-          sprite.y = sprite.targetY;
-          sprite.root.x = sprite.x;
-          sprite.root.y = sprite.y;
-        }
       }
-    });
+    } else {
+      const home = homeSpot();
+      sprite.targetX = home.x;
+      sprite.targetY = home.y;
+    }
 
-    for (const [persona, sprite] of personasRef.current) {
-      if (!seen.has(persona)) {
-        world.removeChild(sprite.root);
-        sprite.root.destroy({ children: true });
-        personasRef.current.delete(persona);
-      }
+    if (prefersReducedMotion()) {
+      sprite.x = sprite.targetX;
+      sprite.y = sprite.targetY;
+      sprite.root.x = sprite.x;
+      sprite.root.y = sprite.y;
     }
 
     world.sortableChildren = true;
-  }, [cast, activityByPersona, servers, stageReady]);
+  }, [activity, selectedId, servers, stageReady]);
 
   const serverBusyLabel = (serverId: string): string | undefined => {
-    const hit = Object.values(activityByPersona).find(
-      (a) => a && a.serverId === serverId && a.phase !== "idle",
-    );
-    return hit?.label;
+    if (activity && activity.serverId === serverId && activity.phase !== "idle") {
+      return activity.label;
+    }
+    return undefined;
   };
 
-  const liveActivity = Object.values(activityByPersona).find(
-    (a) => a && a.phase !== "idle",
-  );
+  const liveBusy = activity && activity.phase !== "idle" ? activity : undefined;
 
   return (
     <div className="agent-canvas-host">
@@ -553,7 +534,7 @@ export function AgentCanvas({
         <div className="agent-canvas-empty">
           <div className="empty-hint">
             <strong>Your LAN map is empty</strong>
-            <p className="muted status-inline">Tell the agents what to stand up tonight.</p>
+            <p className="muted status-inline">Tell the agent what to stand up tonight.</p>
           </div>
           <button
             type="button"
@@ -568,9 +549,9 @@ export function AgentCanvas({
           <p className="agent-canvas-map-hint muted" aria-hidden>
             Drag to pan · Scroll to zoom
           </p>
-          {liveActivity ? (
+          {liveBusy ? (
             <p className="agent-canvas-live-chip" role="status">
-              {shortPersona(liveActivity.persona)} · {liveActivity.label ?? liveActivity.verb}
+              {skillShortLabel(liveBusy.skill)} · {liveBusy.label ?? liveBusy.verb}
             </p>
           ) : null}
           <div className="agent-canvas-rail">

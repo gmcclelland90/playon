@@ -1,10 +1,16 @@
 import { eq } from "drizzle-orm";
-import { surfaceXp, type AgentPersona } from "@playon/agent-core";
+import {
+  AGENT_SKILLS,
+  skillLabel,
+  surfaceSkill,
+  surfaceXp,
+  type AgentSkill,
+} from "@playon/agent-core";
 import type { Db } from "../db/client.js";
 import { agentProgress } from "../db/schema.js";
 
 export type AgentProgressRecord = {
-  persona: AgentPersona | string;
+  skill: AgentSkill | string;
   xp: number;
   level: number;
   title: string;
@@ -12,7 +18,7 @@ export type AgentProgressRecord = {
 };
 
 export type XpAward = {
-  persona: string;
+  skill: string;
   xpGained: number;
   reason: string;
   leveledUp: boolean;
@@ -33,7 +39,24 @@ export function levelFromXp(xp: number): number {
   return level;
 }
 
-export function titleFor(persona: string, level: number): string {
+/** XP progress within the current level (for skill bars). */
+export function xpProgressInLevel(xp: number): {
+  level: number;
+  intoLevel: number;
+  need: number;
+} {
+  let level = 1;
+  let need = 100;
+  let remaining = Math.max(0, xp);
+  while (remaining >= need && level < 99) {
+    remaining -= need;
+    level += 1;
+    need = Math.floor(need * 1.35);
+  }
+  return { level, intoLevel: remaining, need };
+}
+
+export function titleFor(skill: string, level: number): string {
   const band =
     level >= 12
       ? "Legend"
@@ -44,8 +67,7 @@ export function titleFor(persona: string, level: number): string {
           : level >= 3
             ? "Apprentice"
             : "Rookie";
-  const label = persona.replace(/_/g, " ");
-  return `${band} ${label}`;
+  return `${band} ${skillLabel(skill)}`;
 }
 
 function isFailedResult(result: unknown): boolean {
@@ -56,17 +78,8 @@ function isFailedResult(result: unknown): boolean {
   return false;
 }
 
-/** Default cast shown on the host before anyone has earned XP. */
-export const DEFAULT_SERVER_CAST = [
-  "installer",
-  "monitor",
-  "configurer",
-  "troubleshooter",
-  "backup",
-  "player_panel",
-  "modder",
-  "orchestrator",
-] as const;
+/** Default skill roster shown before anyone has earned XP. */
+export const DEFAULT_AGENT_SKILLS = AGENT_SKILLS;
 
 export class AgentProgressService {
   constructor(private readonly db: Db) {}
@@ -75,47 +88,51 @@ export class AgentProgressService {
     const rows = await this.db.select().from(agentProgress);
     return rows
       .map((r) => ({
-        persona: r.persona,
+        skill: r.skill,
         xp: r.xp,
         level: r.level,
         title: r.title,
         updatedAt: r.updatedAt,
       }))
-      .sort((a, b) => b.xp - a.xp || a.persona.localeCompare(b.persona));
+      .sort((a, b) => b.xp - a.xp || a.skill.localeCompare(b.skill));
   }
 
   /** Full roster: defaults at Rookie + any earned progress rows. */
-  async listCast(): Promise<AgentProgressRecord[]> {
+  async listSkills(): Promise<AgentProgressRecord[]> {
     const earned = await this.list();
-    const byPersona = new Map(earned.map((row) => [row.persona, row]));
-    const cast: AgentProgressRecord[] = DEFAULT_SERVER_CAST.map((persona) => {
-      const existing = byPersona.get(persona);
+    const bySkill = new Map(earned.map((row) => [row.skill, row]));
+    const skills: AgentProgressRecord[] = DEFAULT_AGENT_SKILLS.map((skill) => {
+      const existing = bySkill.get(skill);
       if (existing) return existing;
       return {
-        persona,
+        skill,
         xp: 0,
         level: 1,
-        title: titleFor(persona, 1),
+        title: titleFor(skill, 1),
         updatedAt: new Date(0),
       };
     });
     for (const row of earned) {
-      if (!DEFAULT_SERVER_CAST.includes(row.persona as (typeof DEFAULT_SERVER_CAST)[number])) {
-        cast.push(row);
+      if (!DEFAULT_AGENT_SKILLS.includes(row.skill as (typeof DEFAULT_AGENT_SKILLS)[number])) {
+        skills.push(row);
       }
     }
-    return cast.sort((a, b) => b.xp - a.xp || a.persona.localeCompare(b.persona));
+    // Keep roster order (DEFAULT_AGENT_SKILLS), extras after sorted by XP.
+    const extras = skills.slice(DEFAULT_AGENT_SKILLS.length).sort(
+      (a, b) => b.xp - a.xp || a.skill.localeCompare(b.skill),
+    );
+    return [...skills.slice(0, DEFAULT_AGENT_SKILLS.length), ...extras];
   }
 
-  async get(persona: string): Promise<AgentProgressRecord> {
+  async get(skill: string): Promise<AgentProgressRecord> {
     const rows = await this.db
       .select()
       .from(agentProgress)
-      .where(eq(agentProgress.persona, persona))
+      .where(eq(agentProgress.skill, skill))
       .limit(1);
     if (rows[0]) {
       return {
-        persona: rows[0].persona,
+        skill: rows[0].skill,
         xp: rows[0].xp,
         level: rows[0].level,
         title: rows[0].title,
@@ -123,34 +140,34 @@ export class AgentProgressService {
       };
     }
     return {
-      persona,
+      skill,
       xp: 0,
       level: 1,
-      title: titleFor(persona, 1),
+      title: titleFor(skill, 1),
       updatedAt: new Date(0),
     };
   }
 
-  async award(persona: string, xpGained: number, reason: string): Promise<XpAward> {
-    const current = await this.get(persona);
+  async award(skill: string, xpGained: number, reason: string): Promise<XpAward> {
+    const current = await this.get(skill);
     const previousLevel = current.level;
     const xp = current.xp + Math.max(0, xpGained);
     const level = levelFromXp(xp);
-    const title = titleFor(persona, level);
+    const title = titleFor(skill, level);
     const now = new Date();
     const existing = await this.db
       .select()
       .from(agentProgress)
-      .where(eq(agentProgress.persona, persona))
+      .where(eq(agentProgress.skill, skill))
       .limit(1);
     if (existing[0]) {
       await this.db
         .update(agentProgress)
         .set({ xp, level, title, updatedAt: now })
-        .where(eq(agentProgress.persona, persona));
+        .where(eq(agentProgress.skill, skill));
     } else {
       await this.db.insert(agentProgress).values({
-        persona,
+        skill,
         xp,
         level,
         title,
@@ -159,25 +176,25 @@ export class AgentProgressService {
     }
     const leveledUp = level > previousLevel;
     return {
-      persona,
+      skill,
       xpGained,
       reason,
       leveledUp,
       previousLevel,
-      progress: { persona, xp, level, title, updatedAt: now },
+      progress: { skill, xp, level, title, updatedAt: now },
       celebrate: leveledUp,
     };
   }
 
   async awardForTools(
-    persona: string,
     toolTrace: Array<{ name: string; result?: unknown }>,
   ): Promise<XpAward[]> {
     const awards: XpAward[] = [];
     for (const trace of toolTrace) {
       if (isFailedResult(trace.result)) continue;
+      const skill = surfaceSkill(trace.name);
       const spec = surfaceXp(trace.name);
-      const award = await this.award(persona, spec.xp, spec.reason);
+      const award = await this.award(skill, spec.xp, spec.reason);
       award.celebrate = Boolean(spec.celebrate) || award.leveledUp;
       awards.push(award);
     }

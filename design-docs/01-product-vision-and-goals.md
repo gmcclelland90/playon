@@ -5,7 +5,7 @@
 PlayOn is a self-hosted, AI-agent-driven control plane for dedicated game servers.  
 It turns the traditionally painful process of installing, configuring, modding, and managing game servers into a conversational, reliable, and even fun experience — optimised for LAN parties and spontaneous multiplayer sessions.
 
-Instead of fighting web panels or editing configs by hand, the host talks to specialised agents that already know how to run the game. Players get a clean, always up-to-date panel with join links, required files, guides, and more.
+Instead of fighting web panels or editing configs by hand, the host talks to a single agent that already knows how to run the game. Players get a clean, always up-to-date panel with join links, required files, guides, and more.
 
 ## Core Problem
 

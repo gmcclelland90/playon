@@ -6,7 +6,7 @@
   Single self-hosted application serving both the admin interface and the player-facing panel.
 
 - **Agent Runtime**  
-  Orchestrates specialised agents, manages conversation state, tool calling, and skill loading.
+  Runs the single PlayOn agent: conversation state, tool calling, and game-skill loading.
 
 - **Skills Store**  
   Global skills library + per-server skill overrides. Versioned packages.

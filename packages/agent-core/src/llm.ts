@@ -190,7 +190,7 @@ export class OpenAICompatibleLlmClient implements LlmClient {
     }
 
     if (this.baseUrl.includes("venice.ai")) {
-      // Prefer our persona system prompts over Venice's default chat persona.
+      // Prefer our agent system prompt over Venice's default chat persona.
       body.venice_parameters = {
         include_venice_system_prompt: false,
       };

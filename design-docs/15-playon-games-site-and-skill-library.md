@@ -78,7 +78,7 @@ Keep the first viewport brand-led (see frontend design rules). Library pages are
 ### Phase B — wire PlayOn agents
 
 - `skill_search` / `skill_install_url` in the API against `PLAYON_SKILLS_CATALOG_URL` (default `https://playon.games/skills/index.json`)
-- Installer persona: local → catalog → draft
+- Agent install workflow: local → catalog → draft
 - Settings UI: “Browse skill library”
 
 ### Phase C — community

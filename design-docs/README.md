@@ -10,13 +10,13 @@ The system is designed primarily for LAN parties and rapid multiplayer setup, wi
 
 | # | Document | Description |
 |---|----------|-------------|
-| 01 | [Product Vision & Goals](01-product-vision-and-goals.md) | North-star vision, personas, success metrics, non-goals |
+| 01 | [Product Vision & Goals](01-product-vision-and-goals.md) | North-star vision, host/player personas, success metrics, non-goals |
 | 02 | [System Architecture Overview](02-system-architecture-overview.md) | High-level components, topology, data isolation |
-| 03 | [Skills System Design](03-skills-system-design.md) | Global vs server skills, package structure, lifecycle |
-| 04 | [Agent System Design](04-agent-system-design.md) | Agent roles, tools, conversation model, gamification of agents |
+| 03 | [Skills System Design](03-skills-system-design.md) | Global vs server game skills, package structure, lifecycle |
+| 04 | [Agent System Design](04-agent-system-design.md) | Single agent, tools, conversation model, agent-skill XP |
 | 05 | [Runtime & Node Management](05-runtime-and-node-management.md) | Docker-first, native fallback, multi-node, IaC |
 | 06 | [Player-Facing Panel Design](06-player-facing-panel-design.md) | Agent-pushed content model for players |
-| 07 | [Admin Interface & Gamification](07-admin-interface-and-gamification.md) | Host UX, chat + dashboard, game-like systems |
+| 07 | [Admin Interface & Gamification](07-admin-interface-and-gamification.md) | Map + chat UX, one agent sprite, skill bars |
 | 08 | [Identity, Roles & Access Control](08-identity-roles-and-access-control.md) | Multi-user roles, permissions, audit |
 | 09 | [Backup, Snapshot & Recovery](09-backup-snapshot-and-recovery.md) | Data safety, snapshots, restore flows |
 | 10 | [Migration & Import Utility](10-migration-and-import-utility.md) | Bringing existing servers under management |

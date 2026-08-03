@@ -2,23 +2,25 @@
 
 ## Purpose
 
-Agents are the intelligent actors that perform work on behalf of the host.  
-They load skills, reason, call tools, and keep both the servers and the player-facing panel in good shape.
+PlayOn has **one agent** that performs work on behalf of the host.  
+It loads game skills, reasons, calls tools, and keeps both the servers and the player-facing panel in good shape.
 
-## Specialised Agent Roles (Examples)
+## One agent, many workflows
 
-- **Installer Agent** – create new servers from skills
-- **Modder Agent** – add, update, remove, and validate mods
-- **Configurer Agent** – manage settings, ports, passwords, player limits, etc.
-- **Monitor / Health Agent** – watch processes, logs, resources; remediate common issues
-- **Player Panel Agent** – push content and collect structured input from the player surface
-- **Troubleshooter Agent** – diagnose and fix problems
-- **Backup Agent** – coordinate snapshots and restores
-- **Generalist / Orchestrator** – routes work and maintains conversation context
+The agent is a generalist with the full tool surface. It handles install, config, mods, monitoring, backups, troubleshooting, and player-panel updates in one conversation — no separate “little guys” routing the chat.
 
-Multiple specialised agents can collaborate on a single request.
+Workflow flavor (for prompts and progression, not separate actors):
 
-## Tooling Available to Agents
+- **Install** – create and start servers from game skills
+- **Mod** – add, update, remove, and validate mods
+- **Config** – settings, ports, passwords, player limits, live rules
+- **Monitor** – health, query, remediations
+- **Panel** – publish join info and player-facing blocks
+- **Fix** – diagnose and repair failures
+- **Backup** – snapshots and restores
+- **Lead** – general orchestration and routing within a turn
+
+## Tooling Available to the Agent
 
 Tools are strictly scoped:
 
@@ -31,28 +33,30 @@ Tools are strictly scoped:
 - Snapshot / backup triggers
 - Player-panel content publishing APIs
 
+Each tool is tagged with a primary **agent skill** used only for XP / celebrations (see below). That tag does not gate which tools the agent may call.
+
 ## Conversation & Memory Model
 
 - Primary interface is multi-turn chat with the host
-- Agents maintain relevant context (current server, recent actions, skill versions)
+- The agent maintains relevant context (current server, recent actions, skill versions)
 - Important decisions and state changes are logged and attributed to the user
 
-## Gamification of Agents
+## Gamification (agent skills)
 
-Agents themselves are gamified:
+Progression is for fun on the map — not host trophies:
 
-- Gain XP and levels from successful tasks
-- Unlock titles, visual flair, and personality traits
-- Different agents can have distinct “characters” themed around games or hosting archetypes
-- Successes, recoveries, and clean mod installs can trigger celebrations or achievements in the UI
+- Successful tools award XP to the tool’s tagged **agent skill** (Install, Monitor, Config, Fix, Backup, Panel, Mod, Lead)
+- Skills level independently with evolving titles (Rookie → Legend)
+- Celebrations and map accent color follow the active skill
+- There is a single agent character on the canvas; the dock shows skill bars
 
-This makes the management experience itself entertaining.
+**Naming:** *game skills* are install packages under `skills/`. *Agent skills* are the eight XP tracks above. Do not conflate them in product copy.
 
 ## Safety & Control
 
 - All tool calls are subject to the security model (see Security document)
 - Destructive or high-impact actions should prefer confirmation or automatic pre-snapshots
-- Agents must surface uncertainty rather than guessing on critical operations
+- The agent must surface uncertainty rather than guessing on critical operations
 
 ## Player Panel Integration
 

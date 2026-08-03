@@ -116,18 +116,17 @@ export const api = {
       conversationId: string;
       serverId?: string;
       reply: string;
-      persona: string;
       llmMode: string;
       toolTrace?: ToolTrace[];
       agentProgress?: {
-        persona: string;
+        skill: string;
         xp: number;
         level: number;
         title: string;
       };
       celebrations?: Array<{
         serverId?: string;
-        persona: string;
+        skill: string;
         reason: string;
         xpGained: number;
         level: number;
@@ -156,8 +155,9 @@ export const api = {
     ),
   agents: () =>
     request<{
-      agents: Array<{
-        persona: string;
+      agent: { name: string };
+      skills: Array<{
+        skill: string;
         xp: number;
         level: number;
         title: string;
