@@ -190,6 +190,34 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  listAccessTokens: () =>
+    request<{
+      tokens: Array<{
+        id: string;
+        name: string;
+        autoApproveConfirms: boolean;
+        createdAt: string;
+        lastUsedAt: string | null;
+      }>;
+    }>("/api/access-tokens"),
+  createAccessToken: (body: { name: string; autoApproveConfirms?: boolean }) =>
+    request<{
+      token: {
+        id: string;
+        name: string;
+        autoApproveConfirms: boolean;
+        createdAt: string;
+        lastUsedAt: string | null;
+        token: string;
+      };
+    }>("/api/access-tokens", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  revokeAccessToken: (id: string) =>
+    request<{ ok: true }>(`/api/access-tokens/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
   skills: (serverId?: string) =>
     request<{ skills: SkillRow[] }>(
       serverId ? `/api/skills?serverId=${encodeURIComponent(serverId)}` : "/api/skills",

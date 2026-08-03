@@ -886,6 +886,29 @@ details.tool-trace summary {
   gap: 0.35rem;
 }
 
+.field.checkbox-row {
+  grid-template-columns: auto 1fr;
+  align-items: start;
+}
+
+.field.checkbox-row input[type="checkbox"] {
+  width: auto;
+  margin-top: 0.2rem;
+}
+
+.code-block {
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: oklch(0.08 0 0);
+}
+
 .field > span {
   font-size: 0.875rem;
   font-weight: 600;

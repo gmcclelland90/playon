@@ -76,6 +76,14 @@ import { EventHub } from "./services/event-hub.js";
 import { safeQueryLive } from "./services/server-panel.js";
 import { labelForTool, verbForTool } from "./services/agent-activity.js";
 import { nodeJobService } from "./services/node-jobs.js";
+import {
+  authenticateAccessToken,
+  bearerFromAuthorization,
+  createAccessToken,
+  listAccessTokens,
+  revokeAccessToken,
+} from "./services/access-tokens.js";
+import { authInfoFromAccessToken, createPlayOnMcpHandler } from "./services/mcp.js";
 import { createLlmClient, createOrchestrator } from "./services/tools.js";
 
 
@@ -429,6 +437,62 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
 
     await setSetting(db, LLM_SETTINGS_KEY, next);
     return c.json({ llm: toPublicLlmSettings(next) });
+  });
+
+  app.get("/api/access-tokens", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const tokens = await listAccessTokens(db, user.id);
+    return c.json({
+      tokens: tokens.map((t) => ({
+        id: t.id,
+        name: t.name,
+        autoApproveConfirms: t.autoApproveConfirms,
+        createdAt: t.createdAt.toISOString(),
+        lastUsedAt: t.lastUsedAt?.toISOString() ?? null,
+      })),
+    });
+  });
+
+  app.post("/api/access-tokens", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const body = z
+      .object({
+        name: z.string().min(1).max(80).default("MCP token"),
+        autoApproveConfirms: z.boolean().optional(),
+      })
+      .parse(await c.req.json().catch(() => ({})));
+    const created = await createAccessToken(db, {
+      name: body.name,
+      userId: user.id,
+      autoApproveConfirms: body.autoApproveConfirms,
+    });
+    return c.json({
+      token: {
+        id: created.id,
+        name: created.name,
+        autoApproveConfirms: created.autoApproveConfirms,
+        createdAt: created.createdAt.toISOString(),
+        lastUsedAt: null,
+        token: created.token,
+      },
+    });
+  });
+
+  app.delete("/api/access-tokens/:id", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const id = c.req.param("id");
+    const ok = await revokeAccessToken(db, id, user.id);
+    if (!ok) return c.json({ error: "not_found" }, 404);
+    return c.json({ ok: true });
   });
 
   app.get("/api/settings/cloud", async (c) => {
@@ -1892,6 +1956,18 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     const ok = confirmService.resolve(body.requestId, body.approved);
     if (!ok) return c.json({ error: "unknown_or_expired_request" }, 404);
     return c.json({ ok: true, requestId: body.requestId, approved: body.approved });
+  });
+
+  const mcpHandler = createPlayOnMcpHandler(plane);
+  app.all("/mcp", async (c) => {
+    const rawToken = bearerFromAuthorization(c.req.header("authorization"));
+    const principal = await authenticateAccessToken(db, rawToken);
+    if (!principal || !rawToken) {
+      return c.json({ error: "unauthorized" }, 401);
+    }
+    return mcpHandler.fetch(c.req.raw, {
+      authInfo: authInfoFromAccessToken(rawToken, principal),
+    });
   });
 
   const webDist =

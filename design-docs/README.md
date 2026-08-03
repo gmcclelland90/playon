@@ -26,6 +26,7 @@ The system is designed primarily for LAN parties and rapid multiplayer setup, wi
 | 14 | [Per-Server Compute Placement](14-cloud-backed-lan-mode.md) | Exploratory: Local / Remote (LAN) / Cloud per server, LAN-feel tunneling for cloud |
 | 15 | [playon.games site & skill library](15-playon-games-site-and-skill-library.md) | Sibling `playon-games` owns all games.*; monorepo/Home are platform-only |
 | 16 | [Live Server Query](16-live-server-query.md) | Uniform live stats (GameQ-style), built-in dialects, agent-authored skill connectors |
+| 17 | [MCP & External Agents](17-mcp-and-external-agents.md) | Same tool registry via Venice, Ollama, or MCP; PATs for external agents |
 
 ## How to Use
 

@@ -158,11 +158,14 @@ export function SettingsPage({ user }: { user: PublicUser }) {
     <div className="pane settings-page stack">
       <header className="page-header">
         <h2>Settings</h2>
-        <p className="lede">LLM provider, backups, and host accounts.</p>
+        <p className="lede">
+          Same tools whether you use Venice, Ollama, or MCP — only the brain and how you connect
+          change.
+        </p>
       </header>
 
       <form className="panel stack tight" onSubmit={onSubmit}>
-        <h3>LLM</h3>
+        <h3>In-app agents (Venice / Ollama)</h3>
         {llm.isLoading ? (
           <div className="skeleton" aria-hidden>
             <div className="skeleton-row" />
@@ -231,6 +234,8 @@ export function SettingsPage({ user }: { user: PublicUser }) {
           </div>
         )}
       </form>
+
+      <McpAccessTokensSection />
 
       <form
         className="panel stack tight"
@@ -408,5 +413,132 @@ export function SettingsPage({ user }: { user: PublicUser }) {
         </form>
       ) : null}
     </div>
+  );
+}
+
+function McpAccessTokensSection() {
+  const qc = useQueryClient();
+  const tokens = useQuery({ queryKey: ["access-tokens"], queryFn: api.listAccessTokens });
+  const [name, setName] = useState("Cursor / Claude / Codex");
+  const [autoApprove, setAutoApprove] = useState(false);
+  const [createdPlaintext, setCreatedPlaintext] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const mcpUrl =
+    typeof window !== "undefined" ? `${window.location.origin}/mcp` : "http://<host>:8787/mcp";
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.createAccessToken({ name: name.trim() || "MCP token", autoApproveConfirms: autoApprove }),
+    onSuccess: async (result) => {
+      setCreatedPlaintext(result.token.token);
+      setCopied(false);
+      await qc.invalidateQueries({ queryKey: ["access-tokens"] });
+    },
+  });
+
+  const revoke = useMutation({
+    mutationFn: (id: string) => api.revokeAccessToken(id),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["access-tokens"] });
+    },
+  });
+
+  const snippet = `{
+  "mcpServers": {
+    "playon": {
+      "url": "${mcpUrl}",
+      "headers": {
+        "Authorization": "Bearer ${createdPlaintext ?? "playon_…"}"
+      }
+    }
+  }
+}`;
+
+  return (
+    <section className="panel stack tight">
+      <h3>External agents (MCP)</h3>
+      <p className="muted status-inline">
+        Connect Claude Code, Codex, Cursor, or other MCP clients with a PlayOn access token. No Venice
+        key required on this host — they use the same tools as in-app agents.
+      </p>
+      <label className="field">
+        <span>MCP URL</span>
+        <input value={mcpUrl} readOnly />
+      </label>
+      <label className="field">
+        <span>Token name</span>
+        <input value={name} onChange={(e) => setName(e.target.value)} />
+      </label>
+      <label className="field checkbox-row">
+        <input
+          type="checkbox"
+          checked={autoApprove}
+          onChange={(e) => setAutoApprove(e.target.checked)}
+        />
+        <span>Auto-approve confirm-gated tools (trusted automation; still audited)</span>
+      </label>
+      <div className="btn-row">
+        <button
+          className="btn btn-primary"
+          type="button"
+          disabled={create.isPending}
+          onClick={() => create.mutate()}
+        >
+          {create.isPending ? "Creating…" : "Create access token"}
+        </button>
+      </div>
+      {create.isError ? <p className="error">{(create.error as Error).message}</p> : null}
+      {createdPlaintext ? (
+        <div className="stack tight">
+          <p className="ok">Copy this token now — it will not be shown again.</p>
+          <label className="field">
+            <span>Token</span>
+            <input value={createdPlaintext} readOnly />
+          </label>
+          <pre className="code-block">{snippet}</pre>
+          <div className="btn-row">
+            <button
+              className="btn"
+              type="button"
+              onClick={async () => {
+                await navigator.clipboard.writeText(snippet);
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 2000);
+              }}
+            >
+              {copied ? "Copied" : "Copy client snippet"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {tokens.isLoading ? (
+        <p className="muted">Loading tokens…</p>
+      ) : tokens.data?.tokens.length ? (
+        <ul className="stack tight">
+          {tokens.data.tokens.map((t) => (
+            <li key={t.id} className="btn-row" style={{ justifyContent: "space-between" }}>
+              <span>
+                {t.name}
+                {t.autoApproveConfirms ? " · auto-approve" : ""}
+                <span className="muted"> · {new Date(t.createdAt).toLocaleString()}</span>
+              </span>
+              <button
+                className="btn"
+                type="button"
+                disabled={revoke.isPending}
+                onClick={() => {
+                  if (window.confirm(`Revoke token “${t.name}”?`)) revoke.mutate(t.id);
+                }}
+              >
+                Revoke
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">No active access tokens.</p>
+      )}
+    </section>
   );
 }

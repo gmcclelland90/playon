@@ -1,9 +1,10 @@
 import { AGENT_SYSTEM_PROMPT } from "./agent-prompt.js";
-import { confirmSummary } from "./confirm-summary.js";
+import { runToolInvocation } from "./invoke-tool.js";
 import type { LlmClient, LlmMessage } from "./llm.js";
 import { toLlmToolDefinition, type ToolDefinition, type ToolHandler } from "./tools.js";
 
 export { confirmActionLabel, confirmSummary } from "./confirm-summary.js";
+export { runToolInvocation, type ConfirmPolicy, type ToolEntry } from "./invoke-tool.js";
 
 export interface ToolTraceEntry {
   name: string;
@@ -244,37 +245,18 @@ export class Orchestrator {
         let result: unknown;
         let failed = false;
         try {
-          if (entry.def.requiresConfirm) {
-            const gate = this.options.confirmGate;
-            if (!gate) {
-              result = {
-                error: "confirm_required",
-                detail: "host_confirm_gate_unavailable",
-                toolName: call.name,
-              };
-              failed = true;
-            } else {
-              const decision = await gate.requestConfirmation({
-                toolName: call.name,
-                summary: confirmSummary(call.name, call.arguments),
-                arguments: call.arguments,
-              });
-              if (!decision.approved) {
-                result = {
-                  error: "confirm_denied",
-                  requestId: decision.requestId,
-                  toolName: call.name,
-                };
-                failed = true;
-              } else {
-                result = await entry.handler(call.arguments);
-                if (result && typeof result === "object") {
-                  result = { ...(result as object), confirmRequestId: decision.requestId };
-                }
-              }
-            }
-          } else {
-            result = await entry.handler(call.arguments);
+          result = await runToolInvocation(entry, call.arguments, {
+            confirmGate: this.options.confirmGate,
+            confirmPolicy: "gate",
+          });
+          if (
+            result &&
+            typeof result === "object" &&
+            typeof (result as { error?: unknown }).error === "string" &&
+            ((result as { error: string }).error === "confirm_denied" ||
+              (result as { error: string }).error === "confirm_required")
+          ) {
+            failed = true;
           }
         } catch (err) {
           failed = true;

@@ -113,3 +113,19 @@ export const agentProgress = sqliteTable("agent_progress", {
   title: text("title").notNull().default("Rookie"),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
+
+/** Machine credentials for MCP / external agents (hashed at rest). */
+export const accessTokens = sqliteTable("access_tokens", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  tokenHash: text("token_hash").notNull().unique(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  autoApproveConfirms: integer("auto_approve_confirms", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  lastUsedAt: integer("last_used_at", { mode: "timestamp_ms" }),
+  revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+});

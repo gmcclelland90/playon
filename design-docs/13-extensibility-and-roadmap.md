@@ -7,6 +7,7 @@
 - Community skill sharing (export/import packages) as a natural next step; hosted library on playon.games is a separate site track
 - New agent-skill XP tracks or map flair can extend gamification without splitting the chat agent
 - New content block types for the player-facing panel
+- External agents via MCP into the same tool registry as Canvas (Venice / Ollama) — see [17](17-mcp-and-external-agents.md)
 
 ## Medium-Term Ideas
 
