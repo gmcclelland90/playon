@@ -8,6 +8,7 @@ import { PathJailError } from "@playon/runtime";
 import type { AppConfig } from "../config.js";
 import { createDb, type Db } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
+import { LAB_DOCKER_SKILL, resolveFixturesRoot } from "../lab-games-root.js";
 import { buildTestZip, ServerArchiveService } from "./archive-tools.js";
 import { ServerService } from "./servers.js";
 
@@ -40,7 +41,7 @@ function tempEnv(): {
     llmMode: "openai_compatible",
     runtimeMode: "docker",
     advertiseHost: "127.0.0.1",
-    skillsRoots: [path.join(findRepoRoot(), "sites","playon-games","skills","src"), path.join(root, "skills")],
+    skillsRoots: [resolveFixturesRoot(findRepoRoot()), path.join(root, "skills")],
   };
   const { db, sqlite } = createDb(dbPath);
   temps.push({ root, sqlite });
@@ -63,7 +64,7 @@ afterEach(() => {
 describe("ServerArchiveService", () => {
   it("extracts a zip into the server jail", async () => {
     const { archives, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "games.minecraft-paper" });
+    const server = await servers.createFromSkill({ skillName: "fixtures.lab-docker-server" });
     const zipPath = path.join(server.dataPath, "mods.zip");
     fs.writeFileSync(
       zipPath,
@@ -87,7 +88,7 @@ describe("ServerArchiveService", () => {
 
   it("strips leading path components from zip entries", async () => {
     const { archives, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "games.minecraft-paper" });
+    const server = await servers.createFromSkill({ skillName: "fixtures.lab-docker-server" });
     fs.writeFileSync(
       path.join(server.dataPath, "pack.zip"),
       buildTestZip({ "ModPack-1.0/mods/foo.jar": "jar-bytes" }),
@@ -106,7 +107,7 @@ describe("ServerArchiveService", () => {
 
   it("rejects zip-slip paths", async () => {
     const { archives, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "games.minecraft-paper" });
+    const server = await servers.createFromSkill({ skillName: "fixtures.lab-docker-server" });
     fs.writeFileSync(
       path.join(server.dataPath, "evil.zip"),
       buildTestZip({ "../escape.txt": "nope" }),
@@ -123,7 +124,7 @@ describe("ServerArchiveService", () => {
 
   it("rejects archive paths outside the jail", async () => {
     const { archives, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "games.minecraft-paper" });
+    const server = await servers.createFromSkill({ skillName: "fixtures.lab-docker-server" });
     await expect(
       archives.extract({
         serverId: server.id,
@@ -135,7 +136,7 @@ describe("ServerArchiveService", () => {
 
   it.runIf(tarAvailable())("extracts a tar.gz into the server jail", async () => {
     const { archives, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "games.minecraft-paper" });
+    const server = await servers.createFromSkill({ skillName: "fixtures.lab-docker-server" });
     const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-tarfix-"));
     try {
       fs.mkdirSync(path.join(staging, "payload"), { recursive: true });

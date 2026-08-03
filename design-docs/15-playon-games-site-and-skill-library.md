@@ -2,8 +2,8 @@
 
 ## Status
 
-**Separate workstream** from control-plane / skill-seeding in the monorepo.  
-This document kicks off the public site + hosted skill library so product and eng can plan without blocking in-app skill packaging.
+**Shipped as a sibling repo** (`playon-games` — Astro + Cloudflare Pages/Workers).  
+Home / control-plane never bundles `games.*`; hosts install from the playon.games catalog.
 
 ## Goals
 
@@ -68,12 +68,12 @@ Keep the first viewport brand-led (see frontend design rules). Library pages are
 
 ## Phased delivery
 
-### Phase A — static official library
+### Phase A — official library (done in sibling repo)
 
-- Static site (or minimal framework) on playon.games
-- `index.json` + zips published from CI of this monorepo (`pnpm skills:export` → `dist/skills/`)
-- Seeded catalog skills (as of seeding track): Paper, Rust, UT99, Valheim, Terraria, Factorio + platform packs
-- No accounts
+- Astro site on playon.games (`playon-games` repo)
+- Author trees only in sibling `skills-src/`; publish via `pnpm catalog` → `public/skills/`
+- Seeded catalog skills: Paper, Rust, UT99, Valheim, Terraria, Factorio
+- Monorepo has no `games.*`; Home remains platform-only (`PLAYON_SKILLS_PROFILE=minimal`)
 
 ### Phase B — wire PlayOn agents
 
@@ -89,19 +89,18 @@ Keep the first viewport brand-led (see frontend design rules). Library pages are
 
 ## Relationship to the monorepo
 
-| In monorepo (now) | On playon.games (this track) |
-|-------------------|------------------------------|
-| Platform + game skill **content** | Hosting + discovery UI |
-| `.skill.zip` export/import | CDN / static file hosting |
-| Runtime that honors skill metadata | Docs for hosts/players |
-| `PLAYON_SKILLS_PROFILE=minimal\|dev` | “Get PlayOn” install stories |
+| In monorepo | In sibling `playon-games` / playon.games |
+|-------------|------------------------------------------|
+| Platform skills (Home bundle) | Site UI + LAN hub |
+| No curated `games.*` sources | `skills-src/` + `public/skills/` catalog |
+| Runtime install into `dataRoot/skills` | Hosted `index.json` + `.skill.zip` |
+| `.skill.zip` import/API | Cloudflare Pages/Workers deploy |
 
 ## Open product choices (for the site track)
 
-1. SSG (Astro/Next static) vs small custom site
-2. Whether docs live on the site only or also mirror into `docs/`
-3. Domain DNS / hosting (Cloudflare Pages, etc.)
-4. When to expose community submit
+1. Whether host/player docs live only on the site or also mirror into monorepo `docs/`
+2. When to expose community submit
+3. Signing / checksum policy beyond `sha256` in the index
 
 ## Success metric
 

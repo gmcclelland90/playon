@@ -6,6 +6,7 @@ import type Database from "better-sqlite3";
 import type { AppConfig } from "../config.js";
 import { createDb, type Db } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
+import { LAB_DOCKER_SKILL, resolveFixturesRoot } from "../lab-games-root.js";
 import { createOrReinstallFromSkill } from "./tools.js";
 import { ServerService } from "./servers.js";
 
@@ -34,7 +35,7 @@ function tempEnv(): { db: Db; config: AppConfig; servers: ServerService } {
     llmMode: "openai_compatible",
     runtimeMode: "docker",
     advertiseHost: "127.0.0.1",
-    skillsRoots: [path.join(repoRoot, "sites","playon-games","skills","src"), path.join(root, "skills")],
+    skillsRoots: [resolveFixturesRoot(repoRoot), path.join(root, "skills")],
   };
   const { db, sqlite } = createDb(dbPath);
   temps.push({ root, sqlite });
@@ -52,13 +53,13 @@ describe("reinstallFromSkill / createOrReinstallFromSkill", () => {
   it("keeps the same server id when switching skills", async () => {
     const { servers } = tempEnv();
     const first = await servers.createFromSkill({
-      skillName: "games.minecraft-paper",
+      skillName: "fixtures.lab-docker-server",
       serverName: "LAN MC",
     });
     fs.writeFileSync(path.join(first.dataPath, "game", "marker.txt"), "old");
 
     const second = await servers.reinstallFromSkill(first.id, {
-      skillName: "games.minecraft-paper",
+      skillName: "fixtures.lab-docker-server",
       serverName: "LAN MC 2",
     });
 
@@ -74,14 +75,14 @@ describe("reinstallFromSkill / createOrReinstallFromSkill", () => {
     const workspace = { serverId: undefined as string | undefined };
 
     const a = await createOrReinstallFromSkill(servers, workspace, {
-      skillName: "games.minecraft-paper",
+      skillName: "fixtures.lab-docker-server",
       serverName: "One",
     });
     expect(a.mode).toBe("created");
     expect(workspace.serverId).toBe(a.server.id);
 
     const b = await createOrReinstallFromSkill(servers, workspace, {
-      skillName: "games.minecraft-paper",
+      skillName: "fixtures.lab-docker-server",
       serverName: "Two",
     });
     expect(b.mode).toBe("reinstalled");

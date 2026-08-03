@@ -17,6 +17,7 @@ import { waitForRcon } from "./services/rcon.js";
 import { ServerService } from "./services/servers.js";
 import { listSkills } from "./services/skills.js";
 import { SteamcmdNotFoundError, steamcmdAppUpdate } from "./services/steamcmd.js";
+import { LAB_DOCKER_SKILL, resolveFixturesRoot } from "./lab-games-root.js";
 
 const temps: Array<{ root: string; sqlite: Database.Database }> = [];
 
@@ -56,7 +57,7 @@ function tempConfig(): { db: Db; config: AppConfig; root: string } {
     llmMode: "openai_compatible",
     runtimeMode: "docker",
     advertiseHost: "127.0.0.1",
-    skillsRoots: [path.join(repoRoot, "sites","playon-games","skills","src"), path.join(root, "skills")],
+    skillsRoots: [resolveFixturesRoot(repoRoot), path.join(root, "skills")],
   };
 
   const { db, sqlite } = createDb(dbPath);
@@ -92,14 +93,14 @@ async function seedVenice(db: Db, config: AppConfig) {
 }
 
 describe("api integration (real Venice + Docker)", () => {
-  it("bootstraps owner and lists Paper skill", async () => {
+  it("bootstraps owner and lists lab docker fixture skill", async () => {
     const { db, config } = tempConfig();
     const app = createApp(db, config);
     const cookie = await bootstrapOwner(app);
     expect(cookie).toContain("playon_session=");
 
     const skills = listSkills(config.skillsRoots);
-    expect(skills.some((s) => s.metadata.name === "games.minecraft-paper")).toBe(true);
+    expect(skills.some((s) => s.metadata.name === "fixtures.lab-docker-server")).toBe(true);
     expect(skills.some((s) => s.metadata.name.includes("fake-http"))).toBe(false);
   });
 
@@ -107,7 +108,7 @@ describe("api integration (real Venice + Docker)", () => {
     const { db, config } = tempConfig();
     const servers = new ServerService(db, config);
     const created = await servers.createFromSkill({
-      skillName: "games.minecraft-paper",
+      skillName: "fixtures.lab-docker-server",
       serverName: "LAN Paper",
     });
     expect(created.runtimeMode).toBe("docker");
@@ -131,7 +132,7 @@ describe("api integration (real Venice + Docker)", () => {
       headers: { "content-type": "application/json", cookie },
       body: JSON.stringify({
         message:
-          "Create a Paper Minecraft server named Venice Paper using servers_create_from_skill with skillName games.minecraft-paper, then publish a join panel. Do not ask questions.",
+          "Create a lab docker server named Venice Lab using servers_create_from_skill with skillName fixtures.lab-docker-server, then publish a join panel. Do not ask questions.",
       }),
     });
     expect(chat.status).toBe(200);
@@ -164,7 +165,7 @@ describe("api integration (real Venice + Docker)", () => {
       method: "POST",
       headers: { "content-type": "application/json", cookie },
       body: JSON.stringify({
-        skillName: "games.minecraft-paper",
+        skillName: "fixtures.lab-docker-server",
         serverName: "Maintain Me",
       }),
     });
@@ -227,7 +228,7 @@ describe("api integration (real Venice + Docker)", () => {
     const { db, config } = tempConfig();
     const servers = new ServerService(db, config);
     const created = await servers.createFromSkill({
-      skillName: "games.minecraft-paper",
+      skillName: "fixtures.lab-docker-server",
       serverName: "RCON Paper",
     });
     const started = await servers.start(created.id);
@@ -258,7 +259,7 @@ describe("api integration (real Venice + Docker)", () => {
     const { db, config } = tempConfig();
     const servers = new ServerService(db, config);
     const created = await servers.createFromSkill({
-      skillName: "games.minecraft-paper",
+      skillName: "fixtures.lab-docker-server",
       serverName: "Steam Jail",
     });
     await expect(

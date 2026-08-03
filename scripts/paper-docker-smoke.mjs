@@ -22,6 +22,16 @@ const dbPath = path.join(root, "playon.db");
 applyBootstrap(dbPath);
 const { db, sqlite } = createDb(dbPath);
 
+const gamesRoot =
+  process.env.PLAYON_GAMES_SKILLS_ROOT?.trim() ||
+  path.join(repoRoot, "..", "playon-games", "skills-src", "games");
+if (!fs.existsSync(path.join(gamesRoot, "minecraft-paper", "metadata.yaml"))) {
+  console.error(
+    `games.minecraft-paper not found at ${gamesRoot}. Checkout sibling playon-games or set PLAYON_GAMES_SKILLS_ROOT.`,
+  );
+  process.exit(2);
+}
+
 const config = {
   port: 0,
   dataRoot: root,
@@ -29,10 +39,7 @@ const config = {
   sessionSecret: "paper-smoke-secret",
   llmMode: "openai_compatible",
   runtimeMode: "docker",
-  skillsRoots: [
-    path.join(repoRoot, "sites","playon-games","skills","src"),
-    path.join(root, "skills"),
-  ],
+  skillsRoots: [gamesRoot, path.join(root, "skills")],
 };
 
 const adapters = await createRuntimeAdapters("docker");
