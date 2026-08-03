@@ -40,7 +40,7 @@ function tempEnv(): {
     llmMode: "openai_compatible",
     runtimeMode: "docker",
     advertiseHost: "127.0.0.1",
-    skillsRoots: [path.join(findRepoRoot(), "skills", "games"), path.join(root, "skills")],
+    skillsRoots: [path.join(findRepoRoot(), "sites","playon-games","skills","src"), path.join(root, "skills")],
   };
   const { db, sqlite } = createDb(dbPath);
   temps.push({ root, sqlite });

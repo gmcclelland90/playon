@@ -56,7 +56,7 @@ function tempConfig(): { db: Db; config: AppConfig; root: string } {
     llmMode: "openai_compatible",
     runtimeMode: "docker",
     advertiseHost: "127.0.0.1",
-    skillsRoots: [path.join(repoRoot, "skills", "games"), path.join(root, "skills")],
+    skillsRoots: [path.join(repoRoot, "sites","playon-games","skills","src"), path.join(root, "skills")],
   };
 
   const { db, sqlite } = createDb(dbPath);

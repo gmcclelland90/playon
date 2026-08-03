@@ -70,7 +70,7 @@ Still run a **host-native** `playon-node` (or install-node against `http://127.0
   - **Chat** — ask to install / create a server (agent uses the playon.games catalog)
   - **Settings → Skill library → Install** — one click per skill
 - Catalog URL defaults to `https://playon.games/skills/index.json` (`PLAYON_SKILLS_CATALOG_URL`). Hosts never download zip files by hand.
-- Publish packages for the site with `pnpm skills:export` (prefer publishing `games.*`; platform stays in Home).
+- All curated `games.*` skill sources live under `sites/playon-games/skills/src/` (not in the control-plane tree). Publish with `pnpm skills:export` → `packages/*.skill.zip` + `index.json`.
 
 ## Cloud (Vultr)
 

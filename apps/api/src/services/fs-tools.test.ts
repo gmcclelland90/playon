@@ -36,7 +36,7 @@ function tempEnv(): { db: Db; config: AppConfig; fsTools: ServerFsService; serve
     runtimeMode: "docker",
     advertiseHost: "127.0.0.1",
     skillsRoots: [
-      path.join(repoRoot, "skills", "games"),
+      path.join(repoRoot, "sites","playon-games","skills","src"),
       path.join(root, "skills"),
     ],
   };

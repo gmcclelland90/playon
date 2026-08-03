@@ -1,16 +1,24 @@
 #!/usr/bin/env node
 /**
- * Pack repo skills into dist/skills/*.skill.zip for the playon.games library.
- * Usage: node scripts/export-skill-seeds.mjs
+ * Pack catalog skill sources into the playon.games library.
  *
- * Home installs ship platform.* as core. Publish curated games.* (and optional extras)
- * to https://playon.games/skills/ — hosts install them on demand via catalog, not by hand.
+ * Usage:
+ *   node scripts/export-skill-seeds.mjs
+ *   node scripts/export-skill-seeds.mjs games.valheim games.terraria
+ *
+ * Source: sites/playon-games/skills/src/**
+ * Writes:
+ *   sites/playon-games/skills/packages/{slug}-{version}.skill.zip
+ *   sites/playon-games/skills/index.json  (absolute https://playon.games URLs)
+ *   dist/skills/                         (mirror for local inspection)
+ *
+ * Platform skills stay in Home (skills/platform). Game skills are catalog-only.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
@@ -18,11 +26,16 @@ const require = createRequire(path.join(repoRoot, "apps/api/package.json"));
 const { zipSync } = require("fflate");
 const yaml = require("js-yaml");
 
-const OUT = path.join(repoRoot, "dist", "skills");
-const ROOTS = [
-  path.join(repoRoot, "skills", "games"),
-  path.join(repoRoot, "skills", "platform"),
-];
+const SITE_SKILLS = path.join(repoRoot, "sites", "playon-games", "skills");
+const SRC = path.join(SITE_SKILLS, "src");
+const PACKAGES = path.join(SITE_SKILLS, "packages");
+const DIST = path.join(repoRoot, "dist", "skills");
+const CATALOG_BASE = "https://playon.games/skills/packages";
+const INDEX_PATH = path.join(SITE_SKILLS, "index.json");
+
+const nameFilter = new Set(
+  process.argv.slice(2).map((s) => s.trim()).filter(Boolean),
+);
 
 function walkFiles(dir, prefix = "") {
   const out = {};
@@ -59,60 +72,79 @@ function scan(root) {
   return found;
 }
 
-fs.mkdirSync(OUT, { recursive: true });
-const index = { updatedAt: new Date().toISOString(), skills: [] };
-
-for (const root of ROOTS) {
-  for (const skillDir of scan(root)) {
-    const raw = yaml.load(fs.readFileSync(path.join(skillDir, "metadata.yaml"), "utf8"));
-    const name = String(raw.name ?? "");
-    const version = String(raw.version ?? "0.0.0");
-    if (!name.startsWith("games.") && !name.startsWith("platform.")) continue;
-
-    const files = walkFiles(skillDir);
-    if (!files["metadata.yaml"]) throw new Error(`missing metadata in ${skillDir}`);
-    const bytes = zipSync(files, { level: 6 });
-    const filename = `${slugify(name)}-${version}.skill.zip`;
-    fs.writeFileSync(path.join(OUT, filename), bytes);
-
-    // sha256 via openssl/shasum when available
-    let sha256 = "";
-    try {
-      sha256 = execFileSync(
-        process.platform === "win32" ? "certutil" : "sha256sum",
-        process.platform === "win32"
-          ? ["-hashfile", path.join(OUT, filename), "SHA256"]
-          : [path.join(OUT, filename)],
-        { encoding: "utf8" },
-      );
-      if (process.platform === "win32") {
-        sha256 = sha256.split(/\r?\n/).map((l) => l.trim()).find((l) => /^[0-9a-f]{64}$/i.test(l)) ?? "";
-      } else {
-        sha256 = sha256.trim().split(/\s+/)[0] ?? "";
-      }
-    } catch {
-      sha256 = "";
-    }
-
-    index.skills.push({
-      name,
-      version,
-      game: raw.game ?? null,
-      description: raw.description ?? "",
-      tags: raw.tags ?? [],
-      dependencies: raw.dependencies ?? [],
-      containerSupport: raw.containerSupport ?? "none",
-      minRamMb: raw.minRamMb ?? null,
-      steamAppId: raw.steamAppId ?? null,
-      dockerImage: raw.dockerImage ?? null,
-      downloadUrl: `./${filename}`,
-      sha256: sha256.toLowerCase(),
-      official: true,
-    });
-    console.log(`wrote ${filename}`);
+function loadExistingIndex() {
+  if (!fs.existsSync(INDEX_PATH)) return { updatedAt: "", skills: [] };
+  try {
+    return JSON.parse(fs.readFileSync(INDEX_PATH, "utf8"));
+  } catch {
+    return { updatedAt: "", skills: [] };
   }
 }
 
-index.skills.sort((a, b) => a.name.localeCompare(b.name));
-fs.writeFileSync(path.join(OUT, "index.json"), JSON.stringify(index, null, 2) + "\n");
-console.log(`index: ${index.skills.length} skills → ${OUT}`);
+function entryFromMeta(raw, filename, sha256) {
+  const name = String(raw.name ?? "");
+  const version = String(raw.version ?? "0.0.0");
+  /** @type {Record<string, unknown>} */
+  const entry = {
+    name,
+    version,
+    description: String(raw.description ?? "").trim(),
+    tags: Array.isArray(raw.tags) ? raw.tags : [],
+    dependencies: Array.isArray(raw.dependencies) ? raw.dependencies : [],
+    downloadUrl: `${CATALOG_BASE}/${filename}`,
+    sha256,
+    official: true,
+  };
+  if (raw.game) entry.game = String(raw.game);
+  if (raw.containerSupport) entry.containerSupport = String(raw.containerSupport);
+  if (typeof raw.minRamMb === "number") entry.minRamMb = raw.minRamMb;
+  if (raw.steamAppId != null) entry.steamAppId = raw.steamAppId;
+  if (raw.dockerImage) entry.dockerImage = String(raw.dockerImage);
+  return entry;
+}
+
+fs.mkdirSync(PACKAGES, { recursive: true });
+fs.mkdirSync(DIST, { recursive: true });
+
+const byName = new Map();
+for (const s of loadExistingIndex().skills ?? []) {
+  if (s?.name) byName.set(s.name, s);
+}
+
+let wrote = 0;
+
+for (const skillDir of scan(SRC)) {
+  const raw = yaml.load(fs.readFileSync(path.join(skillDir, "metadata.yaml"), "utf8"));
+  const name = String(raw.name ?? "");
+  const version = String(raw.version ?? "0.0.0");
+  if (!name.startsWith("games.")) continue;
+  if (nameFilter.size && !nameFilter.has(name)) continue;
+
+  const files = walkFiles(skillDir);
+  if (!files["metadata.yaml"]) throw new Error(`missing metadata in ${skillDir}`);
+  const bytes = zipSync(files, { level: 6 });
+  const filename = `${slugify(name)}-${version}.skill.zip`;
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+
+  fs.writeFileSync(path.join(PACKAGES, filename), bytes);
+  fs.writeFileSync(path.join(DIST, filename), bytes);
+
+  byName.set(name, entryFromMeta(raw, filename, sha256));
+  wrote += 1;
+  console.log(`wrote ${filename}`);
+}
+
+if (nameFilter.size && wrote === 0) {
+  console.error(`No matching games.* skills for: ${[...nameFilter].join(", ")}`);
+  process.exit(1);
+}
+
+const index = {
+  updatedAt: new Date().toISOString(),
+  skills: [...byName.values()].sort((a, b) => String(a.name).localeCompare(String(b.name))),
+};
+
+const indexJson = JSON.stringify(index, null, 2) + "\n";
+fs.writeFileSync(INDEX_PATH, indexJson);
+fs.writeFileSync(path.join(DIST, "index.json"), indexJson);
+console.log(`index: ${index.skills.length} skills → ${INDEX_PATH} (${wrote} packed this run)`);

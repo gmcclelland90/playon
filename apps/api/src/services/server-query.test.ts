@@ -36,7 +36,7 @@ function tempConfig(): { db: ReturnType<typeof createDb>["db"]; config: AppConfi
     llmMode: "openai_compatible",
     runtimeMode: "docker",
     skillsRoots: [
-      path.join(repoRoot, "skills", "games"),
+      path.join(repoRoot, "sites","playon-games","skills","src"),
       path.join(repoRoot, "skills", "fixtures"),
       path.join(root, "skills"),
     ],

@@ -1,4 +1,156 @@
 {
-  "updatedAt": "2026-08-02T00:00:00Z",
-  "skills": []
+  "updatedAt": "2026-08-03T08:21:52.911Z",
+  "skills": [
+    {
+      "name": "games.factorio",
+      "version": "0.1.0",
+      "description": "Factorio headless dedicated server via factoriotools/factorio Docker image. Great LAN/session factory; pin versions for long saves.",
+      "tags": [
+        "factorio",
+        "docker",
+        "lan",
+        "factory"
+      ],
+      "dependencies": [
+        "platform.docker-basics",
+        "platform.networking-lan",
+        "platform.capacity",
+        "platform.hostability",
+        "platform.admin-protocols"
+      ],
+      "downloadUrl": "https://playon.games/skills/packages/games-factorio-0.1.0.skill.zip",
+      "sha256": "7ff125b068ba19269f8f51f58797888c8172c471899d0b55da03a6c7a08845b6",
+      "official": true,
+      "game": "Factorio",
+      "containerSupport": "full",
+      "minRamMb": 2048,
+      "dockerImage": "factoriotools/factorio:stable"
+    },
+    {
+      "name": "games.minecraft-paper",
+      "version": "0.1.0",
+      "description": "Paper Minecraft dedicated server — container-first LAN skill.",
+      "tags": [
+        "minecraft",
+        "paper",
+        "reference",
+        "docker"
+      ],
+      "dependencies": [
+        "platform.docker-basics",
+        "platform.networking-lan",
+        "platform.admin-protocols",
+        "platform.server-auth",
+        "platform.capacity",
+        "platform.hostability"
+      ],
+      "downloadUrl": "https://playon.games/skills/packages/games-minecraft-paper-0.1.0.skill.zip",
+      "sha256": "eb2ad959ec19cbaf5fdbd98e1700d55a78779f85a5612e35066881d63ea52096",
+      "official": true,
+      "game": "Minecraft (Paper)",
+      "containerSupport": "full",
+      "minRamMb": 2048,
+      "dockerImage": "itzg/minecraft-server:latest"
+    },
+    {
+      "name": "games.rust",
+      "version": "0.1.0",
+      "description": "Rust dedicated server via SteamCMD + native process. Expands platform.steamcmd; install app 258550 into game/, then start RustDedicated / start.sh.",
+      "tags": [
+        "rust",
+        "steamcmd",
+        "survival",
+        "native",
+        "reference"
+      ],
+      "dependencies": [
+        "platform.steamcmd",
+        "platform.native-process",
+        "platform.networking-lan",
+        "platform.admin-protocols",
+        "platform.server-auth",
+        "platform.capacity",
+        "platform.hostability"
+      ],
+      "downloadUrl": "https://playon.games/skills/packages/games-rust-0.1.0.skill.zip",
+      "sha256": "a6215669811d2b6607fc32d96d2aa53f252f0883c27a452be95efa9972397e02",
+      "official": true,
+      "game": "Rust",
+      "containerSupport": "none",
+      "minRamMb": 8192,
+      "steamAppId": 258550
+    },
+    {
+      "name": "games.terraria",
+      "version": "0.1.0",
+      "description": "Terraria dedicated server via Docker (ryshe/terraria — TShock-capable image). Lightweight LAN classic; worlds persist under game/.",
+      "tags": [
+        "terraria",
+        "docker",
+        "lan"
+      ],
+      "dependencies": [
+        "platform.docker-basics",
+        "platform.networking-lan",
+        "platform.capacity",
+        "platform.hostability"
+      ],
+      "downloadUrl": "https://playon.games/skills/packages/games-terraria-0.1.0.skill.zip",
+      "sha256": "2750c58638a310b1b0c2c9bcd1e7f89d78a95e91cd22fa2059135618e3ee26b0",
+      "official": true,
+      "game": "Terraria",
+      "containerSupport": "full",
+      "minRamMb": 1536,
+      "dockerImage": "ryshe/terraria:latest"
+    },
+    {
+      "name": "games.unreal-tournament-99",
+      "version": "0.1.0",
+      "description": "Classic UT99 dedicated server skill. PlayOn prepares data layout and player panel guidance; the host supplies OldUnreal (or equivalent) server binaries under the server game directory.",
+      "tags": [
+        "unreal",
+        "ut99",
+        "classic",
+        "native"
+      ],
+      "dependencies": [
+        "platform.native-process",
+        "platform.networking-lan",
+        "platform.capacity",
+        "platform.hostability"
+      ],
+      "downloadUrl": "https://playon.games/skills/packages/games-unreal-tournament-99-0.1.0.skill.zip",
+      "sha256": "ff6694634ee10479d18c018f05ad7a2a500bac2be1b82299e74e259cecafb0b5",
+      "official": true,
+      "game": "Unreal Tournament 99",
+      "containerSupport": "none",
+      "minRamMb": 512
+    },
+    {
+      "name": "games.valheim",
+      "version": "0.1.0",
+      "description": "Valheim dedicated server via SteamCMD (app 896660) + native start.sh. Password must be ≥5 characters and not contained in the server name.",
+      "tags": [
+        "valheim",
+        "steamcmd",
+        "survival",
+        "native",
+        "lan"
+      ],
+      "dependencies": [
+        "platform.steamcmd",
+        "platform.native-process",
+        "platform.networking-lan",
+        "platform.capacity",
+        "platform.hostability"
+      ],
+      "downloadUrl": "https://playon.games/skills/packages/games-valheim-0.1.0.skill.zip",
+      "sha256": "6377422e11ded2392418d9752bcf8d63cfe92e2e24775451aacdcc5d228f3950",
+      "official": true,
+      "game": "Valheim",
+      "containerSupport": "none",
+      "minRamMb": 4096,
+      "steamAppId": 896660
+    }
+  ]
 }

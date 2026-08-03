@@ -77,6 +77,10 @@ copyTree(
   path.join(stage, "skills", "platform"),
   (name) => name !== "node_modules",
 );
+copyFile(
+  path.join(root, "skills", "import-hints.yaml"),
+  path.join(stage, "skills", "import-hints.yaml"),
+);
 
 copyTree(path.join(root, "deploy"), path.join(stage, "deploy"));
 copyTree(path.join(root, "infra/control-plane"), path.join(stage, "infra/control-plane"));

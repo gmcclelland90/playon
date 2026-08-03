@@ -30,7 +30,7 @@ function findRepoRoot(start: string): string {
 }
 
 function fixtureSkill() {
-  const gamesRoot = path.join(findRepoRoot(process.cwd()), "skills", "games");
+  const gamesRoot = path.join(findRepoRoot(process.cwd()), "sites","playon-games","skills","src");
   const skill = loadSkillMetadata([gamesRoot], "games.minecraft-paper");
   if (!skill) throw new Error("missing fixture skill games.minecraft-paper");
   return skill;

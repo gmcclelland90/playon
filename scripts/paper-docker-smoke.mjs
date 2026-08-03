@@ -30,7 +30,7 @@ const config = {
   llmMode: "openai_compatible",
   runtimeMode: "docker",
   skillsRoots: [
-    path.join(repoRoot, "skills", "games"),
+    path.join(repoRoot, "sites","playon-games","skills","src"),
     path.join(root, "skills"),
   ],
 };

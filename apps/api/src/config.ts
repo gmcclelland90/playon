@@ -133,11 +133,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     ? env.PLAYON_ADVERTISE_HOST!.trim()
     : detectAdvertiseHost(env);
   const extraCors = parseCorsExtra(env.PLAYON_CORS_ORIGINS);
-  /** `minimal` = platform skills only (library-shaped). `dev` (default) also mounts repo games. */
+  /**
+   * `minimal` = platform skills only (Home / production shape).
+   * `dev` (default) also mounts repo test fixtures under skills/fixtures.
+   * Curated games.* skills are never bundled — install from the playon.games catalog
+   * into dataRoot/skills.
+   */
   const skillsProfile = (env.PLAYON_SKILLS_PROFILE?.trim() || "dev").toLowerCase();
   /**
    * Optional baked/install skills root (Home tarball / container).
-   * Colon/semicolon-separated absolute paths; each may contain platform|games|fixtures subdirs
+   * Colon/semicolon-separated absolute paths; each may contain platform|fixtures subdirs
    * or be a single skill category directory.
    */
   const bakedSkillsRoot = env.PLAYON_SKILLS_ROOT?.trim();
@@ -147,11 +152,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     for (const part of parts) {
       const abs = path.resolve(part);
       const platform = path.join(abs, "platform");
-      const games = path.join(abs, "games");
       const fixtures = path.join(abs, "fixtures");
-      if (fs.existsSync(platform) || fs.existsSync(games) || fs.existsSync(fixtures)) {
+      if (fs.existsSync(platform) || fs.existsSync(fixtures)) {
         if (fs.existsSync(platform)) skillsRoots.push(platform);
-        if (skillsProfile !== "minimal" && fs.existsSync(games)) skillsRoots.push(games);
         if (skillsProfile !== "minimal" && fs.existsSync(fixtures)) skillsRoots.push(fixtures);
       } else {
         skillsRoots.push(abs);
@@ -160,7 +163,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   } else {
     skillsRoots.push(path.join(repoRoot, "skills", "platform"));
     if (skillsProfile !== "minimal") {
-      skillsRoots.unshift(path.join(repoRoot, "skills", "games"));
       skillsRoots.push(path.join(repoRoot, "skills", "fixtures"));
     }
   }
