@@ -7,6 +7,7 @@ import { PathJailError } from "@playon/runtime";
 import type { AppConfig } from "../config.js";
 import { createDb, type Db } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
+import { LAB_DOCKER_SKILL, resolveFixturesRoot } from "../lab-games-root.js";
 import { ServerFsService } from "./fs-tools.js";
 import { ServerService } from "./servers.js";
 
@@ -36,7 +37,7 @@ function tempEnv(): { db: Db; config: AppConfig; fsTools: ServerFsService; serve
     runtimeMode: "docker",
     advertiseHost: "127.0.0.1",
     skillsRoots: [
-      path.join(repoRoot, "skills", "games"),
+      resolveFixturesRoot(repoRoot),
       path.join(root, "skills"),
     ],
   };
@@ -57,7 +58,7 @@ describe("ServerFsService", () => {
   it("reads and writes inside the server jail", async () => {
     const { fsTools, servers } = tempEnv();
     const server = await servers.createFromSkill({
-      skillName: "games.minecraft-paper",
+      skillName: LAB_DOCKER_SKILL,
       serverName: "FS Test",
     });
 
@@ -72,7 +73,7 @@ describe("ServerFsService", () => {
   it("blocks path escape attempts", async () => {
     const { fsTools, servers } = tempEnv();
     const server = await servers.createFromSkill({
-      skillName: "games.minecraft-paper",
+      skillName: LAB_DOCKER_SKILL,
     });
 
     await expect(fsTools.read(server.id, "../escape.txt")).rejects.toBeInstanceOf(PathJailError);
@@ -85,7 +86,7 @@ describe("ServerFsService", () => {
   it("deletes, renames, and copies inside the jail", async () => {
     const { fsTools, servers } = tempEnv();
     const server = await servers.createFromSkill({
-      skillName: "games.minecraft-paper",
+      skillName: LAB_DOCKER_SKILL,
       serverName: "FS Mutate",
     });
 
@@ -118,7 +119,7 @@ describe("ServerFsService", () => {
 
   it("reads with offset and maxBytes", async () => {
     const { fsTools, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "games.minecraft-paper" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
     await fsTools.write(server.id, "game/chunk.txt", "abcdefghij");
 
     const mid = await fsTools.read(server.id, "game/chunk.txt", { offset: 3, maxBytes: 4 });

@@ -9,6 +9,7 @@ import {
   writeSkillMarkerFromSkill,
 } from "./skill-marker.js";
 import { loadSkillMetadata } from "./skills.js";
+import { LAB_DOCKER_SKILL, resolveFixturesRoot } from "../lab-games-root.js";
 
 const temps: string[] = [];
 
@@ -30,9 +31,9 @@ function findRepoRoot(start: string): string {
 }
 
 function fixtureSkill() {
-  const gamesRoot = path.join(findRepoRoot(process.cwd()), "skills", "games");
-  const skill = loadSkillMetadata([gamesRoot], "games.minecraft-paper");
-  if (!skill) throw new Error("missing fixture skill games.minecraft-paper");
+  const gamesRoot = resolveFixturesRoot(findRepoRoot(process.cwd()));
+  const skill = loadSkillMetadata([gamesRoot], LAB_DOCKER_SKILL);
+  if (!skill) throw new Error("missing fixture skill fixtures.lab-docker-server");
   return skill;
 }
 

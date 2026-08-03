@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { AppConfig } from "../config.js";
 import { createDb, type Db } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
+import { LAB_DOCKER_SKILL, resolveFixturesRoot } from "../lab-games-root.js";
 import { isBlockedDestinationIp, NetToolsService } from "./net-tools.js";
 import { ServerService } from "./servers.js";
 
@@ -34,7 +35,7 @@ function tempEnv(): { db: Db; config: AppConfig; net: NetToolsService; servers: 
     llmMode: "openai_compatible",
     runtimeMode: "docker",
     advertiseHost: "127.0.0.1",
-    skillsRoots: [path.join(findRepoRoot(), "skills", "games"), path.join(root, "skills")],
+    skillsRoots: [resolveFixturesRoot(findRepoRoot()), path.join(root, "skills")],
   };
   const { db, sqlite } = createDb(dbPath);
   temps.push({ root, sqlite });
@@ -73,7 +74,7 @@ describe("NetToolsService", () => {
 
   it("fetches a URL into the server jail", async () => {
     const { net, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "games.minecraft-paper" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
 
     const httpServer = http.createServer((_req, res) => {
       res.writeHead(200, { "content-type": "text/plain" });
@@ -98,7 +99,7 @@ describe("NetToolsService", () => {
 
   it("follows redirects within the hop limit", async () => {
     const { net, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "games.minecraft-paper" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
 
     const httpServer = http.createServer((req, res) => {
       if (req.url === "/start") {
@@ -127,7 +128,7 @@ describe("NetToolsService", () => {
 
   it("rejects blocked private destinations", async () => {
     const { net, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "games.minecraft-paper" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
     await expect(
       net.fetchUrl({
         serverId: server.id,
@@ -139,7 +140,7 @@ describe("NetToolsService", () => {
 
   it("rejects oversized payloads", async () => {
     const { net, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "games.minecraft-paper" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
 
     const chunk = Buffer.alloc(1024 * 1024, 1); // 1 MiB
     const httpServer = http.createServer((_req, res) => {

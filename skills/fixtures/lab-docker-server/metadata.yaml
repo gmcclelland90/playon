@@ -1,0 +1,45 @@
+name: fixtures.lab-docker-server
+version: 0.1.0
+game: Lab Docker Server
+description: >
+  Minimal Docker skill for unit/integration tests. Not a curated games.* package —
+  real game skills come from the playon.games catalog.
+tags:
+  - fixture
+  - docker
+  - ci
+os:
+  - linux
+  - windows
+arch:
+  - amd64
+containerSupport: full
+dockerImage: itzg/minecraft-server:latest
+dockerDataMount: /data
+dockerEnv:
+  EULA: "TRUE"
+  TYPE: PAPER
+  ONLINE_MODE: "FALSE"
+  MAX_PLAYERS: "5"
+  ENABLE_RCON: "true"
+adminDialect: mc_rcon
+queryDialect: minecraft_status
+minRamMb: 1024
+ports:
+  - name: game
+    protocol: tcp
+    default: 25565
+  - name: rcon
+    protocol: tcp
+    default: 25575
+dependencies:
+  - platform.docker-basics
+healthChecks:
+  - id: process
+    type: process_running
+    onFail: restart
+  - id: game-port
+    type: tcp_port
+    portName: game
+    port: 25565
+    onFail: restart

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createDb } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
 import type { AppConfig } from "../config.js";
+import { LAB_DOCKER_SKILL, resolveFixturesRoot } from "../lab-games-root.js";
 import { HealthService } from "./health.js";
 import { NetToolsService } from "./net-tools.js";
 import { ServerService } from "./servers.js";
@@ -37,7 +38,7 @@ function tempConfig(): { db: ReturnType<typeof createDb>["db"]; config: AppConfi
     llmMode: "openai_compatible",
     runtimeMode: "docker",
     skillsRoots: [
-      path.join(repoRoot, "skills", "games"),
+      resolveFixturesRoot(repoRoot),
       path.join(root, "skills"),
     ],
     advertiseHost: "127.0.0.1",
@@ -66,7 +67,7 @@ describe("HealthService", () => {
     const health = new HealthService(servers, net, config);
 
     const created = await servers.createFromSkill({
-      skillName: "games.minecraft-paper",
+      skillName: LAB_DOCKER_SKILL,
       serverName: "Health Paper",
     });
     expect(created.status).toBe("stopped");

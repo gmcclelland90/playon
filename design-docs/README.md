@@ -24,7 +24,7 @@ The system is designed primarily for LAN parties and rapid multiplayer setup, wi
 | 12 | [Security & Safety Model](12-security-and-safety-model.md) | Scoping, isolation, guardrails |
 | 13 | [Extensibility & Roadmap](13-extensibility-and-roadmap.md) | Future ideas and parking lot |
 | 14 | [Per-Server Compute Placement](14-cloud-backed-lan-mode.md) | Exploratory: Local / Remote (LAN) / Cloud per server, LAN-feel tunneling for cloud |
-| 15 | [playon.games site & skill library](15-playon-games-site-and-skill-library.md) | Separate track: get/docs/library site + hosted `.skill.zip` catalog |
+| 15 | [playon.games site & skill library](15-playon-games-site-and-skill-library.md) | Sibling `playon-games` owns all games.*; monorepo/Home are platform-only |
 | 16 | [Live Server Query](16-live-server-query.md) | Uniform live stats (GameQ-style), built-in dialects, agent-authored skill connectors |
 
 ## How to Use

@@ -66,7 +66,7 @@ describe("detectImportHints", () => {
     try {
       fs.writeFileSync(path.join(dir, "server.properties"), "motd=hi\n");
       fs.writeFileSync(path.join(dir, "paper.yml"), "x: 1\n");
-      const gamesRoot = path.join(findRepoRoot(process.cwd()), "skills", "games");
+      const gamesRoot = path.join(findRepoRoot(process.cwd()), "skills", "platform");
       const hints = detectImportHints(dir, [gamesRoot]);
       expect(hints.suggestedSkillName).toBe("games.minecraft-paper");
       expect(hints.hints).toContain("minecraft_java_layout");

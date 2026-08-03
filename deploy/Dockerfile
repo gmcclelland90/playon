@@ -4,7 +4,7 @@
 FROM node:22-bookworm-slim AS build
 RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
 WORKDIR /src
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json ./
 COPY apps ./apps
 COPY packages ./packages
 COPY skills ./skills

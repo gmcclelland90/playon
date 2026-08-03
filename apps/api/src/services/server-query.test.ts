@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createDb } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
 import type { AppConfig } from "../config.js";
+import { resolveFixturesRoot } from "../lab-games-root.js";
 import { ServerQueryService } from "./server-query.js";
 import { ServerService } from "./servers.js";
 
@@ -36,7 +37,7 @@ function tempConfig(): { db: ReturnType<typeof createDb>["db"]; config: AppConfi
     llmMode: "openai_compatible",
     runtimeMode: "docker",
     skillsRoots: [
-      path.join(repoRoot, "skills", "games"),
+      resolveFixturesRoot(repoRoot),
       path.join(repoRoot, "skills", "fixtures"),
       path.join(root, "skills"),
     ],

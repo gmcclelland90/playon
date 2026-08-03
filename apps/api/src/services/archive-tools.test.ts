@@ -8,6 +8,7 @@ import { PathJailError } from "@playon/runtime";
 import type { AppConfig } from "../config.js";
 import { createDb, type Db } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
+import { LAB_DOCKER_SKILL, resolveFixturesRoot } from "../lab-games-root.js";
 import { buildTestZip, ServerArchiveService } from "./archive-tools.js";
 import { ServerService } from "./servers.js";
 
@@ -40,7 +41,7 @@ function tempEnv(): {
     llmMode: "openai_compatible",
     runtimeMode: "docker",
     advertiseHost: "127.0.0.1",
-    skillsRoots: [path.join(findRepoRoot(), "skills", "games"), path.join(root, "skills")],
+    skillsRoots: [resolveFixturesRoot(findRepoRoot()), path.join(root, "skills")],
   };
   const { db, sqlite } = createDb(dbPath);
   temps.push({ root, sqlite });
@@ -63,7 +64,7 @@ afterEach(() => {
 describe("ServerArchiveService", () => {
   it("extracts a zip into the server jail", async () => {
     const { archives, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "games.minecraft-paper" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
     const zipPath = path.join(server.dataPath, "mods.zip");
     fs.writeFileSync(
       zipPath,
@@ -87,7 +88,7 @@ describe("ServerArchiveService", () => {
 
   it("strips leading path components from zip entries", async () => {
     const { archives, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "games.minecraft-paper" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
     fs.writeFileSync(
       path.join(server.dataPath, "pack.zip"),
       buildTestZip({ "ModPack-1.0/mods/foo.jar": "jar-bytes" }),
@@ -106,7 +107,7 @@ describe("ServerArchiveService", () => {
 
   it("rejects zip-slip paths", async () => {
     const { archives, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "games.minecraft-paper" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
     fs.writeFileSync(
       path.join(server.dataPath, "evil.zip"),
       buildTestZip({ "../escape.txt": "nope" }),
@@ -123,7 +124,7 @@ describe("ServerArchiveService", () => {
 
   it("rejects archive paths outside the jail", async () => {
     const { archives, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "games.minecraft-paper" });
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
     await expect(
       archives.extract({
         serverId: server.id,
@@ -133,32 +134,39 @@ describe("ServerArchiveService", () => {
     ).rejects.toBeInstanceOf(PathJailError);
   });
 
-  it.runIf(tarAvailable())("extracts a tar.gz into the server jail", async () => {
-    const { archives, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: "games.minecraft-paper" });
-    const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-tarfix-"));
-    try {
-      fs.mkdirSync(path.join(staging, "payload"), { recursive: true });
-      fs.writeFileSync(path.join(staging, "payload", "mod.txt"), "from-tar");
-      const archive = path.join(server.dataPath, "mods.tar.gz");
-      const packed = spawnSync("tar", ["-czf", archive, "-C", staging, "payload"], {
-        encoding: "utf8",
-        windowsHide: true,
-      });
-      expect(packed.status).toBe(0);
+  it.runIf(tarAvailable())(
+    "extracts a tar.gz into the server jail",
+    async () => {
+      const { archives, servers } = tempEnv();
+      const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
+      const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-tarfix-"));
+      try {
+        fs.mkdirSync(path.join(staging, "payload"), { recursive: true });
+        fs.writeFileSync(path.join(staging, "payload", "mod.txt"), "from-tar");
+        const archive = path.join(server.dataPath, "mods.tar.gz");
+        const packed = spawnSync("tar", ["-czf", archive, "-C", staging, "payload"], {
+          encoding: "utf8",
+          windowsHide: true,
+        });
+        expect(packed.status).toBe(0);
 
-      const result = await archives.extract({
-        serverId: server.id,
-        archivePath: "mods.tar.gz",
-        destDir: "game/extracted",
-      });
-      expect(result.format).toBe("tar.gz");
-      expect(result.extracted).toBe(1);
-      expect(
-        fs.readFileSync(path.join(server.dataPath, "game", "extracted", "payload", "mod.txt"), "utf8"),
-      ).toBe("from-tar");
-    } finally {
-      fs.rmSync(staging, { recursive: true, force: true });
-    }
-  });
+        const result = await archives.extract({
+          serverId: server.id,
+          archivePath: "mods.tar.gz",
+          destDir: "game/extracted",
+        });
+        expect(result.format).toBe("tar.gz");
+        expect(result.extracted).toBe(1);
+        expect(
+          fs.readFileSync(
+            path.join(server.dataPath, "game", "extracted", "payload", "mod.txt"),
+            "utf8",
+          ),
+        ).toBe("from-tar");
+      } finally {
+        fs.rmSync(staging, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
 });

@@ -70,7 +70,7 @@ Still run a **host-native** `playon-node` (or install-node against `http://127.0
   - **Chat** — ask to install / create a server (agent uses the playon.games catalog)
   - **Settings → Skill library → Install** — one click per skill
 - Catalog URL defaults to `https://playon.games/skills/index.json` (`PLAYON_SKILLS_CATALOG_URL`). Hosts never download zip files by hand.
-- Publish packages for the site with `pnpm skills:export` (prefer publishing `games.*`; platform stays in Home).
+- Curated `games.*` live only in the sibling **playon-games** repo (`skills-src/` → `pnpm catalog` → `public/skills/`). Never present in Home or monorepo `skills/`.
 
 ## Cloud (Vultr)
 
@@ -91,4 +91,4 @@ Source zip (`pnpm package:mvp`) is a power-user fallback, not the primary Get Pl
 - [linux-dev-host.md](linux-dev-host.md) — lab host
 - [design-docs/14](../design-docs/14-cloud-backed-lan-mode.md) — placement + Vultr
 - [design-docs/15](../design-docs/15-playon-games-site-and-skill-library.md) — site + catalog
-- [`sites/playon-games/`](../sites/playon-games/) — static Get / skills / connect docs
+- Sibling **playon-games** repo — Astro site + public skill catalog (playon.games)

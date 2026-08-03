@@ -10,7 +10,7 @@ PlayOn is a self-hosted AI control plane for game servers ([playon.games](https:
 - `packages/shared` — Zod schemas and shared types
 - `packages/agent-core` — orchestrator, tool registry, skill loading
 - `packages/runtime` — Docker/native adapters
-- `skills/` — global game + platform skills
+- `skills/` — platform (+ test fixtures) only. No curated `games.*` here — those live in sibling `playon-games`; hosts install from the playon.games catalog. Lab/unit tests use `fixtures.lab-docker-server`.
 - `design-docs/` — product intent (update only when asked)
 
 ## Commands
