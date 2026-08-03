@@ -1,24 +1,5 @@
-/** Human-readable action phrases for gated tools. */
-const TOOL_ACTIONS: Record<string, string> = {
-  servers_stop: "stop this server",
-  servers_restart: "restart this server",
-  servers_delete: "permanently delete this server",
-  servers_relocate: "move this server to another machine",
-  servers_import_local: "import a server from a local folder",
-  servers_import_sftp: "import a server over SFTP",
-  snapshot_restore: "restore this server from a snapshot",
-  backup_offnode_restore: "restore this server from an off-site backup",
-  fs_write: "change a server file",
-  fs_delete: "delete a server file or folder",
-  fs_rename: "rename or move a server path",
-  fs_copy: "copy a server file or folder",
-  archive_extract: "extract an archive into the server folder",
-  fetch_url: "download a file into the server folder",
-  skill_promote: "promote a draft skill so it can be installed",
-  skill_import: "import a skill package",
-  skill_promote_server: "add a server skill to the shared library",
-  steamcmd_app_update: "download or update game files via Steam",
-};
+import { surfaceConfirmAction } from "./tool-surface.js";
+import "./tool-surface-overlay.js";
 
 function asNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -28,11 +9,6 @@ function asNonEmptyString(value: unknown): string | undefined {
 
 function clip(text: string, max = 80): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
-}
-
-function humanizeToolName(toolName: string): string {
-  const spaced = toolName.replace(/_/g, " ").trim();
-  return spaced ? `run "${spaced}"` : "run a privileged action";
 }
 
 function detailFor(toolName: string, args: Record<string, unknown>): string | undefined {
@@ -70,6 +46,10 @@ function detailFor(toolName: string, args: Record<string, unknown>): string | un
     }
     case "fetch_url":
       return url ? clip(url) : path ? clip(path) : undefined;
+    case "skill_install_url": {
+      const downloadUrl = asNonEmptyString(args.downloadUrl);
+      return skill ? clip(skill) : downloadUrl ? clip(downloadUrl) : undefined;
+    }
     case "servers_import_local":
     case "servers_import_sftp":
     case "skill_import":
@@ -94,7 +74,7 @@ function detailFor(toolName: string, args: Record<string, unknown>): string | un
 
 /** Short host-facing confirmation copy (no raw JSON dumps). */
 export function confirmSummary(toolName: string, args: Record<string, unknown>): string {
-  const action = TOOL_ACTIONS[toolName] ?? humanizeToolName(toolName);
+  const action = surfaceConfirmAction(toolName);
   const detail = detailFor(toolName, args);
   if (detail) return `An agent wants to ${action}: ${detail}`;
   return `An agent wants to ${action}.`;
@@ -102,5 +82,5 @@ export function confirmSummary(toolName: string, args: Record<string, unknown>):
 
 /** Short label for “always allow this” UI (verb phrase without “An agent wants to”). */
 export function confirmActionLabel(toolName: string): string {
-  return TOOL_ACTIONS[toolName] ?? humanizeToolName(toolName);
+  return surfaceConfirmAction(toolName);
 }

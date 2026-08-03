@@ -1,5 +1,8 @@
 # Control-plane install (single host)
 
+> Prefer the Home package in [docs/deploy.md](../../docs/deploy.md) (`deploy/install.sh`).
+> This folder remains the checkout-based systemd unit for lab/dev hosts.
+
 Run the API + built web UI as one systemd service on a LAN host.
 
 ## One-time setup

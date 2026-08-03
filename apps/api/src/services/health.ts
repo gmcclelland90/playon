@@ -2,10 +2,9 @@ import type { HealthCheck, SkillMetadata } from "@playon/shared";
 import type { NetToolsService } from "./net-tools.js";
 import type { ServerQueryService } from "./server-query.js";
 import type { ServerRecord, ServerService } from "./servers.js";
+import { readSkillMarker } from "./skill-marker.js";
 import { loadSkillMetadata } from "./skills.js";
 import type { AppConfig } from "../config.js";
-import fs from "node:fs";
-import path from "node:path";
 
 export type HealthCheckResult = {
   id: string;
@@ -24,15 +23,7 @@ export type ServerHealthReport = {
 };
 
 function readSkillName(dataPath: string): string {
-  try {
-    return (
-      (JSON.parse(fs.readFileSync(path.join(dataPath, "skill.json"), "utf8")) as {
-        skillName?: string;
-      }).skillName ?? ""
-    );
-  } catch {
-    return "";
-  }
+  return readSkillMarker(dataPath)?.skillName ?? "";
 }
 
 export class HealthService {

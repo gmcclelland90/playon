@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LiveServerStateSchema, offlineState } from "./live-state.js";
+import { LiveServerStateSchema, liveStateToPanelBody, offlineState } from "./live-state.js";
 
 describe("LiveServerStateSchema", () => {
   it("accepts a minimal online result", () => {
@@ -27,5 +27,33 @@ describe("LiveServerStateSchema", () => {
     const state = offlineState("timeout", 12);
     expect(state).toEqual({ online: false, queryMs: 12, error: "timeout" });
     expect(LiveServerStateSchema.parse(state).online).toBe(false);
+  });
+});
+
+describe("liveStateToPanelBody", () => {
+  it("maps online live fields for the panel", () => {
+    expect(
+      liveStateToPanelBody({
+        online: true,
+        players: 3,
+        maxPlayers: 20,
+        map: "world",
+        mode: "survival",
+        name: "LAN",
+        playerList: [{ name: "alice", score: 1 }],
+      }),
+    ).toEqual({
+      online: true,
+      players: 3,
+      maxPlayers: 20,
+      map: "world",
+      mode: "survival",
+      serverName: "LAN",
+      playerList: [{ name: "alice", score: 1 }],
+    });
+  });
+
+  it("omits offline errors", () => {
+    expect(liveStateToPanelBody({ online: false, error: "nope" })).toEqual({});
   });
 });

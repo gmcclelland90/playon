@@ -28,17 +28,52 @@ export const SessionResponseSchema = z.object({
   user: PublicUserSchema,
 });
 
+/** Runtime capabilities advertised by a node (Local / Remote / Cloud). */
+export const NodeCapabilitiesSchema = z.object({
+  os: z.enum(["linux", "windows"]),
+  /** Can start Docker game containers. */
+  docker: z.boolean(),
+  /** Can supervise native OS processes (always true for host agents). */
+  native: z.boolean().default(true),
+  /** SteamCMD binary present or auto-provisionable on this node. */
+  steamcmd: z.boolean().default(false),
+  freeDiskBytes: z.number().nonnegative().optional(),
+});
+
 export const NodeHeartbeatSchema = z.object({
   nodeId: z.string().min(1),
   name: z.string().min(1),
   os: z.enum(["linux", "windows"]),
   docker: z.boolean(),
+  native: z.boolean().default(true),
+  steamcmd: z.boolean().default(false),
   freeDiskBytes: z.number().nonnegative().optional(),
   agentVersion: z.string().default("0.1.0"),
 });
+
+/** Job kinds the control plane may enqueue onto a node-agent. */
+export const NodeJobKindSchema = z.enum([
+  "ping",
+  "fs_list",
+  "fs_ensure_dir",
+  "fs_write_text",
+  "container_create",
+  "container_start",
+  "container_stop",
+  "container_remove",
+  "container_inspect",
+  "container_logs",
+  "process_start",
+  "process_stop",
+  "process_status",
+  "steamcmd_app_update",
+  "runtime_caps",
+]);
 
 export type SetupStatus = z.infer<typeof SetupStatusSchema>;
 export type BootstrapOwner = z.infer<typeof BootstrapOwnerSchema>;
 export type LoginInput = z.infer<typeof LoginSchema>;
 export type PublicUser = z.infer<typeof PublicUserSchema>;
+export type NodeCapabilities = z.infer<typeof NodeCapabilitiesSchema>;
 export type NodeHeartbeat = z.infer<typeof NodeHeartbeatSchema>;
+export type NodeJobKind = z.infer<typeof NodeJobKindSchema>;

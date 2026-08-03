@@ -18,7 +18,9 @@ async function tickHeartbeat() {
   const payload = buildHeartbeat({ nodeId, name, dataRoot });
   try {
     await postHeartbeat(apiBase, payload, nodeToken);
-    console.log(`[node-agent] heartbeat ok node=${nodeId} docker=${payload.docker}`);
+    console.log(
+      `[node-agent] heartbeat ok node=${nodeId} docker=${payload.docker} native=${payload.native} steamcmd=${payload.steamcmd}`,
+    );
   } catch (err) {
     console.warn(`[node-agent] heartbeat failed: ${(err as Error).message}`);
   }
@@ -30,7 +32,7 @@ async function tickJobs() {
     if (!job) return;
     console.log(`[node-agent] job claim id=${job.id} kind=${job.kind}`);
     try {
-      const result = executeJob(job, dataRoot);
+      const result = await executeJob(job, dataRoot);
       await reportJobResult(apiBase, nodeId, job.id, { ok: true, result }, nodeToken);
       console.log(`[node-agent] job done id=${job.id}`);
     } catch (err) {

@@ -295,7 +295,11 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                         </span>
                         {" · "}
                         {n.os}
-                        {n.docker ? " · Docker" : " · no Docker"} · free {formatBytes(n.freeDiskBytes)}
+                        {n.docker ? " · Docker" : ""}
+                        {n.native !== false ? " · native" : ""}
+                        {n.steamcmd ? " · SteamCMD" : ""}
+                        {" · free "}
+                        {formatBytes(n.freeDiskBytes)}
                         {n.agentVersion ? ` · agent ${n.agentVersion}` : ""}
                       </div>
                       <div className="muted">Seen {relativeTime(String(n.lastSeenAt))}</div>
@@ -307,7 +311,8 @@ export function DashboardPage({ user }: { user: PublicUser }) {
               <div className="empty-hint">
                 <strong>Local host only</strong>
                 <p className="muted status-inline">
-                  Remote node-agents appear here after heartbeat registration.
+                  Add a LAN machine with the Node install command from Settings, or wait for the
+                  local node to register.
                 </p>
               </div>
             )}

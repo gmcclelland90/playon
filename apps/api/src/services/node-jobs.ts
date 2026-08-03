@@ -1,6 +1,7 @@
 import { nanoid } from "nanoid";
+import { NodeJobKindSchema, type NodeJobKind } from "@playon/shared";
 
-export type NodeJobKind = "ping" | "fs_list";
+export type { NodeJobKind };
 
 export interface NodeJob {
   id: string;
@@ -22,6 +23,7 @@ export class NodeJobService {
   private readonly jobs = new Map<string, NodeJob>();
 
   enqueue(nodeId: string, kind: NodeJobKind, args: Record<string, unknown> = {}): NodeJob {
+    NodeJobKindSchema.parse(kind);
     const now = new Date().toISOString();
     const job: NodeJob = {
       id: nanoid(),

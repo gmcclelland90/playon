@@ -1,9 +1,16 @@
 export type NodePresence = "online" | "stale" | "offline";
 
+/** Durable id for the control-plane host’s local node. */
+export const LOCAL_NODE_ID = "local";
+
 /** Default: 3× typical 5s heartbeat. */
 export const NODE_ONLINE_MS = 15_000;
 /** After this, treat the node as fully disconnected. */
 export const NODE_OFFLINE_MS = 60_000;
+
+export function isLocalNodeId(nodeId: string | null | undefined): boolean {
+  return !nodeId || nodeId === LOCAL_NODE_ID;
+}
 
 export function deriveNodePresence(
   lastSeenAt: Date | number | string,

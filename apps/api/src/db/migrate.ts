@@ -30,6 +30,17 @@ function ensureConversationColumns(raw: Database.Database) {
   }
 }
 
+function ensureNodeCapabilityColumns(raw: Database.Database) {
+  const cols = raw.prepare(`PRAGMA table_info(nodes)`).all() as Array<{ name: string }>;
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has("native")) {
+    raw.exec(`ALTER TABLE nodes ADD COLUMN native INTEGER NOT NULL DEFAULT 1`);
+  }
+  if (!names.has("steamcmd")) {
+    raw.exec(`ALTER TABLE nodes ADD COLUMN steamcmd INTEGER NOT NULL DEFAULT 0`);
+  }
+}
+
 type LegacyProgressRow = {
   persona: string;
   xp: number;
@@ -93,6 +104,7 @@ export function applyBootstrap(dbPath: string) {
   const raw = new Database(dbPath);
   raw.exec(sql);
   ensureConversationColumns(raw);
+  ensureNodeCapabilityColumns(raw);
   migrateAgentProgressToGlobal(raw);
   raw.close();
 }

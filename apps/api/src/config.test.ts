@@ -84,3 +84,25 @@ describe("isProductionEnv", () => {
     expect(isProductionEnv({})).toBe(false);
   });
 });
+
+describe("PLAYON_SKILLS_ROOT", () => {
+  it("loads baked skills tree without repo games when minimal", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-cfg-"));
+    temps.push(root);
+    const skills = path.join(root, "skills");
+    fs.mkdirSync(path.join(skills, "platform"), { recursive: true });
+    fs.mkdirSync(path.join(skills, "games"), { recursive: true });
+    const data = path.join(root, "data");
+    const cfg = loadConfig({
+      PLAYON_DATA_ROOT: data,
+      PLAYON_SKILLS_ROOT: skills,
+      PLAYON_SKILLS_PROFILE: "minimal",
+    });
+    expect(cfg.skillsRoots.some((p) => p.replace(/\\/g, "/").endsWith("/skills/platform"))).toBe(
+      true,
+    );
+    expect(cfg.skillsRoots.some((p) => p.replace(/\\/g, "/").endsWith("/skills/games"))).toBe(
+      false,
+    );
+  });
+});

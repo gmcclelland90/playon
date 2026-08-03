@@ -1,0 +1,35 @@
+# Optional Docker-panel Home flavor.
+# Control plane runs in a container (no Docker socket).
+# Local node-agent runs on the host via the install script / systemd for SteamCMD.
+#
+# Usage:
+#   cp deploy/.env.example .env   # set secrets
+#   docker compose -f deploy/docker-compose.yml up -d
+#   # separately: run playon-node.service on the host pointing at http://127.0.0.1:8787
+
+services:
+  control-plane:
+    image: ghcr.io/gmcclelland90/playon:${PLAYON_IMAGE_TAG:-latest}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "${PLAYON_PORT:-8787}:8787"
+    environment:
+      PLAYON_ENV: production
+      PLAYON_HOST: "0.0.0.0"
+      PLAYON_PORT: "8787"
+      PLAYON_ADVERTISE_HOST: ${PLAYON_ADVERTISE_HOST}
+      PLAYON_SESSION_SECRET: ${PLAYON_SESSION_SECRET}
+      PLAYON_DATA_ROOT: /var/lib/playon
+      PLAYON_RUNTIME: native
+      PLAYON_LLM_MODE: openai_compatible
+      PLAYON_NODE_TOKEN: ${PLAYON_NODE_TOKEN:-}
+      PLAYON_SKILLS_ROOT: /opt/playon/skills
+      PLAYON_SKILLS_PROFILE: minimal
+      PLAYON_WEB_DIST: /opt/playon/apps/web/dist
+      PLAYON_VENICE_API_KEY: ${PLAYON_VENICE_API_KEY:-}
+    volumes:
+      # Panel state only (SQLite, settings). Game worlds live on the host node-agent.
+      - ${PLAYON_HOST_DATA:-/var/lib/playon}:/var/lib/playon
+    restart: unless-stopped

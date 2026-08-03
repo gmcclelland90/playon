@@ -2,7 +2,7 @@ import { DockerodeAdapter } from "./dockerode-adapter.js";
 import { NativeProcessSupervisor } from "./native-process.js";
 import type { ContainerInfo, ContainerSpec, DockerAdapter, ProcessSupervisor } from "./types.js";
 
-export type RuntimeAdapterMode = "docker";
+export type RuntimeAdapterMode = "docker" | "native";
 
 export interface RuntimeAdapters {
   docker: DockerAdapter;
@@ -38,12 +38,24 @@ export class UnavailableDockerAdapter implements DockerAdapter {
 }
 
 /**
- * Create runtime adapters.
- * - `docker`: real Docker engine + real OS process supervisor (fails if Docker unavailable)
+ * Preferred entry: truthful mode label matching host `PLAYON_RUNTIME`.
+ * - `docker`: real Docker engine + OS process supervisor (fails if Docker unavailable)
+ * - `native`: OS processes only; Docker ops throw via UnavailableDockerAdapter
+ */
+export async function createRuntime(mode: RuntimeAdapterMode): Promise<RuntimeAdapters> {
+  if (mode === "native") {
+    return createNativeRuntimeAdapters();
+  }
+  return createRuntimeAdapters("docker");
+}
+
+/**
+ * Create runtime adapters for an explicit mode.
+ * Prefer {@link createRuntime} at call sites.
  */
 export async function createRuntimeAdapters(mode: RuntimeAdapterMode): Promise<RuntimeAdapters> {
-  if (mode !== "docker") {
-    throw new Error(`unsupported_runtime_mode: ${String(mode)}`);
+  if (mode === "native") {
+    return createNativeRuntimeAdapters();
   }
 
   try {
@@ -60,11 +72,11 @@ export async function createRuntimeAdapters(mode: RuntimeAdapterMode): Promise<R
   }
 }
 
-/** Real OS processes only (no Docker). */
+/** Real OS processes only (no Docker). Mode is always `"native"`. */
 export function createNativeRuntimeAdapters(): RuntimeAdapters {
   return {
     docker: new UnavailableDockerAdapter(),
     process: new NativeProcessSupervisor(),
-    mode: "docker",
+    mode: "native",
   };
 }

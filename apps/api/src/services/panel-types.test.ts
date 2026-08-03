@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizePanelBlockType } from "./tools.js";
+import { normalizePanelBlockType } from "./server-panel.js";
 
 describe("normalizePanelBlockType", () => {
   it("maps common aliases", () => {

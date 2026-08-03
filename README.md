@@ -5,6 +5,17 @@ AI-driven game server control plane for LAN parties.
 
 ## Quick start
 
+### LAN host (production)
+
+See **[docs/deploy.md](docs/deploy.md)** — native Home install (no Docker required), optional Docker panel, LAN nodes, Vultr.
+
+```bash
+pnpm build && pnpm package:home
+# Linux: extract dist-home/playon + sudo bash deploy/install.sh
+```
+
+### Developers
+
 Needs Node.js 22+ and pnpm 9+.
 
 ```bash
@@ -21,15 +32,8 @@ pnpm dev
 
 1. Open the UI and create the **Owner** account.  
 2. Go to **Settings** → choose provider (`OpenAI-compatible` or `Ollama`), paste API key if needed, set model, save.  
-3. Chat: ask to spin up a game — or in mock mode: *install fake-http fixture*.  
+3. Chat: ask to spin up a game (Paper needs Docker; Rust/SteamCMD works with `PLAYON_RUNTIME=native`).  
 4. Players use **/play** for join info.
-
-Default autonomous / CI modes (no keys):
-
-```bash
-PLAYON_LLM_MODE=mock
-PLAYON_RUNTIME=mock
-```
 
 ## Workspace
 

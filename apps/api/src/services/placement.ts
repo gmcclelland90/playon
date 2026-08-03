@@ -1,6 +1,7 @@
 import os from "node:os";
 import { eq } from "drizzle-orm";
-import { deriveNodePresence, type NodePresence, type SkillMetadata } from "@playon/shared";
+import { deriveNodePresence, LOCAL_NODE_ID, type NodePresence, type SkillMetadata } from "@playon/shared";
+import { probeHostCapabilities } from "@playon/runtime";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db/client.js";
 import { nodes } from "../db/schema.js";
@@ -14,6 +15,8 @@ export type PlacementCandidate = {
   name: string;
   os: "linux" | "windows";
   docker: boolean;
+  native: boolean;
+  steamcmd: boolean;
   freeDiskBytes: number | null;
   status: NodePresence;
   eligible: boolean;
@@ -32,6 +35,8 @@ export type NodeCaps = {
   name: string;
   os: "linux" | "windows";
   docker: boolean;
+  native: boolean;
+  steamcmd: boolean;
   freeDiskBytes: number | null;
   lastSeenAt: Date;
 };
@@ -68,15 +73,35 @@ export function scoreNodeForSkill(
 
   const needsDocker = skill.containerSupport === "full" && !opts?.relaxDocker;
   const prefersDocker = skill.containerSupport === "partial" || skill.containerSupport === "full";
+  const needsNative =
+    skill.containerSupport === "none" || (skill.steamAppId != null && !needsDocker);
+
   if (needsDocker && !node.docker) {
     eligible = false;
     reasons.push("docker_required");
   } else if (prefersDocker && (node.docker || opts?.relaxDocker)) {
     score += 20;
     reasons.push(node.docker ? "docker_ready" : "docker_relaxed");
-  } else if (skill.containerSupport === "none" && !node.docker) {
-    score += 5;
-    reasons.push("native_ok");
+  }
+
+  if (needsNative) {
+    if (!node.native) {
+      eligible = false;
+      reasons.push("native_required");
+    } else {
+      score += 10;
+      reasons.push("native_ok");
+    }
+  }
+
+  if (skill.steamAppId != null) {
+    if (!node.steamcmd) {
+      eligible = false;
+      reasons.push("steamcmd_required");
+    } else {
+      score += 15;
+      reasons.push("steamcmd_ok");
+    }
   }
 
   if (node.freeDiskBytes != null) {
@@ -97,16 +122,14 @@ export function scoreNodeForSkill(
     name: node.name,
     os: node.os,
     docker: node.docker,
+    native: node.native,
+    steamcmd: node.steamcmd,
     freeDiskBytes: node.freeDiskBytes,
     status,
     eligible,
     score: eligible ? score : score - 1000,
     reasons,
   };
-}
-
-function hostOs(): "linux" | "windows" {
-  return process.platform === "win32" ? "windows" : "linux";
 }
 
 export class PlacementService {
@@ -119,15 +142,20 @@ export class PlacementService {
   /** Ensure a durable `local` control-plane row exists for FK placement. */
   async ensureLocalNode(): Promise<NodeCaps> {
     const now = new Date();
+    const probed = probeHostCapabilities(this.config.dataRoot);
+    // Host PLAYON_RUNTIME=native means we will not use Docker even if the socket exists.
+    const docker = this.config.runtimeMode === "docker" && probed.docker;
     const local: NodeCaps = {
-      id: "local",
+      id: LOCAL_NODE_ID,
       name: os.hostname() || "local",
-      os: hostOs(),
-      docker: this.config.runtimeMode === "docker",
-      freeDiskBytes: null,
+      os: probed.os,
+      docker,
+      native: probed.native,
+      steamcmd: probed.steamcmd,
+      freeDiskBytes: probed.freeDiskBytes ?? null,
       lastSeenAt: now,
     };
-    const existing = await this.db.select().from(nodes).where(eq(nodes.id, "local")).limit(1);
+    const existing = await this.db.select().from(nodes).where(eq(nodes.id, LOCAL_NODE_ID)).limit(1);
     if (existing[0]) {
       await this.db
         .update(nodes)
@@ -135,17 +163,22 @@ export class PlacementService {
           name: local.name,
           os: local.os,
           docker: local.docker,
+          native: local.native,
+          steamcmd: local.steamcmd,
+          freeDiskBytes: local.freeDiskBytes,
           lastSeenAt: now,
         })
-        .where(eq(nodes.id, "local"));
-      return { ...local, freeDiskBytes: existing[0].freeDiskBytes };
+        .where(eq(nodes.id, LOCAL_NODE_ID));
+      return local;
     }
     await this.db.insert(nodes).values({
       id: local.id,
       name: local.name,
       os: local.os,
       docker: local.docker,
-      freeDiskBytes: null,
+      native: local.native,
+      steamcmd: local.steamcmd,
+      freeDiskBytes: local.freeDiskBytes,
       agentVersion: "control-plane",
       lastSeenAt: now,
     });
@@ -160,6 +193,8 @@ export class PlacementService {
       name: n.name,
       os: n.os as "linux" | "windows",
       docker: n.docker,
+      native: n.native ?? true,
+      steamcmd: n.steamcmd ?? false,
       freeDiskBytes: n.freeDiskBytes,
       lastSeenAt: n.lastSeenAt,
     }));
@@ -174,7 +209,6 @@ export class PlacementService {
       .map((n) => scoreNodeForSkill(n, skill.metadata, Date.now()))
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 
-    // Best-effort port probe on the control plane for preferred skill ports.
     if (this.net && candidates[0]?.eligible) {
       const preferred = skill.metadata.ports.find((p) => p.default)?.default;
       if (preferred) {

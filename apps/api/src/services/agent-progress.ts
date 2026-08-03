@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import type { AgentPersona } from "@playon/agent-core";
+import { surfaceXp, type AgentPersona } from "@playon/agent-core";
 import type { Db } from "../db/client.js";
 import { agentProgress } from "../db/schema.js";
 
@@ -19,20 +19,6 @@ export type XpAward = {
   previousLevel: number;
   progress: AgentProgressRecord;
   celebrate: boolean;
-};
-
-const TOOL_XP: Record<string, { xp: number; reason: string; celebrate?: boolean }> = {
-  servers_create_from_skill: { xp: 50, reason: "clean_install", celebrate: true },
-  servers_import_local: { xp: 55, reason: "clean_import", celebrate: true },
-  servers_import_sftp: { xp: 60, reason: "clean_import_sftp", celebrate: true },
-  snapshot_restore: { xp: 40, reason: "recovery", celebrate: true },
-  backup_offnode_restore: { xp: 45, reason: "recovery_offnode", celebrate: true },
-  servers_start: { xp: 15, reason: "server_start" },
-  servers_restart: { xp: 12, reason: "server_restart" },
-  skill_promote: { xp: 25, reason: "skill_promote" },
-  panel_publish: { xp: 10, reason: "player_panel" },
-  backup_offnode: { xp: 20, reason: "durable_backup" },
-  servers_relocate: { xp: 30, reason: "relocate" },
 };
 
 export function levelFromXp(xp: number): number {
@@ -190,7 +176,7 @@ export class AgentProgressService {
     const awards: XpAward[] = [];
     for (const trace of toolTrace) {
       if (isFailedResult(trace.result)) continue;
-      const spec = TOOL_XP[trace.name] ?? { xp: 5, reason: "tool_success" };
+      const spec = surfaceXp(trace.name);
       const award = await this.award(persona, spec.xp, spec.reason);
       award.celebrate = Boolean(spec.celebrate) || award.leveledUp;
       awards.push(award);

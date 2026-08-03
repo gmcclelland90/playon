@@ -1,8 +1,10 @@
 # Blank-node IaC templates
 
-Provision a spare Linux or Windows machine so it can join a PlayOn control plane as a **node-agent** (heartbeat + future runtime).
+> **Preferred:** Home bundle scripts [`deploy/install-node.sh`](../../deploy/install-node.sh) / [`deploy/windows/install-node.ps1`](../../deploy/windows/install-node.ps1) — full runtime jobs (process / Docker / SteamCMD). See [docs/deploy.md](../../docs/deploy.md).
 
-These templates are intentionally thin: Docker + Node 22 + the monorepo `node-agent`, wired with `PLAYON_API_URL` and `PLAYON_NODE_TOKEN`.
+Provision a spare Linux or Windows machine so it can join a PlayOn control plane as a **node-agent**.
+
+These templates remain thin cloud-init / bootstrap alternatives: Docker + Node 22 + the monorepo `node-agent`, wired with `PLAYON_API_URL` and `PLAYON_NODE_TOKEN`.
 
 ## Prerequisites on the control plane
 
@@ -60,4 +62,4 @@ On the control plane Dashboard → Nodes (or Chat → Machines), the new node sh
 
 - Terraform / cloud provider modules
 - Automatic game-port firewall rules per skill
-- Running Docker game containers on the remote agent (runtime still executes on the control plane today; these templates prepare the host)
+- Full Cloud tunnel gateway (see design-docs/14); node runtime jobs are implemented in `apps/node-agent`

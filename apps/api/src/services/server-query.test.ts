@@ -72,17 +72,4 @@ describe("ServerQueryService", () => {
     expect(state.map).toBe("testmap");
     expect(state.maxPlayers).toBe(4);
   });
-
-  it("panelFields omits offline errors", async () => {
-    const { db, config } = tempConfig();
-    const servers = new ServerService(db, config);
-    const queries = new ServerQueryService(servers, config);
-    expect(queries.panelFields({ online: false, error: "nope" })).toEqual({});
-    expect(queries.panelFields({ online: true, players: 1, maxPlayers: 8, map: "x" })).toEqual({
-      online: true,
-      players: 1,
-      maxPlayers: 8,
-      map: "x",
-    });
-  });
 });

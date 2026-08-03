@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { KeyedAsyncLock } from "./panel-lock.js";
+import { KeyedAsyncLock } from "./panel.js";
 
 describe("KeyedAsyncLock", () => {
   it("serializes work for the same key", async () => {

@@ -171,6 +171,8 @@ export const api = {
         name: string;
         os: string;
         docker: boolean;
+        native?: boolean;
+        steamcmd?: boolean;
         freeDiskBytes?: number | null;
         agentVersion?: string | null;
         lastSeenAt: string | number;
@@ -262,6 +264,37 @@ export const api = {
     }
     return res.json() as Promise<{ skill: { skillName: string; path: string; version: string } }>;
   },
+  skillsCatalog: (q = "") =>
+    request<{
+      catalogUrl: string;
+      skills: Array<{
+        name: string;
+        version: string;
+        game?: string;
+        description?: string;
+        tags: string[];
+        dependencies: string[];
+        containerSupport?: string;
+        minRamMb?: number;
+        downloadUrl: string;
+        sha256?: string;
+        official?: boolean;
+        installed: boolean;
+      }>;
+      error?: string;
+    }>(`/api/skills/catalog${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`),
+  installSkillFromCatalog: (body: { name?: string; downloadUrl?: string; overwrite?: boolean }) =>
+    request<{
+      skill: { skillName: string; path: string; version: string };
+      catalogUrl: string;
+      downloadUrl: string;
+      sha256: string;
+      installed: string[];
+      skippedDeps: string[];
+    }>("/api/skills/install-from-catalog", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   servers: () =>
     request<{ servers: ServerRow[]; advertiseHost?: string; runtimeMode?: string }>("/api/servers"),
   serverDetail: (id: string) => request<ServerDetail>(`/api/servers/${encodeURIComponent(id)}`),

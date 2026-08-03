@@ -1,17 +1,55 @@
 import { describe, expect, it } from "vitest";
-import { ConnectorRegistry } from "./registry.js";
+import {
+  ConnectorRegistry,
+  builtInDialectIds,
+  listDialectDescriptors,
+  portPreferenceForDialect,
+  primaryPortForDialect,
+  queryDialectToolEnum,
+} from "./registry.js";
 
 describe("ConnectorRegistry", () => {
   const registry = new ConnectorRegistry();
 
   it("lists built-in dialects", () => {
     const dialects = registry.listBuiltInDialects();
+    expect(dialects).toEqual(builtInDialectIds);
     expect(dialects).toContain("minecraft_status");
     expect(dialects).toContain("a2s");
     expect(dialects).toContain("valheim");
     expect(dialects).toContain("unreal");
     expect(dialects).toContain("terraria");
     expect(dialects).toContain("factorio");
+    expect(dialects).not.toContain("none");
+    expect(dialects).not.toContain("skill_module");
+  });
+
+  it("exposes descriptors with portPreference", () => {
+    const list = listDialectDescriptors();
+    expect(list.length).toBe(builtInDialectIds.length);
+    expect(list.find((d) => d.id === "minecraft_status")?.portPreference).toBe("game");
+    expect(list.find((d) => d.id === "valheim")?.portPreference).toBe("query");
+    expect(list.find((d) => d.id === "unreal")?.portPreference).toBe("query");
+    expect(list.find((d) => d.id === "a2s")?.portPreference).toBe("query");
+  });
+
+  it("resolves primary port from descriptor preference", () => {
+    expect(portPreferenceForDialect("minecraft_status")).toBe("game");
+    expect(portPreferenceForDialect("valheim")).toBe("query");
+    expect(portPreferenceForDialect("skill_module")).toBe("query");
+    expect(portPreferenceForDialect("none")).toBe("query");
+    expect(primaryPortForDialect("minecraft_status", { gamePort: 25565, queryPort: 25566 })).toBe(
+      25565,
+    );
+    expect(primaryPortForDialect("valheim", { gamePort: 2456, queryPort: 2457 })).toBe(2457);
+  });
+
+  it("builds tool enum from built-ins plus special cases", () => {
+    expect(queryDialectToolEnum()).toEqual([
+      "none",
+      ...builtInDialectIds,
+      "skill_module",
+    ]);
   });
 
   it("returns null for none", () => {

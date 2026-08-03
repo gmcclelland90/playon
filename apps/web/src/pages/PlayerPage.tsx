@@ -67,20 +67,17 @@ function chipLabel(type: string): string {
   }
 }
 
-/** Short copy under the join hero — game-aware (not Minecraft-only). */
-function joinHeroHint(game?: string | null): string {
-  const g = (game ?? "").trim().toLowerCase();
-  if (g.includes("rust")) {
-    return "Prefer Open in Steam, or Steam → F1 → paste the connect command";
+/** Skill-owned copy under the join hero (client_setup notes/instructions). */
+function setupHeroHint(rest: PanelBlockRow[]): string {
+  const setup = rest.find((b) => b.type === "client_setup");
+  if (setup) {
+    const notes = typeof setup.body.notes === "string" ? setup.body.notes.trim() : "";
+    if (notes) return notes;
+    const instructions =
+      typeof setup.body.instructions === "string" ? setup.body.instructions.trim() : "";
+    if (instructions) return instructions;
   }
-  if (g.includes("unreal") || g === "ut99" || g.includes("tournament")) {
-    return "Unreal Tournament 99 · Multiplayer → Open → paste address";
-  }
-  if (g.includes("minecraft") || g === "paper") {
-    return "Minecraft Java · Multiplayer → Direct Connection → paste address";
-  }
-  if (!g) return "Copy the address above and paste it in your game client";
-  return `${game} · connect with the address above`;
+  return "Copy the address above and paste it in your game client";
 }
 
 function sectionTitle(join: PanelBlockRow | undefined, themeGame?: string): string {
@@ -285,10 +282,6 @@ export function PlayerPage() {
         }
         if (map) liveBits.push(map);
         if (mode) liveBits.push(mode);
-        const joinGame =
-          (typeof joinBlock.body.game === "string" && joinBlock.body.game) ||
-          theme.game ||
-          undefined;
         const addrKey = `${group.key}:address`;
         const cmdKey = `${group.key}:command`;
 
@@ -357,7 +350,7 @@ export function PlayerPage() {
                 Couldn’t copy — select the text and copy manually.
               </p>
             ) : null}
-            <p className="muted status-inline">{joinHeroHint(joinGame)}</p>
+            <p className="muted status-inline">{setupHeroHint(group.rest)}</p>
 
             {group.rest.map((block) => (
               <PanelBlockCard

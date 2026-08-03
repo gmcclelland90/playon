@@ -27,6 +27,9 @@ describe("confirmSummary", () => {
     expect(confirmSummary("skill_promote", { slug: "minecraft-paper" })).toBe(
       "An agent wants to promote a draft skill so it can be installed: minecraft-paper",
     );
+    expect(confirmSummary("skill_install_url", { name: "games.minecraft-paper" })).toBe(
+      "An agent wants to install a skill from the public catalog: games.minecraft-paper",
+    );
   });
 
   it("falls back for unknown tools", () => {

@@ -12,6 +12,17 @@ const baseSkill = SkillMetadataSchema.parse({
   ports: [{ name: "game", protocol: "tcp", default: 25565 }],
 });
 
+const steamSkill = SkillMetadataSchema.parse({
+  name: "games.rust",
+  version: "1.0.0",
+  description: "rust",
+  os: ["linux", "windows"],
+  arch: ["amd64"],
+  containerSupport: "none",
+  steamAppId: 258550,
+  ports: [{ name: "game", protocol: "udp", default: 28015 }],
+});
+
 describe("scoreNodeForSkill", () => {
   const now = Date.now();
 
@@ -22,6 +33,8 @@ describe("scoreNodeForSkill", () => {
         name: "lab",
         os: "linux",
         docker: true,
+        native: true,
+        steamcmd: false,
         freeDiskBytes: 20 * 1024 ** 3,
         lastSeenAt: new Date(now - 1000),
       },
@@ -34,6 +47,8 @@ describe("scoreNodeForSkill", () => {
         name: "win",
         os: "windows",
         docker: false,
+        native: true,
+        steamcmd: true,
         freeDiskBytes: 20 * 1024 ** 3,
         lastSeenAt: new Date(now - 1000),
       },
@@ -45,6 +60,40 @@ describe("scoreNodeForSkill", () => {
     expect(good.score).toBeGreaterThan(bad.score);
   });
 
+  it("requires steamcmd for Steam skills", () => {
+    const withSteam = scoreNodeForSkill(
+      {
+        id: "a",
+        name: "lab",
+        os: "linux",
+        docker: false,
+        native: true,
+        steamcmd: true,
+        freeDiskBytes: 20 * 1024 ** 3,
+        lastSeenAt: new Date(now - 1000),
+      },
+      steamSkill,
+      now,
+    );
+    const without = scoreNodeForSkill(
+      {
+        id: "b",
+        name: "bare",
+        os: "linux",
+        docker: true,
+        native: true,
+        steamcmd: false,
+        freeDiskBytes: 20 * 1024 ** 3,
+        lastSeenAt: new Date(now - 1000),
+      },
+      steamSkill,
+      now,
+    );
+    expect(withSteam.eligible).toBe(true);
+    expect(without.eligible).toBe(false);
+    expect(without.reasons).toContain("steamcmd_required");
+  });
+
   it("rejects offline or low-disk nodes", () => {
     const offline = scoreNodeForSkill(
       {
@@ -52,6 +101,8 @@ describe("scoreNodeForSkill", () => {
         name: "gone",
         os: "linux",
         docker: true,
+        native: true,
+        steamcmd: false,
         freeDiskBytes: 50 * 1024 ** 3,
         lastSeenAt: new Date(now - 120_000),
       },
@@ -64,6 +115,8 @@ describe("scoreNodeForSkill", () => {
         name: "tiny",
         os: "linux",
         docker: true,
+        native: true,
+        steamcmd: false,
         freeDiskBytes: 64 * 1024 * 1024,
         lastSeenAt: new Date(now - 1000),
       },

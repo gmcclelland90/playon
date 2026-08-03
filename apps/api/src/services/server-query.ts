@@ -3,28 +3,15 @@ import path from "node:path";
 import {
   DEFAULT_QUERY_CONNECTOR,
   defaultRegistry,
+  primaryPortForDialect,
   type QueryTarget,
 } from "@playon/server-query";
 import type { LiveServerState, QueryDialect, SkillMetadata } from "@playon/shared";
 import { offlineState } from "@playon/shared";
 import type { AppConfig } from "../config.js";
+import { readSkillMarker } from "./skill-marker.js";
 import { loadSkillMetadata, skillsRootsForWorkspace } from "./skills.js";
 import type { ServerRecord, ServerService } from "./servers.js";
-
-type SkillMarker = {
-  skillName?: string;
-  queryDialect?: QueryDialect;
-  queryPortName?: string;
-  queryConnector?: string;
-};
-
-function readSkillMarker(dataPath: string): SkillMarker {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(dataPath, "skill.json"), "utf8")) as SkillMarker;
-  } catch {
-    return {};
-  }
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -70,7 +57,7 @@ export class ServerQueryService {
     const server = await this.dbServers.get(serverId);
     if (!server) return offlineState(`unknown_server: ${serverId}`);
 
-    const marker = readSkillMarker(server.dataPath);
+    const marker = readSkillMarker(server.dataPath) ?? {};
     const skillName = marker.skillName ?? "";
     const roots = skillsRootsForWorkspace(
       this.config.skillsRoots,
@@ -93,7 +80,7 @@ export class ServerQueryService {
       meta?.queryConnector ?? marker.queryConnector ?? DEFAULT_QUERY_CONNECTOR;
     const target: QueryTarget = {
       host,
-      port: dialect === "minecraft_status" ? gamePort : queryPort,
+      port: primaryPortForDialect(dialect, { gamePort, queryPort }),
       queryPort,
       gamePort,
       timeoutMs: 2500,
@@ -140,26 +127,6 @@ export class ServerQueryService {
     if (!hit) return null;
     if (Date.now() - hit.at > maxAgeMs) return null;
     return hit.state;
-  }
-
-  /** Panel-safe subset of live state (no error string spam). */
-  panelFields(state: LiveServerState | null | undefined): Record<string, unknown> {
-    if (!state?.online) return {};
-    const out: Record<string, unknown> = { online: true };
-    if (state.players !== undefined) out.players = state.players;
-    if (state.maxPlayers !== undefined) out.maxPlayers = state.maxPlayers;
-    if (state.map) out.map = state.map;
-    if (state.mode) out.mode = state.mode;
-    if (state.name) out.serverName = state.name;
-    if (state.version) out.version = state.version;
-    if (state.playerList?.length) {
-      out.playerList = state.playerList.map((p) => ({
-        name: p.name,
-        ...(p.score !== undefined ? { score: p.score } : {}),
-      }));
-    }
-    if (state.uptimeSeconds !== undefined) out.uptimeSeconds = state.uptimeSeconds;
-    return out;
   }
 
   async queryTest(args: QueryTestArgs): Promise<LiveServerState> {
@@ -220,7 +187,7 @@ export class ServerQueryService {
       if (!connector) return offlineState("no_connector");
       return await connector.query({
         host,
-        port: dialect === "minecraft_status" ? gamePort : queryPort,
+        port: primaryPortForDialect(dialect, { gamePort, queryPort }),
         queryPort,
         gamePort,
         timeoutMs: args.timeoutMs ?? 2500,

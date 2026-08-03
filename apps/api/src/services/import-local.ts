@@ -8,6 +8,7 @@ import type { Db } from "../db/client.js";
 import { servers } from "../db/schema.js";
 import { PlacementService } from "./placement.js";
 import { SkillDraftService } from "./skill-drafts.js";
+import { writeSkillMarkerFromSkill } from "./skill-marker.js";
 import { loadSkillMetadata, listSkills } from "./skills.js";
 import type { ServerRecord, ServerService } from "./servers.js";
 import type { SnapshotService } from "./snapshots.js";
@@ -211,28 +212,14 @@ export class ImportLocalService {
     const copiedBytes = dirSizeBytes(gamePath);
 
     const metaName = skill.metadata.name;
-    const metaVersion = skill.metadata.version;
-    const containerSupport = skill.metadata.containerSupport;
     const gameLabel =
       args.game?.trim() || skill.metadata.game || detection.suggestedGame || path.basename(source);
     const serverName = args.serverName?.trim() || gameLabel;
 
-    fs.writeFileSync(
-      path.join(dataPath, "skill.json"),
-      JSON.stringify(
-        {
-          skillName: metaName,
-          version: metaVersion,
-          runtimeMode: this.config.runtimeMode,
-          containerSupport,
-          nodeId: resolvedNodeId,
-          importedFrom: source,
-          importedAt: new Date().toISOString(),
-        },
-        null,
-        2,
-      ),
-    );
+    writeSkillMarkerFromSkill(dataPath, skill, this.config.runtimeMode, resolvedNodeId, {
+      importedFrom: source,
+      importedAt: new Date().toISOString(),
+    });
 
     const now = new Date();
     await this.db.insert(servers).values({

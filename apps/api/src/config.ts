@@ -135,14 +135,36 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const extraCors = parseCorsExtra(env.PLAYON_CORS_ORIGINS);
   /** `minimal` = platform skills only (library-shaped). `dev` (default) also mounts repo games. */
   const skillsProfile = (env.PLAYON_SKILLS_PROFILE?.trim() || "dev").toLowerCase();
-  const skillsRoots = [
-    path.join(repoRoot, "skills", "platform"),
-    path.join(dataRoot, "skills"),
-  ];
-  if (skillsProfile !== "minimal") {
-    skillsRoots.unshift(path.join(repoRoot, "skills", "games"));
-    skillsRoots.push(path.join(repoRoot, "skills", "fixtures"));
+  /**
+   * Optional baked/install skills root (Home tarball / container).
+   * Colon/semicolon-separated absolute paths; each may contain platform|games|fixtures subdirs
+   * or be a single skill category directory.
+   */
+  const bakedSkillsRoot = env.PLAYON_SKILLS_ROOT?.trim();
+  const skillsRoots: string[] = [];
+  if (bakedSkillsRoot) {
+    const parts = bakedSkillsRoot.split(/[:;]/g).map((s) => s.trim()).filter(Boolean);
+    for (const part of parts) {
+      const abs = path.resolve(part);
+      const platform = path.join(abs, "platform");
+      const games = path.join(abs, "games");
+      const fixtures = path.join(abs, "fixtures");
+      if (fs.existsSync(platform) || fs.existsSync(games) || fs.existsSync(fixtures)) {
+        if (fs.existsSync(platform)) skillsRoots.push(platform);
+        if (skillsProfile !== "minimal" && fs.existsSync(games)) skillsRoots.push(games);
+        if (skillsProfile !== "minimal" && fs.existsSync(fixtures)) skillsRoots.push(fixtures);
+      } else {
+        skillsRoots.push(abs);
+      }
+    }
+  } else {
+    skillsRoots.push(path.join(repoRoot, "skills", "platform"));
+    if (skillsProfile !== "minimal") {
+      skillsRoots.unshift(path.join(repoRoot, "skills", "games"));
+      skillsRoots.push(path.join(repoRoot, "skills", "fixtures"));
+    }
   }
+  skillsRoots.push(path.join(dataRoot, "skills"));
 
   return {
     port,

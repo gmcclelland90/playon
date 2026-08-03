@@ -44,3 +44,31 @@ export function toPublicLlmSettings(settings: LlmSettings): LlmSettingsPublic {
     hasApiKey: Boolean(settings.apiKeyEncrypted),
   };
 }
+
+export const CLOUD_SETTINGS_KEY = "cloud.vultr";
+export const SKILLS_CATALOG_KEY = "skills.catalog";
+
+export type VultrCloudSettings = {
+  accessTokenEncrypted?: string;
+  refreshTokenEncrypted?: string;
+  expiresAt?: string;
+  connectState?: string;
+  codeVerifier?: string;
+};
+
+export type SkillsCatalogSettings = {
+  /** Default https://playon.games/skills/index.json */
+  catalogUrl: string;
+};
+
+export function toPublicCloudSettings(stored: VultrCloudSettings | null): {
+  provider: "vultr";
+  connected: boolean;
+  expiresAt?: string;
+} {
+  return {
+    provider: "vultr",
+    connected: Boolean(stored?.accessTokenEncrypted),
+    expiresAt: stored?.expiresAt,
+  };
+}

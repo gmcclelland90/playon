@@ -13,6 +13,7 @@ import {
   BootstrapOwnerSchema,
   LoginSchema,
   NodeHeartbeatSchema,
+  NodeJobKindSchema,
   RoleSchema,
   can,
   deriveNodePresence,
@@ -42,35 +43,38 @@ import {
 } from "./auth/session.js";
 import { encryptSecret } from "./services/secrets.js";
 import {
+  CLOUD_SETTINGS_KEY,
   getSetting,
   LLM_SETTINGS_KEY,
+  SKILLS_CATALOG_KEY,
   setSetting,
+  toPublicCloudSettings,
   toPublicLlmSettings,
   type LlmSettings,
+  type SkillsCatalogSettings,
+  type VultrCloudSettings,
 } from "./services/settings.js";
+import {
+  buildVultrAuthorizeUrl,
+  createVultrConnectSession,
+  DEFAULT_VULTR_RELAY,
+  exchangeVultrCode,
+} from "./services/cloud/oauth-relay.js";
+import {
+  annotateCatalogInstalled,
+  installSkillFromCatalog,
+} from "./services/catalog-install.js";
+import {
+  fetchSkillsCatalog,
+  resolveSkillsCatalogUrl,
+  searchCatalog,
+} from "./services/skills-catalog.js";
+import { createControlPlane, type ControlPlane } from "./control-plane.js";
 import { listSkills, skillsRootsForWorkspace } from "./services/skills.js";
-import { SkillPackageService } from "./services/skill-packages.js";
 import { ConfirmService } from "./services/confirm.js";
 import { EventHub } from "./services/event-hub.js";
-import { HealthService } from "./services/health.js";
-import { NetToolsService } from "./services/net-tools.js";
-import { PanelService } from "./services/panel.js";
-import { resolvePanelTheme } from "./services/panel-theme.js";
-import {
-  isPlayerPanelLiveStatus,
-  publishServerPanel,
-  safeQueryLive,
-} from "./services/server-panel.js";
-import { ServerQueryService } from "./services/server-query.js";
-import { ServerService } from "./services/servers.js";
-import { MigrateService } from "./services/migrate.js";
+import { safeQueryLive } from "./services/server-panel.js";
 import { labelForTool, verbForTool } from "./services/agent-activity.js";
-import { AgentProgressService } from "./services/agent-progress.js";
-import { ImportLocalService } from "./services/import-local.js";
-import { ImportSftpService } from "./services/import-sftp.js";
-import { OffNodeBackupService } from "./services/offnode-backup.js";
-import { PlacementService } from "./services/placement.js";
-import { SnapshotService } from "./services/snapshots.js";
 import { nodeJobService } from "./services/node-jobs.js";
 import { createLlmClient, createOrchestrator } from "./services/tools.js";
 
@@ -111,6 +115,7 @@ export type PlayOnApp = Hono<{ Variables: Vars }> & {
   injectWebSocket: (server: NodeHttpServer) => void;
   eventHub: EventHub;
   confirmService: ConfirmService;
+  controlPlane: ControlPlane;
 };
 
 const LlmSettingsPutSchema = z.object({
@@ -151,26 +156,24 @@ const CreateUserSchema = z.object({
 
 export function createApp(db: Db, config: AppConfig): PlayOnApp {
   const app = new Hono<{ Variables: Vars }>();
-  const eventHub = new EventHub();
-  const confirmService = new ConfirmService(eventHub);
-  const serverService = new ServerService(db, config, eventHub);
-  const snapshotService = new SnapshotService(db, config, serverService);
-  const panelService = new PanelService(db, eventHub);
-  const netTools = new NetToolsService(serverService);
-  const queryService = new ServerQueryService(serverService, config);
-  const healthService = new HealthService(serverService, netTools, config, queryService);
-  const placementService = new PlacementService(db, config, netTools);
-  const migrateService = new MigrateService(
-    db,
-    serverService,
-    snapshotService,
-    placementService,
+  const plane = createControlPlane(db, config);
+  const {
     eventHub,
-  );
-  const offNodeBackup = new OffNodeBackupService(db, config, snapshotService);
-  const importLocal = new ImportLocalService(db, config, serverService, snapshotService);
-  const importSftp = new ImportSftpService(db, config, serverService, snapshotService);
-  const agentProgress = new AgentProgressService(db);
+    confirm: confirmService,
+    servers: serverService,
+    snapshots: snapshotService,
+    panel: panelService,
+    playerPanel,
+    queries: queryService,
+    health: healthService,
+    placement: placementService,
+    migrate: migrateService,
+    offNode: offNodeBackup,
+    importLocal,
+    importSftp,
+    agentProgress,
+    skillPackages,
+  } = plane;
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
   // Keep player panel in sync with runtime reconcile/start/stop (not only explicit tool calls).
@@ -186,15 +189,9 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
               event.serverId,
             );
           }
-          await publishServerPanel(
-            serverService,
-            panelService,
-            event.serverId,
-            event.status,
-            live,
-          );
+          await playerPanel.publishForStatus(event.serverId, event.status, live);
         } else if (event.status === "stopped" || event.status === "error") {
-          await publishServerPanel(serverService, panelService, event.serverId, event.status);
+          await playerPanel.publishForStatus(event.serverId, event.status);
         }
       } catch {
         // panel sync must not break status fan-out
@@ -434,7 +431,177 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     return c.json({ llm: toPublicLlmSettings(next) });
   });
 
-  const skillPackages = new SkillPackageService(config);
+  app.get("/api/settings/cloud", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const stored = await getSetting<VultrCloudSettings>(db, CLOUD_SETTINGS_KEY);
+    return c.json({ cloud: toPublicCloudSettings(stored) });
+  });
+
+  app.post("/api/settings/cloud/vultr/connect", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const clientId = process.env.PLAYON_VULTR_CLIENT_ID?.trim();
+    if (!clientId) {
+      return c.json(
+        {
+          error: "vultr_oauth_not_configured",
+          hint: "Set PLAYON_VULTR_CLIENT_ID (PlayOn Vultr OAuth app) to enable Connect Vultr.",
+        },
+        503,
+      );
+    }
+    const session = createVultrConnectSession();
+    const existing = (await getSetting<VultrCloudSettings>(db, CLOUD_SETTINGS_KEY)) ?? {};
+    await setSetting(db, CLOUD_SETTINGS_KEY, {
+      ...existing,
+      connectState: session.state,
+      codeVerifier: session.codeVerifier,
+    } satisfies VultrCloudSettings);
+    const installCallback = `http://${config.advertiseHost}:${config.port}/api/settings/cloud/vultr/callback`;
+    const authorizeUrl = buildVultrAuthorizeUrl({
+      session,
+      relayBase: process.env.PLAYON_VULTR_RELAY?.trim() || DEFAULT_VULTR_RELAY,
+      installCallback,
+      clientId,
+    });
+    return c.json({ authorizeUrl, state: session.state });
+  });
+
+  app.post("/api/settings/cloud/vultr/callback", async (c) => {
+    // Relay or loopback posts { state, code } — not a browser cookie session.
+    const body = z
+      .object({
+        state: z.string().min(1),
+        code: z.string().min(1),
+      })
+      .parse(await c.req.json());
+    const stored = await getSetting<VultrCloudSettings>(db, CLOUD_SETTINGS_KEY);
+    if (!stored?.connectState || stored.connectState !== body.state || !stored.codeVerifier) {
+      return c.json({ error: "invalid_state" }, 400);
+    }
+    const clientId = process.env.PLAYON_VULTR_CLIENT_ID?.trim();
+    if (!clientId) return c.json({ error: "vultr_oauth_not_configured" }, 503);
+    const redirectUri = `${(process.env.PLAYON_VULTR_RELAY?.trim() || DEFAULT_VULTR_RELAY).replace(/\/$/, "")}/callback`;
+    try {
+      const tokens = await exchangeVultrCode({
+        code: body.code,
+        codeVerifier: stored.codeVerifier,
+        redirectUri,
+        clientId,
+        clientSecret: process.env.PLAYON_VULTR_CLIENT_SECRET?.trim(),
+      });
+      await setSetting(db, CLOUD_SETTINGS_KEY, {
+        accessTokenEncrypted: encryptSecret(config.sessionSecret, tokens.accessToken),
+        refreshTokenEncrypted: encryptSecret(config.sessionSecret, tokens.refreshToken),
+        expiresAt: tokens.expiresAt,
+      } satisfies VultrCloudSettings);
+      return c.json({ ok: true, cloud: toPublicCloudSettings(await getSetting(db, CLOUD_SETTINGS_KEY)) });
+    } catch (err) {
+      return c.json(
+        { error: err instanceof Error ? err.message : "vultr_exchange_failed" },
+        400,
+      );
+    }
+  });
+
+  app.delete("/api/settings/cloud/vultr", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    await setSetting(db, CLOUD_SETTINGS_KEY, {} satisfies VultrCloudSettings);
+    return c.json({ ok: true, cloud: toPublicCloudSettings(null) });
+  });
+
+  app.get("/api/skills/catalog", async (c) => {
+    const user = c.get("user");
+    if (!user || !roleAtLeast(user.role, "operator")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const stored = await getSetting<SkillsCatalogSettings>(db, SKILLS_CATALOG_KEY);
+    const catalogUrl = resolveSkillsCatalogUrl(
+      process.env.PLAYON_SKILLS_CATALOG_URL,
+      stored?.catalogUrl,
+    );
+    const q = c.req.query("q")?.trim() || "";
+    try {
+      const skills = annotateCatalogInstalled(
+        searchCatalog(await fetchSkillsCatalog(catalogUrl), q),
+        config.skillsRoots,
+      );
+      return c.json({ catalogUrl, skills });
+    } catch (err) {
+      return c.json(
+        {
+          catalogUrl,
+          skills: [],
+          error: err instanceof Error ? err.message : "catalog_unavailable",
+        },
+        502,
+      );
+    }
+  });
+
+  app.post("/api/skills/install-from-catalog", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "skills.package")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    try {
+      const body = z
+        .object({
+          name: z.string().min(1).optional(),
+          downloadUrl: z.string().url().optional(),
+          overwrite: z.boolean().optional(),
+        })
+        .parse(await c.req.json());
+      if (!body.name && !body.downloadUrl) {
+        return c.json({ error: "name_or_downloadUrl_required" }, 400);
+      }
+      const stored = await getSetting<SkillsCatalogSettings>(db, SKILLS_CATALOG_KEY);
+      const catalogUrl = resolveSkillsCatalogUrl(
+        process.env.PLAYON_SKILLS_CATALOG_URL,
+        stored?.catalogUrl,
+      );
+      const result = await installSkillFromCatalog({
+        config,
+        skillPackages,
+        catalogUrl,
+        name: body.name,
+        downloadUrl: body.downloadUrl,
+        overwrite: body.overwrite,
+      });
+      return c.json({
+        skill: {
+          skillName: result.skillName,
+          path: result.path,
+          version: result.version,
+        },
+        catalogUrl: result.catalogUrl,
+        downloadUrl: result.downloadUrl,
+        sha256: result.sha256,
+        installed: result.installed,
+        skippedDeps: result.skippedDeps,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "catalog_install_failed";
+      const status = message.startsWith("skill_exists")
+        ? 409
+        : message.startsWith("catalog_skill_not_found")
+          ? 404
+          : message.startsWith("catalog_sha256")
+            ? 400
+            : message.startsWith("skills_catalog_fetch")
+              ? 502
+              : 400;
+      return c.json({ error: message }, status);
+    }
+  });
 
   app.get("/api/skills", async (c) => {
     const user = c.get("user");
@@ -664,7 +831,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         serverName: body.serverName,
         nodeId: body.nodeId,
       });
-      await publishServerPanel(serverService, panelService, server.id, "stopped");
+      await playerPanel.publishForStatus(server.id, "stopped");
       return c.json({ server });
     } catch (err) {
       const message = err instanceof Error ? err.message : "create_failed";
@@ -688,7 +855,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         })
         .parse(await c.req.json());
       const report = await importLocal.importFromPath(body);
-      await publishServerPanel(serverService, panelService, report.server.id, "stopped");
+      await playerPanel.publishForStatus(report.server.id, "stopped");
       return c.json({
         import: {
           server: report.server,
@@ -728,7 +895,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         })
         .parse(await c.req.json());
       const report = await importSftp.importFromSftp(body);
-      await publishServerPanel(serverService, panelService, report.server.id, "stopped");
+      await playerPanel.publishForStatus(report.server.id, "stopped");
       return c.json({
         import: {
           server: report.server,
@@ -760,7 +927,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         (id) => queryService.queryServerWithRetry(id, { attempts: 5, delayMs: 1200 }),
         server.id,
       );
-      await publishServerPanel(serverService, panelService, server.id, "running", live);
+      await playerPanel.publishForStatus(server.id, "running", live);
       const detail = await serverService.detail(server.id);
       return c.json({ server, runtime: detail?.runtime });
     } catch (err) {
@@ -776,7 +943,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     }
     try {
       const server = await serverService.stop(c.req.param("id"));
-      await publishServerPanel(serverService, panelService, server.id, "stopped");
+      await playerPanel.publishForStatus(server.id, "stopped");
       return c.json({ server });
     } catch (err) {
       const message = err instanceof Error ? err.message : "stop_failed";
@@ -811,7 +978,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         (id) => queryService.queryServerWithRetry(id, { attempts: 5, delayMs: 1200 }),
         server.id,
       );
-      await publishServerPanel(serverService, panelService, server.id, "running", live);
+      await playerPanel.publishForStatus(server.id, "running", live);
       const detail = await serverService.detail(server.id);
       return c.json({ server, runtime: detail?.runtime });
     } catch (err) {
@@ -830,9 +997,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         .object({ targetNodeId: z.string().min(1) })
         .parse(await c.req.json());
       const result = await migrateService.relocate(c.req.param("id"), body.targetNodeId);
-      await publishServerPanel(
-        serverService,
-        panelService,
+      await playerPanel.publishForStatus(
         result.server.id,
         result.server.status === "running" ? "running" : "stopped",
       );
@@ -850,18 +1015,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
 
   app.get("/api/panel", async (c) => {
     const serverId = c.req.query("serverId");
-    let blocks = await panelService.list(serverId);
-    // Player panel is join-first: only show blocks for live (running/starting) servers
-    // (unless a specific serverId filter was requested).
-    if (!serverId) {
-      const live = new Set(
-        (await serverService.list())
-          .filter((s) => isPlayerPanelLiveStatus(s.status))
-          .map((s) => s.id),
-      );
-      blocks = blocks.filter((b) => !b.serverId || live.has(b.serverId));
-    }
-    const theme = resolvePanelTheme(config, blocks);
+    const blocks = await playerPanel.listForPlayers(serverId);
+    const theme = playerPanel.resolveTheme(blocks);
     const payload = {
       blocks: blocks.map((b) => ({
         id: b.id,
@@ -920,6 +1075,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         name: n.name,
         os: n.os,
         docker: n.docker,
+        native: n.native ?? true,
+        steamcmd: n.steamcmd ?? false,
         freeDiskBytes: n.freeDiskBytes,
         agentVersion: n.agentVersion,
         lastSeenAt: n.lastSeenAt.toISOString(),
@@ -1183,6 +1340,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           name: body.name,
           os: body.os,
           docker: body.docker,
+          native: body.native ?? true,
+          steamcmd: body.steamcmd ?? false,
           freeDiskBytes: body.freeDiskBytes ?? null,
           agentVersion: body.agentVersion,
           lastSeenAt: now,
@@ -1194,6 +1353,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         name: body.name,
         os: body.os,
         docker: body.docker,
+        native: body.native ?? true,
+        steamcmd: body.steamcmd ?? false,
         freeDiskBytes: body.freeDiskBytes ?? null,
         agentVersion: body.agentVersion,
         lastSeenAt: now,
@@ -1206,6 +1367,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       capabilities: {
         os: body.os,
         docker: body.docker,
+        native: body.native ?? true,
+        steamcmd: body.steamcmd ?? false,
         freeDiskBytes: body.freeDiskBytes,
       },
     });
@@ -1315,7 +1478,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     const nodeId = c.req.param("nodeId");
     const body = z
       .object({
-        kind: z.enum(["ping", "fs_list"]),
+        kind: NodeJobKindSchema,
         args: z.record(z.unknown()).optional(),
       })
       .parse(await c.req.json());
@@ -1537,9 +1700,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         },
       };
 
-      const orchestrator = createOrchestrator(db, config, llm, {
+      const orchestrator = createOrchestrator(plane, llm, {
         confirmGate,
-        eventHub,
         workspaceServerId,
         stream: {
           conversationId,
@@ -1735,5 +1897,6 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   playon.injectWebSocket = injectWebSocket;
   playon.eventHub = eventHub;
   playon.confirmService = confirmService;
+  playon.controlPlane = plane;
   return playon;
 }

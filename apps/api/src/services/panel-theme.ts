@@ -1,7 +1,7 @@
-import fs from "node:fs";
 import path from "node:path";
 import type { SkillTheme, SkillThemeId } from "@playon/shared";
 import type { AppConfig } from "../config.js";
+import { readSkillMarker } from "./skill-marker.js";
 import { loadSkillMetadata } from "./skills.js";
 
 export type PanelTheme = {
@@ -65,15 +65,7 @@ export function resolvePanelTheme(
   if (!serverId) return DEFAULT_THEME;
 
   const dataPath = path.join(config.dataRoot, "servers", serverId);
-  let skillName = "";
-  try {
-    const raw = JSON.parse(fs.readFileSync(path.join(dataPath, "skill.json"), "utf8")) as {
-      skillName?: string;
-    };
-    skillName = raw.skillName ?? "";
-  } catch {
-    return DEFAULT_THEME;
-  }
+  const skillName = readSkillMarker(dataPath)?.skillName ?? "";
   if (!skillName) return DEFAULT_THEME;
   const skill = loadSkillMetadata(config.skillsRoots, skillName);
   if (!skill) return { ...DEFAULT_THEME, skillName };

@@ -37,3 +37,41 @@ export function offlineState(error: string, queryMs?: number): LiveServerState {
     error,
   };
 }
+
+/**
+ * Keys on server_status.body owned by the live-query layer.
+ * Control plane always re-applies these so agent panel_publish cannot wipe them.
+ */
+export const LIVE_PANEL_STATUS_KEYS = [
+  "online",
+  "players",
+  "maxPlayers",
+  "map",
+  "mode",
+  "serverName",
+  "version",
+  "uptimeSeconds",
+  "playerList",
+] as const;
+
+export type LivePanelStatusKey = (typeof LIVE_PANEL_STATUS_KEYS)[number];
+
+/** Single LiveServerState → player panel server_status.body projection. */
+export function liveStateToPanelBody(live?: LiveServerState | null): Record<string, unknown> {
+  if (!live?.online) return {};
+  const out: Record<string, unknown> = { online: true };
+  if (live.players !== undefined) out.players = live.players;
+  if (live.maxPlayers !== undefined) out.maxPlayers = live.maxPlayers;
+  if (live.map) out.map = live.map;
+  if (live.mode) out.mode = live.mode;
+  if (live.name) out.serverName = live.name;
+  if (live.version) out.version = live.version;
+  if (live.uptimeSeconds !== undefined) out.uptimeSeconds = live.uptimeSeconds;
+  if (live.playerList?.length) {
+    out.playerList = live.playerList.map((p) => ({
+      name: p.name,
+      ...(p.score !== undefined ? { score: p.score } : {}),
+    }));
+  }
+  return out;
+}

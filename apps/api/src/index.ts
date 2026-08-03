@@ -4,17 +4,14 @@ import { createDb } from "./db/client.js";
 import { applyBootstrap } from "./db/migrate.js";
 import { createApp } from "./app.js";
 import { LiveQueryScheduler } from "./services/live-query-scheduler.js";
-import { PanelService } from "./services/panel.js";
-import { ServerQueryService } from "./services/server-query.js";
-import { ServerService } from "./services/servers.js";
 import { SnapshotScheduler } from "./services/snapshot-scheduler.js";
-import { SnapshotService } from "./services/snapshots.js";
 import { webDistReady } from "./static-web.js";
 
 const config = loadConfig();
 applyBootstrap(config.dbPath);
 const { db } = createDb(config.dbPath);
 const app = createApp(db, config);
+const { servers, playerPanel, queries, snapshots } = app.controlPlane;
 
 const host = config.host ?? "127.0.0.1";
 const webReady = Boolean(config.webDist && webDistReady(config.webDist));
@@ -46,15 +43,8 @@ if (config.isProduction && !webReady) {
 const server = serve({ fetch: app.fetch, port: config.port, hostname: host });
 app.injectWebSocket(server as Parameters<typeof app.injectWebSocket>[0]);
 
-const snapshotScheduler = new SnapshotScheduler(
-  new SnapshotService(db, config, new ServerService(db, config, app.eventHub)),
-);
+const snapshotScheduler = new SnapshotScheduler(snapshots);
 snapshotScheduler.start();
 
-const liveQueryServers = new ServerService(db, config, app.eventHub);
-const liveQueryScheduler = new LiveQueryScheduler(
-  liveQueryServers,
-  new PanelService(db, app.eventHub),
-  new ServerQueryService(liveQueryServers, config),
-);
+const liveQueryScheduler = new LiveQueryScheduler(servers, playerPanel, queries);
 liveQueryScheduler.start();

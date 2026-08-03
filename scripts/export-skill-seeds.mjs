@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 /**
- * Pack repo skills into dist/skills/*.skill.zip for the future playon.games library.
+ * Pack repo skills into dist/skills/*.skill.zip for the playon.games library.
  * Usage: node scripts/export-skill-seeds.mjs
+ *
+ * Home installs ship platform.* as core. Publish curated games.* (and optional extras)
+ * to https://playon.games/skills/ — hosts install them on demand via catalog, not by hand.
  */
 import fs from "node:fs";
 import path from "node:path";

@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS nodes (
   name TEXT NOT NULL,
   os TEXT NOT NULL,
   docker INTEGER NOT NULL DEFAULT 0,
+  native INTEGER NOT NULL DEFAULT 1,
+  steamcmd INTEGER NOT NULL DEFAULT 0,
   free_disk_bytes INTEGER,
   agent_version TEXT,
   last_seen_at INTEGER NOT NULL

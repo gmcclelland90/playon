@@ -49,6 +49,11 @@ export interface DockerAdapter {
   ): Promise<LogFollowHandle>;
 }
 
+/**
+ * Process supervisor contract. Only NativeProcessSupervisor implements this today;
+ * kept as an interface so node-agent (or a future jail/sandbox adapter) can swap in without
+ * changing DockerodeAdapter. Collapse to the concrete class if a second impl never appears.
+ */
 export interface ProcessSupervisor {
   start(spec: ProcessSpec): Promise<ProcessInfo>;
   stop(id: string): Promise<void>;

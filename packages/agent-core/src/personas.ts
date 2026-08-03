@@ -1,138 +1,15 @@
-export type AgentPersona =
-  | "orchestrator"
-  | "installer"
-  | "player_panel"
-  | "modder"
-  | "configurer"
-  | "troubleshooter"
-  | "monitor"
-  | "backup";
+import {
+  derivePersonaAllowlist,
+  surfaceToolsAllowedForPersona,
+  type AgentPersona,
+} from "./tool-surface.js";
+import "./tool-surface-overlay.js";
 
-/** Allowed tool names per persona (`null` = all registered tools). */
-export const PERSONA_TOOL_ALLOWLIST: Record<AgentPersona, readonly string[] | null> = {
-  orchestrator: null,
-  installer: [
-    "skill_list",
-    "skill_read",
-    "skill_draft_save",
-    "skill_draft_list",
-    "skill_draft_set_query_connector",
-    "skill_promote",
-    "skill_export",
-    "skill_import",
-    "skill_promote_server",
-    "placement_suggest",
-    "servers_create_from_skill",
-    "servers_import_local",
-    "servers_import_sftp",
-    "servers_relocate",
-    "servers_start",
-    "servers_stop",
-    "servers_restart",
-    "servers_list",
-    "servers_health_check",
-    "servers_query",
-    "servers_query_test",
-    "servers_logs_tail",
-    "snapshot_create",
-    "snapshot_restore",
-    "snapshot_list",
-    "fs_list",
-    "fs_read",
-    "fs_write",
-    "fs_delete",
-    "fs_rename",
-    "fs_copy",
-    "archive_extract",
-    "net_port_check",
-    "net_suggest_bind",
-    "fetch_url",
-    "panel_publish",
-    "panel_list",
-    "steamcmd_app_update",
-    "node_ping",
-    "node_fs_list",
-  ],
-  player_panel: ["panel_list", "panel_publish", "servers_list"],
-  modder: [
-    "servers_list",
-    "fs_list",
-    "fs_read",
-    "fs_write",
-    "fs_delete",
-    "fs_rename",
-    "fs_copy",
-    "fetch_url",
-    "archive_extract",
-    "snapshot_create",
-    "snapshot_list",
-    "snapshot_restore",
-    "servers_restart",
-    "servers_health_check",
-    "servers_query",
-    "servers_logs_tail",
-    "rcon_exec",
-    "steamcmd_app_update",
-    "skill_read",
-  ],
-  configurer: [
-    "servers_list",
-    "fs_list",
-    "fs_read",
-    "fs_write",
-    "fs_delete",
-    "fs_rename",
-    "fs_copy",
-    "snapshot_create",
-    "snapshot_list",
-    "net_port_check",
-    "net_suggest_bind",
-    "servers_restart",
-    "rcon_exec",
-    "rcon_say",
-  ],
-  troubleshooter: [
-    "servers_list",
-    "servers_start",
-    "servers_stop",
-    "servers_restart",
-    "servers_health_check",
-    "servers_query",
-    "servers_query_test",
-    "servers_logs_tail",
-    "fs_list",
-    "fs_read",
-    "net_port_check",
-    "snapshot_list",
-    "snapshot_restore",
-    "panel_list",
-    "rcon_exec",
-    "rcon_say",
-  ],
-  monitor: [
-    "servers_list",
-    "servers_health_check",
-    "servers_query",
-    "panel_list",
-    "panel_publish",
-    "net_port_check",
-    "snapshot_list",
-    "rcon_exec",
-    "rcon_say",
-  ],
-  backup: [
-    "servers_list",
-    "snapshot_create",
-    "snapshot_list",
-    "snapshot_restore",
-    "snapshot_enforce_retention",
-    "backup_offnode",
-    "backup_offnode_list",
-    "backup_offnode_restore",
-    "servers_stop",
-    "servers_start",
-  ],
-};
+export type { AgentPersona };
+
+/** Allowed tool names per persona (`null` = all registered tools). Derived from ToolSurface. */
+export const PERSONA_TOOL_ALLOWLIST: Record<AgentPersona, readonly string[] | null> =
+  derivePersonaAllowlist();
 
 const SELF_HEAL_GUIDANCE =
   "Self-heal on tool failures: read the error/hint, fix the approach once (different args, alternate command/skill, or one targeted inspect), then finish or explain. Never spam the same failing call.";
@@ -151,9 +28,10 @@ export const PERSONA_SYSTEM_PROMPTS: Record<AgentPersona, string> = {
       "Budget: finish create→start→panel in as few rounds as possible; batch multiple tools per turn.",
       "Happy path when a matching skill exists: skill_list → (skill_read if needed) → servers_create_from_skill → steamcmd_app_update when metadata.steamAppId is set → servers_start → panel_publish (join_info + client_setup) → short final reply with the join address.",
       "Pick skillName from skill_list for the requested game. When several match, prefer containerSupport=full. Do not invent skill names.",
+      "If skill_list has no usable match: skill_search the public catalog → skill_install_url (by name) → then continue the happy path. Do not invent skill names from memory.",
       "Never fork a sibling server: after the first create, servers_create_from_skill reinstalls the same server id in place — use that to switch skills, then servers_start + panel_publish.",
-      "Do NOT skill_draft_save or skill_promote when a usable skill already exists for the game.",
-      "Only draft/promote a skill when skill_list has no usable match for the requested game.",
+      "Do NOT skill_draft_save or skill_promote when a usable skill already exists locally or in the catalog.",
+      "Only draft/promote a skill when both skill_list and skill_search have no usable match for the requested game.",
       "For novel games without a queryDialect: prefer a built-in dialect when it fits; otherwise author query/connector.mjs (skill_module), test with servers_query_test, then promote.",
       "Do NOT use fs_list, fs_read, fs_write, or fetch_url on the happy path. Use them only after create/start fails and you need one targeted fix.",
       "On resume/continue: servers_list → servers_start for any created-but-stopped server → panel_publish → done. No rediscovery, no new skill drafts, no second create.",
@@ -192,9 +70,7 @@ export const PERSONA_SYSTEM_PROMPTS: Record<AgentPersona, string> = {
 };
 
 export function toolsAllowedForPersona(persona: AgentPersona, toolName: string): boolean {
-  const allow = PERSONA_TOOL_ALLOWLIST[persona];
-  if (!allow) return true;
-  return allow.includes(toolName);
+  return surfaceToolsAllowedForPersona(persona, toolName);
 }
 
 const RESUME_MESSAGE_RE =

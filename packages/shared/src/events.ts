@@ -41,6 +41,8 @@ export const WsEventSchema = z.discriminatedUnion("type", [
     capabilities: z.object({
       os: z.enum(["linux", "windows"]),
       docker: z.boolean(),
+      native: z.boolean().optional(),
+      steamcmd: z.boolean().optional(),
       freeDiskBytes: z.number().nonnegative().optional(),
     }),
   }),

@@ -6,6 +6,7 @@ import { servers } from "../db/schema.js";
 import type { EventHub } from "./event-hub.js";
 import { PlacementService } from "./placement.js";
 import type { ServerRecord, ServerService } from "./servers.js";
+import { readSkillMarker } from "./skill-marker.js";
 import type { SnapshotService } from "./snapshots.js";
 
 export type RelocateResult = {
@@ -89,14 +90,7 @@ export class MigrateService {
   }
 
   private readSkillName(dataPath: string): string | null {
-    try {
-      const raw = JSON.parse(fs.readFileSync(path.join(dataPath, "skill.json"), "utf8")) as {
-        skillName?: string;
-      };
-      return raw.skillName ?? null;
-    } catch {
-      return null;
-    }
+    return readSkillMarker(dataPath)?.skillName ?? null;
   }
 
   private writeSkillNode(dataPath: string, nodeId: string): void {

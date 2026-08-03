@@ -1,5 +1,5 @@
 import type { NodeHeartbeat } from "@playon/shared";
-import { detectOs, dockerAvailable, freeDiskBytes } from "./capabilities.js";
+import { probeCapabilities } from "./capabilities.js";
 
 export function buildHeartbeat(opts: {
   nodeId: string;
@@ -7,12 +7,15 @@ export function buildHeartbeat(opts: {
   dataRoot: string;
   agentVersion?: string;
 }): NodeHeartbeat {
+  const caps = probeCapabilities(opts.dataRoot);
   return {
     nodeId: opts.nodeId,
     name: opts.name,
-    os: detectOs(),
-    docker: dockerAvailable(),
-    freeDiskBytes: freeDiskBytes(opts.dataRoot),
+    os: caps.os,
+    docker: caps.docker,
+    native: caps.native,
+    steamcmd: caps.steamcmd,
+    freeDiskBytes: caps.freeDiskBytes,
     agentVersion: opts.agentVersion ?? "0.1.0",
   };
 }

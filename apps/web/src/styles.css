@@ -1260,7 +1260,16 @@ a.btn {
 }
 
 .compact-list li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
   padding: 0.55rem 0;
+}
+
+.compact-list li > div {
+  min-width: 0;
+  flex: 1;
 }
 
 .activity-feed {

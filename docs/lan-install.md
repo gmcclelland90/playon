@@ -1,6 +1,9 @@
 # LAN install (single-host production)
 
-Run PlayOn on a machine that can publish game ports to the LAN. Production is **one process**: the API serves the built web UI on `PLAYON_PORT` (default `8787`).
+> **Preferred path:** [deploy.md](deploy.md) — Home tarball + `deploy/install.sh` (control plane + local node, Docker optional).
+> This page remains the **checkout / systemd** path for developers and air-gapped clones.
+
+Run PlayOn on a machine that can publish game ports to the LAN. Production is **one process**: the API serves the built web UI on `PLAYON_PORT` (default `8787`). Pair with `playon-node` (local node-agent) when using remote job routing.
 
 ## Quick path (Linux host recommended)
 

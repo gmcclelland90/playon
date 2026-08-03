@@ -10,6 +10,18 @@ Canonical automated build/test host for PlayOn (Docker + Node).
 - Sync: **git** (`git pull --ff-only` from `origin`)
 - Remote: `git@github.com:gmcclelland90/playon.git` (read-only deploy key `~/.ssh/playon_deploy`)
 
+### SSH from the Windows workstation
+
+```bash
+ssh playon-lab
+```
+
+Host alias in `~/.ssh/config` → `playon@172.16.0.155`, identity `~/.ssh/playon_lab` (ed25519). Non-interactive:
+
+```bash
+ssh -o BatchMode=yes playon-lab 'hostname && cd /home/playon/src/playon && git rev-parse --short HEAD'
+```
+
 ## Toolchain
 
 - Git

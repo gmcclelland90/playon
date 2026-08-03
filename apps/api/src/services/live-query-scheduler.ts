@@ -1,5 +1,4 @@
-import type { PanelService } from "./panel.js";
-import { publishServerPanel } from "./server-panel.js";
+import type { PlayerPanel } from "./player-panel.js";
 import type { ServerQueryService } from "./server-query.js";
 import type { ServerService } from "./servers.js";
 
@@ -13,7 +12,7 @@ export class LiveQueryScheduler {
 
   constructor(
     private readonly servers: ServerService,
-    private readonly panel: PanelService,
+    private readonly playerPanel: PlayerPanel,
     private readonly queries: ServerQueryService,
     private readonly intervalMs = Number(process.env.PLAYON_LIVE_QUERY_INTERVAL_MS ?? 20_000),
   ) {}
@@ -42,9 +41,7 @@ export class LiveQueryScheduler {
         if (server.status !== "running" && server.status !== "starting") continue;
         try {
           const live = await this.queries.queryServer(server.id);
-          await publishServerPanel(
-            this.servers,
-            this.panel,
+          await this.playerPanel.publishForStatus(
             server.id,
             server.status === "starting" ? "starting" : "running",
             live,

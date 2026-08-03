@@ -1,79 +1,46 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ChatStreamSink, ConfirmGate, ToolDefinition } from "@playon/agent-core";
-import { Orchestrator } from "@playon/agent-core";
-import { OpenAICompatibleLlmClient, type LlmClient } from "@playon/agent-core";
-import { PanelBlockTypeSchema } from "@playon/shared";
+import {
+  installToolSurface,
+  mergeToolSurface,
+  Orchestrator,
+  OpenAICompatibleLlmClient,
+  TOOL_SURFACE_OVERLAY,
+  toToolDefinition,
+  type LlmClient,
+} from "@playon/agent-core";
+import { queryDialectToolEnum } from "@playon/server-query";
+import type { QueryDialect } from "@playon/shared";
 import type { AppConfig } from "../config.js";
+import type { ControlPlane } from "../control-plane.js";
 import type { Db } from "../db/client.js";
 import { decryptSecret } from "./secrets.js";
-import { getSetting, LLM_SETTINGS_KEY, type LlmSettings } from "./settings.js";
-import type { EventHub } from "./event-hub.js";
-import { ServerArchiveService } from "./archive-tools.js";
-import { ServerFsService } from "./fs-tools.js";
-import { NetToolsService } from "./net-tools.js";
-import { listSkills, skillsRootsForWorkspace } from "./skills.js";
-import { SkillDraftService } from "./skill-drafts.js";
-import { SkillPackageService } from "./skill-packages.js";
-import { MigrateService } from "./migrate.js";
-import { ImportLocalService } from "./import-local.js";
-import { ImportSftpService } from "./import-sftp.js";
-import { OffNodeBackupService } from "./offnode-backup.js";
-import { PlacementService } from "./placement.js";
-import { HealthService } from "./health.js";
-import { nodeJobService } from "./node-jobs.js";
-import { PanelService } from "./panel.js";
-import { rconExec, rconExecWithSelfHeal } from "./rcon.js";
 import {
-  clientSetupNotes,
-  enrichBlocksWithLiveStatus,
-  enrichJoinInfoBody,
-  isPlayerPanelLiveStatus,
-  publishServerPanel,
-  resolveJoin,
-  safeQueryLive,
-} from "./server-panel.js";
-import { ServerQueryService } from "./server-query.js";
-import { ServerService } from "./servers.js";
+  getSetting,
+  LLM_SETTINGS_KEY,
+  SKILLS_CATALOG_KEY,
+  type LlmSettings,
+  type SkillsCatalogSettings,
+} from "./settings.js";
+import {
+  annotateCatalogInstalled,
+  installSkillFromCatalog,
+} from "./catalog-install.js";
+import {
+  fetchSkillsCatalog,
+  resolveSkillsCatalogUrl,
+  searchCatalog,
+} from "./skills-catalog.js";
+import { listSkills, skillsRootsForWorkspace } from "./skills.js";
+import { nodeJobService } from "./node-jobs.js";
+import { rconExec, rconExecWithSelfHeal } from "./rcon.js";
+import { isPlayerPanelLiveStatus, safeQueryLive } from "./server-panel.js";
+import type { ServerService } from "./servers.js";
 import { SnapshotService, withSnapshot } from "./snapshots.js";
 import { SteamcmdNotFoundError, steamcmdAppUpdate } from "./steamcmd.js";
 
-
-
-
-/** Map common LLM aliases to canonical panel block types. */
-export function normalizePanelBlockType(raw: unknown): string {
-  const value = String(raw ?? "")
-    .trim()
-    .toLowerCase()
-    .replace(/[\s-]+/g, "_");
-  const aliases: Record<string, string> = {
-    status: "server_status",
-    serverstatus: "server_status",
-    state: "server_status",
-    join: "join_info",
-    joininfo: "join_info",
-    connection: "join_info",
-    connect: "join_info",
-    setup: "client_setup",
-    clientsetup: "client_setup",
-    client: "client_setup",
-    howto: "guide",
-    how_to: "guide",
-    instructions: "guide",
-    poll: "vote",
-    voting: "vote",
-    ready: "readiness",
-    announcement: "announcement",
-    announce: "announcement",
-    news: "announcement",
-    file: "file_drop",
-    files: "file_drop",
-    download: "file_drop",
-    discover: "discovery",
-  };
-  return aliases[value] ?? value;
-}
+const QUERY_DIALECT_TOOL_ENUM = queryDialectToolEnum();
 
 /** Resolve serverId for tools inside a server workspace (default + cross-server jail). */
 /** Mutable chat↔server binding for the duration of an agent turn. */
@@ -213,16 +180,15 @@ export async function createLlmClient(
 }
 
 export function createOrchestrator(
-  db: Db,
-  config: AppConfig,
+  plane: ControlPlane,
   llm: LlmClient,
   options: {
     confirmGate?: ConfirmGate;
     stream?: ChatStreamSink;
-    eventHub?: EventHub;
     workspaceServerId?: string;
   } = {},
 ): Orchestrator {
+  const { config } = plane;
   /** Binds on first create/import so mid-turn sibling creates cannot fork. */
   const workspace: WorkspaceBinding = { serverId: options.workspaceServerId };
   const skillRoots = skillsRootsForWorkspace(
@@ -230,21 +196,30 @@ export function createOrchestrator(
     config.dataRoot,
     workspace.serverId,
   );
-  const servers = new ServerService(db, config, options.eventHub);
-  const snapshots = new SnapshotService(db, config, servers);
-  const serverFs = new ServerFsService(servers);
-  const archives = new ServerArchiveService(servers);
-  const net = new NetToolsService(servers);
-  const drafts = new SkillDraftService(config);
-  const skillPackages = new SkillPackageService(config);
-  const placement = new PlacementService(db, config, net);
-  const migrate = new MigrateService(db, servers, snapshots, placement, options.eventHub);
-  const offNode = new OffNodeBackupService(db, config, snapshots);
-  const importLocal = new ImportLocalService(db, config, servers, snapshots);
-  const importSftp = new ImportSftpService(db, config, servers, snapshots);
-  const panel = new PanelService(db, options.eventHub);
-  const queries = new ServerQueryService(servers, config);
-  const health = new HealthService(servers, net, config, queries);
+  const {
+    db,
+    servers,
+    snapshots,
+    serverFs,
+    archives,
+    net,
+    drafts,
+    skillPackages,
+    placement,
+    migrate,
+    offNode,
+    importLocal,
+    importSftp,
+    panel,
+    playerPanel,
+    queries,
+    health,
+  } = plane;
+
+  async function catalogUrl(): Promise<string> {
+    const stored = await getSetting<SkillsCatalogSettings>(db, SKILLS_CATALOG_KEY);
+    return resolveSkillsCatalogUrl(process.env.PLAYON_SKILLS_CATALOG_URL, stored?.catalogUrl);
+  }
   const orch = new Orchestrator(llm, {
     confirmGate: options.confirmGate,
     stream: options.stream,
@@ -635,6 +610,34 @@ export function createOrchestrator(
       },
     },
     {
+      name: "skill_search",
+      description:
+        "Search the public PlayOn skill catalog (playon.games) for official .skill.zip packages. Use when skill_list has no local match for the requested game.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: "Game or skill name / tags (e.g. minecraft, rust). Empty returns the full catalog.",
+          },
+        },
+      },
+    },
+    {
+      name: "skill_install_url",
+      description:
+        "Download and install a skill from the public catalog. Prefer name from skill_search; downloadUrl must match a catalog entry. Verifies sha256 when the catalog provides one.",
+      requiresConfirm: true,
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Catalog skill name, e.g. games.minecraft-paper" },
+          downloadUrl: { type: "string", description: "Exact downloadUrl from skill_search" },
+          overwrite: { type: "boolean" },
+        },
+      },
+    },
+    {
       name: "skill_promote_server",
       description: "Promote a per-server skill folder to the global skills library",
       requiresConfirm: true,
@@ -858,16 +861,7 @@ export function createOrchestrator(
           connectorPath: { type: "string" },
           queryDialect: {
             type: "string",
-            enum: [
-              "none",
-              "minecraft_status",
-              "a2s",
-              "valheim",
-              "unreal",
-              "terraria",
-              "factorio",
-              "skill_module",
-            ],
+            enum: QUERY_DIALECT_TOOL_ENUM,
           },
           timeoutMs: { type: "number" },
         },
@@ -893,11 +887,13 @@ export function createOrchestrator(
 
 
 
-  const toolByName = new Map(toolDefs.map((d) => [d.name, d]));
+  const surface = mergeToolSurface(toolDefs, TOOL_SURFACE_OVERLAY);
+  installToolSurface(surface);
+  const toolByName = new Map(surface.map((d) => [d.name, d]));
   const tool = (name: string): ToolDefinition => {
     const def = toolByName.get(name);
     if (!def) throw new Error(`missing_tool_def: ${name}`);
-    return def;
+    return toToolDefinition(def);
   };
 
   orch.registerTool(tool("skill_list"), async () =>
@@ -947,7 +943,7 @@ export function createOrchestrator(
       nodeId: args.nodeId ? String(args.nodeId) : undefined,
     });
     await snapshots.create(server.id, "baseline");
-    await publishServerPanel(servers, panel, server.id, "stopped");
+    await playerPanel.publishForStatus(server.id, "stopped");
     const join = servers.joinInfoFor(server);
     return {
       serverId: server.id,
@@ -967,7 +963,7 @@ export function createOrchestrator(
       (id) => queries.queryServerWithRetry(id, { attempts: 5, delayMs: 1200 }),
       server.id,
     );
-    await publishServerPanel(servers, panel, server.id, "running", live);
+    await playerPanel.publishForStatus(server.id, "running", live);
     const detail = await servers.detail(server.id);
     return {
       serverId: server.id,
@@ -984,7 +980,7 @@ export function createOrchestrator(
     const resolved = resolveWorkspaceServerId(args, workspace.serverId);
     if (!resolved.ok) return resolved.error;
     const server = await servers.stop(resolved.serverId);
-    await publishServerPanel(servers, panel, server.id, "stopped");
+    await playerPanel.publishForStatus(server.id, "stopped");
     return { serverId: server.id, status: server.status };
   });
 
@@ -996,7 +992,7 @@ export function createOrchestrator(
       (id) => queries.queryServerWithRetry(id, { attempts: 5, delayMs: 1200 }),
       server.id,
     );
-    await publishServerPanel(servers, panel, server.id, "running", live);
+    await playerPanel.publishForStatus(server.id, "running", live);
     const detail = await servers.detail(server.id);
     return {
       serverId: server.id,
@@ -1022,109 +1018,7 @@ export function createOrchestrator(
     const resolved = resolveOptionalWorkspaceServerId(args, workspace.serverId);
     if (!resolved.ok) return resolved.error;
     const blocks = Array.isArray(args.blocks) ? args.blocks : [];
-    let parsedBlocks = blocks.map((block, index) => {
-      const raw = block as Record<string, unknown>;
-      return {
-        type: PanelBlockTypeSchema.parse(normalizePanelBlockType(raw.type)),
-        title: String(raw.title),
-        body: (raw.body as Record<string, unknown> | undefined) ?? {},
-        sortOrder: typeof raw.sortOrder === "number" ? raw.sortOrder : index,
-      };
-    });
-    // Prefer control-plane join (advertise host + skill port) over LLM-invented ports.
-    // Preserve agent connectCommand / steamConnectUrl; fill game defaults when missing.
-    let serverStatus: string | undefined;
-    if (resolved.serverId) {
-      const detail = await servers.detail(resolved.serverId);
-      serverStatus = detail?.server.status;
-      const join = detail?.runtime.join;
-      if (join && detail) {
-        const joinMeta = resolveJoin(servers, detail.server.dataPath);
-        const existing = await panel.list(resolved.serverId);
-        const previousStatusBody =
-          existing.find((b) => b.type === "server_status")?.body ?? null;
-        const live = isPlayerPanelLiveStatus(detail.server.status)
-          ? await safeQueryLive(
-              (id) => queries.queryServerWithRetry(id, { attempts: 3, delayMs: 800 }),
-              resolved.serverId,
-            )
-          : null;
-        parsedBlocks = parsedBlocks.map((block) => {
-          if (block.type === "join_info") {
-            return {
-              ...block,
-              body: enrichJoinInfoBody({
-                body: block.body,
-                address: join.address,
-                port: join.port,
-                join: joinMeta,
-                game: detail.server.game,
-              }),
-            };
-          }
-          return block;
-        });
-        // Agents sometimes omit join_info — inject control-plane join so players are never blank.
-        if (!parsedBlocks.some((b) => b.type === "join_info")) {
-          parsedBlocks.unshift({
-            type: "join_info",
-            title: detail.server.game ? `Join ${detail.server.game}` : "Join",
-            body: enrichJoinInfoBody({
-              body: {},
-              address: join.address,
-              port: join.port,
-              join: joinMeta,
-              game: detail.server.game,
-            }),
-            sortOrder: -1,
-          });
-        }
-        if (!parsedBlocks.some((b) => b.type === "client_setup")) {
-          parsedBlocks.push({
-            type: "client_setup",
-            title: "How to connect",
-            body: {
-              notes: clientSetupNotes({
-                join: joinMeta,
-                address: join.address,
-                port: join.port,
-              }),
-            },
-            sortOrder: parsedBlocks.length,
-          });
-        }
-        // Live query fields are control-plane owned — merge/inject so agents cannot wipe them.
-        parsedBlocks = enrichBlocksWithLiveStatus(parsedBlocks, {
-          status: detail.server.status,
-          runtime: detail.runtime.kind,
-          game: detail.server.game,
-          live,
-          previousStatusBody,
-        });
-      }
-      const published = await panel.replaceForServer(resolved.serverId, parsedBlocks);
-      const playerVisible = isPlayerPanelLiveStatus(serverStatus);
-      return {
-        published: published.length,
-        blocks: published,
-        mode: "replace",
-        playerVisible,
-        serverStatus,
-        hint: playerVisible
-          ? undefined
-          : "Blocks saved, but the public player panel only shows join info while the server is starting or running. Call servers_start (or wait for start) so players can see it.",
-      };
-    }
-    const published = await panel.publish({
-      serverId: resolved.serverId,
-      blocks: parsedBlocks,
-    });
-    return {
-      published: published.length,
-      blocks: published,
-      mode: "append",
-      playerVisible: true,
-    };
+    return playerPanel.publishFromAgent(resolved.serverId, blocks);
   });
 
   orch.registerTool(tool("panel_list"), async (args) => {
@@ -1330,6 +1224,54 @@ export function createOrchestrator(
     return skillPackages.importZip(bytes, { overwrite: Boolean(args.overwrite) });
   });
 
+  orch.registerTool(tool("skill_search"), async (args) => {
+    const url = await catalogUrl();
+    const q = args.query !== undefined ? String(args.query) : "";
+    try {
+      const skills = annotateCatalogInstalled(
+        searchCatalog(await fetchSkillsCatalog(url), q),
+        config.skillsRoots,
+      );
+      return {
+        catalogUrl: url,
+        skills: skills.map((s) => ({
+          name: s.name,
+          version: s.version,
+          game: s.game,
+          description: s.description,
+          tags: s.tags,
+          dependencies: s.dependencies,
+          containerSupport: s.containerSupport,
+          minRamMb: s.minRamMb,
+          downloadUrl: s.downloadUrl,
+          sha256: s.sha256,
+          official: s.official,
+          installed: s.installed,
+        })),
+      };
+    } catch (err) {
+      return {
+        catalogUrl: url,
+        skills: [],
+        error: err instanceof Error ? err.message : "catalog_unavailable",
+      };
+    }
+  });
+
+  orch.registerTool(tool("skill_install_url"), async (args) => {
+    const name = args.name !== undefined ? String(args.name).trim() : "";
+    const downloadUrl = args.downloadUrl !== undefined ? String(args.downloadUrl).trim() : "";
+    const url = await catalogUrl();
+    return installSkillFromCatalog({
+      config,
+      skillPackages,
+      catalogUrl: url,
+      name: name || undefined,
+      downloadUrl: downloadUrl || undefined,
+      overwrite: Boolean(args.overwrite),
+    });
+  });
+
   orch.registerTool(tool("skill_promote_server"), async (args) => {
     const resolved = resolveWorkspaceServerId(args, workspace.serverId);
     if (!resolved.ok) return resolved.error;
@@ -1466,11 +1408,29 @@ export function createOrchestrator(
     const server = await servers.get(resolved.serverId);
     if (!server) return { error: `unknown_server: ${resolved.serverId}` };
     try {
-      const result = await steamcmdAppUpdate({
-        serverDataPath: server.dataPath,
-        appId: Number(args.appId),
-        installDirRel: args.installDir ? String(args.installDir) : undefined,
-        validate: args.validate === undefined ? true : Boolean(args.validate),
+      const { dispatchNodeJob, nodeServerRelPath } = await import("./node-runtime.js");
+      const result = await dispatchNodeJob<{
+        appId: number;
+        installDir: string;
+        exitCode: number;
+        stdout: string;
+      }>({
+        nodeId: server.nodeId,
+        kind: "steamcmd_app_update",
+        args: {
+          serverRel: nodeServerRelPath(server.id),
+          appId: Number(args.appId),
+          installDirRel: args.installDir ? String(args.installDir) : undefined,
+          validate: args.validate === undefined ? true : Boolean(args.validate),
+        },
+        timeoutMs: 600_000,
+        localHandler: () =>
+          steamcmdAppUpdate({
+            serverDataPath: server.dataPath,
+            appId: Number(args.appId),
+            installDirRel: args.installDir ? String(args.installDir) : undefined,
+            validate: args.validate === undefined ? true : Boolean(args.validate),
+          }),
       });
       return {
         serverId: resolved.serverId,
@@ -1540,9 +1500,7 @@ export function createOrchestrator(
       const server = await servers.get(resolved.serverId);
       if (server && (server.status === "running" || server.status === "starting")) {
         try {
-          await publishServerPanel(
-            servers,
-            panel,
+          await playerPanel.publishForStatus(
             resolved.serverId,
             server.status === "starting" ? "starting" : "running",
             state,
@@ -1563,16 +1521,7 @@ export function createOrchestrator(
       gamePort: args.gamePort !== undefined ? Number(args.gamePort) : undefined,
       skillName: args.skillName ? String(args.skillName) : undefined,
       connectorPath: args.connectorPath ? String(args.connectorPath) : undefined,
-      queryDialect: args.queryDialect as
-        | "none"
-        | "minecraft_status"
-        | "a2s"
-        | "valheim"
-        | "unreal"
-        | "terraria"
-        | "factorio"
-        | "skill_module"
-        | undefined,
+      queryDialect: args.queryDialect as QueryDialect | undefined,
       timeoutMs: args.timeoutMs !== undefined ? Number(args.timeoutMs) : undefined,
     });
   });

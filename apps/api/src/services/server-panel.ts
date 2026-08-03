@@ -1,54 +1,53 @@
-import fs from "node:fs";
-import path from "node:path";
 import {
+  LIVE_PANEL_STATUS_KEYS,
   PanelBlockTypeSchema,
+  liveStateToPanelBody,
   renderSkillTemplate,
+  type LivePanelStatusKey,
   type LiveServerState,
   type SkillJoin,
   type SkillMetadata,
 } from "@playon/shared";
 import { PublishBlockSchema, type PanelService } from "./panel.js";
 import type { ServerService } from "./servers.js";
+import { readSkillMarker } from "./skill-marker.js";
 import { loadSkillMetadata } from "./skills.js";
 import type { z } from "zod";
 
-/**
- * Keys on server_status.body owned by the live-query layer.
- * Control plane always re-applies these so agent panel_publish cannot wipe them.
- * Extend this list when new uniform live fields are added.
- */
-export const LIVE_PANEL_STATUS_KEYS = [
-  "online",
-  "players",
-  "maxPlayers",
-  "map",
-  "mode",
-  "serverName",
-  "version",
-  "uptimeSeconds",
-  "playerList",
-] as const;
+export { LIVE_PANEL_STATUS_KEYS, liveStateToPanelBody, type LivePanelStatusKey };
 
-export type LivePanelStatusKey = (typeof LIVE_PANEL_STATUS_KEYS)[number];
-
-/** Panel-safe live fields for server_status.body. */
-export function liveStateToPanelBody(live?: LiveServerState | null): Record<string, unknown> {
-  if (!live?.online) return {};
-  const out: Record<string, unknown> = { online: true };
-  if (live.players !== undefined) out.players = live.players;
-  if (live.maxPlayers !== undefined) out.maxPlayers = live.maxPlayers;
-  if (live.map) out.map = live.map;
-  if (live.mode) out.mode = live.mode;
-  if (live.name) out.serverName = live.name;
-  if (live.version) out.version = live.version;
-  if (live.uptimeSeconds !== undefined) out.uptimeSeconds = live.uptimeSeconds;
-  if (live.playerList?.length) {
-    out.playerList = live.playerList.map((p) => ({
-      name: p.name,
-      ...(p.score !== undefined ? { score: p.score } : {}),
-    }));
-  }
-  return out;
+/** Map common LLM aliases to canonical panel block types. */
+export function normalizePanelBlockType(raw: unknown): string {
+  const value = String(raw ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  const aliases: Record<string, string> = {
+    status: "server_status",
+    serverstatus: "server_status",
+    state: "server_status",
+    join: "join_info",
+    joininfo: "join_info",
+    connection: "join_info",
+    connect: "join_info",
+    setup: "client_setup",
+    clientsetup: "client_setup",
+    client: "client_setup",
+    howto: "guide",
+    how_to: "guide",
+    instructions: "guide",
+    poll: "vote",
+    voting: "vote",
+    ready: "readiness",
+    announcement: "announcement",
+    announce: "announcement",
+    news: "announcement",
+    file: "file_drop",
+    files: "file_drop",
+    download: "file_drop",
+    discover: "discovery",
+  };
+  return aliases[value] ?? value;
 }
 
 /** Pull previously published live fields (used when a fresh query is offline). */
@@ -81,15 +80,9 @@ function readSkillJson(dataPath: string): {
   skillName: string;
   join?: SkillJoin;
 } {
-  try {
-    const raw = JSON.parse(fs.readFileSync(path.join(dataPath, "skill.json"), "utf8")) as {
-      skillName?: string;
-      join?: SkillJoin;
-    };
-    return { skillName: raw.skillName ?? "", join: raw.join };
-  } catch {
-    return { skillName: "" };
-  }
+  const raw = readSkillMarker(dataPath);
+  if (!raw) return { skillName: "" };
+  return { skillName: raw.skillName ?? "", join: raw.join };
 }
 
 export function resolveJoin(

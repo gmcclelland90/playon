@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PlayOn skill library</title>
+    <link rel="stylesheet" href="../styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <p class="brand"><a href="../">PlayOn</a></p>
+      <h1>Skill library</h1>
+      <p class="lede">
+        Official <code>.skill.zip</code> packages. The control plane reads
+        <a href="./index.json"><code>index.json</code></a> (set
+        <code>PLAYON_SKILLS_CATALOG_URL</code>).
+      </p>
+      <p id="status" class="muted">Loading catalog…</p>
+      <ul id="list" class="skill-list"></ul>
+    </main>
+    <script type="module">
+      const status = document.getElementById("status");
+      const list = document.getElementById("list");
+      try {
+        const res = await fetch("./index.json", { headers: { accept: "application/json" } });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const skills = data.skills ?? [];
+        status.textContent = `${skills.length} skills · updated ${data.updatedAt ?? "—"}`;
+        for (const s of skills) {
+          const li = document.createElement("li");
+          li.innerHTML = `<strong>${s.game ?? s.name}</strong>
+            <span class="muted">${s.name} · ${s.version}${s.containerSupport ? ` · ${s.containerSupport}` : ""}</span>
+            <p>${s.description ?? ""}</p>
+            <a href="${s.downloadUrl}">Download</a>`;
+          list.appendChild(li);
+        }
+      } catch (err) {
+        status.textContent =
+          "Catalog not published yet — CI exports skills to this index. " + (err.message || "");
+      }
+    </script>
+  </body>
+</html>
