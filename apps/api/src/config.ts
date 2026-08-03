@@ -55,6 +55,12 @@ export function findRepoRoot(start: string): string {
   }
 }
 
+/** Split PLAYON_SKILLS_ROOT without breaking Windows drive letters (C:\...). */
+export function splitSkillsRootPaths(raw: string): string[] {
+  const sep = process.platform === "win32" ? /;/g : /[:;]/g;
+  return raw.split(sep).map((s) => s.trim()).filter(Boolean);
+}
+
 function parseLlmMode(raw: string | undefined): AppConfig["llmMode"] {
   if (raw === "ollama") return "ollama";
   return "openai_compatible";
@@ -142,13 +148,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const skillsProfile = (env.PLAYON_SKILLS_PROFILE?.trim() || "dev").toLowerCase();
   /**
    * Optional baked/install skills root (Home tarball / container).
-   * Colon/semicolon-separated absolute paths; each may contain platform|fixtures subdirs
-   * or be a single skill category directory.
+   * Semicolon-separated absolute paths (also `:` on non-Windows). Each may contain
+   * platform|fixtures subdirs or be a single skill category directory.
    */
   const bakedSkillsRoot = env.PLAYON_SKILLS_ROOT?.trim();
   const skillsRoots: string[] = [];
   if (bakedSkillsRoot) {
-    const parts = bakedSkillsRoot.split(/[:;]/g).map((s) => s.trim()).filter(Boolean);
+    const parts = splitSkillsRootPaths(bakedSkillsRoot);
     for (const part of parts) {
       const abs = path.resolve(part);
       const platform = path.join(abs, "platform");

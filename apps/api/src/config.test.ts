@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { buildCorsOrigins, isProductionEnv, loadConfig } from "./config.js";
+import { buildCorsOrigins, isProductionEnv, loadConfig, splitSkillsRootPaths } from "./config.js";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -82,6 +82,16 @@ describe("isProductionEnv", () => {
     expect(isProductionEnv({ PLAYON_ENV: "production" })).toBe(true);
     expect(isProductionEnv({ NODE_ENV: "production" })).toBe(true);
     expect(isProductionEnv({})).toBe(false);
+  });
+});
+
+describe("splitSkillsRootPaths", () => {
+  it("keeps Windows drive letters intact", () => {
+    if (process.platform !== "win32") return;
+    expect(splitSkillsRootPaths("D:\\data\\skills;E:\\more")).toEqual([
+      "D:\\data\\skills",
+      "E:\\more",
+    ]);
   });
 });
 

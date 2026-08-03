@@ -20,8 +20,8 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install
+      # Full loop:verify (int/agent + Venice) stays on the Linux lab host.
       - run: pnpm verify
-      - run: pnpm loop:verify
 
   packaging-smoke:
     runs-on: ubuntu-latest
