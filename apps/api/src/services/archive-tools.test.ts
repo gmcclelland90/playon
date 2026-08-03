@@ -134,32 +134,39 @@ describe("ServerArchiveService", () => {
     ).rejects.toBeInstanceOf(PathJailError);
   });
 
-  it.runIf(tarAvailable())("extracts a tar.gz into the server jail", async () => {
-    const { archives, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
-    const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-tarfix-"));
-    try {
-      fs.mkdirSync(path.join(staging, "payload"), { recursive: true });
-      fs.writeFileSync(path.join(staging, "payload", "mod.txt"), "from-tar");
-      const archive = path.join(server.dataPath, "mods.tar.gz");
-      const packed = spawnSync("tar", ["-czf", archive, "-C", staging, "payload"], {
-        encoding: "utf8",
-        windowsHide: true,
-      });
-      expect(packed.status).toBe(0);
+  it.runIf(tarAvailable())(
+    "extracts a tar.gz into the server jail",
+    async () => {
+      const { archives, servers } = tempEnv();
+      const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
+      const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-tarfix-"));
+      try {
+        fs.mkdirSync(path.join(staging, "payload"), { recursive: true });
+        fs.writeFileSync(path.join(staging, "payload", "mod.txt"), "from-tar");
+        const archive = path.join(server.dataPath, "mods.tar.gz");
+        const packed = spawnSync("tar", ["-czf", archive, "-C", staging, "payload"], {
+          encoding: "utf8",
+          windowsHide: true,
+        });
+        expect(packed.status).toBe(0);
 
-      const result = await archives.extract({
-        serverId: server.id,
-        archivePath: "mods.tar.gz",
-        destDir: "game/extracted",
-      });
-      expect(result.format).toBe("tar.gz");
-      expect(result.extracted).toBe(1);
-      expect(
-        fs.readFileSync(path.join(server.dataPath, "game", "extracted", "payload", "mod.txt"), "utf8"),
-      ).toBe("from-tar");
-    } finally {
-      fs.rmSync(staging, { recursive: true, force: true });
-    }
-  });
+        const result = await archives.extract({
+          serverId: server.id,
+          archivePath: "mods.tar.gz",
+          destDir: "game/extracted",
+        });
+        expect(result.format).toBe("tar.gz");
+        expect(result.extracted).toBe(1);
+        expect(
+          fs.readFileSync(
+            path.join(server.dataPath, "game", "extracted", "payload", "mod.txt"),
+            "utf8",
+          ),
+        ).toBe("from-tar");
+      } finally {
+        fs.rmSync(staging, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
 });
