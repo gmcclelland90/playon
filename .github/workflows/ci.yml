@@ -24,7 +24,15 @@ jobs:
       - run: pnpm verify
 
   packaging-smoke:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_glob: dist-home/playon-home-*-linux-x64.tar.gz
+          - os: windows-latest
+            artifact_glob: dist-home/playon-home-*-windows-x64.zip
+    runs-on: ${{ matrix.os }}
     needs: verify
     steps:
       - uses: actions/checkout@v4
@@ -33,13 +41,31 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - run: sudo apt-get update && sudo apt-get install -y zip
+      - name: Install Linux zip tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zip
       - run: pnpm install
       - run: pnpm build
       - run: pnpm package:home
-      - run: test -f dist-home/playon-home-*.tar.gz
-      - run: node scripts/package-mvp.mjs
-      - run: test -f dist-package/playon-mvp.zip
+      - name: Assert Home artifact
+        shell: bash
+        run: |
+          ls -la dist-home/
+          shopt -s nullglob
+          files=(${{ matrix.artifact_glob }})
+          echo "Found: ${files[*]}"
+          test "${#files[@]}" -ge 1
+      - name: Upload Home artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: playon-home-${{ runner.os }}
+          path: ${{ matrix.artifact_glob }}
+          if-no-files-found: error
+      - name: MVP package smoke (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          node scripts/package-mvp.mjs
+          test -f dist-package/playon-mvp.zip
 
   image-smoke:
     runs-on: ubuntu-latest

@@ -29,4 +29,5 @@ Thumbs.db
 playwright-report/
 test-results/
 dist-package/
+dist-home/
 

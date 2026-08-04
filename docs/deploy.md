@@ -12,33 +12,58 @@
 
 Placement per server: **Local** (Home’s local node) · **Remote** (another LAN node) · **Cloud** (Vultr BYO → node + tunnel).
 
-## Primary: native Home (no Docker)
+## Primary: one-line install (recommended)
 
-### Linux
-
-```bash
-pnpm build && pnpm package:home   # maintainers / CI
-# or download playon-home-*.tar.gz from releases / playon.games
-
-tar -xzf playon-home-*.tar.gz
-cd playon
-export PLAYON_ADVERTISE_HOST=192.168.1.50   # optional; auto-detected
-sudo -E bash deploy/install.sh
-```
-
-Opens `http://$PLAYON_ADVERTISE_HOST:8787`. Creates systemd units `playon` + `playon-node`.
-
-Use `PLAYON_RUNTIME=native` for SteamCMD-only hosts. If `/var/run/docker.sock` exists and you did not force native, install defaults to `docker` mode for container skills.
-
-### Windows
-
-Extract the Home zip, elevated PowerShell:
+Scripts are hosted on [playon.games](https://playon.games/get) (source: [`deploy/bootstrap/`](../deploy/bootstrap/)). They pull the latest Home release asset and start PlayOn.
 
 ```powershell
-.\deploy\windows\install.ps1 -AdvertiseHost 192.168.1.50
+# Windows
+irm https://playon.games/install.ps1 | iex
 ```
 
-Scheduled tasks start the API and local node-agent. SteamCMD auto-provisions when a Steam skill needs it (`PLAYON_STEAMCMD_AUTO`).
+```bash
+# Linux
+curl -fsSL https://playon.games/install | bash
+```
+
+| | Windows | Linux |
+|--|---------|--------|
+| Default dir | `%LOCALAPPDATA%\PlayOn` | `~/playon` |
+| Optional | `PLAYON_HOME`, `PLAYON_VERSION`, `PLAYON_START=0` | same |
+
+Each Home archive includes **Node.js**, production dependencies, the API, web UI, local node-agent, and platform skills. Create Owner → Settings → Venice API key → start a game. Players use `/play`.
+
+### Manual archive
+
+From [GitHub Releases](https://github.com/gmcclelland90/playon/releases), or build on the matching OS:
+
+```bash
+pnpm build && pnpm package:home
+# Windows → dist-home/playon-home-<version>-windows-x64.zip
+# Linux   → dist-home/playon-home-<version>-linux-x64.tar.gz
+```
+
+- **Windows:** extract → `Start-PlayOn.ps1`
+- **Linux:** `tar -xzf … && cd playon && ./start-playon.sh`
+
+Optional: `export PLAYON_ADVERTISE_HOST=192.168.1.50` before start (otherwise LAN IP is auto-detected). Data/secrets: `./data` and `./env`.
+
+## Optional: install as a service (always-on)
+
+```powershell
+# Windows — registers scheduled tasks
+$env:PLAYON_SERVICE = "1"
+irm https://playon.games/install.ps1 | iex
+```
+
+```bash
+# Linux — systemd units playon + playon-node
+curl -fsSL https://playon.games/install | PLAYON_SERVICE=1 bash
+```
+
+Or from an extracted tree: `sudo -E bash deploy/install.sh` / `.\deploy\windows\install.ps1`. Uses bundled Node when present; skips `pnpm install` when `node_modules` is vendored.
+
+Use `PLAYON_RUNTIME=native` for SteamCMD-only hosts. If `/var/run/docker.sock` exists and you did not force native, Linux service install defaults to `docker` mode for container skills. SteamCMD auto-provisions when a Steam skill needs it (`PLAYON_STEAMCMD_AUTO`).
 
 ## Add a LAN node
 
@@ -81,7 +106,7 @@ Still run a **host-native** `playon-node` (or install-node against `http://127.0
 
 ## Lab / us
 
-Prefer the same Home tarball customers get (`pnpm package:home` + `deploy/install.sh`). Dev remains `pnpm dev` + `pnpm loop:verify`.
+Prefer the same Home tarball customers get (`pnpm package:home`). Tag `v*` builds attach Windows + Linux artifacts via `.github/workflows/release-home.yml`. After changing bootstrap scripts, run `node scripts/sync-install-scripts.mjs` and deploy the sibling **playon-games** site. Dev remains `pnpm dev` + `pnpm loop:verify`.
 
 Source zip (`pnpm package:mvp`) is a power-user fallback, not the primary Get PlayOn path.
 
@@ -91,4 +116,4 @@ Source zip (`pnpm package:mvp`) is a power-user fallback, not the primary Get Pl
 - [linux-dev-host.md](linux-dev-host.md) — lab host
 - [design-docs/14](../design-docs/14-cloud-backed-lan-mode.md) — placement + Vultr
 - [design-docs/15](../design-docs/15-playon-games-site-and-skill-library.md) — site + catalog
-- Sibling **playon-games** repo — Astro site + public skill catalog (playon.games)
+- Sibling **playon-games** repo — Astro site + public skill catalog (playon.games); update `/get` to point at Releases when ready

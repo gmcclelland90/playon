@@ -5,13 +5,35 @@ AI-driven game server control plane for LAN parties.
 
 ## Quick start
 
-### LAN host (production)
+### LAN host (recommended)
 
-See **[docs/deploy.md](docs/deploy.md)** — native Home install (no Docker required), optional Docker panel, LAN nodes, Vultr.
+One line — fetches the latest Home release and starts PlayOn ([playon.games/get](https://playon.games/get)):
+
+```powershell
+# Windows (PowerShell)
+irm https://playon.games/install.ps1 | iex
+```
+
+```bash
+# Linux
+curl -fsSL https://playon.games/install | bash
+```
+
+1. Browser opens the admin UI.  
+2. Create the **Owner** account, save a Venice API key under **Settings**, then ask to start a game.  
+3. Players open `/play` on that host (shown in the UI).
+
+No separate Node.js or pnpm install. Always-on: `PLAYON_SERVICE=1` (see **[docs/deploy.md](docs/deploy.md)**).
+
+Manual zip / USB: [GitHub Releases](https://github.com/gmcclelland90/playon/releases) → `Start-PlayOn.ps1` / `./start-playon.sh`.
+
+Maintainers / CI:
 
 ```bash
 pnpm build && pnpm package:home
-# Linux: extract dist-home/playon + sudo bash deploy/install.sh
+# → dist-home/playon-home-<version>-windows-x64.zip
+# → dist-home/playon-home-<version>-linux-x64.tar.gz
+node scripts/sync-install-scripts.mjs   # → playon-games/public (when sibling present)
 ```
 
 ### Developers

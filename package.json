@@ -27,6 +27,7 @@
     "test:e2e:install": "playwright install chromium",
     "package:mvp": "node scripts/package-mvp.mjs",
     "package:home": "node scripts/package-home.mjs",
+    "sync:install-scripts": "node scripts/sync-install-scripts.mjs",
     "smoke:venice": "pnpm --filter @playon/api smoke:venice",
     "smoke:paper-docker": "node scripts/paper-docker-smoke.mjs",
     "lint": "turbo run lint",

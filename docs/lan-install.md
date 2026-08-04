@@ -87,7 +87,11 @@ Open `http://<lan-ip>:5173` (proxies `/api` to `:8787`).
 
 To add a spare Linux or Windows machine that heartbeats into the control plane, use [`infra/blank-node/`](../infra/blank-node/README.md). Set the same `PLAYON_NODE_TOKEN` on the API host and the new node.
 
-## Packaging zip
+## Packaging
+
+Prefer the one-liner (`curl -fsSL https://playon.games/install | bash` / `irm https://playon.games/install.ps1 | iex`) or a portable Home archive — see [deploy.md](deploy.md).
+
+Source zip fallback:
 
 ```bash
 pnpm package:mvp
