@@ -53,7 +53,6 @@ Write-Host "==> Extracting"
 Expand-Archive -Path $zipPath -DestinationPath $staging -Force
 $extracted = Get-ChildItem -Path $staging -Directory | Where-Object { $_.Name -ne "__MACOSX" } | Select-Object -First 1
 if (-not $extracted -or -not (Test-Path (Join-Path $extracted.FullName "Start-PlayOn.ps1"))) {
-  # zip may contain a single "playon" folder
   $candidate = Join-Path $staging "playon"
   if (Test-Path (Join-Path $candidate "Start-PlayOn.ps1")) {
     $extracted = Get-Item $candidate

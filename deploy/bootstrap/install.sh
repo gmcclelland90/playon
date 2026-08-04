@@ -15,6 +15,7 @@ REPO="${PLAYON_REPO:-gmcclelland90/playon}"
 HOME_DIR="${PLAYON_HOME:-${HOME}/playon}"
 DO_START="${PLAYON_START:-1}"
 AS_SERVICE="${PLAYON_SERVICE:-0}"
+
 api() {
   local url="$1"
   if command -v curl >/dev/null 2>&1; then
@@ -27,7 +28,7 @@ api() {
 download() {
   local url="$1" dest="$2"
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL -o "$dest" "$url"
+    curl -fsSL -L -o "$dest" "$url"
   else
     wget -qO "$dest" "$url"
   fi
@@ -45,31 +46,28 @@ else
   RELEASE_JSON="$(api "https://api.github.com/repos/${REPO}/releases/latest")"
 fi
 
-TAG_NAME="$(printf '%s' "${RELEASE_JSON}" | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
-# Prefer python/jq if present for robust JSON; fall back to sed+grep.
-ASSET_URL=""
+TAG_NAME=""
 ASSET_NAME=""
-if command -v jq >/dev/null 2>&1; then
-  ASSET_NAME="$(printf '%s' "${RELEASE_JSON}" | jq -r '.assets[] | select(.name | test("playon-home-.*-linux-x64\\.tar\\.gz")) | .name' | head -n1)"
-  ASSET_URL="$(printf '%s' "${RELEASE_JSON}" | jq -r '.assets[] | select(.name | test("playon-home-.*-linux-x64\\.tar\\.gz")) | .browser_download_url' | head -n1)"
-elif command -v python3 >/dev/null 2>&1; then
+ASSET_URL=""
+if command -v python3 >/dev/null 2>&1; then
   eval "$(printf '%s' "${RELEASE_JSON}" | python3 -c '
 import json,sys,re
 r=json.load(sys.stdin)
 pat=re.compile(r"playon-home-.*-linux-x64\.tar\.gz")
+print("TAG_NAME="+repr(r.get("tag_name") or ""))
 for a in r.get("assets",[]):
   if pat.search(a.get("name","")):
     print("ASSET_NAME="+repr(a["name"]))
     print("ASSET_URL="+repr(a["browser_download_url"]))
     break
 ')"
+elif command -v jq >/dev/null 2>&1; then
+  TAG_NAME="$(printf '%s' "${RELEASE_JSON}" | jq -r '.tag_name')"
+  ASSET_NAME="$(printf '%s' "${RELEASE_JSON}" | jq -r '.assets[] | select(.name | test("playon-home-.*-linux-x64\\.tar\\.gz")) | .name' | head -n1)"
+  ASSET_URL="$(printf '%s' "${RELEASE_JSON}" | jq -r '.assets[] | select(.name | test("playon-home-.*-linux-x64\\.tar\\.gz")) | .browser_download_url' | head -n1)"
 else
-  ASSET_NAME="$(printf '%s' "${RELEASE_JSON}" | tr ',' '\n' | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\(playon-home-[^"]*-linux-x64\.tar\.gz\)".*/\1/p' | head -n1)"
-  ASSET_URL="$(printf '%s' "${RELEASE_JSON}" | tr ',' '\n' | sed -n 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"\([^"]*'"${ASSET_NAME}"'\)".*/\1/p' | head -n1)"
-  # Last-resort: construct from tag if name known
-  if [[ -n "${ASSET_NAME}" && -z "${ASSET_URL}" ]]; then
-    ASSET_URL="https://github.com/${REPO}/releases/download/${TAG_NAME}/${ASSET_NAME}"
-  fi
+  echo "Need python3 or jq to parse the GitHub release JSON"
+  exit 1
 fi
 
 if [[ -z "${ASSET_URL}" || -z "${ASSET_NAME}" || "${ASSET_URL}" == "null" ]]; then
