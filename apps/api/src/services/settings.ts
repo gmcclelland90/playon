@@ -1,4 +1,11 @@
 import { eq } from "drizzle-orm";
+import {
+  getLlmPreset,
+  inferLlmPreset,
+  isLlmPresetId,
+  type LlmPresetId,
+  type LlmTransport,
+} from "@playon/shared";
 import type { Db } from "../db/client.js";
 import { settings } from "../db/schema.js";
 
@@ -20,28 +27,73 @@ export async function setSetting<T>(db: Db, key: string, value: T): Promise<void
 
 export const LLM_SETTINGS_KEY = "llm";
 
-export type LlmProvider = "openai_compatible" | "ollama";
+/** @deprecated Prefer LlmTransport / preset — kept for stored JSON shape. */
+export type LlmProvider = LlmTransport;
 
 export interface LlmSettings {
-  provider: LlmProvider;
+  provider: LlmTransport;
+  preset?: LlmPresetId;
   baseUrl?: string;
   model?: string;
   apiKeyEncrypted?: string;
 }
 
 export interface LlmSettingsPublic {
-  provider: LlmProvider;
+  provider: LlmTransport;
+  preset: LlmPresetId;
   baseUrl?: string;
   model?: string;
   hasApiKey: boolean;
 }
 
+export function resolveLlmPreset(settings: LlmSettings): LlmPresetId {
+  return inferLlmPreset({
+    provider: settings.provider,
+    preset: settings.preset,
+    baseUrl: settings.baseUrl,
+  });
+}
+
 export function toPublicLlmSettings(settings: LlmSettings): LlmSettingsPublic {
+  const preset = resolveLlmPreset(settings);
   return {
     provider: settings.provider,
+    preset,
     baseUrl: settings.baseUrl,
     model: settings.model,
     hasApiKey: Boolean(settings.apiKeyEncrypted),
+  };
+}
+
+export function llmSettingsFromPut(body: {
+  preset?: string;
+  provider?: string;
+  baseUrl?: string;
+  model?: string;
+}): Pick<LlmSettings, "provider" | "preset" | "baseUrl" | "model"> {
+  const presetId: LlmPresetId =
+    body.preset && isLlmPresetId(body.preset)
+      ? body.preset
+      : inferLlmPreset({
+          provider: body.provider,
+          baseUrl: body.baseUrl,
+        });
+  const preset = getLlmPreset(presetId);
+  const baseUrl =
+    preset.baseUrlEditable
+      ? body.baseUrl?.trim() || preset.baseUrl || undefined
+      : preset.baseUrl || body.baseUrl?.trim() || undefined;
+  if (preset.baseUrlEditable && !baseUrl) {
+    throw new Error("llm_base_url_required");
+  }
+  if (!body.model?.trim() && !preset.defaultModel) {
+    throw new Error("llm_model_required");
+  }
+  return {
+    provider: preset.transport,
+    preset: presetId,
+    baseUrl,
+    model: body.model?.trim() || preset.defaultModel || undefined,
   };
 }
 

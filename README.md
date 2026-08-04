@@ -53,7 +53,7 @@ pnpm dev
 | Player panel | http://127.0.0.1:5173/play |
 
 1. Open the UI and create the **Owner** account.  
-2. Go to **Settings** → choose provider (`OpenAI-compatible` or `Ollama`), paste API key if needed, set model, save.  
+2. Go to **Settings** → pick a provider (Venice, OpenAI, Ollama, …), paste your API key if needed, set model, save.  
 3. Chat: ask to spin up a game (Paper needs Docker; Rust/SteamCMD works with `PLAYON_RUNTIME=native`).  
 4. Players use **/play** for join info.
 

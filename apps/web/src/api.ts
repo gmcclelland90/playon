@@ -1,4 +1,4 @@
-import type { PublicUser, SetupStatus } from "@playon/shared";
+import type { LlmPresetId, PublicUser, SetupStatus } from "@playon/shared";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -19,6 +19,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export type LlmPublic = {
   provider: "openai_compatible" | "ollama";
+  preset: LlmPresetId;
   baseUrl?: string;
   model?: string;
   hasApiKey: boolean;
@@ -181,7 +182,7 @@ export const api = {
     }>("/api/nodes"),
   getLlmSettings: () => request<{ llm: LlmPublic }>("/api/settings/llm"),
   putLlmSettings: (body: {
-    provider: LlmPublic["provider"];
+    preset: LlmPresetId;
     baseUrl?: string;
     model?: string;
     apiKey?: string;

@@ -31,7 +31,7 @@ curl -fsSL https://playon.games/install | bash
 | Default dir | `%LOCALAPPDATA%\PlayOn` | `~/playon` |
 | Optional | `PLAYON_HOME`, `PLAYON_VERSION`, `PLAYON_START=0` | same |
 
-Each Home archive includes **Node.js**, production dependencies, the API, web UI, local node-agent, and platform skills. Create Owner → Settings → Venice API key → start a game. Players use `/play`.
+Each Home archive includes **Node.js**, production dependencies, the API, web UI, local node-agent, and platform skills. Create Owner → Settings → pick an LLM provider (Venice, OpenAI, Ollama, …) and paste your own key if needed → start a game. Players use `/play`.
 
 ### Manual archive
 

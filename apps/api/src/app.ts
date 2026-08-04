@@ -11,6 +11,7 @@ import type { ConfirmGate, LlmMessage } from "@playon/agent-core";
 import { surfaceSkill } from "@playon/agent-core";
 import {
   BootstrapOwnerSchema,
+  LLM_PRESET_IDS,
   LoginSchema,
   NodeHeartbeatSchema,
   NodeJobKindSchema,
@@ -48,6 +49,7 @@ import {
   LLM_SETTINGS_KEY,
   SKILLS_CATALOG_KEY,
   setSetting,
+  llmSettingsFromPut,
   toPublicCloudSettings,
   toPublicLlmSettings,
   type LlmSettings,
@@ -126,12 +128,18 @@ export type PlayOnApp = Hono<{ Variables: Vars }> & {
   controlPlane: ControlPlane;
 };
 
-const LlmSettingsPutSchema = z.object({
-  provider: z.enum(["openai_compatible", "ollama"]),
-  baseUrl: z.string().optional(),
-  model: z.string().optional(),
-  apiKey: z.string().optional(),
-});
+const LlmSettingsPutSchema = z
+  .object({
+    preset: z.enum(LLM_PRESET_IDS).optional(),
+    /** @deprecated Prefer preset; kept for older clients. */
+    provider: z.enum(["openai_compatible", "ollama"]).optional(),
+    baseUrl: z.string().optional(),
+    model: z.string().optional(),
+    apiKey: z.string().optional(),
+  })
+  .refine((body) => Boolean(body.preset || body.provider), {
+    message: "preset_or_provider_required",
+  });
 
 const CreateServerSchema = z
   .object({
@@ -419,13 +427,24 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     }
     const body = LlmSettingsPutSchema.parse(await c.req.json());
     const existing = (await getSetting<LlmSettings>(db, LLM_SETTINGS_KEY)) ?? {
-      provider: body.provider,
+      provider: config.llmMode,
     };
 
+    let resolved: ReturnType<typeof llmSettingsFromPut>;
+    try {
+      resolved = llmSettingsFromPut({
+        preset: body.preset,
+        provider: body.provider ?? existing.provider,
+        baseUrl: body.baseUrl ?? existing.baseUrl,
+        model: body.model ?? existing.model,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "llm_settings_invalid";
+      return c.json({ error: message }, 400);
+    }
+
     const next: LlmSettings = {
-      provider: body.provider,
-      baseUrl: body.baseUrl ?? existing.baseUrl,
-      model: body.model ?? existing.model,
+      ...resolved,
       apiKeyEncrypted: existing.apiKeyEncrypted,
     };
 

@@ -33,8 +33,8 @@ PlayOn MVP is ready for a LAN demo when all items below are green.
 
 ## Offline / local LLM
 
-- [ ] Ollama profile documented ([ollama-offline.md](ollama-offline.md))
-- [ ] Settings UI can switch to `ollama` without cloud keys
+- [x] Ollama profile documented ([ollama-offline.md](ollama-offline.md))
+- [x] Settings UI can switch to `ollama` (and other BYO providers) without cloud keys
 
 ## Polish (human gate)
 

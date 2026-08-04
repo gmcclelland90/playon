@@ -18,7 +18,7 @@ import {
   type LlmClient,
 } from "@playon/agent-core";
 import { queryDialectToolEnum } from "@playon/server-query";
-import type { QueryDialect } from "@playon/shared";
+import { getLlmPreset, type QueryDialect } from "@playon/shared";
 import type { AppConfig } from "../config.js";
 import type { ControlPlane } from "../control-plane.js";
 import type { Db } from "../db/client.js";
@@ -26,6 +26,7 @@ import { decryptSecret } from "./secrets.js";
 import {
   getSetting,
   LLM_SETTINGS_KEY,
+  resolveLlmPreset,
   SKILLS_CATALOG_KEY,
   type LlmSettings,
   type SkillsCatalogSettings,
@@ -137,53 +138,51 @@ function resolveOptionalWorkspaceServerId(
   return { ok: true, serverId: requested };
 }
 
-const VENICE_BASE_URL = "https://api.venice.ai/api/v1";
-const VENICE_DEFAULT_MODEL = "llama-3.3-70b";
-
 export async function createLlmClient(
   db: Db,
   config: AppConfig,
 ): Promise<LlmClient> {
   const stored = await getSetting<LlmSettings>(db, LLM_SETTINGS_KEY);
-  const provider =
-    stored?.provider === "ollama" || stored?.provider === "openai_compatible"
-      ? stored.provider
-      : config.llmMode;
+  const fallback: LlmSettings = {
+    provider: config.llmMode,
+    preset: config.llmMode === "ollama" ? "ollama" : "venice",
+  };
+  const settings = stored ?? fallback;
+  const presetId = resolveLlmPreset(settings);
+  const preset = getLlmPreset(presetId);
 
   const envVenice =
     process.env.PLAYON_VENICE_API_KEY?.trim() || process.env.VENICE_API_KEY?.trim() || "";
 
   const storedKey = (): string => {
-    if (!stored?.apiKeyEncrypted) return "";
+    if (!settings.apiKeyEncrypted) return "";
     try {
-      return decryptSecret(config.sessionSecret, stored.apiKeyEncrypted);
+      return decryptSecret(config.sessionSecret, settings.apiKeyEncrypted);
     } catch {
       // Session secret rotated (common after prod install) — fall back to env.
       return "";
     }
   };
 
-  if (provider === "ollama") {
-    return new OpenAICompatibleLlmClient(
-      stored?.baseUrl ?? "http://127.0.0.1:11434/v1",
-      storedKey() || envVenice,
-      stored?.model ?? "llama3.2",
-      "ollama",
-    );
+  const baseUrl =
+    (preset.baseUrlEditable ? settings.baseUrl?.trim() : undefined) ||
+    preset.baseUrl ||
+    settings.baseUrl?.trim() ||
+    getLlmPreset("venice").baseUrl;
+  const model =
+    settings.model?.trim() || preset.defaultModel || getLlmPreset("venice").defaultModel;
+
+  if (preset.transport === "ollama") {
+    return new OpenAICompatibleLlmClient(baseUrl, storedKey(), model, "ollama");
   }
 
-  const apiKey = storedKey() || envVenice;
-  if (!apiKey) {
+  const apiKey = storedKey() || (presetId === "venice" ? envVenice : "");
+  if (preset.requiresApiKey && !apiKey) {
     throw new Error(
-      "llm_api_key_required: set a Venice API key under Settings → Model, or PLAYON_VENICE_API_KEY (re-save the key if PLAYON_SESSION_SECRET changed)",
+      "llm_api_key_required: set an API key under Settings → In-app agents, or PLAYON_VENICE_API_KEY for Venice (re-save the key if PLAYON_SESSION_SECRET changed)",
     );
   }
-  return new OpenAICompatibleLlmClient(
-    stored?.baseUrl ?? VENICE_BASE_URL,
-    apiKey,
-    stored?.model ?? VENICE_DEFAULT_MODEL,
-    "openai_compatible",
-  );
+  return new OpenAICompatibleLlmClient(baseUrl, apiKey, model, "openai_compatible");
 }
 
 export type PlayOnToolRegistry = {

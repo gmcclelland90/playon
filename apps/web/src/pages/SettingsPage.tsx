@@ -1,18 +1,29 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { can, type PublicUser } from "@playon/shared";
-import { api, type LlmPublic } from "../api";
+import {
+  can,
+  getLlmPreset,
+  LLM_PRESET_LIST,
+  type LlmPresetId,
+  type PublicUser,
+} from "@playon/shared";
+import { api } from "../api";
 
 
 export function SettingsPage({ user }: { user: PublicUser }) {
   const qc = useQueryClient();
   const llm = useQuery({ queryKey: ["llm"], queryFn: api.getLlmSettings });
-  const [provider, setProvider] = useState<LlmPublic["provider"]>("openai_compatible");
+  const [preset, setPreset] = useState<LlmPresetId>("venice");
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [saved, setSaved] = useState(false);
-  const [fieldErrors, setFieldErrors] = useState<{ model?: string; apiKey?: string }>({});
+  const [fieldErrors, setFieldErrors] = useState<{
+    baseUrl?: string;
+    model?: string;
+    apiKey?: string;
+  }>({});
+  const activePreset = getLlmPreset(preset);
 
   const [newUsername, setNewUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -56,21 +67,23 @@ export function SettingsPage({ user }: { user: PublicUser }) {
 
   useEffect(() => {
     if (!llm.data?.llm) return;
-    setProvider(llm.data.llm.provider);
-    setBaseUrl(llm.data.llm.baseUrl ?? "");
-    setModel(llm.data.llm.model ?? "");
+    const loadedPreset = llm.data.llm.preset;
+    setPreset(loadedPreset);
+    const def = getLlmPreset(loadedPreset);
+    setBaseUrl(llm.data.llm.baseUrl ?? def.baseUrl);
+    setModel(llm.data.llm.model ?? def.defaultModel);
   }, [llm.data]);
 
   const dirty = useMemo(() => {
     const loaded = llm.data?.llm;
     if (!loaded) return false;
     return (
-      provider !== loaded.provider ||
-      baseUrl !== (loaded.baseUrl ?? "") ||
+      preset !== loaded.preset ||
+      baseUrl !== (loaded.baseUrl ?? getLlmPreset(loaded.preset).baseUrl) ||
       model !== (loaded.model ?? "") ||
       apiKey !== ""
     );
-  }, [llm.data, provider, baseUrl, model, apiKey]);
+  }, [llm.data, preset, baseUrl, model, apiKey]);
 
   useEffect(() => {
     if (!dirty) return;
@@ -90,7 +103,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
   const save = useMutation({
     mutationFn: () =>
       api.putLlmSettings({
-        provider,
+        preset,
         baseUrl: baseUrl || undefined,
         model: model || undefined,
         apiKey: apiKey || undefined,
@@ -103,6 +116,14 @@ export function SettingsPage({ user }: { user: PublicUser }) {
       window.setTimeout(() => setSaved(false), 4000);
     },
   });
+
+  function onPresetChange(next: LlmPresetId) {
+    setPreset(next);
+    const def = getLlmPreset(next);
+    setBaseUrl(def.baseUrl);
+    setModel(def.defaultModel);
+    setFieldErrors({});
+  }
 
   const saveBackup = useMutation({
     mutationFn: () => api.setBackupTarget(backupRoot),
@@ -130,14 +151,13 @@ export function SettingsPage({ user }: { user: PublicUser }) {
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
-    const errors: { model?: string; apiKey?: string } = {};
+    const errors: { baseUrl?: string; model?: string; apiKey?: string } = {};
+    if (activePreset.baseUrlEditable && !baseUrl.trim()) {
+      errors.baseUrl = "Base URL is required";
+    }
     if (!model.trim()) errors.model = "Model is required";
-    if (
-      provider === "openai_compatible" &&
-      !llm.data?.llm.hasApiKey &&
-      !apiKey.trim()
-    ) {
-      errors.apiKey = "API key required for Venice / OpenAI-compatible";
+    if (activePreset.requiresApiKey && !llm.data?.llm.hasApiKey && !apiKey.trim()) {
+      errors.apiKey = `API key required for ${activePreset.label}`;
     }
     if (Object.keys(errors).length) {
       setFieldErrors(errors);
@@ -159,13 +179,13 @@ export function SettingsPage({ user }: { user: PublicUser }) {
       <header className="page-header">
         <h2>Settings</h2>
         <p className="lede">
-          Same tools whether you use Venice, Ollama, or MCP — only the brain and how you connect
-          change.
+          Same tools whether you use a cloud LLM, Ollama, or MCP — only the brain and how you
+          connect change.
         </p>
       </header>
 
       <form className="panel stack tight" onSubmit={onSubmit}>
-        <h3>In-app agents (Venice / Ollama)</h3>
+        <h3>In-app agents (LLM provider)</h3>
         {llm.isLoading ? (
           <div className="skeleton" aria-hidden>
             <div className="skeleton-row" />
@@ -176,11 +196,14 @@ export function SettingsPage({ user }: { user: PublicUser }) {
             <label className="field">
               <span>Provider</span>
               <select
-                value={provider}
-                onChange={(e) => setProvider(e.target.value as LlmPublic["provider"])}
+                value={preset}
+                onChange={(e) => onPresetChange(e.target.value as LlmPresetId)}
               >
-                <option value="openai_compatible">Venice / OpenAI-compatible</option>
-                <option value="ollama">Ollama (offline)</option>
+                {LLM_PRESET_LIST.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
               </select>
             </label>
 
@@ -189,32 +212,54 @@ export function SettingsPage({ user }: { user: PublicUser }) {
               <input
                 value={baseUrl}
                 onChange={(e) => setBaseUrl(e.target.value)}
-                placeholder={
-                  provider === "ollama" ? "http://127.0.0.1:11434/v1" : "https://api.venice.ai/api/v1"
-                }
+                placeholder={activePreset.baseUrl || "https://api.example.com/v1"}
+                readOnly={!activePreset.baseUrlEditable}
+                disabled={!activePreset.baseUrlEditable}
+                aria-invalid={Boolean(fieldErrors.baseUrl) || undefined}
               />
+              {fieldErrors.baseUrl ? (
+                <span className="field-error">{fieldErrors.baseUrl}</span>
+              ) : null}
             </label>
             <label className="field">
               <span>Model</span>
               <input
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                placeholder={provider === "ollama" ? "llama3.2" : "llama-3.3-70b"}
+                list="llm-model-suggestions"
+                placeholder={activePreset.defaultModel || "model-id"}
                 required
                 aria-invalid={Boolean(fieldErrors.model) || undefined}
               />
+              {activePreset.suggestedModels.length > 0 ? (
+                <datalist id="llm-model-suggestions">
+                  {activePreset.suggestedModels.map((id) => (
+                    <option key={id} value={id} />
+                  ))}
+                </datalist>
+              ) : null}
+              {activePreset.docsHint ? (
+                <span className="muted status-inline">{activePreset.docsHint}</span>
+              ) : null}
               {fieldErrors.model ? (
                 <span className="field-error">{fieldErrors.model}</span>
               ) : null}
             </label>
             <label className="field">
-              <span>API key {llm.data?.llm.hasApiKey ? "(saved — leave blank to keep)" : ""}</span>
+              <span>
+                API key{" "}
+                {llm.data?.llm.hasApiKey ? "(saved — leave blank to keep)" : ""}
+              </span>
               <input
                 type="password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 autoComplete="off"
-                placeholder={provider === "ollama" ? "optional" : "Venice API key"}
+                placeholder={
+                  activePreset.requiresApiKey
+                    ? activePreset.apiKeyLabel
+                    : "optional"
+                }
                 aria-invalid={Boolean(fieldErrors.apiKey) || undefined}
               />
               {fieldErrors.apiKey ? (
