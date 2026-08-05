@@ -2,6 +2,20 @@
 
 All notable changes to PlayOn Home (root `package.json` version) are listed here.
 
+## [0.1.3] — 2026-08-05
+
+### Added
+
+- **Ollama in Settings** — when the provider is **Ollama (offline)**, Home probes the configured Base URL, lists installed models, and can pull suggested models (`llama3.2`, `qwen2.5`, `mistral`, …).
+- **One-click Ollama install** — on localhost, if Docker is available, **Install Ollama** starts a `playon-ollama` container (`ollama/ollama` on port 11434). No silent install during bootstrap; admin click only.
+- Manual install fallback when Docker is missing (copyable official Linux / Windows one-liner).
+- Model chooser for installed tags, with a custom model name escape hatch.
+
+### Notes
+
+- One-click install targets the Home control plane host only (loopback). Remote/LAN Ollama URLs still work for probe, pull, and chat — install those yourself on that machine.
+- Public guide: [playon.games/docs/providers/ollama](https://playon.games/docs/providers/ollama).
+
 ## [0.1.2] — 2026-08-05
 
 ### Added
