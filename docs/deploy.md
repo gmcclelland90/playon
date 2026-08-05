@@ -110,14 +110,15 @@ Still run a **host-native** `playon-node` (or install-node against `http://127.0
 
 ## Lab / us
 
-Prefer the same Home tarball customers get (`pnpm package:home`). Tag `v*` builds attach Windows + Linux artifacts via `.github/workflows/release-home.yml`. After changing bootstrap scripts, run `node scripts/sync-install-scripts.mjs` and deploy the sibling **playon-games** site. Dev remains `pnpm dev` + `pnpm loop:verify`.
+Prefer the same Home tarball customers get (`pnpm package:home`). Tag `v*` builds attach Windows + Linux artifacts via `.github/workflows/release-home.yml`, then sync OTA + deploy playon.games — see **[release.md](release.md)** for the standard CI/CD pipeline. After changing bootstrap scripts only, run `node scripts/sync-install-scripts.mjs` and push playon-games. Dev remains `pnpm dev` + `pnpm loop:verify`.
 
 Source zip (`pnpm package:mvp`) is a power-user fallback, not the primary Get PlayOn path.
 
 ## Related
 
+- [release.md](release.md) — Home tag → GitHub Release → `/home/latest.json` → Cloudflare Pages
 - [lan-install.md](lan-install.md) — legacy systemd-from-checkout notes
 - [linux-dev-host.md](linux-dev-host.md) — lab host
 - [design-docs/14](../design-docs/14-cloud-backed-lan-mode.md) — placement + Add-node / WireGuard
 - [design-docs/15](../design-docs/15-playon-games-site-and-skill-library.md) — site + catalog
-- Sibling **playon-games** repo — Astro site + public skill catalog (playon.games); update `/get` to point at Releases when ready
+- Sibling **playon-games** repo — Astro site + public skill catalog (playon.games)

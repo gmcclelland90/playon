@@ -50,6 +50,9 @@ jobs:
   release:
     needs: package
     runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -58,6 +61,13 @@ jobs:
           merge-multiple: true
       - name: List artifacts
         run: find artifacts -type f -print
+      - name: Release metadata
+        id: meta
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -78,7 +88,9 @@ jobs:
 
             Remote nodes: download the matching `playon-node-*` asset, or add via Home **Settings → Nodes**.
 
-            See [CHANGELOG.md](https://github.com/gmcclelland90/playon/blob/main/CHANGELOG.md) and [quick start](https://playon.games/docs/quick-start).
+            In-app updates: after this release is published to playon.games (`/home/latest.json`), Owners on an older build can **Update & restart** from Settings.
+
+            See [CHANGELOG.md](https://github.com/gmcclelland90/playon/blob/main/CHANGELOG.md) and [release pipeline](https://github.com/gmcclelland90/playon/blob/main/docs/release.md).
 
             No separate Node.js install required. Optional always-on: `PLAYON_SERVICE=1` on the one-liner.
       - name: Build home/latest.json (local artifacts)
@@ -102,3 +114,27 @@ jobs:
         with:
           files: |
             manifest-out/home/latest.json
+
+  # Tell playon-games to sync OTA manifest + installers and deploy Pages.
+  notify-site:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: repository_dispatch → playon-games
+        env:
+          # Fine-grained or classic PAT with contents:write + actions:write on playon-games.
+          # Falls back to GITHUB_TOKEN only works for same-repo dispatches (not used here).
+          GH_TOKEN: ${{ secrets.PLAYON_GAMES_TOKEN }}
+          TAG: ${{ needs.release.outputs.tag }}
+          VERSION: ${{ needs.release.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GH_TOKEN:-}" ]]; then
+            echo "::error::Missing secret PLAYON_GAMES_TOKEN on playon. Create a PAT that can dispatch workflows on playon-games (see docs/release.md)."
+            exit 1
+          fi
+          gh api repos/gmcclelland90/playon-games/dispatches \
+            -f event_type='playon-release' \
+            -f "client_payload[tag]=${TAG}" \
+            -f "client_payload[version]=${VERSION}"
+          echo "Dispatched playon-release for ${TAG}"

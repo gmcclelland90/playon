@@ -31,7 +31,8 @@ pnpm dev # api + web + local node-agent
 ```
 
 Autonomous loop protocol: [docs/agent-dev-loop.md](docs/agent-dev-loop.md)  
-Linux lab host notes: [docs/linux-dev-host.md](docs/linux-dev-host.md)
+Linux lab host notes: [docs/linux-dev-host.md](docs/linux-dev-host.md)  
+Home release / playon.games CI/CD: [docs/release.md](docs/release.md)
 
 ## Autonomy rules
 

@@ -30,7 +30,7 @@ No separate Node.js or pnpm install. Always-on: `PLAYON_SERVICE=1` (see **[docs/
 
 Manual zip / USB: [GitHub Releases](https://github.com/gmcclelland90/playon/releases) → `Start-PlayOn.ps1` / `./start-playon.sh`.
 
-Maintainers / CI:
+Maintainers / CI: bump version + CHANGELOG, tag `vX.Y.Z` — see **[docs/release.md](docs/release.md)** (packages Home/Node, publishes GitHub Release, syncs `/home/latest.json` to playon.games, deploys Pages).
 
 ```bash
 pnpm build && pnpm package:home

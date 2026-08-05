@@ -2,6 +2,9 @@
 /**
  * Copy deploy/bootstrap installers into sibling playon-games/public for playon.games hosting.
  *   node scripts/sync-install-scripts.mjs
+ *
+ * Env:
+ *   PLAYON_GAMES_PUBLIC  override path to playon-games/public (CI when playon is nested)
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -9,7 +12,9 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
-const site = path.resolve(root, "..", "playon-games", "public");
+const site =
+  process.env.PLAYON_GAMES_PUBLIC?.trim() ||
+  path.resolve(root, "..", "playon-games", "public");
 
 const pairs = [
   [path.join(root, "deploy/bootstrap/install.ps1"), path.join(site, "install.ps1")],
