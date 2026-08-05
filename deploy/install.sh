@@ -92,8 +92,16 @@ fi
 SESSION_SECRET="${PLAYON_SESSION_SECRET:-$(openssl rand -hex 32 2>/dev/null || head -c 32 /dev/urandom | xxd -p -c 32)}"
 NODE_TOKEN="${PLAYON_NODE_TOKEN:-$(openssl rand -hex 24 2>/dev/null || head -c 24 /dev/urandom | xxd -p -c 24)}"
 RUNTIME="${PLAYON_RUNTIME:-native}"
-# Auto-upgrade to docker mode when Engine socket exists and user did not force native
-if [[ "${RUNTIME}" == "native" && -S /var/run/docker.sock && -z "${PLAYON_RUNTIME:-}" ]]; then
+ENSURE_DOCKER_SH="${SCRIPT_DIR}/lib/ensure-docker.sh"
+if [[ -f "${ENSURE_DOCKER_SH}" ]]; then
+  # shellcheck source=lib/ensure-docker.sh
+  source "${ENSURE_DOCKER_SH}"
+  playon_ensure_docker || true
+fi
+# Prefer docker when Engine is available and user did not force native
+if [[ -S /var/run/docker.sock && -z "${PLAYON_RUNTIME:-}" ]]; then
+  RUNTIME=docker
+elif [[ -S /var/run/docker.sock && "${PLAYON_RUNTIME:-}" != "native" && "${RUNTIME}" != "native" ]]; then
   RUNTIME=docker
 fi
 
@@ -158,12 +166,16 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-# Allow docker group if present
+# Allow docker group if present (ensure-docker also adds; keep for already-present Engine)
 if getent group docker >/dev/null 2>&1; then
   usermod -aG docker "${PLAYON_USER}" || true
 fi
 
 systemctl daemon-reload
+# Start Docker before node-agent when available so the first heartbeat sees the socket
+if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files docker.service >/dev/null 2>&1; then
+  systemctl enable --now docker.service 2>/dev/null || true
+fi
 systemctl enable --now playon.service playon-node.service
 
 echo ""

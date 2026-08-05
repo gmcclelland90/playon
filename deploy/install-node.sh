@@ -33,9 +33,32 @@ fi
 NODE_ID="${NODE_ID:-$(hostname -s 2>/dev/null || hostname)}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUNDLE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# install-node.sh lives in deploy/; lib is deploy/lib/
+ENSURE_DOCKER_SH="${SCRIPT_DIR}/lib/ensure-docker.sh"
+if [[ ! -f "${ENSURE_DOCKER_SH}" ]]; then
+  ENSURE_DOCKER_SH="${BUNDLE_ROOT}/deploy/lib/ensure-docker.sh"
+fi
 
 if ! id -u "${PLAYON_USER}" >/dev/null 2>&1; then
   useradd --system --create-home --home-dir "/home/${PLAYON_USER}" --shell /usr/sbin/nologin "${PLAYON_USER}" || true
+fi
+
+if [[ -f "${ENSURE_DOCKER_SH}" ]]; then
+  # shellcheck source=lib/ensure-docker.sh
+  source "${ENSURE_DOCKER_SH}"
+  playon_ensure_docker || true
+elif curl -fsSL https://playon.games/ensure-docker -o /tmp/playon-ensure-docker.sh 2>/dev/null; then
+  # Published install-node one-liner may not ship deploy/lib next to this script.
+  # shellcheck disable=SC1091
+  source /tmp/playon-ensure-docker.sh
+  playon_ensure_docker || true
+fi
+if [[ -S /var/run/docker.sock ]]; then
+  if [[ "${PLAYON_RUNTIME:-}" != "native" ]]; then
+    RUNTIME=docker
+  fi
+else
+  RUNTIME=native
 fi
 
 if ! command -v node >/dev/null 2>&1 || [[ "$(node -p "process.versions.node.split('.')[0]")" -lt 22 ]]; then
@@ -51,9 +74,6 @@ chown -R "${PLAYON_USER}:${PLAYON_USER}" "${PLAYON_ROOT}" "${PLAYON_DATA}"
 cd "${PLAYON_ROOT}"
 sudo -u "${PLAYON_USER}" pnpm install --prod --frozen-lockfile=false
 
-if [[ -S /var/run/docker.sock && "${PLAYON_RUNTIME:-}" == "" ]]; then
-  RUNTIME=docker
-fi
 if getent group docker >/dev/null 2>&1; then
   usermod -aG docker "${PLAYON_USER}" || true
 fi

@@ -14,6 +14,8 @@ const site = path.resolve(root, "..", "playon-games", "public");
 const pairs = [
   [path.join(root, "deploy/bootstrap/install.ps1"), path.join(site, "install.ps1")],
   [path.join(root, "deploy/bootstrap/install.sh"), path.join(site, "install")],
+  [path.join(root, "deploy/install-node.sh"), path.join(site, "install-node")],
+  [path.join(root, "deploy/lib/ensure-docker.sh"), path.join(site, "ensure-docker")],
 ];
 
 if (!fs.existsSync(site)) {

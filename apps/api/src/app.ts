@@ -206,6 +206,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     skillPackages,
     tunnel,
     addNode,
+    installDocker,
   } = plane;
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
@@ -1365,6 +1366,63 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       const message = err instanceof Error ? err.message : "remove_node_failed";
       const status = message.startsWith("unknown_node") ? 404 : 400;
       return c.json({ error: message }, status);
+    }
+  });
+
+  app.post("/api/nodes/:nodeId/install-docker", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "servers.manage")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    try {
+      const body = z
+        .object({
+          host: z.string().min(1),
+          port: z.number().int().positive().optional(),
+          username: z.string().min(1),
+          password: z.string().optional(),
+          privateKey: z.string().optional(),
+        })
+        .parse(await c.req.json());
+      const result = await installDocker.installViaSsh({
+        nodeId: c.req.param("nodeId"),
+        ...body,
+      });
+      return c.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "install_docker_failed";
+      const status = message.startsWith("unknown_node") ? 404 : 400;
+      return c.json({ error: message }, status);
+    }
+  });
+
+  app.post("/api/nodes/:nodeId/install-docker/token", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "servers.manage")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    try {
+      const result = await installDocker.createToken(c.req.param("nodeId"));
+      return c.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "install_docker_token_failed";
+      const status = message.startsWith("unknown_node") ? 404 : 400;
+      return c.json({ error: message }, status);
+    }
+  });
+
+  app.get("/api/nodes/:nodeId/install-docker/:token", async (c) => {
+    try {
+      const script = await installDocker.scriptForToken(
+        c.req.param("nodeId"),
+        c.req.param("token"),
+      );
+      return c.text(script, 200, {
+        "content-type": "text/x-shellscript; charset=utf-8",
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "install_docker_failed";
+      return c.text(`#!/bin/bash\necho ${JSON.stringify(message)} >&2\nexit 1\n`, 400);
     }
   });
 

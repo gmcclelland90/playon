@@ -45,6 +45,12 @@ export function SettingsPage({ user }: { user: PublicUser }) {
   const [oneLiner, setOneLiner] = useState<string | null>(null);
   const [nodeNotice, setNodeNotice] = useState<string | null>(null);
   const [nodeError, setNodeError] = useState<string | null>(null);
+  const [dockerInstallNodeId, setDockerInstallNodeId] = useState<string | null>(null);
+  const [dockerSshHost, setDockerSshHost] = useState("");
+  const [dockerSshUser, setDockerSshUser] = useState("root");
+  const [dockerSshPassword, setDockerSshPassword] = useState("");
+  const [dockerOneLiner, setDockerOneLiner] = useState<string | null>(null);
+  const [dockerWaitingId, setDockerWaitingId] = useState<string | null>(null);
   const [ollamaCustomModel, setOllamaCustomModel] = useState(false);
   const [pullTarget, setPullTarget] = useState("");
   const [ollamaNotice, setOllamaNotice] = useState<string | null>(null);
@@ -119,6 +125,46 @@ export function SettingsPage({ user }: { user: PublicUser }) {
     },
     onError: (err: Error) => setNodeError(err.message),
   });
+
+  const installDockerSshMut = useMutation({
+    mutationFn: (nodeId: string) =>
+      api.installDockerViaSsh(nodeId, {
+        host: dockerSshHost.trim(),
+        username: dockerSshUser.trim(),
+        password: dockerSshPassword || undefined,
+      }),
+    onSuccess: async (res) => {
+      setDockerSshPassword("");
+      setDockerWaitingId(res.nodeId);
+      setNodeNotice("Docker install started — waiting for the node to report Docker…");
+      await qc.invalidateQueries({ queryKey: ["nodes"] });
+    },
+    onError: (err: Error) => setNodeError(err.message),
+  });
+
+  const installDockerTokenMut = useMutation({
+    mutationFn: (nodeId: string) => api.createInstallDockerToken(nodeId),
+    onSuccess: (res) => {
+      setDockerOneLiner(res.oneLiner);
+      setDockerWaitingId(res.nodeId);
+      setNodeNotice(
+        `One-liner ready (expires ${new Date(res.expiresAt).toLocaleString()}). Run it on the node, then wait for Docker.`,
+      );
+    },
+    onError: (err: Error) => setNodeError(err.message),
+  });
+
+  useEffect(() => {
+    if (!dockerWaitingId || !nodesList.data?.nodes) return;
+    const n = nodesList.data.nodes.find((x) => x.id === dockerWaitingId);
+    if (n?.docker) {
+      setNodeNotice(`Docker is available on ${n.name}.`);
+      setDockerWaitingId(null);
+      setDockerInstallNodeId(null);
+      setDockerOneLiner(null);
+      window.setTimeout(() => setNodeNotice(null), 4000);
+    }
+  }, [dockerWaitingId, nodesList.data?.nodes]);
 
   const catalog = useQuery({
     queryKey: ["skills-catalog", catalogSearch],
@@ -459,7 +505,11 @@ export function SettingsPage({ user }: { user: PublicUser }) {
 
         {nodesList.data?.nodes?.length ? (
           <ul className="list compact-list">
-            {nodesList.data.nodes.map((n) => (
+            {nodesList.data.nodes.map((n) => {
+              const needsDocker = !n.docker;
+              const isWindows = n.os === "windows";
+              const panelOpen = dockerInstallNodeId === n.id;
+              return (
               <li key={n.id}>
                 <div className="btn-row" style={{ justifyContent: "space-between" }}>
                   <div>
@@ -467,30 +517,130 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                     <span className="muted">{n.badge ?? n.kind}</span>
                     <div className="muted">
                       {n.status}
+                      {n.docker ? " · Docker" : " · no Docker"}
                       {n.tunnelStatus && n.tunnelStatus !== "none"
                         ? ` · tunnel ${n.tunnelStatus}`
                         : ""}
+                      {dockerWaitingId === n.id ? " · waiting for Docker…" : ""}
                     </div>
                   </div>
-                  {n.id !== "local" ? (
-                    <button
-                      className="btn"
-                      type="button"
-                      disabled={removeNodeMut.isPending}
-                      onClick={() => {
-                        if (!window.confirm(`Remove node ${n.name}? Servers must be moved first.`)) {
-                          return;
-                        }
-                        setNodeError(null);
-                        removeNodeMut.mutate(n.id);
-                      }}
-                    >
-                      Remove
-                    </button>
-                  ) : null}
+                  <div className="btn-row">
+                    {needsDocker && !isWindows ? (
+                      <button
+                        className="btn btn-primary"
+                        type="button"
+                        onClick={() => {
+                          setNodeError(null);
+                          setDockerOneLiner(null);
+                          setDockerInstallNodeId(panelOpen ? null : n.id);
+                          setDockerSshHost(n.id === "local" ? "127.0.0.1" : "");
+                          setDockerSshUser("root");
+                        }}
+                      >
+                        {panelOpen ? "Cancel" : "Install Docker"}
+                      </button>
+                    ) : null}
+                    {n.id !== "local" ? (
+                      <button
+                        className="btn"
+                        type="button"
+                        disabled={removeNodeMut.isPending}
+                        onClick={() => {
+                          if (!window.confirm(`Remove node ${n.name}? Servers must be moved first.`)) {
+                            return;
+                          }
+                          setNodeError(null);
+                          removeNodeMut.mutate(n.id);
+                        }}
+                      >
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
                 </div>
+                {needsDocker && isWindows ? (
+                  <p className="muted status-inline">
+                    Install{" "}
+                    <a
+                      href="https://docs.docker.com/desktop/setup/install/windows-install/"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Docker Desktop
+                    </a>
+                    , then wait for the next heartbeat (or refresh this page).
+                  </p>
+                ) : null}
+                {panelOpen && needsDocker && !isWindows ? (
+                  <div className="stack tight" style={{ marginTop: "0.5rem" }}>
+                    <p className="muted status-inline">
+                      Install Docker Engine on this Linux node, then wait for it to report Docker.
+                      Guide:{" "}
+                      <a href="https://playon.games/docs/docker" target="_blank" rel="noreferrer">
+                        playon.games/docs/docker
+                      </a>
+                    </p>
+                    <label className="field">
+                      <span>SSH host</span>
+                      <input
+                        value={dockerSshHost}
+                        onChange={(e) => setDockerSshHost(e.target.value)}
+                        placeholder={n.id === "local" ? "127.0.0.1" : "192.168.1.50"}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>SSH username</span>
+                      <input
+                        value={dockerSshUser}
+                        onChange={(e) => setDockerSshUser(e.target.value)}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>SSH password</span>
+                      <input
+                        type="password"
+                        value={dockerSshPassword}
+                        onChange={(e) => setDockerSshPassword(e.target.value)}
+                        autoComplete="off"
+                      />
+                    </label>
+                    <div className="btn-row">
+                      <button
+                        className="btn btn-primary"
+                        type="button"
+                        disabled={
+                          installDockerSshMut.isPending || !dockerSshHost.trim()
+                        }
+                        onClick={() => {
+                          setNodeError(null);
+                          installDockerSshMut.mutate(n.id);
+                        }}
+                      >
+                        {installDockerSshMut.isPending ? "Installing…" : "Install via SSH"}
+                      </button>
+                      <button
+                        className="btn"
+                        type="button"
+                        disabled={installDockerTokenMut.isPending}
+                        onClick={() => {
+                          setNodeError(null);
+                          installDockerTokenMut.mutate(n.id);
+                        }}
+                      >
+                        {installDockerTokenMut.isPending ? "…" : "Copy one-liner instead"}
+                      </button>
+                    </div>
+                    {dockerOneLiner && dockerInstallNodeId === n.id ? (
+                      <label className="field">
+                        <span>Run on the target machine</span>
+                        <textarea readOnly rows={3} value={dockerOneLiner} />
+                      </label>
+                    ) : null}
+                  </div>
+                ) : null}
               </li>
-            ))}
+              );
+            })}
           </ul>
         ) : null}
         {nodeNotice ? <p className="ok">{nodeNotice}</p> : null}

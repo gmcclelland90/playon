@@ -4,6 +4,7 @@ import { AgentProgressService } from "./services/agent-progress.js";
 import { ServerArchiveService } from "./services/archive-tools.js";
 import { AddNodeService } from "./services/cloud/add-node.js";
 import { LanGateway } from "./services/cloud/gateway.js";
+import { InstallDockerService } from "./services/cloud/install-docker.js";
 import { TunnelService } from "./services/cloud/tunnel.js";
 import { ConfirmService } from "./services/confirm.js";
 import { EventHub } from "./services/event-hub.js";
@@ -49,6 +50,7 @@ export type ControlPlane = {
   tunnel: TunnelService;
   gateway: LanGateway;
   addNode: AddNodeService;
+  installDocker: InstallDockerService;
 };
 
 export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
@@ -57,6 +59,7 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
   const tunnel = new TunnelService(db, config);
   const gateway = new LanGateway(config);
   const addNode = new AddNodeService(db, config, tunnel);
+  const installDocker = new InstallDockerService(db, config);
   const servers = new ServerService(db, config, eventHub, gateway);
   const snapshots = new SnapshotService(db, config, servers);
   const panel = new PanelService(db, eventHub);
@@ -100,5 +103,6 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
     tunnel,
     gateway,
     addNode,
+    installDocker,
   };
 }

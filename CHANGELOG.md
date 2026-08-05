@@ -2,6 +2,24 @@
 
 All notable changes to PlayOn Home (root `package.json` version) are listed here.
 
+## [0.1.4] — 2026-08-05
+
+### Added
+
+- **Docker on Linux nodes** — `deploy/lib/ensure-docker.sh` provisions Docker Engine during Home service install and install-node (opt out with `PLAYON_INSTALL_DOCKER=0`).
+- **Settings → Nodes → Install Docker** — when a Linux node heartbeats without Docker: Install via SSH or a short-lived sudo one-liner; waits for the next heartbeat.
+- Published `https://playon.games/install-node` and `https://playon.games/ensure-docker` via sync-install-scripts.
+- Host guide: [playon.games/docs/docker](https://playon.games/docs/docker).
+
+### Changed
+
+- `docker_unavailable` failures point hosts at Settings → Nodes → Install Docker.
+- platform.docker-basics INSTALL guide no longer mentions mock runtime.
+
+### Notes
+
+- Windows nodes stay guidance-only (Docker Desktop). Silent Engine install is Linux/root paths only.
+
 ## [0.1.3] — 2026-08-05
 
 ### Added

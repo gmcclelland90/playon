@@ -20,7 +20,7 @@ import {
   skillShortLabel,
   type AgentActivityView,
 } from "../components/agent-canvas/AgentCanvas";
-import { statusHint, statusLabel } from "../status";
+import { runtimeErrorHint, statusHint, statusLabel } from "../status";
 import { playonSocket } from "../ws";
 
 type ChatLine = {
@@ -657,8 +657,10 @@ export function CanvasPage({ user }: { user: PublicUser }) {
               aria-labelledby="dock-tab-ops"
               hidden={dockTab !== "ops"}
             >
-              {statusHint(status) ? (
-                <p className="muted canvas-dock-hint">{statusHint(status)}</p>
+              {statusHint(status) || runtimeErrorHint(status) ? (
+                <p className="muted canvas-dock-hint">
+                  {statusHint(status) ?? runtimeErrorHint(status)}
+                </p>
               ) : null}
               <div className="btn-row">
                 <button

@@ -233,6 +233,31 @@ export const api = {
       `/api/nodes/${encodeURIComponent(nodeId)}${force ? "?force=1" : ""}`,
       { method: "DELETE" },
     ),
+  installDockerViaSsh: (
+    nodeId: string,
+    body: {
+      host: string;
+      port?: number;
+      username: string;
+      password?: string;
+      privateKey?: string;
+    },
+  ) =>
+    request<{ nodeId: string; detail: string }>(
+      `/api/nodes/${encodeURIComponent(nodeId)}/install-docker`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  createInstallDockerToken: (nodeId: string) =>
+    request<{
+      token: string;
+      nodeId: string;
+      oneLiner: string;
+      expiresAt: string;
+      manualCommand: string;
+    }>(`/api/nodes/${encodeURIComponent(nodeId)}/install-docker/token`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
   getLlmSettings: () => request<{ llm: LlmPublic }>("/api/settings/llm"),
   putLlmSettings: (body: {
     preset: LlmPresetId;

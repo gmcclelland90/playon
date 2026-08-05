@@ -316,7 +316,7 @@ sudo bash deploy/install.sh
 
 ## Games
 
-Platform skills are bundled. Install games from the playon.games catalog via chat or **Settings → Skill library**. Docker is only needed for container-based games (e.g. Paper), not for running PlayOn itself.
+Platform skills are bundled. Install games from the playon.games catalog via chat or **Settings → Skill library**. Docker is only needed for container-based games (e.g. Paper), not for running PlayOn itself. On Linux, service/node install can provision Engine; or use **Settings → Nodes → Install Docker**.
 `,
 );
 

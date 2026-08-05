@@ -63,7 +63,7 @@ curl -fsSL https://playon.games/install | PLAYON_SERVICE=1 bash
 
 Or from an extracted tree: `sudo -E bash deploy/install.sh` / `.\deploy\windows\install.ps1`. Uses bundled Node when present; skips `pnpm install` when `node_modules` is vendored.
 
-Use `PLAYON_RUNTIME=native` for SteamCMD-only hosts. If `/var/run/docker.sock` exists and you did not force native, Linux service install defaults to `docker` mode for container skills. SteamCMD auto-provisions when a Steam skill needs it (`PLAYON_STEAMCMD_AUTO`).
+Use `PLAYON_RUNTIME=native` for SteamCMD-only hosts. Linux **service** install (`deploy/install.sh`) and **install-node** call `deploy/lib/ensure-docker.sh` to provision Docker Engine when missing (opt out with `PLAYON_INSTALL_DOCKER=0`). If the socket is present and you did not force native, runtime defaults to `docker` for container skills. Already-online Linux nodes without Docker: **Settings → Nodes → Install Docker** (SSH or one-liner). SteamCMD auto-provisions when a Steam skill needs it (`PLAYON_STEAMCMD_AUTO`).
 
 ## Add a LAN node
 
