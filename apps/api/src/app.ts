@@ -12,13 +12,17 @@ import { surfaceSkill } from "@playon/agent-core";
 import {
   BootstrapOwnerSchema,
   LLM_PRESET_IDS,
+  LOCAL_NODE_ID,
   LoginSchema,
   NodeHeartbeatSchema,
   NodeJobKindSchema,
   RoleSchema,
   can,
   deriveNodePresence,
+  placementBadge,
+  placementFromNodeKind,
   roleAtLeast,
+  type NodeKind,
   type Role,
   type WsEvent,
 } from "@playon/shared";
@@ -45,14 +49,18 @@ import {
 import { encryptSecret } from "./services/secrets.js";
 import {
   CLOUD_SETTINGS_KEY,
+  DEFAULT_NODE_SETTINGS,
   getSetting,
   LLM_SETTINGS_KEY,
+  NODE_SETTINGS_KEY,
   SKILLS_CATALOG_KEY,
   setSetting,
   llmSettingsFromPut,
   toPublicCloudSettings,
   toPublicLlmSettings,
+  toPublicNodeSettings,
   type LlmSettings,
+  type NodeSettings,
   type SkillsCatalogSettings,
   type VultrCloudSettings,
 } from "./services/settings.js";
@@ -189,6 +197,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     importSftp,
     agentProgress,
     skillPackages,
+    tunnel,
+    addNode,
   } = plane;
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
@@ -1152,20 +1162,141 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     }
     const list = await db.select().from(nodes);
     const now = Date.now();
+    const nodeSettings = await getSetting<NodeSettings>(db, NODE_SETTINGS_KEY);
     return c.json({
-      nodes: list.map((n) => ({
-        id: n.id,
-        name: n.name,
-        os: n.os,
-        docker: n.docker,
-        native: n.native ?? true,
-        steamcmd: n.steamcmd ?? false,
-        freeDiskBytes: n.freeDiskBytes,
-        agentVersion: n.agentVersion,
-        lastSeenAt: n.lastSeenAt.toISOString(),
-        status: deriveNodePresence(n.lastSeenAt, now),
-      })),
+      localComputeEnabled: nodeSettings?.localComputeEnabled ?? true,
+      wireguardTools: tunnel.toolsAvailable(),
+      nodes: list.map((n) => {
+        const kind = (n.kind as NodeKind) || (n.id === LOCAL_NODE_ID ? "local" : "lan");
+        return {
+          id: n.id,
+          name: n.name,
+          os: n.os,
+          docker: n.docker,
+          native: n.native ?? true,
+          steamcmd: n.steamcmd ?? false,
+          freeDiskBytes: n.freeDiskBytes,
+          agentVersion: n.agentVersion,
+          lastSeenAt: n.lastSeenAt.toISOString(),
+          status: deriveNodePresence(n.lastSeenAt, now),
+          kind,
+          placement: placementFromNodeKind(kind),
+          badge: placementBadge({
+            kind,
+            name: n.name,
+            tunnelStatus: n.tunnelStatus,
+          }),
+          tunnelStatus: n.tunnelStatus,
+          overlayIp: n.overlayIp,
+          tunnelEndpoint: n.tunnelEndpoint,
+        };
+      }),
     });
+  });
+
+  app.get("/api/settings/nodes", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const stored = await getSetting<NodeSettings>(db, NODE_SETTINGS_KEY);
+    return c.json({ nodes: toPublicNodeSettings(stored) });
+  });
+
+  app.put("/api/settings/nodes", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const body = z
+      .object({ localComputeEnabled: z.boolean() })
+      .parse(await c.req.json());
+    const existing =
+      (await getSetting<NodeSettings>(db, NODE_SETTINGS_KEY)) ?? DEFAULT_NODE_SETTINGS;
+    await setSetting(db, NODE_SETTINGS_KEY, {
+      ...existing,
+      localComputeEnabled: body.localComputeEnabled,
+    } satisfies NodeSettings);
+    return c.json({
+      nodes: toPublicNodeSettings(await getSetting(db, NODE_SETTINGS_KEY)),
+    });
+  });
+
+  app.post("/api/nodes/add", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "servers.manage")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    try {
+      const body = z
+        .object({
+          kind: z.enum(["lan", "cloud"]),
+          host: z.string().min(1),
+          port: z.number().int().positive().optional(),
+          username: z.string().min(1),
+          password: z.string().optional(),
+          privateKey: z.string().optional(),
+          nodeId: z.string().min(1).optional(),
+          nodeName: z.string().min(1).optional(),
+          wgListenPort: z.number().int().positive().optional(),
+        })
+        .parse(await c.req.json());
+      const result = await addNode.addViaSsh(body);
+      return c.json({ node: result });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "add_node_failed";
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  app.post("/api/nodes/bootstrap-token", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "servers.manage")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    try {
+      const body = z
+        .object({
+          kind: z.enum(["lan", "cloud"]),
+          nodeId: z.string().min(1).optional(),
+          nodeName: z.string().min(1).optional(),
+          endpointHost: z.string().min(1).optional(),
+        })
+        .parse(await c.req.json());
+      const result = await addNode.createBootstrapToken(body);
+      return c.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "bootstrap_token_failed";
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  app.get("/api/nodes/bootstrap/:token", async (c) => {
+    try {
+      const script = await addNode.scriptForToken(c.req.param("token"));
+      return c.text(script, 200, {
+        "content-type": "text/x-shellscript; charset=utf-8",
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "bootstrap_failed";
+      return c.text(`#!/bin/bash\necho ${JSON.stringify(message)} >&2\nexit 1\n`, 400);
+    }
+  });
+
+  app.delete("/api/nodes/:nodeId", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "servers.manage")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    try {
+      const force = c.req.query("force") === "1" || c.req.query("force") === "true";
+      const result = await addNode.removeNode(c.req.param("nodeId"), { force });
+      return c.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "remove_node_failed";
+      const status = message.startsWith("unknown_node") ? 404 : 400;
+      return c.json({ error: message }, status);
+    }
   });
 
   app.get("/api/placement", async (c) => {
@@ -1417,6 +1548,10 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     const body = NodeHeartbeatSchema.parse(await c.req.json());
     const now = new Date();
     const existing = await db.select().from(nodes).where(eq(nodes.id, body.nodeId)).limit(1);
+    const kind: NodeKind =
+      body.kind ??
+      (existing[0]?.kind as NodeKind | undefined) ??
+      (body.nodeId === LOCAL_NODE_ID ? "local" : "lan");
     if (existing[0]) {
       await db
         .update(nodes)
@@ -1429,6 +1564,11 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           freeDiskBytes: body.freeDiskBytes ?? null,
           agentVersion: body.agentVersion,
           lastSeenAt: now,
+          kind,
+          // Cloud: heartbeat implies overlay path is usable
+          ...(kind === "cloud" && existing[0].tunnelStatus === "pending"
+            ? { tunnelStatus: "up" }
+            : {}),
         })
         .where(eq(nodes.id, body.nodeId));
     } else {
@@ -1442,6 +1582,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         freeDiskBytes: body.freeDiskBytes ?? null,
         agentVersion: body.agentVersion,
         lastSeenAt: now,
+        kind,
+        tunnelStatus: kind === "cloud" ? "up" : "none",
       });
     }
 

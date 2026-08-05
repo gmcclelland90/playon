@@ -38,7 +38,7 @@ Ideas that are interesting but explicitly not committed:
 - Mobile-native admin apps
 - Deep OS-level integration beyond containers and services
 - Real-time collaborative editing of skills by multiple admins
-- **Per-server compute placement** — Local (install host) / Remote (LAN node) / Cloud (nearby VPS + LAN tunnel); mixed homes in one party (see [14](14-cloud-backed-lan-mode.md))
+- ~~**Per-server compute placement**~~ — **Shipping in 0.1.2:** Add-node (LAN + cloud BYO), WireGuard + Home gateway (see [14](14-cloud-backed-lan-mode.md)). Still deferred: vendor OAuth Connect / guided VPS spin-up.
 
 ---
 

@@ -7,10 +7,10 @@
 | Piece | Role |
 |-------|------|
 | **Home (control plane)** | Admin UI, agents, placement, SQLite — never needs the Docker socket |
-| **Node** | Runs games (native / SteamCMD / optional Docker) |
-| **playon.games** | Get PlayOn, skill catalog, Vultr OAuth relay |
+| **Node** | Runs games (native / SteamCMD / optional Docker) — Local, LAN, or cloud BYO |
+| **playon.games** | Get PlayOn, skill catalog, host docs |
 
-Placement per server: **Local** (Home’s local node) · **Remote** (another LAN node) · **Cloud** (Vultr BYO → node + tunnel).
+Placement per server: **Local** (optional on Home) · **Remote** (LAN node via Add node) · **Cloud** (any VPS via Add node + WireGuard + Home LAN gateway). Vendor Connect is deferred.
 
 ## Primary: one-line install (recommended)
 
@@ -31,7 +31,7 @@ curl -fsSL https://playon.games/install | bash
 | Default dir | `%LOCALAPPDATA%\PlayOn` | `~/playon` |
 | Optional | `PLAYON_HOME`, `PLAYON_VERSION`, `PLAYON_START=0` | same |
 
-Each Home archive includes **Node.js**, production dependencies, the API, web UI, local node-agent, and platform skills. Create Owner → Settings → pick an LLM provider (Venice, OpenAI, Ollama, …) and paste your own key if needed → start a game. Players use `/play`.
+Each Home archive includes **Node.js**, production dependencies, the API, web UI, local node-agent, and platform skills. Create Owner → Settings → pick an LLM provider (or MCP) → optionally **Settings → Nodes** to add LAN/cloud capacity → start a game. Players use `/play`.
 
 ### Manual archive
 
@@ -97,12 +97,14 @@ Still run a **host-native** `playon-node` (or install-node against `http://127.0
 - Catalog URL defaults to `https://playon.games/skills/index.json` (`PLAYON_SKILLS_CATALOG_URL`). Hosts never download zip files by hand.
 - Curated `games.*` live only in the sibling **playon-games** repo (`skills-src/` → `pnpm catalog` → `public/skills/`). Never present in Home or monorepo `skills/`.
 
-## Cloud (Vultr)
+## Nodes (LAN + cloud BYO)
 
-1. Register PlayOn Vultr OAuth app; set `PLAYON_VULTR_CLIENT_ID` (and secret) on Home.
-2. Settings → Cloud → Connect Vultr → browser via `connect.playon.games` relay.
-3. Tokens stored encrypted on the control plane only.
-4. Cloud placement provisions a tagged instance, cloud-init runs `install-node.sh`, tunnel plan is recorded (WireGuard/Tailscale gateway TBD).
+1. Settings → **Nodes**: choose whether Home also hosts game servers (Local), or control-plane-only.
+2. **Add node** via SSH (preferred) or console one-liner:
+   - **LAN** — install-node against Home’s LAN API URL; no tunnel.
+   - **Cloud** — any VPS you can SSH to; PlayOn installs WireGuard + node-agent; Home is the roaming WG peer; game ports publish through the Home LAN gateway.
+3. Install `wireguard-tools` (Linux) or WireGuard for Windows on Home before adding cloud nodes.
+4. Vendor Connect (Vultr OAuth, etc.) is **deferred** — scaffold remains under `apps/api/src/services/cloud/` but is not the product path.
 
 ## Lab / us
 
@@ -114,6 +116,6 @@ Source zip (`pnpm package:mvp`) is a power-user fallback, not the primary Get Pl
 
 - [lan-install.md](lan-install.md) — legacy systemd-from-checkout notes
 - [linux-dev-host.md](linux-dev-host.md) — lab host
-- [design-docs/14](../design-docs/14-cloud-backed-lan-mode.md) — placement + Vultr
+- [design-docs/14](../design-docs/14-cloud-backed-lan-mode.md) — placement + Add-node / WireGuard
 - [design-docs/15](../design-docs/15-playon-games-site-and-skill-library.md) — site + catalog
 - Sibling **playon-games** repo — Astro site + public skill catalog (playon.games); update `/get` to point at Releases when ready

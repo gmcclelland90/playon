@@ -1,4 +1,6 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   createRuntime,
@@ -135,6 +137,48 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, content, "utf8");
     return { path: rel, bytes: Buffer.byteLength(content, "utf8") };
+  }
+
+  if (job.kind === "fs_put_archive") {
+    const rel = strArg(job.args, "path");
+    const archiveBase64 = typeof job.args.archiveBase64 === "string" ? job.args.archiveBase64 : "";
+    const target = resolveInJail(dataRoot, rel);
+    fs.rmSync(target, { recursive: true, force: true });
+    fs.mkdirSync(target, { recursive: true });
+    if (archiveBase64) {
+      const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-put-"));
+      const archive = path.join(staging, "tree.tar");
+      try {
+        fs.writeFileSync(archive, Buffer.from(archiveBase64, "base64"));
+        execFileSync("tar", ["-xf", archive, "-C", target], { stdio: "pipe" });
+      } finally {
+        fs.rmSync(staging, { recursive: true, force: true });
+      }
+    }
+    return { path: rel, ok: true };
+  }
+
+  if (job.kind === "fs_get_archive") {
+    const rel = strArg(job.args, "path");
+    const target = resolveInJail(dataRoot, rel);
+    if (!fs.existsSync(target)) {
+      return { archiveBase64: "" };
+    }
+    const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-get-"));
+    const archive = path.join(staging, "tree.tar");
+    try {
+      execFileSync("tar", ["-cf", archive, "-C", target, "."], { stdio: "pipe" });
+      return { archiveBase64: fs.readFileSync(archive).toString("base64") };
+    } finally {
+      fs.rmSync(staging, { recursive: true, force: true });
+    }
+  }
+
+  if (job.kind === "fs_remove") {
+    const rel = strArg(job.args, "path");
+    const target = resolveInJail(dataRoot, rel);
+    fs.rmSync(target, { recursive: true, force: true });
+    return { path: rel, ok: true };
   }
 
   const { docker, process: proc } = await ensureAdapters();

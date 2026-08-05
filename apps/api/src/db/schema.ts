@@ -28,6 +28,18 @@ export const nodes = sqliteTable("nodes", {
   freeDiskBytes: integer("free_disk_bytes"),
   agentVersion: text("agent_version"),
   lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }).notNull(),
+  /** local | lan | cloud */
+  kind: text("kind").notNull().default("lan"),
+  /** WireGuard peer public key (cloud). */
+  wgPublicKey: text("wg_public_key"),
+  /** Encrypted WireGuard peer private key (cloud). */
+  wgPrivateKeyEncrypted: text("wg_private_key_encrypted"),
+  /** VPS public endpoint host:port for WG. */
+  tunnelEndpoint: text("tunnel_endpoint"),
+  /** Overlay IPv4 assigned to this node. */
+  overlayIp: text("overlay_ip"),
+  /** none | unconfigured | pending | up | down */
+  tunnelStatus: text("tunnel_status").notNull().default("none"),
 });
 
 export const servers = sqliteTable("servers", {

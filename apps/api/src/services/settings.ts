@@ -99,6 +99,8 @@ export function llmSettingsFromPut(body: {
 
 export const CLOUD_SETTINGS_KEY = "cloud.vultr";
 export const SKILLS_CATALOG_KEY = "skills.catalog";
+export const NODE_SETTINGS_KEY = "nodes";
+export const WG_HOME_SETTINGS_KEY = "cloud.wireguard.home";
 
 export type VultrCloudSettings = {
   accessTokenEncrypted?: string;
@@ -113,6 +115,24 @@ export type SkillsCatalogSettings = {
   catalogUrl: string;
 };
 
+/** Home compute + overlay bookkeeping. */
+export type NodeSettings = {
+  /** When false, Local is hidden from placement (control-plane-only). Default true. */
+  localComputeEnabled: boolean;
+  /** Next host octet for 10.77.0.N cloud overlay assignments (starts at 2). */
+  nextOverlayHost?: number;
+};
+
+export type WgHomeSettings = {
+  publicKey: string;
+  privateKeyEncrypted: string;
+};
+
+export const DEFAULT_NODE_SETTINGS: NodeSettings = {
+  localComputeEnabled: true,
+  nextOverlayHost: 2,
+};
+
 export function toPublicCloudSettings(stored: VultrCloudSettings | null): {
   provider: "vultr";
   connected: boolean;
@@ -122,5 +142,13 @@ export function toPublicCloudSettings(stored: VultrCloudSettings | null): {
     provider: "vultr",
     connected: Boolean(stored?.accessTokenEncrypted),
     expiresAt: stored?.expiresAt,
+  };
+}
+
+export function toPublicNodeSettings(stored: NodeSettings | null): {
+  localComputeEnabled: boolean;
+} {
+  return {
+    localComputeEnabled: stored?.localComputeEnabled ?? true,
   };
 }

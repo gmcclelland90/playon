@@ -1,12 +1,12 @@
-# 14 – Per-Server Compute Placement (exploratory)
+# 14 – Per-Server Compute Placement
 
-> **Status:** Idea capture / parking lot — not committed for v1.  
-> **Working names:** Compute placement · Run-where · Local / Remote / Cloud  
-> **Earlier framing:** “Cloud-backed LAN mode” — refined below into a **per-server** choice, not a global product mode.
+> **Status:** Implementing — unified **Add a node** (LAN + cloud BYO) with WireGuard LAN gateway.  
+> **Working names:** Compute placement · Add a node · Local / Remote / Cloud  
+> **Earlier framing:** “Cloud-backed LAN mode” — refined into a **per-server** choice and a single Add-node capacity flow.
 
 ## One-liner
 
-When creating (or moving) a game server, the host picks **where it runs**: on this machine, on another computer on the LAN, or on a nearby cloud VPS — with cloud join paths tunneled so it still feels LAN-local.
+Install PlayOn Home (control plane), optionally host games on that machine, then **Add a node** (SSH or one-liner) for a LAN spare or any cloud VPS. Cloud nodes join over WireGuard; players still get LAN join addresses via the Home gateway.
 
 ## Problem
 
@@ -289,13 +289,13 @@ Not a pivot into “PlayOn Cloud Servers” as the default product. Cloud exists
 11. **Exact Vultr OAuth scopes / IAM policies** needed for Cloud placement (minimum set).
 12. **Second provider after Vultr** — only if demand appears; same Connect pattern.
 
-## Suggested phasing (if ever built)
+## Suggested phasing
 
-1. **Per-server pin to Local vs existing LAN Remote nodes** — productize the language; no Cloud yet.
-2. **Move server between Local and Remote** with snapshot + copy.
-3. **Cloud attach** — BYO VPS registered as a node + tunnel you bring (Tailscale/WireGuard).
-4. **Connect Vultr (OAuth + relay)** + spin-up — consent flow, token rotation, region list, RTT probe, tagged create/destroy, LAN gateway.
-5. Optional second provider later (same Connect pattern if they expose OAuth).
+1. **Node kinds + Local compute toggle** — `local` / `lan` / `cloud` badges; Home may be control-plane-only.
+2. **Unified Add node** — SSH + one-liner for LAN (install-node only) and cloud (+ WireGuard overlay).
+3. **Home LAN gateway** — TCP/UDP forward for cloud-placed servers; panel advertises Home.
+4. **Relocate with data copy** + remove node (WG teardown for cloud).
+5. **Deferred:** vendor Connect (Vultr/Linode/DO OAuth), guided spin-up, RTT region probe — adapters may call the same Add-node bootstrap later.
 
 ## Success metrics (exploratory)
 

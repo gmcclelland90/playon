@@ -14,13 +14,16 @@ import type { Db } from "../db/client.js";
 import {
   conversations,
   messages,
+  nodes,
   panelBlocks,
   servers,
   snapshots,
   toolInvocations,
 } from "../db/schema.js";
+import type { LanGateway } from "./cloud/gateway.js";
 import type { EventHub } from "./event-hub.js";
 import { PlacementService } from "./placement.js";
+import { pushServerDirToNode } from "./node-sync.js";
 import {
   generateRconPassword,
   readRconConfig,
@@ -90,6 +93,7 @@ export class ServerService {
     private readonly db: Db,
     private readonly config: AppConfig,
     private readonly events?: EventHub,
+    private readonly gateway?: LanGateway,
   ) {}
 
   private emitStatus(
@@ -274,10 +278,48 @@ export class ServerService {
 
   joinInfoFor(server: ServerRecord): { address: string; port: number } {
     const skillName = this.readSkillName(server.dataPath);
+    // Cloud servers are joined via Home LAN gateway — always advertise Home.
     return {
       address: this.config.advertiseHost,
       port: this.gamePortForSkill(skillName, server.game),
     };
+  }
+
+  private async nodeRow(nodeId: string | null | undefined) {
+    if (!nodeId) return null;
+    const rows = await this.db.select().from(nodes).where(eq(nodes.id, nodeId)).limit(1);
+    return rows[0] ?? null;
+  }
+
+  /** For cloud nodes, publish Home LAN → overlay game port forwards. */
+  private async ensureCloudGateway(server: ServerRecord, skillName: string): Promise<void> {
+    if (!this.gateway || !server.nodeId || isLocalNodeId(server.nodeId)) return;
+    const node = await this.nodeRow(server.nodeId);
+    if (!node || node.kind !== "cloud" || !node.overlayIp) return;
+    if (node.tunnelStatus === "down" || node.tunnelStatus === "unconfigured") {
+      throw new Error(`cloud_capacity_unreachable: tunnel ${node.tunnelStatus}`);
+    }
+    const skill = this.resolveSkill(skillName);
+    const ports =
+      skill?.metadata.ports.filter((p) => p.default != null).map((p) => ({
+        port: p.default!,
+        protocol: (p.protocol === "udp" ? "udp" : "tcp") as "tcp" | "udp",
+      })) ?? [
+        {
+          port: this.gamePortForSkill(skillName, server.game),
+          protocol: "tcp" as const,
+        },
+      ];
+    for (const p of ports) {
+      await this.gateway.ensure({
+        serverId: server.id,
+        nodeId: server.nodeId,
+        listenPort: p.port,
+        protocol: p.protocol,
+        targetHost: node.overlayIp,
+        targetPort: p.port,
+      });
+    }
   }
 
   async list(): Promise<ServerRecord[]> {
@@ -565,6 +607,12 @@ export class ServerService {
     const id = server.id;
     const nodeId = server.nodeId!;
     await this.provisionRemoteDirs(server);
+    await pushServerDirToNode({
+      nodeId,
+      serverId: id,
+      localDataPath: server.dataPath,
+    }).catch(() => undefined);
+    await this.ensureCloudGateway(server, skillName);
 
     if (this.wantsNativeRuntime(server, skillName, skillMeta.containerSupport)) {
       const skillEntry = this.resolveSkill(skillName);
@@ -807,6 +855,7 @@ export class ServerService {
     await this.db.update(servers).set({ status: "stopping" }).where(eq(servers.id, id));
     this.emitStatus(id, "stopping");
     this.stopLogFollow(id);
+    await this.gateway?.releaseServer(id).catch(() => undefined);
 
     if (this.isRemoteNode(server) && server.nodeId) {
       const processId = this.processes.get(id);

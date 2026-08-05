@@ -38,6 +38,25 @@ function ensureNodeCapabilityColumns(raw: Database.Database) {
   if (!names.has("steamcmd")) {
     raw.exec(`ALTER TABLE nodes ADD COLUMN steamcmd INTEGER NOT NULL DEFAULT 0`);
   }
+  if (!names.has("kind")) {
+    raw.exec(`ALTER TABLE nodes ADD COLUMN kind TEXT NOT NULL DEFAULT 'lan'`);
+    raw.exec(`UPDATE nodes SET kind = 'local' WHERE id = 'local'`);
+  }
+  if (!names.has("wg_public_key")) {
+    raw.exec(`ALTER TABLE nodes ADD COLUMN wg_public_key TEXT`);
+  }
+  if (!names.has("wg_private_key_encrypted")) {
+    raw.exec(`ALTER TABLE nodes ADD COLUMN wg_private_key_encrypted TEXT`);
+  }
+  if (!names.has("tunnel_endpoint")) {
+    raw.exec(`ALTER TABLE nodes ADD COLUMN tunnel_endpoint TEXT`);
+  }
+  if (!names.has("overlay_ip")) {
+    raw.exec(`ALTER TABLE nodes ADD COLUMN overlay_ip TEXT`);
+  }
+  if (!names.has("tunnel_status")) {
+    raw.exec(`ALTER TABLE nodes ADD COLUMN tunnel_status TEXT NOT NULL DEFAULT 'none'`);
+  }
 }
 
 /** Dev reset: replace legacy persona/per-server progress with skill-keyed table. */

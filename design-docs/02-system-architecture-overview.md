@@ -67,5 +67,5 @@ Global skills live in a separate, version-controlled store.
 
 - Community skill registry
 - Cross-LAN or WAN federation (later)
-- Per-server compute placement: Local / Remote (LAN) / Cloud with LAN-presence tunneling (exploratory — see [14](14-cloud-backed-lan-mode.md))
+- Per-server compute placement: Local / Remote (LAN) / Cloud via Add-node + WireGuard LAN gateway (see [14](14-cloud-backed-lan-mode.md))
 - Deeper “computer use” agents inside dedicated VMs for awkward proprietary launchers

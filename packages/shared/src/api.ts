@@ -40,6 +40,8 @@ export const NodeCapabilitiesSchema = z.object({
   freeDiskBytes: z.number().nonnegative().optional(),
 });
 
+export const NodeKindSchema = z.enum(["local", "lan", "cloud"]);
+
 export const NodeHeartbeatSchema = z.object({
   nodeId: z.string().min(1),
   name: z.string().min(1),
@@ -49,6 +51,8 @@ export const NodeHeartbeatSchema = z.object({
   steamcmd: z.boolean().default(false),
   freeDiskBytes: z.number().nonnegative().optional(),
   agentVersion: z.string().default("0.1.0"),
+  /** Optional; control plane preserves kind set at Add-node time when omitted. */
+  kind: NodeKindSchema.optional(),
 });
 
 /** Job kinds the control plane may enqueue onto a node-agent. */
@@ -57,6 +61,9 @@ export const NodeJobKindSchema = z.enum([
   "fs_list",
   "fs_ensure_dir",
   "fs_write_text",
+  "fs_put_archive",
+  "fs_get_archive",
+  "fs_remove",
   "container_create",
   "container_start",
   "container_stop",

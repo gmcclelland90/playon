@@ -5,6 +5,8 @@ AI-driven game server control plane for LAN parties.
 
 ## Quick start
 
+Host setup guides live on the site: **[playon.games/docs/quick-start](https://playon.games/docs/quick-start)** (providers, MCP for Cursor / Claude / OpenClaw / Hermes, players, skills).
+
 ### LAN host (recommended)
 
 One line — fetches the latest Home release and starts PlayOn ([playon.games/get](https://playon.games/get)):
@@ -20,8 +22,9 @@ curl -fsSL https://playon.games/install | bash
 ```
 
 1. Browser opens the admin UI.  
-2. Create the **Owner** account, save a Venice API key under **Settings**, then ask to start a game.  
-3. Players open `/play` on that host (shown in the UI).
+2. Create the **Owner** account, then either paste an LLM key under **Settings** or connect an external agent via MCP ([docs](https://playon.games/docs/mcp)).  
+3. Optional: **Settings → Nodes** — host games on this machine and/or **Add a node** (LAN spare or any cloud VPS; WireGuard is configured for you).  
+4. Ask chat (or your MCP agent) to start a game; players open `/play` on that host.
 
 No separate Node.js or pnpm install. Always-on: `PLAYON_SERVICE=1` (see **[docs/deploy.md](docs/deploy.md)**).
 
@@ -34,6 +37,7 @@ pnpm build && pnpm package:home
 # → dist-home/playon-home-<version>-windows-x64.zip
 # → dist-home/playon-home-<version>-linux-x64.tar.gz
 node scripts/sync-install-scripts.mjs   # → playon-games/public (when sibling present)
+pnpm sync:llm-presets                 # → playon-games docs preset facts (when sibling present)
 ```
 
 ### Developers
@@ -53,9 +57,12 @@ pnpm dev
 | Player panel | http://127.0.0.1:5173/play |
 
 1. Open the UI and create the **Owner** account.  
-2. Go to **Settings** → pick a provider (Venice, OpenAI, Ollama, …), paste your API key if needed, set model, save.  
-3. Chat: ask to spin up a game (Paper needs Docker; Rust/SteamCMD works with `PLAYON_RUNTIME=native`).  
-4. Players use **/play** for join info.
+2. Go to **Settings** → pick a provider (Venice, NVIDIA, OpenAI, Ollama, …), paste your API key if needed, set model, save — or mint an MCP token for an external agent.  
+3. Optional: **Settings → Nodes** to add LAN/cloud capacity ([nodes guide](https://playon.games/docs/nodes)).  
+4. Chat (or MCP): ask to spin up a game (Paper needs Docker; Rust/SteamCMD works with `PLAYON_RUNTIME=native`).  
+5. Players use **/play** for join info.
+
+End-user docs: [playon.games/docs](https://playon.games/docs). Ops/lab notes stay in [`docs/`](docs/).
 
 ## Workspace
 

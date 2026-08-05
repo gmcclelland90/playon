@@ -1,10 +1,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import { eq } from "drizzle-orm";
+import { isLocalNodeId } from "@playon/shared";
 import type { Db } from "../db/client.js";
-import { servers } from "../db/schema.js";
+import { nodes, servers } from "../db/schema.js";
 import type { EventHub } from "./event-hub.js";
 import { PlacementService } from "./placement.js";
+import { pullServerDirFromNode, pushServerDirToNode } from "./node-sync.js";
 import type { ServerRecord, ServerService } from "./servers.js";
 import { readSkillMarker } from "./skill-marker.js";
 import type { SnapshotService } from "./snapshots.js";
@@ -20,9 +22,7 @@ export type RelocateResult = {
 };
 
 /**
- * Best-effort relocate: stop → snapshot → rebind nodeId → start on control plane.
- * Remote Docker execution is not available yet; any eligible online node may receive
- * the binding, and runtime always runs on the API host for now.
+ * Relocate: stop → snapshot → sync server dir → rebind nodeId → start.
  */
 export class MigrateService {
   constructor(
@@ -62,6 +62,24 @@ export class MigrateService {
 
     const snap = await this.snapshots.create(serverId, `pre-relocate-${toNodeId}`);
 
+    // Ensure control-plane copy is current when leaving a remote node.
+    if (fromNodeId && !isLocalNodeId(fromNodeId)) {
+      await pullServerDirFromNode({
+        nodeId: fromNodeId,
+        serverId,
+        localDataPath: server.dataPath,
+      });
+    }
+
+    // Push to remote/cloud target.
+    if (!isLocalNodeId(toNodeId)) {
+      await pushServerDirToNode({
+        nodeId: toNodeId,
+        serverId,
+        localDataPath: server.dataPath,
+      });
+    }
+
     await this.db.update(servers).set({ nodeId: toNodeId }).where(eq(servers.id, serverId));
     this.writeSkillNode(server.dataPath, toNodeId);
 
@@ -79,13 +97,17 @@ export class MigrateService {
     }
 
     const updated = (await this.servers.get(serverId))!;
+    const toKind =
+      (
+        await this.db.select().from(nodes).where(eq(nodes.id, toNodeId)).limit(1)
+      )[0]?.kind ?? "lan";
     return {
       server: updated,
       fromNodeId,
       toNodeId,
       snapshotId: snap.id,
       restarted,
-      note: "rebound_control_plane_runtime",
+      note: `synced_to_${toKind}`,
     };
   }
 

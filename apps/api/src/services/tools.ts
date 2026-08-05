@@ -236,6 +236,7 @@ export function createPlayOnToolRegistry(
     playerPanel,
     queries,
     health,
+    addNode,
   } = plane;
 
   async function catalogUrl(): Promise<string> {
@@ -676,7 +677,7 @@ export function createPlayOnToolRegistry(
     {
       name: "placement_suggest",
       description:
-        "Rank nodes for a skill by OS, Docker, disk, and online status. Use before servers_create_from_skill when choosing nodeId.",
+        "Rank nodes for a skill by OS, Docker, disk, online status, and placement kind (Local / Remote / Cloud). Use before servers_create_from_skill when choosing nodeId.",
       parameters: {
         type: "object",
         properties: { skillName: { type: "string" } },
@@ -684,9 +685,43 @@ export function createPlayOnToolRegistry(
       },
     },
     {
+      name: "nodes_add",
+      description:
+        "Add a LAN or cloud compute node via SSH. Cloud installs WireGuard so servers can join like LAN. Prefer this over asking the host to hand-install the agent.",
+      requiresConfirm: true,
+      parameters: {
+        type: "object",
+        properties: {
+          kind: { type: "string", enum: ["lan", "cloud"] },
+          host: { type: "string" },
+          username: { type: "string" },
+          password: { type: "string" },
+          privateKey: { type: "string" },
+          nodeId: { type: "string" },
+          nodeName: { type: "string" },
+          port: { type: "number" },
+        },
+        required: ["kind", "host", "username"],
+      },
+    },
+    {
+      name: "nodes_remove",
+      description:
+        "Remove a registered LAN/cloud node. Fails if servers are still bound unless force=true. Tears down WireGuard for cloud nodes.",
+      requiresConfirm: true,
+      parameters: {
+        type: "object",
+        properties: {
+          nodeId: { type: "string" },
+          force: { type: "boolean" },
+        },
+        required: ["nodeId"],
+      },
+    },
+    {
       name: "servers_relocate",
       description:
-        "Best-effort move a server onto another node: stop, snapshot, rebind nodeId, restart on the control plane.",
+        "Move a server onto another node: stop, snapshot, sync server dir, rebind nodeId, restart on the target.",
       requiresConfirm: true,
       parameters: {
         type: "object",
@@ -1303,6 +1338,24 @@ export function createPlayOnToolRegistry(
   });
 
   registerTool(tool("placement_suggest"), async (args) => placement.plan(String(args.skillName)));
+
+  registerTool(tool("nodes_add"), async (args) => {
+    const kind = String(args.kind) === "cloud" ? "cloud" : "lan";
+    return addNode.addViaSsh({
+      kind,
+      host: String(args.host),
+      username: String(args.username),
+      password: args.password != null ? String(args.password) : undefined,
+      privateKey: args.privateKey != null ? String(args.privateKey) : undefined,
+      nodeId: args.nodeId != null ? String(args.nodeId) : undefined,
+      nodeName: args.nodeName != null ? String(args.nodeName) : undefined,
+      port: typeof args.port === "number" ? args.port : undefined,
+    });
+  });
+
+  registerTool(tool("nodes_remove"), async (args) =>
+    addNode.removeNode(String(args.nodeId), { force: args.force === true }),
+  );
 
   registerTool(tool("servers_relocate"), async (args) => {
     const resolved = resolveWorkspaceServerId(args, workspace.serverId);

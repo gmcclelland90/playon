@@ -37,9 +37,81 @@ export function SettingsPage({ user }: { user: PublicUser }) {
   const [catalogSearch, setCatalogSearch] = useState("");
   const [installingSkill, setInstallingSkill] = useState<string | null>(null);
 
+  const [addKind, setAddKind] = useState<"lan" | "cloud">("lan");
+  const [addHost, setAddHost] = useState("");
+  const [addUser, setAddUser] = useState("root");
+  const [addPassword, setAddPassword] = useState("");
+  const [addNodeName, setAddNodeName] = useState("");
+  const [oneLiner, setOneLiner] = useState<string | null>(null);
+  const [nodeNotice, setNodeNotice] = useState<string | null>(null);
+  const [nodeError, setNodeError] = useState<string | null>(null);
+
   const backupTarget = useQuery({
     queryKey: ["backup-target"],
     queryFn: api.backupTarget,
+  });
+
+  const nodeSettings = useQuery({
+    queryKey: ["node-settings"],
+    queryFn: api.getNodeSettings,
+    enabled: can(user.role, "settings.llm"),
+  });
+
+  const nodesList = useQuery({
+    queryKey: ["nodes"],
+    queryFn: api.nodes,
+    refetchInterval: 10_000,
+  });
+
+  const saveNodeSettings = useMutation({
+    mutationFn: (localComputeEnabled: boolean) => api.putNodeSettings({ localComputeEnabled }),
+    onSuccess: async () => {
+      setNodeNotice("Node settings saved.");
+      await qc.invalidateQueries({ queryKey: ["node-settings"] });
+      await qc.invalidateQueries({ queryKey: ["nodes"] });
+      window.setTimeout(() => setNodeNotice(null), 3000);
+    },
+    onError: (err: Error) => setNodeError(err.message),
+  });
+
+  const addNodeMut = useMutation({
+    mutationFn: () =>
+      api.addNode({
+        kind: addKind,
+        host: addHost.trim(),
+        username: addUser.trim(),
+        password: addPassword || undefined,
+        nodeName: addNodeName.trim() || undefined,
+      }),
+    onSuccess: async (res) => {
+      setNodeNotice(`Added ${res.node.name} (${res.node.kind}) — ${res.node.detail}`);
+      setAddPassword("");
+      await qc.invalidateQueries({ queryKey: ["nodes"] });
+    },
+    onError: (err: Error) => setNodeError(err.message),
+  });
+
+  const bootstrapTokenMut = useMutation({
+    mutationFn: () =>
+      api.createNodeBootstrapToken({
+        kind: addKind,
+        nodeName: addNodeName.trim() || undefined,
+        endpointHost: addKind === "cloud" ? addHost.trim() : undefined,
+      }),
+    onSuccess: (res) => {
+      setOneLiner(res.oneLiner);
+      setNodeNotice(`One-liner ready (expires ${new Date(res.expiresAt).toLocaleString()})`);
+    },
+    onError: (err: Error) => setNodeError(err.message),
+  });
+
+  const removeNodeMut = useMutation({
+    mutationFn: (id: string) => api.removeNode(id),
+    onSuccess: async () => {
+      setNodeNotice("Node removed.");
+      await qc.invalidateQueries({ queryKey: ["nodes"] });
+    },
+    onError: (err: Error) => setNodeError(err.message),
   });
 
   const catalog = useQuery({
@@ -184,6 +256,144 @@ export function SettingsPage({ user }: { user: PublicUser }) {
         </p>
       </header>
 
+      <section className="panel stack tight">
+        <h3>Nodes</h3>
+        <p className="muted status-inline">
+          Home is the control plane. Optionally host games here, or add LAN / cloud machines via SSH
+          (cloud nodes get WireGuard + a LAN join gateway).
+        </p>
+        <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>
+          <input
+            type="checkbox"
+            checked={nodeSettings.data?.nodes.localComputeEnabled ?? true}
+            onChange={(e) => {
+              setNodeError(null);
+              saveNodeSettings.mutate(e.target.checked);
+            }}
+            disabled={saveNodeSettings.isPending || nodeSettings.isLoading}
+          />
+          <span>Also host game servers on this machine (Local)</span>
+        </label>
+        {nodesList.data?.wireguardTools === false ? (
+          <p className="muted status-inline">
+            WireGuard tools not detected on Home — install wireguard-tools (Linux) or WireGuard for
+            Windows before adding cloud nodes.
+          </p>
+        ) : null}
+
+        <h4>Add node</h4>
+        <div className="stack tight">
+          <label className="field">
+            <span>Where is this machine?</span>
+            <select
+              value={addKind}
+              onChange={(e) => setAddKind(e.target.value as "lan" | "cloud")}
+            >
+              <option value="lan">On my LAN (no tunnel)</option>
+              <option value="cloud">In the cloud (WireGuard)</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>{addKind === "cloud" ? "Public IP / hostname" : "SSH host"}</span>
+            <input
+              value={addHost}
+              onChange={(e) => setAddHost(e.target.value)}
+              placeholder={addKind === "cloud" ? "203.0.113.9" : "192.168.1.50"}
+            />
+          </label>
+          <label className="field">
+            <span>SSH username</span>
+            <input value={addUser} onChange={(e) => setAddUser(e.target.value)} />
+          </label>
+          <label className="field">
+            <span>SSH password (for Add via SSH)</span>
+            <input
+              type="password"
+              value={addPassword}
+              onChange={(e) => setAddPassword(e.target.value)}
+              autoComplete="off"
+            />
+          </label>
+          <label className="field">
+            <span>Node name (optional)</span>
+            <input
+              value={addNodeName}
+              onChange={(e) => setAddNodeName(e.target.value)}
+              placeholder="spare-pc"
+            />
+          </label>
+          <div className="btn-row">
+            <button
+              className="btn btn-primary"
+              type="button"
+              disabled={addNodeMut.isPending || !addHost.trim()}
+              onClick={() => {
+                setNodeError(null);
+                addNodeMut.mutate();
+              }}
+            >
+              {addNodeMut.isPending ? "Adding…" : "Add via SSH"}
+            </button>
+            <button
+              className="btn"
+              type="button"
+              disabled={bootstrapTokenMut.isPending || (addKind === "cloud" && !addHost.trim())}
+              onClick={() => {
+                setNodeError(null);
+                bootstrapTokenMut.mutate();
+              }}
+            >
+              {bootstrapTokenMut.isPending ? "…" : "Copy one-liner instead"}
+            </button>
+          </div>
+          {oneLiner ? (
+            <label className="field">
+              <span>Run on the target machine</span>
+              <textarea readOnly rows={3} value={oneLiner} />
+            </label>
+          ) : null}
+        </div>
+
+        {nodesList.data?.nodes?.length ? (
+          <ul className="list compact-list">
+            {nodesList.data.nodes.map((n) => (
+              <li key={n.id}>
+                <div className="btn-row" style={{ justifyContent: "space-between" }}>
+                  <div>
+                    <strong>{n.name}</strong>{" "}
+                    <span className="muted">{n.badge ?? n.kind}</span>
+                    <div className="muted">
+                      {n.status}
+                      {n.tunnelStatus && n.tunnelStatus !== "none"
+                        ? ` · tunnel ${n.tunnelStatus}`
+                        : ""}
+                    </div>
+                  </div>
+                  {n.id !== "local" ? (
+                    <button
+                      className="btn"
+                      type="button"
+                      disabled={removeNodeMut.isPending}
+                      onClick={() => {
+                        if (!window.confirm(`Remove node ${n.name}? Servers must be moved first.`)) {
+                          return;
+                        }
+                        setNodeError(null);
+                        removeNodeMut.mutate(n.id);
+                      }}
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {nodeNotice ? <p className="ok">{nodeNotice}</p> : null}
+        {nodeError ? <p className="error">{nodeError}</p> : null}
+      </section>
+
       <form className="panel stack tight" onSubmit={onSubmit}>
         <h3>In-app agents (LLM provider)</h3>
         {llm.isLoading ? (
@@ -240,6 +450,17 @@ export function SettingsPage({ user }: { user: PublicUser }) {
               ) : null}
               {activePreset.docsHint ? (
                 <span className="muted status-inline">{activePreset.docsHint}</span>
+              ) : null}
+              {activePreset.docsPath ? (
+                <span className="muted status-inline">
+                  <a
+                    href={`https://playon.games${activePreset.docsPath}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Setup guide
+                  </a>
+                </span>
               ) : null}
               {fieldErrors.model ? (
                 <span className="field-error">{fieldErrors.model}</span>
@@ -504,8 +725,12 @@ function McpAccessTokensSection() {
     <section className="panel stack tight">
       <h3>External agents (MCP)</h3>
       <p className="muted status-inline">
-        Connect Claude Code, Codex, Cursor, or other MCP clients with a PlayOn access token. No Venice
-        key required on this host — they use the same tools as in-app agents.
+        Connect Claude Code, Codex, Cursor, OpenClaw, Hermes, or other MCP clients with a PlayOn
+        access token. Your agent can set up servers end-to-end and manage them afterward — same tools
+        as in-app agents. No cloud LLM key required on this host.{" "}
+        <a href="https://playon.games/docs/mcp" target="_blank" rel="noreferrer">
+          Setup guides
+        </a>
       </p>
       <label className="field">
         <span>MCP URL</span>

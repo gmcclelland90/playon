@@ -62,4 +62,5 @@ On the control plane Dashboard → Nodes (or Chat → Machines), the new node sh
 
 - Terraform / cloud provider modules
 - Automatic game-port firewall rules per skill
-- Full Cloud tunnel gateway (see design-docs/14); node runtime jobs are implemented in `apps/node-agent`
+
+Prefer **Settings → Nodes → Add node** (SSH / one-liner) for LAN and cloud BYO; cloud path installs WireGuard and uses the Home LAN gateway (design-docs/14).

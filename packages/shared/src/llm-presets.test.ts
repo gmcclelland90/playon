@@ -75,4 +75,26 @@ describe("llm presets", () => {
     expect(isLlmPresetId("not-a-provider")).toBe(false);
     expect(getLlmPreset("venice").baseUrl).toBe(LLM_PRESETS.venice.baseUrl);
   });
+
+  it("exposes docsPath for every preset", () => {
+    for (const id of LLM_PRESET_IDS) {
+      expect(LLM_PRESETS[id].docsPath).toBe(`/docs/providers/${id}`);
+    }
+  });
+
+  it("keeps curated suggestions aligned with known-good current ids", () => {
+    expect(LLM_PRESETS.venice.suggestedModels).toEqual([
+      "llama-3.3-70b",
+      "qwen3-235b-a22b-instruct-2507",
+      "venice-uncensored-1-2",
+    ]);
+    expect(LLM_PRESETS.anthropic.defaultModel).toBe("claude-sonnet-5");
+    expect(LLM_PRESETS.groq.defaultModel).toBe("openai/gpt-oss-120b");
+    expect(LLM_PRESETS.nvidia.suggestedModels).toContain(
+      "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+    );
+    expect(LLM_PRESETS.nvidia.suggestedModels).not.toContain(
+      "nvidia/llama-3.1-nemotron-70b-instruct",
+    );
+  });
 });

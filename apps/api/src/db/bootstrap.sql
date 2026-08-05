@@ -23,7 +23,13 @@ CREATE TABLE IF NOT EXISTS nodes (
   steamcmd INTEGER NOT NULL DEFAULT 0,
   free_disk_bytes INTEGER,
   agent_version TEXT,
-  last_seen_at INTEGER NOT NULL
+  last_seen_at INTEGER NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'lan',
+  wg_public_key TEXT,
+  wg_private_key_encrypted TEXT,
+  tunnel_endpoint TEXT,
+  overlay_ip TEXT,
+  tunnel_status TEXT NOT NULL DEFAULT 'none'
 );
 
 CREATE TABLE IF NOT EXISTS servers (

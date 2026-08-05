@@ -1,7 +1,7 @@
 {
   "name": "playon",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "PlayOn — AI-driven game server control plane for LAN parties",
   "packageManager": "pnpm@9.15.4",
   "engines": {
@@ -28,6 +28,7 @@
     "package:mvp": "node scripts/package-mvp.mjs",
     "package:home": "node scripts/package-home.mjs",
     "sync:install-scripts": "node scripts/sync-install-scripts.mjs",
+    "sync:llm-presets": "pnpm --filter @playon/shared build && node scripts/sync-llm-presets.mjs",
     "smoke:venice": "pnpm --filter @playon/api smoke:venice",
     "smoke:paper-docker": "node scripts/paper-docker-smoke.mjs",
     "lint": "turbo run lint",

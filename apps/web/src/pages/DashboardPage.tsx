@@ -288,7 +288,8 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                 {nodes.data.nodes.map((n) => (
                   <li key={n.id}>
                     <div>
-                      <strong>{n.name}</strong>
+                      <strong>{n.name}</strong>{" "}
+                      <span className="muted">{n.badge ?? n.placement ?? n.kind ?? ""}</span>
                       <div className="muted">
                         <span className={`node-status node-${n.status}`}>
                           {statusLabel(n.status)}
@@ -298,6 +299,9 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                         {n.docker ? " · Docker" : ""}
                         {n.native !== false ? " · native" : ""}
                         {n.steamcmd ? " · SteamCMD" : ""}
+                        {n.tunnelStatus && n.tunnelStatus !== "none"
+                          ? ` · tunnel ${n.tunnelStatus}`
+                          : ""}
                         {" · free "}
                         {formatBytes(n.freeDiskBytes)}
                         {n.agentVersion ? ` · agent ${n.agentVersion}` : ""}
@@ -311,8 +315,8 @@ export function DashboardPage({ user }: { user: PublicUser }) {
               <div className="empty-hint">
                 <strong>Local host only</strong>
                 <p className="muted status-inline">
-                  Add a LAN machine with the Node install command from Settings, or wait for the
-                  local node to register.
+                  Add a LAN or cloud machine from Settings → Nodes, or wait for the local node to
+                  register.
                 </p>
               </div>
             )}

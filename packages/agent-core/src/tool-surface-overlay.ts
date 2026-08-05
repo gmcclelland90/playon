@@ -60,6 +60,8 @@ export const TOOL_SURFACE_OVERLAY = {
     xp: { xp: 10, reason: "player_panel" },
   },
   placement_suggest: { skill: "installer", activityVerb: "search" },
+  nodes_add: { skill: "installer", activityVerb: "run" },
+  nodes_remove: { skill: "installer", activityVerb: "run" },
   rcon_exec: { skill: "configurer", activityVerb: "run" },
   rcon_say: { skill: "configurer", activityVerb: "run" },
   servers_create_from_skill: {

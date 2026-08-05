@@ -30,6 +30,8 @@ export type LlmPreset = {
   /** Base URL is editable in the UI (custom + local Ollama). */
   baseUrlEditable: boolean;
   docsHint?: string;
+  /** Public setup guide on playon.games */
+  docsPath?: string;
 };
 
 export const LLM_PRESETS: Record<LlmPresetId, LlmPreset> = {
@@ -39,10 +41,15 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPreset> = {
     transport: "openai_compatible",
     baseUrl: "https://api.venice.ai/api/v1",
     defaultModel: "llama-3.3-70b",
-    suggestedModels: ["llama-3.3-70b", "qwen3-235b", "venice-uncensored"],
+    suggestedModels: [
+      "llama-3.3-70b",
+      "qwen3-235b-a22b-instruct-2507",
+      "venice-uncensored-1-2",
+    ],
     requiresApiKey: true,
     apiKeyLabel: "Venice API key",
     baseUrlEditable: false,
+    docsPath: "/docs/providers/venice",
   },
   openai: {
     id: "openai",
@@ -54,18 +61,20 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPreset> = {
     requiresApiKey: true,
     apiKeyLabel: "OpenAI API key",
     baseUrlEditable: false,
+    docsPath: "/docs/providers/openai",
   },
   anthropic: {
     id: "anthropic",
     label: "Anthropic",
     transport: "openai_compatible",
     baseUrl: "https://api.anthropic.com/v1",
-    defaultModel: "claude-sonnet-4-6",
-    suggestedModels: ["claude-sonnet-4-6", "claude-opus-4-7", "claude-haiku-4-5"],
+    defaultModel: "claude-sonnet-5",
+    suggestedModels: ["claude-sonnet-5", "claude-opus-5", "claude-haiku-4-5"],
     requiresApiKey: true,
     apiKeyLabel: "Anthropic API key",
     baseUrlEditable: false,
     docsHint: "Uses Anthropic’s OpenAI-compatible endpoint",
+    docsPath: "/docs/providers/anthropic",
   },
   gemini: {
     id: "gemini",
@@ -77,36 +86,39 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPreset> = {
     requiresApiKey: true,
     apiKeyLabel: "Google AI API key",
     baseUrlEditable: false,
+    docsPath: "/docs/providers/gemini",
   },
   openrouter: {
     id: "openrouter",
     label: "OpenRouter",
     transport: "openai_compatible",
     baseUrl: "https://openrouter.ai/api/v1",
-    defaultModel: "anthropic/claude-sonnet-4",
+    defaultModel: "anthropic/claude-sonnet-5",
     suggestedModels: [
-      "anthropic/claude-sonnet-4",
+      "anthropic/claude-sonnet-5",
       "openai/gpt-4.1",
       "google/gemini-2.5-flash",
     ],
     requiresApiKey: true,
     apiKeyLabel: "OpenRouter API key",
     baseUrlEditable: false,
+    docsPath: "/docs/providers/openrouter",
   },
   groq: {
     id: "groq",
     label: "Groq",
     transport: "openai_compatible",
     baseUrl: "https://api.groq.com/openai/v1",
-    defaultModel: "llama-3.3-70b-versatile",
+    defaultModel: "openai/gpt-oss-120b",
     suggestedModels: [
-      "llama-3.3-70b-versatile",
-      "llama-3.1-8b-instant",
-      "qwen/qwen3-32b",
+      "openai/gpt-oss-120b",
+      "openai/gpt-oss-20b",
+      "qwen/qwen3.6-27b",
     ],
     requiresApiKey: true,
     apiKeyLabel: "Groq API key",
     baseUrlEditable: false,
+    docsPath: "/docs/providers/groq",
   },
   deepseek: {
     id: "deepseek",
@@ -118,6 +130,7 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPreset> = {
     requiresApiKey: true,
     apiKeyLabel: "DeepSeek API key",
     baseUrlEditable: false,
+    docsPath: "/docs/providers/deepseek",
   },
   nvidia: {
     id: "nvidia",
@@ -127,12 +140,13 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPreset> = {
     defaultModel: "meta/llama-3.3-70b-instruct",
     suggestedModels: [
       "meta/llama-3.3-70b-instruct",
-      "nvidia/llama-3.1-nemotron-70b-instruct",
+      "nvidia/llama-3.3-nemotron-super-49b-v1.5",
       "meta/llama-3.1-8b-instruct",
     ],
     requiresApiKey: true,
     apiKeyLabel: "NVIDIA API key",
     baseUrlEditable: false,
+    docsPath: "/docs/providers/nvidia",
   },
   ollama: {
     id: "ollama",
@@ -144,6 +158,7 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPreset> = {
     requiresApiKey: false,
     apiKeyLabel: "API key (optional)",
     baseUrlEditable: true,
+    docsPath: "/docs/providers/ollama",
   },
   custom: {
     id: "custom",
@@ -155,6 +170,7 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPreset> = {
     requiresApiKey: true,
     apiKeyLabel: "API key",
     baseUrlEditable: true,
+    docsPath: "/docs/providers/custom",
   },
 };
 

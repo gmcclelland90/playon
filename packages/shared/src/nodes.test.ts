@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveNodePresence } from "./nodes.js";
+import { deriveNodePresence, placementBadge, placementFromNodeKind } from "./nodes.js";
 
 describe("deriveNodePresence", () => {
   const now = 1_000_000;
@@ -14,5 +14,19 @@ describe("deriveNodePresence", () => {
 
   it("marks old heartbeats offline", () => {
     expect(deriveNodePresence(now - 120_000, now)).toBe("offline");
+  });
+});
+
+describe("placement helpers", () => {
+  it("maps node kinds to placement", () => {
+    expect(placementFromNodeKind("local")).toBe("local");
+    expect(placementFromNodeKind("lan")).toBe("remote");
+    expect(placementFromNodeKind("cloud")).toBe("cloud");
+  });
+
+  it("formats badges", () => {
+    expect(placementBadge({ kind: "local" })).toBe("Local");
+    expect(placementBadge({ kind: "lan", name: "basement" })).toBe("Remote · basement");
+    expect(placementBadge({ kind: "cloud", name: "vps-1", rttMs: 18 })).toBe("Cloud · vps-1 · 18ms");
   });
 });

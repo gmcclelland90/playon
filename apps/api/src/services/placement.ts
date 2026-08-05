@@ -1,12 +1,28 @@
 import os from "node:os";
 import { eq } from "drizzle-orm";
-import { deriveNodePresence, LOCAL_NODE_ID, type NodePresence, type SkillMetadata } from "@playon/shared";
+import {
+  deriveNodePresence,
+  LOCAL_NODE_ID,
+  placementBadge,
+  placementFromNodeKind,
+  type ComputePlacement,
+  type NodeKind,
+  type NodePresence,
+  type NodeTunnelStatus,
+  type SkillMetadata,
+} from "@playon/shared";
 import { probeHostCapabilities } from "@playon/runtime";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db/client.js";
 import { nodes } from "../db/schema.js";
 import { loadSkillMetadata } from "./skills.js";
 import type { NetToolsService } from "./net-tools.js";
+import {
+  DEFAULT_NODE_SETTINGS,
+  getSetting,
+  NODE_SETTINGS_KEY,
+  type NodeSettings,
+} from "./settings.js";
 
 const MIN_DISK_BYTES = 512 * 1024 * 1024;
 
@@ -19,6 +35,10 @@ export type PlacementCandidate = {
   steamcmd: boolean;
   freeDiskBytes: number | null;
   status: NodePresence;
+  kind: NodeKind;
+  placement: ComputePlacement;
+  badge: string;
+  tunnelStatus: NodeTunnelStatus;
   eligible: boolean;
   score: number;
   reasons: string[];
@@ -28,6 +48,7 @@ export type PlacementPlan = {
   skillName: string;
   recommendedNodeId: string | null;
   candidates: PlacementCandidate[];
+  localComputeEnabled: boolean;
 };
 
 export type NodeCaps = {
@@ -39,18 +60,28 @@ export type NodeCaps = {
   steamcmd: boolean;
   freeDiskBytes: number | null;
   lastSeenAt: Date;
+  kind: NodeKind;
+  tunnelStatus: NodeTunnelStatus;
 };
 
 export function scoreNodeForSkill(
   node: NodeCaps,
   skill: SkillMetadata,
   nowMs: number = Date.now(),
-  opts?: { relaxDocker?: boolean },
+  opts?: { relaxDocker?: boolean; localComputeEnabled?: boolean },
 ): PlacementCandidate {
   const status = deriveNodePresence(node.lastSeenAt, nowMs);
   const reasons: string[] = [];
   let eligible = true;
   let score = 0;
+  const kind = node.kind;
+  const placement = placementFromNodeKind(kind);
+  const tunnelStatus = node.tunnelStatus;
+
+  if (kind === "local" && opts?.localComputeEnabled === false) {
+    eligible = false;
+    reasons.push("local_compute_disabled");
+  }
 
   if (status === "offline") {
     eligible = false;
@@ -61,6 +92,16 @@ export function scoreNodeForSkill(
   } else {
     score += 40;
     reasons.push("node_online");
+  }
+
+  if (kind === "cloud" && tunnelStatus !== "up" && tunnelStatus !== "none") {
+    if (tunnelStatus === "down" || tunnelStatus === "unconfigured") {
+      eligible = false;
+      reasons.push(`tunnel_${tunnelStatus}`);
+    } else if (tunnelStatus === "pending") {
+      score -= 15;
+      reasons.push("tunnel_pending");
+    }
   }
 
   if (!skill.os.includes(node.os)) {
@@ -126,6 +167,10 @@ export function scoreNodeForSkill(
     steamcmd: node.steamcmd,
     freeDiskBytes: node.freeDiskBytes,
     status,
+    kind,
+    placement,
+    badge: placementBadge({ kind, name: node.name, tunnelStatus }),
+    tunnelStatus,
     eligible,
     score: eligible ? score : score - 1000,
     reasons,
@@ -138,6 +183,15 @@ export class PlacementService {
     private readonly config: AppConfig,
     private readonly net?: NetToolsService,
   ) {}
+
+  async getNodeSettings(): Promise<NodeSettings> {
+    const stored = await getSetting<NodeSettings>(this.db, NODE_SETTINGS_KEY);
+    return {
+      ...DEFAULT_NODE_SETTINGS,
+      ...stored,
+      nextOverlayHost: stored?.nextOverlayHost ?? DEFAULT_NODE_SETTINGS.nextOverlayHost,
+    };
+  }
 
   /** Ensure a durable `local` control-plane row exists for FK placement. */
   async ensureLocalNode(): Promise<NodeCaps> {
@@ -154,6 +208,8 @@ export class PlacementService {
       steamcmd: probed.steamcmd,
       freeDiskBytes: probed.freeDiskBytes ?? null,
       lastSeenAt: now,
+      kind: "local",
+      tunnelStatus: "none",
     };
     const existing = await this.db.select().from(nodes).where(eq(nodes.id, LOCAL_NODE_ID)).limit(1);
     if (existing[0]) {
@@ -167,6 +223,8 @@ export class PlacementService {
           steamcmd: local.steamcmd,
           freeDiskBytes: local.freeDiskBytes,
           lastSeenAt: now,
+          kind: "local",
+          tunnelStatus: "none",
         })
         .where(eq(nodes.id, LOCAL_NODE_ID));
       return local;
@@ -181,6 +239,8 @@ export class PlacementService {
       freeDiskBytes: local.freeDiskBytes,
       agentVersion: "control-plane",
       lastSeenAt: now,
+      kind: "local",
+      tunnelStatus: "none",
     });
     return local;
   }
@@ -197,6 +257,8 @@ export class PlacementService {
       steamcmd: n.steamcmd ?? false,
       freeDiskBytes: n.freeDiskBytes,
       lastSeenAt: n.lastSeenAt,
+      kind: (n.kind as NodeKind) || (n.id === LOCAL_NODE_ID ? "local" : "lan"),
+      tunnelStatus: (n.tunnelStatus as NodeTunnelStatus) || "none",
     }));
   }
 
@@ -204,9 +266,14 @@ export class PlacementService {
     const skill = loadSkillMetadata(this.config.skillsRoots, skillName);
     if (!skill) throw new Error(`unknown_skill: ${skillName}`);
 
+    const nodeSettings = await this.getNodeSettings();
     const caps = await this.listNodeCaps();
     const candidates = caps
-      .map((n) => scoreNodeForSkill(n, skill.metadata, Date.now()))
+      .map((n) =>
+        scoreNodeForSkill(n, skill.metadata, Date.now(), {
+          localComputeEnabled: nodeSettings.localComputeEnabled,
+        }),
+      )
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 
     if (this.net && candidates[0]?.eligible) {
@@ -234,6 +301,7 @@ export class PlacementService {
       skillName: skill.metadata.name,
       recommendedNodeId: recommended?.nodeId ?? null,
       candidates,
+      localComputeEnabled: nodeSettings.localComputeEnabled,
     };
   }
 

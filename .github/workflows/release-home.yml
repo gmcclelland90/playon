@@ -60,6 +60,9 @@ jobs:
             1. Download the archive for your OS
             2. Extract
             3. **Windows:** right-click `Start-PlayOn.ps1` → Run with PowerShell · **Linux:** `./start-playon.sh`
-            4. Create the Owner account in the browser, add your Venice API key, start a game
+            4. Create the Owner account → Settings (LLM or MCP) → optional **Nodes** (LAN/cloud Add node) → start a game
+            5. Players join via `/play` (cloud servers still advertise LAN addresses)
 
-            No separate Node.js install required. Optional always-on install: `deploy/install.sh` / `deploy/windows/install.ps1`.
+            See [CHANGELOG.md](https://github.com/gmcclelland90/playon/blob/main/CHANGELOG.md) and [quick start](https://playon.games/docs/quick-start).
+
+            No separate Node.js install required. Optional always-on: `PLAYON_SERVICE=1` on the one-liner.

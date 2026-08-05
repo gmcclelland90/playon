@@ -167,6 +167,8 @@ export const api = {
     }>("/api/agents"),
   nodes: () =>
     request<{
+      localComputeEnabled?: boolean;
+      wireguardTools?: boolean;
       nodes: Array<{
         id: string;
         name: string;
@@ -178,8 +180,59 @@ export const api = {
         agentVersion?: string | null;
         lastSeenAt: string | number;
         status: "online" | "stale" | "offline";
+        kind?: "local" | "lan" | "cloud";
+        placement?: "local" | "remote" | "cloud";
+        badge?: string;
+        tunnelStatus?: string;
+        overlayIp?: string | null;
+        tunnelEndpoint?: string | null;
       }>;
     }>("/api/nodes"),
+  getNodeSettings: () =>
+    request<{ nodes: { localComputeEnabled: boolean } }>("/api/settings/nodes"),
+  putNodeSettings: (body: { localComputeEnabled: boolean }) =>
+    request<{ nodes: { localComputeEnabled: boolean } }>("/api/settings/nodes", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  addNode: (body: {
+    kind: "lan" | "cloud";
+    host: string;
+    port?: number;
+    username: string;
+    password?: string;
+    privateKey?: string;
+    nodeId?: string;
+    nodeName?: string;
+    wgListenPort?: number;
+  }) =>
+    request<{
+      node: {
+        nodeId: string;
+        kind: string;
+        name: string;
+        overlayIp?: string;
+        tunnelStatus?: string;
+        detail: string;
+      };
+    }>("/api/nodes/add", { method: "POST", body: JSON.stringify(body) }),
+  createNodeBootstrapToken: (body: {
+    kind: "lan" | "cloud";
+    nodeId?: string;
+    nodeName?: string;
+    endpointHost?: string;
+  }) =>
+    request<{
+      token: string;
+      nodeId: string;
+      oneLiner: string;
+      expiresAt: string;
+    }>("/api/nodes/bootstrap-token", { method: "POST", body: JSON.stringify(body) }),
+  removeNode: (nodeId: string, force?: boolean) =>
+    request<{ ok: true; detail: string }>(
+      `/api/nodes/${encodeURIComponent(nodeId)}${force ? "?force=1" : ""}`,
+      { method: "DELETE" },
+    ),
   getLlmSettings: () => request<{ llm: LlmPublic }>("/api/settings/llm"),
   putLlmSettings: (body: {
     preset: LlmPresetId;

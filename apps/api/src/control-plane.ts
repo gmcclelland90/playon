@@ -2,6 +2,9 @@ import type { AppConfig } from "./config.js";
 import type { Db } from "./db/client.js";
 import { AgentProgressService } from "./services/agent-progress.js";
 import { ServerArchiveService } from "./services/archive-tools.js";
+import { AddNodeService } from "./services/cloud/add-node.js";
+import { LanGateway } from "./services/cloud/gateway.js";
+import { TunnelService } from "./services/cloud/tunnel.js";
 import { ConfirmService } from "./services/confirm.js";
 import { EventHub } from "./services/event-hub.js";
 import { ServerFsService } from "./services/fs-tools.js";
@@ -43,12 +46,18 @@ export type ControlPlane = {
   archives: ServerArchiveService;
   drafts: SkillDraftService;
   skillPackages: SkillPackageService;
+  tunnel: TunnelService;
+  gateway: LanGateway;
+  addNode: AddNodeService;
 };
 
 export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
   const eventHub = new EventHub();
   const confirm = new ConfirmService(eventHub);
-  const servers = new ServerService(db, config, eventHub);
+  const tunnel = new TunnelService(db, config);
+  const gateway = new LanGateway(config);
+  const addNode = new AddNodeService(db, config, tunnel);
+  const servers = new ServerService(db, config, eventHub, gateway);
   const snapshots = new SnapshotService(db, config, servers);
   const panel = new PanelService(db, eventHub);
   const net = new NetToolsService(servers);
@@ -88,5 +97,8 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
     archives,
     drafts,
     skillPackages,
+    tunnel,
+    gateway,
+    addNode,
   };
 }
