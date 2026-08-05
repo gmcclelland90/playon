@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { buildHeartbeat, postHeartbeat } from "./heartbeat.js";
 import { claimNextJob, executeJob, reportJobResult } from "./jobs.js";
+import { readAgentVersion } from "./version.js";
 
 const apiBase = process.env.PLAYON_API_URL ?? "http://127.0.0.1:8787";
 const nodeId = process.env.PLAYON_NODE_ID ?? "local";
@@ -11,11 +12,12 @@ const dataRoot = path.resolve(process.env.PLAYON_DATA_ROOT ?? path.join(process.
 const intervalMs = Number(process.env.PLAYON_HEARTBEAT_MS ?? 5000);
 const jobPollMs = Number(process.env.PLAYON_JOB_POLL_MS ?? 1000);
 const nodeToken = process.env.PLAYON_NODE_TOKEN?.trim() || undefined;
+const agentVersion = readAgentVersion();
 
 fs.mkdirSync(dataRoot, { recursive: true });
 
 async function tickHeartbeat() {
-  const payload = buildHeartbeat({ nodeId, name, dataRoot });
+  const payload = buildHeartbeat({ nodeId, name, dataRoot, agentVersion });
   try {
     await postHeartbeat(apiBase, payload, nodeToken);
     console.log(
@@ -35,6 +37,14 @@ async function tickJobs() {
       const result = await executeJob(job, dataRoot);
       await reportJobResult(apiBase, nodeId, job.id, { ok: true, result }, nodeToken);
       console.log(`[node-agent] job done id=${job.id}`);
+      if (
+        result &&
+        typeof result === "object" &&
+        (result as { restartRequired?: boolean }).restartRequired === true
+      ) {
+        console.log(`[node-agent] restarting after self-update`);
+        setTimeout(() => process.exit(0), 200);
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "job_failed";
       await reportJobResult(apiBase, nodeId, job.id, { ok: false, error: message }, nodeToken);

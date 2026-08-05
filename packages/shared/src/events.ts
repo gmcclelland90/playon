@@ -99,6 +99,22 @@ export const WsEventSchema = z.discriminatedUnion("type", [
     toolName: z.string().optional(),
     label: z.string().optional(),
   }),
+  z.object({
+    type: z.literal("update.progress"),
+    target: z.enum(["home", "node"]),
+    nodeId: z.string().optional(),
+    phase: z.enum([
+      "checking",
+      "downloading",
+      "verifying",
+      "applying",
+      "restarting",
+      "done",
+      "failed",
+    ]),
+    message: z.string(),
+    percent: z.number().min(0).max(100).optional(),
+  }),
 ]);
 
 export type WsEvent = z.infer<typeof WsEventSchema>;

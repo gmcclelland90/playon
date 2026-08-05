@@ -2,6 +2,7 @@ import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { can, type PublicUser } from "@playon/shared";
 import { api } from "../api";
+import { UpdateBanner } from "../components/UpdateBanner";
 import { CanvasPage } from "./CanvasPage";
 import { DashboardPage } from "./DashboardPage";
 import { SettingsPage } from "./SettingsPage";
@@ -34,6 +35,7 @@ export function AdminShell({ user }: { user: PublicUser }) {
 
   return (
     <div className="app-shell">
+      <UpdateBanner user={user} />
       <header className="topbar">
         <div className="topbar-brand">
           <NavLink to={home} className="brand-mark">

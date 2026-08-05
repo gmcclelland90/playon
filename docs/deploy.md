@@ -16,6 +16,8 @@ Placement per server: **Local** (optional on Home) · **Remote** (LAN node via A
 
 Scripts are hosted on [playon.games](https://playon.games/get) (source: [`deploy/bootstrap/`](../deploy/bootstrap/)). They pull the latest Home release asset and start PlayOn.
 
+**In-app updates:** Home polls `https://playon.games/home/latest.json` (override with `PLAYON_UPDATE_MANIFEST_URL`). Owners get a banner + **Settings → About / Updates** to download, verify (sha256), and restart. After Home is current, remote nodes that report an older `agentVersion` show **Update** on Settings → Nodes (per-node job). Re-running the one-liner still works and keeps `data/` / `env/`.
+
 ```powershell
 # Windows
 irm https://playon.games/install.ps1 | iex

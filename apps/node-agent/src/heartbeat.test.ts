@@ -7,12 +7,14 @@ describe("buildHeartbeat", () => {
       nodeId: "local",
       name: "dev-node",
       dataRoot: process.cwd(),
+      agentVersion: "0.1.4",
     });
     expect(hb.nodeId).toBe("local");
     expect(["linux", "windows"]).toContain(hb.os);
     expect(typeof hb.docker).toBe("boolean");
     expect(hb.native).toBe(true);
     expect(typeof hb.steamcmd).toBe("boolean");
+    expect(hb.agentVersion).toBe("0.1.4");
   });
 });
 

@@ -34,6 +34,18 @@ describe("WsEventSchema", () => {
     ).toMatchObject({ type: "chat.tool" });
   });
 
+  it("accepts update.progress", () => {
+    expect(
+      WsEventSchema.parse({
+        type: "update.progress",
+        target: "home",
+        phase: "downloading",
+        message: "Downloading update…",
+        percent: 20,
+      }),
+    ).toMatchObject({ type: "update.progress", target: "home" });
+  });
+
   it("rejects unknown event types", () => {
     expect(() => WsEventSchema.parse({ type: "nope" })).toThrow();
   });

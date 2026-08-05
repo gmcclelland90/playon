@@ -1,7 +1,7 @@
 {
   "name": "playon",
   "private": true,
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "PlayOn — AI-driven game server control plane for LAN parties",
   "packageManager": "pnpm@9.15.4",
   "engines": {
@@ -27,6 +27,8 @@
     "test:e2e:install": "playwright install chromium",
     "package:mvp": "node scripts/package-mvp.mjs",
     "package:home": "node scripts/package-home.mjs",
+    "package:node": "node scripts/package-node.mjs",
+    "publish:home-manifest": "node scripts/publish-home-manifest.mjs",
     "sync:install-scripts": "node scripts/sync-install-scripts.mjs",
     "sync:llm-presets": "pnpm --filter @playon/shared build && node scripts/sync-llm-presets.mjs",
     "smoke:venice": "pnpm --filter @playon/api smoke:venice",

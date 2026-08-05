@@ -258,6 +258,40 @@ export const api = {
       method: "POST",
       body: JSON.stringify({}),
     }),
+  updatesStatus: (force?: boolean) =>
+    request<{
+      currentVersion: string;
+      latestVersion: string | null;
+      channel: string | null;
+      notesUrl: string | null;
+      homeUpdateAvailable: boolean;
+      checkedAt: string | null;
+      manifestError: string | null;
+      platform: string;
+      applying: boolean;
+      applyPhase: string | null;
+      applyMessage: string | null;
+      homeCurrentEnoughForNodes: boolean;
+      nodes: Array<{
+        nodeId: string;
+        name: string;
+        os: "linux" | "windows";
+        agentVersion: string;
+        status: "online" | "stale" | "offline";
+        updateAvailable: boolean;
+        kind: string;
+      }>;
+    }>(`/api/updates/status${force ? "?force=1" : ""}`),
+  applyHomeUpdate: () =>
+    request<{ ok: true; version: string; restarting: true }>("/api/updates/home/apply", {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  updateNode: (nodeId: string) =>
+    request<{ jobId: string; version: string }>(
+      `/api/nodes/${encodeURIComponent(nodeId)}/update`,
+      { method: "POST", body: JSON.stringify({}) },
+    ),
   getLlmSettings: () => request<{ llm: LlmPublic }>("/api/settings/llm"),
   putLlmSettings: (body: {
     preset: LlmPresetId;

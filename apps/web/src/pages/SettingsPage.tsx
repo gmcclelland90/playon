@@ -75,6 +75,35 @@ export function SettingsPage({ user }: { user: PublicUser }) {
     refetchInterval: 10_000,
   });
 
+  const updates = useQuery({
+    queryKey: ["updates"],
+    queryFn: () => api.updatesStatus(false),
+    enabled: can(user.role, "settings.llm"),
+    refetchInterval: 10_000,
+  });
+
+  const checkUpdates = useMutation({
+    mutationFn: () => api.updatesStatus(true),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["updates"] });
+    },
+  });
+
+  const applyHomeUpdate = useMutation({
+    mutationFn: api.applyHomeUpdate,
+    onError: (err) => setNodeError((err as Error).message),
+  });
+
+  const updateNodeMut = useMutation({
+    mutationFn: (nodeId: string) => api.updateNode(nodeId),
+    onSuccess: async (_data, nodeId) => {
+      setNodeNotice(`Update queued for ${nodeId}. Waiting for the node to restart…`);
+      await qc.invalidateQueries({ queryKey: ["updates"] });
+      await qc.invalidateQueries({ queryKey: ["nodes"] });
+    },
+    onError: (err) => setNodeError((err as Error).message),
+  });
+
   const saveNodeSettings = useMutation({
     mutationFn: (localComputeEnabled: boolean) => api.putNodeSettings({ localComputeEnabled }),
     onSuccess: async () => {
@@ -406,6 +435,62 @@ export function SettingsPage({ user }: { user: PublicUser }) {
       </header>
 
       <section className="panel stack tight">
+        <h3>About / Updates</h3>
+        <p className="muted status-inline">
+          PlayOn Home {updates.data?.currentVersion ?? "…"}
+          {updates.data?.latestVersion
+            ? updates.data.homeUpdateAvailable
+              ? ` · ${updates.data.latestVersion} available`
+              : " · up to date"
+            : updates.data?.manifestError
+              ? ` · ${updates.data.manifestError}`
+              : ""}
+        </p>
+        {updates.data?.notesUrl ? (
+          <p className="muted status-inline">
+            <a href={updates.data.notesUrl} target="_blank" rel="noreferrer">
+              Release notes
+            </a>
+            {updates.data.checkedAt ? ` · last checked ${new Date(updates.data.checkedAt).toLocaleString()}` : ""}
+          </p>
+        ) : null}
+        <div className="btn-row">
+          <button
+            type="button"
+            className="btn"
+            disabled={checkUpdates.isPending}
+            onClick={() => checkUpdates.mutate()}
+          >
+            {checkUpdates.isPending ? "Checking…" : "Check now"}
+          </button>
+          {user.role === "owner" && updates.data?.homeUpdateAvailable ? (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={applyHomeUpdate.isPending || updates.data.applying}
+              onClick={() => {
+                if (!window.confirm("Download and install the update? PlayOn will restart briefly.")) {
+                  return;
+                }
+                setNodeError(null);
+                applyHomeUpdate.mutate();
+              }}
+            >
+              {applyHomeUpdate.isPending || updates.data.applying ? "Updating…" : "Update & restart"}
+            </button>
+          ) : null}
+        </div>
+        {updates.data?.applyMessage ? (
+          <p className="muted status-inline">{updates.data.applyMessage}</p>
+        ) : null}
+        {updates.data?.nodes?.some((n) => n.updateAvailable) ? (
+          <p className="muted status-inline">
+            Some remote nodes need an update — use Update on each node below (after Home is current).
+          </p>
+        ) : null}
+      </section>
+
+      <section className="panel stack tight">
         <h3>Nodes</h3>
         <p className="muted status-inline">
           Home is the control plane. Optionally host games here, or add LAN / cloud machines via SSH
@@ -509,6 +594,10 @@ export function SettingsPage({ user }: { user: PublicUser }) {
               const needsDocker = !n.docker;
               const isWindows = n.os === "windows";
               const panelOpen = dockerInstallNodeId === n.id;
+              const nodeUpdate = updates.data?.nodes?.find((u) => u.nodeId === n.id);
+              const needsAgentUpdate = Boolean(nodeUpdate?.updateAvailable);
+              const homeBlocksNodeUpdate =
+                Boolean(updates.data && !updates.data.homeCurrentEnoughForNodes) && n.id !== "local";
               return (
               <li key={n.id}>
                 <div className="btn-row" style={{ justifyContent: "space-between" }}>
@@ -518,6 +607,8 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                     <div className="muted">
                       {n.status}
                       {n.docker ? " · Docker" : " · no Docker"}
+                      {n.agentVersion ? ` · v${n.agentVersion}` : ""}
+                      {needsAgentUpdate ? " · update available" : ""}
                       {n.tunnelStatus && n.tunnelStatus !== "none"
                         ? ` · tunnel ${n.tunnelStatus}`
                         : ""}
@@ -540,6 +631,28 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                         {panelOpen ? "Cancel" : "Install Docker"}
                       </button>
                     ) : null}
+                    {n.id !== "local" && user.role === "owner" && needsAgentUpdate ? (
+                      <button
+                        className="btn btn-primary"
+                        type="button"
+                        title={
+                          homeBlocksNodeUpdate
+                            ? "Update PlayOn Home first"
+                            : `Update to ${updates.data?.latestVersion ?? "latest"}`
+                        }
+                        disabled={
+                          homeBlocksNodeUpdate ||
+                          updateNodeMut.isPending ||
+                          n.status === "offline"
+                        }
+                        onClick={() => {
+                          setNodeError(null);
+                          updateNodeMut.mutate(n.id);
+                        }}
+                      >
+                        {updateNodeMut.isPending ? "Updating…" : "Update"}
+                      </button>
+                    ) : null}
                     {n.id !== "local" ? (
                       <button
                         className="btn"
@@ -558,6 +671,11 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                     ) : null}
                   </div>
                 </div>
+                {homeBlocksNodeUpdate && needsAgentUpdate ? (
+                  <p className="muted status-inline">
+                    Update PlayOn Home first, then update this node.
+                  </p>
+                ) : null}
                 {needsDocker && isWindows ? (
                   <p className="muted status-inline">
                     Install{" "}

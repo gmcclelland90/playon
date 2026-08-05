@@ -47,6 +47,7 @@ import {
   type AuthUser,
 } from "./auth/session.js";
 import { encryptSecret } from "./services/secrets.js";
+import { readAppVersion } from "./services/app-version.js";
 import {
   CLOUD_SETTINGS_KEY,
   DEFAULT_NODE_SETTINGS,
@@ -207,6 +208,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     tunnel,
     addNode,
     installDocker,
+    updates: updateService,
   } = plane;
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
@@ -350,10 +352,52 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     c.json({
       ok: true,
       product: "PlayOn",
+      version: readAppVersion(),
       llmMode: config.llmMode,
       runtimeMode: config.runtimeMode,
     }),
   );
+
+  app.get("/api/updates/status", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const force = c.req.query("force") === "1" || c.req.query("force") === "true";
+    try {
+      return c.json(await updateService.getStatus({ force }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "update_status_failed";
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  app.post("/api/updates/home/apply", async (c) => {
+    const user = c.get("user");
+    if (!user || user.role !== "owner") {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    try {
+      return c.json(await updateService.applyHomeUpdate());
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "update_apply_failed";
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  app.post("/api/nodes/:nodeId/update", async (c) => {
+    const user = c.get("user");
+    if (!user || user.role !== "owner") {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const nodeId = c.req.param("nodeId");
+    try {
+      return c.json(await updateService.enqueueNodeUpdate(nodeId));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "node_update_failed";
+      return c.json({ error: message }, 400);
+    }
+  });
 
   app.get("/api/setup", async (c) => {
     const [{ value }] = await db.select({ value: count() }).from(users);

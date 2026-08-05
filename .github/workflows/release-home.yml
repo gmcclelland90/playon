@@ -15,9 +15,13 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact_glob: dist-home/playon-home-*-linux-x64.tar.gz
+            home_glob: dist-home/playon-home-*-linux-x64.tar.gz
+            node_glob: dist-node/playon-node-*-linux-x64.tar.gz
+            artifact_prefix: linux
           - os: windows-latest
-            artifact_glob: dist-home/playon-home-*-windows-x64.zip
+            home_glob: dist-home/playon-home-*-windows-x64.zip
+            node_glob: dist-node/playon-node-*-windows-x64.zip
+            artifact_prefix: windows
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -29,21 +33,28 @@ jobs:
       - run: pnpm install
       - run: pnpm build
       - run: pnpm package:home
-      - name: Upload dist
+      - run: pnpm package:node
+      - name: Upload Home dist
         uses: actions/upload-artifact@v4
         with:
-          name: home-${{ runner.os }}
-          path: ${{ matrix.artifact_glob }}
+          name: home-${{ matrix.artifact_prefix }}
+          path: ${{ matrix.home_glob }}
+          if-no-files-found: error
+      - name: Upload Node dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-${{ matrix.artifact_prefix }}
+          path: ${{ matrix.node_glob }}
           if-no-files-found: error
 
   release:
     needs: package
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
-          pattern: home-*
           merge-multiple: true
       - name: List artifacts
         run: find artifacts -type f -print
@@ -53,6 +64,8 @@ jobs:
           files: |
             artifacts/playon-home-*-linux-x64.tar.gz
             artifacts/playon-home-*-windows-x64.zip
+            artifacts/playon-node-*-linux-x64.tar.gz
+            artifacts/playon-node-*-windows-x64.zip
           generate_release_notes: true
           body: |
             ## PlayOn Home (portable)
@@ -63,6 +76,29 @@ jobs:
             4. Create the Owner account → Settings (LLM or MCP) → optional **Nodes** (LAN/cloud Add node) → start a game
             5. Players join via `/play` (cloud servers still advertise LAN addresses)
 
+            Remote nodes: download the matching `playon-node-*` asset, or add via Home **Settings → Nodes**.
+
             See [CHANGELOG.md](https://github.com/gmcclelland90/playon/blob/main/CHANGELOG.md) and [quick start](https://playon.games/docs/quick-start).
 
             No separate Node.js install required. Optional always-on: `PLAYON_SERVICE=1` on the one-liner.
+      - name: Build home/latest.json (local artifacts)
+        run: |
+          mkdir -p dist-home dist-node
+          cp -f artifacts/playon-home-* dist-home/
+          cp -f artifacts/playon-node-* dist-node/
+          ls -la dist-home dist-node
+          node scripts/publish-home-manifest.mjs
+        env:
+          PLAYON_GAMES_PUBLIC: ${{ github.workspace }}/manifest-out
+          PLAYON_MANIFEST_STRICT: "1"
+      - name: Upload update manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: home-manifest
+          path: manifest-out/home/*.json
+          if-no-files-found: error
+      - name: Attach manifest to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            manifest-out/home/latest.json

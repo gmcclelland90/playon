@@ -23,6 +23,7 @@ import { ServerService } from "./services/servers.js";
 import { SkillDraftService } from "./services/skill-drafts.js";
 import { SkillPackageService } from "./services/skill-packages.js";
 import { SnapshotService } from "./services/snapshots.js";
+import { UpdateService } from "./services/updates.js";
 
 /** Shared in-process service graph for HTTP, agents, and schedulers. */
 export type ControlPlane = {
@@ -51,6 +52,7 @@ export type ControlPlane = {
   gateway: LanGateway;
   addNode: AddNodeService;
   installDocker: InstallDockerService;
+  updates: UpdateService;
 };
 
 export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
@@ -77,6 +79,7 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
   const archives = new ServerArchiveService(servers);
   const drafts = new SkillDraftService(config);
   const skillPackages = new SkillPackageService(config);
+  const updates = new UpdateService(db, config, eventHub);
 
   return {
     db,
@@ -104,5 +107,6 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
     gateway,
     addNode,
     installDocker,
+    updates,
   };
 }

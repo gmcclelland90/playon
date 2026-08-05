@@ -75,6 +75,7 @@ export const NodeJobKindSchema = z.enum([
   "process_status",
   "steamcmd_app_update",
   "runtime_caps",
+  "node_self_update",
 ]);
 
 export type SetupStatus = z.infer<typeof SetupStatusSchema>;

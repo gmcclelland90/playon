@@ -11,6 +11,7 @@ import {
 } from "@playon/runtime";
 import type { NodeJobKind } from "@playon/shared";
 import { probeCapabilities } from "./capabilities.js";
+import { performNodeSelfUpdate } from "./self-update.js";
 
 export type RemoteJobKind = NodeJobKind;
 
@@ -265,6 +266,22 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
       appId,
       installDirRel: typeof job.args.installDirRel === "string" ? job.args.installDirRel : undefined,
       validate: job.args.validate === true ? true : job.args.validate === false ? false : undefined,
+    });
+  }
+
+  if (job.kind === "node_self_update") {
+    const downloadUrl = strArg(job.args, "downloadUrl");
+    const sha256 = strArg(job.args, "sha256");
+    const version = strArg(job.args, "version");
+    const preserve = Array.isArray(job.args.preserve)
+      ? (job.args.preserve as string[])
+      : undefined;
+    return performNodeSelfUpdate({
+      downloadUrl,
+      sha256,
+      version,
+      preserve,
+      skipExit: job.args.skipExit === true,
     });
   }
 

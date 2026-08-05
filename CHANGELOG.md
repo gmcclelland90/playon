@@ -2,6 +2,21 @@
 
 All notable changes to PlayOn Home (root `package.json` version) are listed here.
 
+## [0.1.5] — 2026-08-06
+
+### Added
+
+- **In-app OTA updates** — Home polls `https://playon.games/home/latest.json` for a newer release. Owners see a dismissible banner and **Settings → About / Updates** with **Update & restart** (download → sha256 verify → swap keeping `data/`/`env/` → restart).
+- **Per-node updates** — after Home is current, remote LAN/cloud nodes that report an older `agentVersion` show **Update** under Settings → Nodes (control plane enqueues `node_self_update`; never accepts client-supplied download URLs).
+- **Node release packages** — `playon-node-<version>-{linux,windows}-x64` artifacts on GitHub Releases; `pnpm package:node` + release workflow.
+- **Update manifest** — `scripts/publish-home-manifest.mjs` writes `playon.games/home/latest.json` with asset URLs + sha256 (override with `PLAYON_UPDATE_MANIFEST_URL`).
+- **install-node from manifest** — when curl’d without a local package tree, Linux/Windows install-node downloads the node asset from `latest.json`.
+
+### Notes
+
+- First install or jump from ≤0.1.4 still uses the one-liner / archive. From **0.1.5** onward, Owners can update Home and then each remote node from the UI.
+- Local node updates with Home (same bundle). No silent auto-apply in this release.
+
 ## [0.1.4] — 2026-08-05
 
 ### Added

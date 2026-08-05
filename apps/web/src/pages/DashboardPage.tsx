@@ -49,6 +49,12 @@ export function DashboardPage({ user }: { user: PublicUser }) {
   const servers = useQuery({ queryKey: ["servers"], queryFn: api.servers, refetchInterval: 5000 });
   const skills = useQuery({ queryKey: ["skills"], queryFn: () => api.skills() });
   const nodes = useQuery({ queryKey: ["nodes"], queryFn: api.nodes, refetchInterval: 10_000 });
+  const updates = useQuery({
+    queryKey: ["updates"],
+    queryFn: () => api.updatesStatus(false),
+    enabled: can(user.role, "settings.llm"),
+    refetchInterval: 60_000,
+  });
   const snapshots = useQuery({
     queryKey: ["snapshots"],
     queryFn: () => api.snapshots(),
@@ -304,7 +310,11 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                           : ""}
                         {" · free "}
                         {formatBytes(n.freeDiskBytes)}
-                        {n.agentVersion ? ` · agent ${n.agentVersion}` : ""}
+                        {n.agentVersion ? ` · v${n.agentVersion}` : ""}
+                        {n.id !== "local" &&
+                        updates.data?.nodes?.some((u) => u.nodeId === n.id && u.updateAvailable)
+                          ? " · update available"
+                          : ""}
                       </div>
                       <div className="muted">Seen {relativeTime(String(n.lastSeenAt))}</div>
                     </div>

@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # PlayOn Node — join an existing Home control plane as a remote runtime host.
+#
+# When run from a package tree (or Home checkout), copies that tree.
+# When curl'd from playon.games/install-node, downloads the node asset from
+# https://playon.games/home/latest.json
 set -euo pipefail
 
 API_URL=""
@@ -9,6 +13,7 @@ PLAYON_ROOT="${PLAYON_ROOT:-/opt/playon-node}"
 PLAYON_DATA="${PLAYON_DATA_ROOT:-/var/lib/playon-node}"
 PLAYON_USER="${PLAYON_USER:-playon}"
 RUNTIME="${PLAYON_RUNTIME:-native}"
+MANIFEST_URL="${PLAYON_UPDATE_MANIFEST_URL:-https://playon.games/home/latest.json}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -32,10 +37,17 @@ fi
 
 NODE_ID="${NODE_ID:-$(hostname -s 2>/dev/null || hostname)}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUNDLE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-# install-node.sh lives in deploy/; lib is deploy/lib/
+# When this file lives in deploy/, bundle root is parent; when curl'd to /tmp, no bundle.
+if [[ -f "${SCRIPT_DIR}/../apps/node-agent/dist/index.js" ]] || [[ -f "${SCRIPT_DIR}/../package.json" && -d "${SCRIPT_DIR}/../apps/node-agent" ]]; then
+  BUNDLE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+elif [[ -f "${SCRIPT_DIR}/apps/node-agent/dist/index.js" ]]; then
+  BUNDLE_ROOT="${SCRIPT_DIR}"
+else
+  BUNDLE_ROOT=""
+fi
+
 ENSURE_DOCKER_SH="${SCRIPT_DIR}/lib/ensure-docker.sh"
-if [[ ! -f "${ENSURE_DOCKER_SH}" ]]; then
+if [[ -n "${BUNDLE_ROOT}" && -f "${BUNDLE_ROOT}/deploy/lib/ensure-docker.sh" ]]; then
   ENSURE_DOCKER_SH="${BUNDLE_ROOT}/deploy/lib/ensure-docker.sh"
 fi
 
@@ -48,7 +60,6 @@ if [[ -f "${ENSURE_DOCKER_SH}" ]]; then
   source "${ENSURE_DOCKER_SH}"
   playon_ensure_docker || true
 elif curl -fsSL https://playon.games/ensure-docker -o /tmp/playon-ensure-docker.sh 2>/dev/null; then
-  # Published install-node one-liner may not ship deploy/lib next to this script.
   # shellcheck disable=SC1091
   source /tmp/playon-ensure-docker.sh
   playon_ensure_docker || true
@@ -61,18 +72,86 @@ else
   RUNTIME=native
 fi
 
-if ! command -v node >/dev/null 2>&1 || [[ "$(node -p "process.versions.node.split('.')[0]")" -lt 22 ]]; then
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-  apt-get install -y nodejs
+download_from_manifest() {
+  echo "==> Fetching node package from ${MANIFEST_URL}"
+  local json staging archive url sha name extracted
+  json="$(curl -fsSL -H "Accept: application/json" -H "User-Agent: PlayOn-Install-Node" "${MANIFEST_URL}")"
+  staging="$(mktemp -d /tmp/playon-node-pkg.XXXXXX)"
+  if command -v python3 >/dev/null 2>&1; then
+    eval "$(printf '%s' "${json}" | python3 -c '
+import json,sys
+m=json.load(sys.stdin)
+a=(m.get("node") or {}).get("linux-x64") or {}
+print("url="+repr(a.get("downloadUrl") or ""))
+print("sha="+repr(a.get("sha256") or ""))
+')"
+  elif command -v jq >/dev/null 2>&1; then
+    url="$(printf '%s' "${json}" | jq -r '.node["linux-x64"].downloadUrl // empty')"
+    sha="$(printf '%s' "${json}" | jq -r '.node["linux-x64"].sha256 // empty')"
+  else
+    echo "Need python3 or jq to parse ${MANIFEST_URL}"
+    exit 1
+  fi
+  if [[ -z "${url:-}" || -z "${sha:-}" ]]; then
+    echo "No linux-x64 node asset in update manifest. Publish playon-node release + home/latest.json first."
+    exit 1
+  fi
+  name="$(basename "${url}")"
+  archive="${staging}/${name}"
+  echo "==> Downloading ${name}"
+  curl -fsSL -L -o "${archive}" "${url}"
+  echo "${sha}  ${archive}" | sha256sum -c -
+  echo "==> Extracting"
+  tar -xzf "${archive}" -C "${staging}"
+  extracted="${staging}/playon-node"
+  if [[ ! -f "${extracted}/package.json" ]]; then
+    extracted="$(find "${staging}" -maxdepth 2 -type f -name package.json -printf '%h\n' | head -n1)"
+  fi
+  if [[ -z "${extracted}" || ! -f "${extracted}/apps/node-agent/dist/index.js" ]]; then
+    echo "Extracted node package missing apps/node-agent/dist/index.js"
+    exit 1
+  fi
+  BUNDLE_ROOT="${extracted}"
+  echo "==> Using downloaded package at ${BUNDLE_ROOT}"
+}
+
+if [[ -z "${BUNDLE_ROOT}" || ! -f "${BUNDLE_ROOT}/apps/node-agent/dist/index.js" ]]; then
+  download_from_manifest
 fi
-corepack enable >/dev/null 2>&1 || true
-corepack prepare pnpm@9.15.4 --activate
 
 mkdir -p "${PLAYON_ROOT}" "${PLAYON_DATA}" /etc/playon
-cp -a "${BUNDLE_ROOT}/." "${PLAYON_ROOT}/"
+# Preserve existing data/env files inside install root if re-running
+if [[ -d "${PLAYON_ROOT}" ]]; then
+  shopt -s dotglob nullglob
+  for item in "${BUNDLE_ROOT}"/*; do
+    base="$(basename "${item}")"
+    if [[ "${base}" == "data" || "${base}" == "env" || "${base}" == "node.env" || "${base}" == "node.env.cmd" ]] && [[ -e "${PLAYON_ROOT}/${base}" ]]; then
+      continue
+    fi
+    rm -rf "${PLAYON_ROOT:?}/${base}"
+    cp -a "${item}" "${PLAYON_ROOT}/"
+  done
+  shopt -u dotglob nullglob
+else
+  cp -a "${BUNDLE_ROOT}/." "${PLAYON_ROOT}/"
+fi
 chown -R "${PLAYON_USER}:${PLAYON_USER}" "${PLAYON_ROOT}" "${PLAYON_DATA}"
-cd "${PLAYON_ROOT}"
-sudo -u "${PLAYON_USER}" pnpm install --prod --frozen-lockfile=false
+
+# Prefer bundled Node; otherwise system Node 22 + pnpm
+NODE_BIN="${PLAYON_ROOT}/runtime/node/bin/node"
+if [[ -x "${NODE_BIN}" ]]; then
+  EXEC_START="${NODE_BIN} ${PLAYON_ROOT}/apps/node-agent/dist/index.js"
+else
+  if ! command -v node >/dev/null 2>&1 || [[ "$(node -p "process.versions.node.split('.')[0]")" -lt 22 ]]; then
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+    apt-get install -y nodejs
+  fi
+  corepack enable >/dev/null 2>&1 || true
+  corepack prepare pnpm@9.15.4 --activate
+  cd "${PLAYON_ROOT}"
+  sudo -u "${PLAYON_USER}" pnpm install --prod --frozen-lockfile=false
+  EXEC_START="/usr/bin/pnpm --filter @playon/node-agent start"
+fi
 
 if getent group docker >/dev/null 2>&1; then
   usermod -aG docker "${PLAYON_USER}" || true
@@ -85,6 +164,7 @@ PLAYON_NODE_ID=${NODE_ID}
 PLAYON_NODE_NAME=${NODE_ID}
 PLAYON_DATA_ROOT=${PLAYON_DATA}
 PLAYON_RUNTIME=${RUNTIME}
+PLAYON_INSTALL_ROOT=${PLAYON_ROOT}
 EOF
 chmod 600 /etc/playon/node.env
 
@@ -100,7 +180,7 @@ User=${PLAYON_USER}
 Group=${PLAYON_USER}
 EnvironmentFile=/etc/playon/node.env
 WorkingDirectory=${PLAYON_ROOT}
-ExecStart=/usr/bin/pnpm --filter @playon/node-agent start
+ExecStart=${EXEC_START}
 Restart=always
 RestartSec=5
 
