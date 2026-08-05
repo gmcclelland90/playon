@@ -244,6 +244,58 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  getOllamaStatus: (baseUrl?: string) => {
+    const q = baseUrl?.trim()
+      ? `?baseUrl=${encodeURIComponent(baseUrl.trim())}`
+      : "";
+    return request<{
+      ollama: {
+        reachable: boolean;
+        version?: string;
+        models: Array<{ name: string; size?: number }>;
+        dockerAvailable: boolean;
+        canInstallLocal: boolean;
+        isLoopback: boolean;
+        manualCommand?: string;
+        nativeBaseUrl: string;
+        job: {
+          phase: "idle" | "installing" | "pulling" | "ready" | "error";
+          message?: string;
+          updatedAt: string;
+        };
+      };
+    }>(`/api/settings/llm/ollama/status${q}`);
+  },
+  installOllama: (baseUrl?: string) =>
+    request<{
+      job: {
+        phase: "idle" | "installing" | "pulling" | "ready" | "error";
+        message?: string;
+        updatedAt: string;
+      };
+    }>("/api/settings/llm/ollama/install", {
+      method: "POST",
+      body: JSON.stringify({ baseUrl }),
+    }),
+  getOllamaJob: () =>
+    request<{
+      job: {
+        phase: "idle" | "installing" | "pulling" | "ready" | "error";
+        message?: string;
+        updatedAt: string;
+      };
+    }>("/api/settings/llm/ollama/job"),
+  pullOllamaModel: (body: { model: string; baseUrl?: string }) =>
+    request<{
+      job: {
+        phase: "idle" | "installing" | "pulling" | "ready" | "error";
+        message?: string;
+        updatedAt: string;
+      };
+    }>("/api/settings/llm/ollama/pull", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   listAccessTokens: () =>
     request<{
       tokens: Array<{

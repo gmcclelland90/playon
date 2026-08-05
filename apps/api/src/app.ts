@@ -95,6 +95,13 @@ import {
 } from "./services/access-tokens.js";
 import { authInfoFromAccessToken, createPlayOnMcpHandler } from "./services/mcp.js";
 import { createLlmClient, createOrchestrator } from "./services/tools.js";
+import {
+  DEFAULT_OLLAMA_OPENAI_BASE,
+  getOllamaJob,
+  probeOllama,
+  startOllamaInstall,
+  startOllamaPull,
+} from "./services/ollama.js";
 
 
 type Vars = {
@@ -466,6 +473,68 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
 
     await setSetting(db, LLM_SETTINGS_KEY, next);
     return c.json({ llm: toPublicLlmSettings(next) });
+  });
+
+  app.get("/api/settings/llm/ollama/status", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const stored = await getSetting<LlmSettings>(db, LLM_SETTINGS_KEY);
+    const q = c.req.query("baseUrl")?.trim();
+    const baseUrl = q || stored?.baseUrl?.trim() || DEFAULT_OLLAMA_OPENAI_BASE;
+    const status = await probeOllama(baseUrl);
+    return c.json({ ollama: status });
+  });
+
+  app.post("/api/settings/llm/ollama/install", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const body = z
+      .object({ baseUrl: z.string().optional() })
+      .parse(await c.req.json().catch(() => ({})));
+    const stored = await getSetting<LlmSettings>(db, LLM_SETTINGS_KEY);
+    const baseUrl =
+      body.baseUrl?.trim() || stored?.baseUrl?.trim() || DEFAULT_OLLAMA_OPENAI_BASE;
+    const job = startOllamaInstall(baseUrl);
+    if (job.phase === "error") {
+      return c.json({ error: job.message ?? "ollama_install_failed", job }, 400);
+    }
+    return c.json({ job });
+  });
+
+  app.get("/api/settings/llm/ollama/job", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    return c.json({ job: getOllamaJob() });
+  });
+
+  app.post("/api/settings/llm/ollama/pull", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const body = z
+      .object({
+        model: z.string().min(1),
+        baseUrl: z.string().optional(),
+      })
+      .parse(await c.req.json());
+    const stored = await getSetting<LlmSettings>(db, LLM_SETTINGS_KEY);
+    const baseUrl =
+      body.baseUrl?.trim() || stored?.baseUrl?.trim() || DEFAULT_OLLAMA_OPENAI_BASE;
+    const job = startOllamaPull(baseUrl, body.model);
+    if (job.phase === "error" && job.message === "ollama_model_required") {
+      return c.json({ error: job.message, job }, 400);
+    }
+    if (job.phase === "error" && job.message === "ollama_job_busy") {
+      return c.json({ error: job.message, job }, 409);
+    }
+    return c.json({ job });
   });
 
   app.get("/api/access-tokens", async (c) => {

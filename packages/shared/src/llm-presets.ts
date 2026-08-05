@@ -158,6 +158,7 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPreset> = {
     requiresApiKey: false,
     apiKeyLabel: "API key (optional)",
     baseUrlEditable: true,
+    docsHint: "Settings can detect Ollama, install it via Docker on this host, and pull models.",
     docsPath: "/docs/providers/ollama",
   },
   custom: {

@@ -45,6 +45,12 @@ export function SettingsPage({ user }: { user: PublicUser }) {
   const [oneLiner, setOneLiner] = useState<string | null>(null);
   const [nodeNotice, setNodeNotice] = useState<string | null>(null);
   const [nodeError, setNodeError] = useState<string | null>(null);
+  const [ollamaCustomModel, setOllamaCustomModel] = useState(false);
+  const [pullTarget, setPullTarget] = useState("");
+  const [ollamaNotice, setOllamaNotice] = useState<string | null>(null);
+  const [ollamaError, setOllamaError] = useState<string | null>(null);
+  const [copiedManual, setCopiedManual] = useState(false);
+  const [lastOllamaJobAt, setLastOllamaJobAt] = useState<string | null>(null);
 
   const backupTarget = useQuery({
     queryKey: ["backup-target"],
@@ -119,6 +125,90 @@ export function SettingsPage({ user }: { user: PublicUser }) {
     queryFn: () => api.skillsCatalog(catalogSearch),
     enabled: can(user.role, "skills.package"),
   });
+
+  const ollamaStatus = useQuery({
+    queryKey: ["ollama-status", baseUrl],
+    queryFn: () => api.getOllamaStatus(baseUrl || undefined),
+    enabled: can(user.role, "settings.llm") && preset === "ollama",
+    refetchInterval: (q) => {
+      const phase = q.state.data?.ollama.job.phase;
+      if (phase === "installing" || phase === "pulling") return 1500;
+      return 8_000;
+    },
+  });
+
+  const ollamaJobBusy =
+    ollamaStatus.data?.ollama.job.phase === "installing" ||
+    ollamaStatus.data?.ollama.job.phase === "pulling";
+
+  const installOllamaMut = useMutation({
+    mutationFn: () => api.installOllama(baseUrl || undefined),
+    onSuccess: async () => {
+      setOllamaError(null);
+      setOllamaNotice("Installing Ollama…");
+      await qc.invalidateQueries({ queryKey: ["ollama-status"] });
+    },
+    onError: (err: Error) => {
+      setOllamaNotice(null);
+      setOllamaError(err.message);
+    },
+  });
+
+  const pullOllamaMut = useMutation({
+    mutationFn: (name: string) =>
+      api.pullOllamaModel({ model: name, baseUrl: baseUrl || undefined }),
+    onSuccess: async (_res, name) => {
+      setOllamaError(null);
+      setOllamaNotice(`Pulling ${name}…`);
+      setModel(name);
+      setOllamaCustomModel(false);
+      await qc.invalidateQueries({ queryKey: ["ollama-status"] });
+    },
+    onError: (err: Error) => {
+      setOllamaNotice(null);
+      setOllamaError(err.message);
+    },
+  });
+
+  useEffect(() => {
+    const job = ollamaStatus.data?.ollama.job;
+    if (!job) return;
+    if (job.updatedAt === lastOllamaJobAt) return;
+    if (job.phase !== "ready" && job.phase !== "error") return;
+    setLastOllamaJobAt(job.updatedAt);
+    if (job.phase === "ready" && job.message) {
+      setOllamaNotice(job.message);
+      setOllamaError(null);
+      window.setTimeout(() => setOllamaNotice(null), 4000);
+    } else if (job.phase === "error" && job.message) {
+      setOllamaError(job.message);
+      setOllamaNotice(null);
+    }
+  }, [ollamaStatus.data?.ollama.job, lastOllamaJobAt]);
+
+  useEffect(() => {
+    if (preset !== "ollama") {
+      setOllamaCustomModel(false);
+      setPullTarget("");
+      return;
+    }
+    const names = ollamaStatus.data?.ollama.models.map((m) => m.name) ?? [];
+    if (!names.length) return;
+    if (!model.trim()) {
+      if (!ollamaCustomModel) setModel(names[0]!);
+      return;
+    }
+    const installed =
+      names.includes(model) || names.some((n) => n === model || n.startsWith(`${model}:`));
+    if (!installed) {
+      setOllamaCustomModel(true);
+      return;
+    }
+    if (!ollamaCustomModel && !names.includes(model)) {
+      const tagged = names.find((n) => n.startsWith(`${model}:`));
+      setModel(tagged ?? names[0]!);
+    }
+  }, [preset, ollamaStatus.data?.ollama.models, model, ollamaCustomModel]);
 
   const installFromCatalog = useMutation({
     mutationFn: (name: string) => api.installSkillFromCatalog({ name }),
@@ -195,6 +285,19 @@ export function SettingsPage({ user }: { user: PublicUser }) {
     setBaseUrl(def.baseUrl);
     setModel(def.defaultModel);
     setFieldErrors({});
+    setOllamaCustomModel(false);
+    setOllamaError(null);
+    setOllamaNotice(null);
+  }
+
+  async function copyManualCommand(cmd: string) {
+    try {
+      await navigator.clipboard.writeText(cmd);
+      setCopiedManual(true);
+      window.setTimeout(() => setCopiedManual(false), 2000);
+    } catch {
+      setOllamaError("Could not copy command");
+    }
   }
 
   const saveBackup = useMutation({
@@ -431,41 +534,240 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                 <span className="field-error">{fieldErrors.baseUrl}</span>
               ) : null}
             </label>
-            <label className="field">
-              <span>Model</span>
-              <input
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                list="llm-model-suggestions"
-                placeholder={activePreset.defaultModel || "model-id"}
-                required
-                aria-invalid={Boolean(fieldErrors.model) || undefined}
-              />
-              {activePreset.suggestedModels.length > 0 ? (
+
+            {preset === "ollama" ? (
+              <div className="stack tight">
+                <div className="field">
+                  <span>Ollama status</span>
+                  <p className="muted status-inline">
+                    {ollamaStatus.isLoading
+                      ? "Checking…"
+                      : ollamaJobBusy
+                        ? ollamaStatus.data?.ollama.job.message ||
+                          (ollamaStatus.data?.ollama.job.phase === "installing"
+                            ? "Installing…"
+                            : "Pulling…")
+                        : ollamaStatus.data?.ollama.reachable
+                          ? `Connected${
+                              ollamaStatus.data.ollama.version
+                                ? ` (v${ollamaStatus.data.ollama.version})`
+                                : ""
+                            } — ${ollamaStatus.data.ollama.models.length} model${
+                              ollamaStatus.data.ollama.models.length === 1 ? "" : "s"
+                            }`
+                          : "Not reachable"}
+                  </p>
+                  {ollamaStatus.data &&
+                  !ollamaStatus.data.ollama.reachable &&
+                  ollamaStatus.data.ollama.canInstallLocal ? (
+                    <div className="btn-row">
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        disabled={ollamaJobBusy || installOllamaMut.isPending}
+                        onClick={() => installOllamaMut.mutate()}
+                      >
+                        {ollamaJobBusy &&
+                        ollamaStatus.data.ollama.job.phase === "installing"
+                          ? "Installing…"
+                          : "Install Ollama"}
+                      </button>
+                      <span className="muted status-inline">
+                        Runs via Docker on this Home host (container playon-ollama).
+                      </span>
+                    </div>
+                  ) : null}
+                  {ollamaStatus.data &&
+                  !ollamaStatus.data.ollama.reachable &&
+                  ollamaStatus.data.ollama.isLoopback &&
+                  !ollamaStatus.data.ollama.canInstallLocal &&
+                  ollamaStatus.data.ollama.manualCommand ? (
+                    <div className="stack tight">
+                      <p className="muted status-inline">
+                        Docker is not available on this host. Install Ollama manually, then
+                        refresh:
+                      </p>
+                      <code className="status-inline">{ollamaStatus.data.ollama.manualCommand}</code>
+                      <div className="btn-row">
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() =>
+                            void copyManualCommand(ollamaStatus.data!.ollama.manualCommand!)
+                          }
+                        >
+                          {copiedManual ? "Copied" : "Copy command"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => void ollamaStatus.refetch()}
+                        >
+                          Recheck
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                  {ollamaStatus.data &&
+                  !ollamaStatus.data.ollama.reachable &&
+                  !ollamaStatus.data.ollama.isLoopback ? (
+                    <p className="muted status-inline">
+                      Remote Ollama URL — one-click install only works for localhost. Start
+                      Ollama on that host, or switch Base URL to 127.0.0.1.
+                    </p>
+                  ) : null}
+                  {ollamaNotice ? <p className="ok">{ollamaNotice}</p> : null}
+                  {ollamaError ? <p className="error">{ollamaError}</p> : null}
+                </div>
+
+                <label className="field">
+                  <span>Model</span>
+                  {ollamaCustomModel ||
+                  !(ollamaStatus.data?.ollama.models.length ?? 0) ? (
+                    <input
+                      value={model}
+                      onChange={(e) => setModel(e.target.value)}
+                      list="llm-model-suggestions"
+                      placeholder={activePreset.defaultModel || "model-id"}
+                      required
+                      aria-invalid={Boolean(fieldErrors.model) || undefined}
+                    />
+                  ) : (
+                    <select
+                      value={
+                        ollamaStatus.data!.ollama.models.some((m) => m.name === model)
+                          ? model
+                          : ollamaStatus.data!.ollama.models[0]?.name ?? ""
+                      }
+                      onChange={(e) => {
+                        if (e.target.value === "__custom__") {
+                          setOllamaCustomModel(true);
+                          return;
+                        }
+                        setModel(e.target.value);
+                      }}
+                      required
+                      aria-invalid={Boolean(fieldErrors.model) || undefined}
+                    >
+                      {ollamaStatus.data!.ollama.models.map((m) => (
+                        <option key={m.name} value={m.name}>
+                          {m.name}
+                        </option>
+                      ))}
+                      <option value="__custom__">Custom model name…</option>
+                    </select>
+                  )}
+                  {ollamaStatus.data?.ollama.models.length ? (
+                    <span className="muted status-inline">
+                      <button
+                        type="button"
+                        className="linkish"
+                        onClick={() => setOllamaCustomModel((v) => !v)}
+                      >
+                        {ollamaCustomModel ? "Choose installed model" : "Enter custom name"}
+                      </button>
+                    </span>
+                  ) : (
+                    <span className="muted status-inline">
+                      No models installed yet — pull one below or type a name.
+                    </span>
+                  )}
+                  {fieldErrors.model ? (
+                    <span className="field-error">{fieldErrors.model}</span>
+                  ) : null}
+                </label>
+
+                <div className="field">
+                  <span>Pull a model</span>
+                  <div className="btn-row">
+                    <select
+                      value={pullTarget}
+                      onChange={(e) => setPullTarget(e.target.value)}
+                      disabled={!ollamaStatus.data?.ollama.reachable || ollamaJobBusy}
+                    >
+                      <option value="">Suggested…</option>
+                      {activePreset.suggestedModels.map((id) => (
+                        <option key={id} value={id}>
+                          {id}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={
+                        !pullTarget ||
+                        !ollamaStatus.data?.ollama.reachable ||
+                        ollamaJobBusy ||
+                        pullOllamaMut.isPending
+                      }
+                      onClick={() => pullOllamaMut.mutate(pullTarget)}
+                    >
+                      {ollamaJobBusy &&
+                      ollamaStatus.data?.ollama.job.phase === "pulling"
+                        ? "Pulling…"
+                        : "Pull"}
+                    </button>
+                  </div>
+                </div>
+
+                {activePreset.docsPath ? (
+                  <span className="muted status-inline">
+                    <a
+                      href={`https://playon.games${activePreset.docsPath}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Setup guide
+                    </a>
+                  </span>
+                ) : null}
                 <datalist id="llm-model-suggestions">
                   {activePreset.suggestedModels.map((id) => (
                     <option key={id} value={id} />
                   ))}
+                  {(ollamaStatus.data?.ollama.models ?? []).map((m) => (
+                    <option key={`installed-${m.name}`} value={m.name} />
+                  ))}
                 </datalist>
-              ) : null}
-              {activePreset.docsHint ? (
-                <span className="muted status-inline">{activePreset.docsHint}</span>
-              ) : null}
-              {activePreset.docsPath ? (
-                <span className="muted status-inline">
-                  <a
-                    href={`https://playon.games${activePreset.docsPath}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Setup guide
-                  </a>
-                </span>
-              ) : null}
-              {fieldErrors.model ? (
-                <span className="field-error">{fieldErrors.model}</span>
-              ) : null}
-            </label>
+              </div>
+            ) : (
+              <label className="field">
+                <span>Model</span>
+                <input
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                  list="llm-model-suggestions"
+                  placeholder={activePreset.defaultModel || "model-id"}
+                  required
+                  aria-invalid={Boolean(fieldErrors.model) || undefined}
+                />
+                {activePreset.suggestedModels.length > 0 ? (
+                  <datalist id="llm-model-suggestions">
+                    {activePreset.suggestedModels.map((id) => (
+                      <option key={id} value={id} />
+                    ))}
+                  </datalist>
+                ) : null}
+                {activePreset.docsHint ? (
+                  <span className="muted status-inline">{activePreset.docsHint}</span>
+                ) : null}
+                {activePreset.docsPath ? (
+                  <span className="muted status-inline">
+                    <a
+                      href={`https://playon.games${activePreset.docsPath}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Setup guide
+                    </a>
+                  </span>
+                ) : null}
+                {fieldErrors.model ? (
+                  <span className="field-error">{fieldErrors.model}</span>
+                ) : null}
+              </label>
+            )}
             <label className="field">
               <span>
                 API key{" "}
