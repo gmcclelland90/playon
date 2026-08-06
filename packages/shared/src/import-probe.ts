@@ -1,11 +1,26 @@
 import { z } from "zod";
 
+/** Per-game cutover hints: external userdata + launch args beyond the install tree. */
+export const ImportHintManageSchema = z.object({
+  /** Dirs under the service user home (e.g. "Zomboid"). */
+  userdataHomeDirs: z.array(z.string().min(1)).default([]),
+  /** CLI flag name without leading dashes (e.g. "servername"). */
+  serverNameArg: z.string().min(1).optional(),
+  /** When true, Manage supplies a non-interactive -adminpassword. */
+  adminPasswordArg: z.boolean().default(false),
+  /** Subdirs under userdata used for world-selective copy. */
+  worldSubdirs: z.array(z.string().min(1)).default(["Server", "db", "Saves/Multiplayer"]),
+});
+
+export type ImportHintManage = z.infer<typeof ImportHintManageSchema>;
+
 /** Fingerprint rule shipped to node-agent in manage_probe job args. */
 export const ImportHintRuleSchema = z.object({
   id: z.string().min(1),
   anyFiles: z.array(z.string().min(1)).default([]),
   suggestedGame: z.string().optional(),
   suggestedSkillName: z.string().optional(),
+  manage: ImportHintManageSchema.optional(),
 });
 
 export type ImportHintRule = z.infer<typeof ImportHintRuleSchema>;
@@ -89,6 +104,29 @@ export const ManageSeedResultSchema = z.object({
 });
 
 export type ManageSeedResult = z.infer<typeof ManageSeedResultSchema>;
+
+/** After seed: sniff systemd + copy external userdata into servers/<id>/home. */
+export const ManageCutoverArgsSchema = z.object({
+  sourcePath: z.string().min(1),
+  allowRoots: z.array(z.string().min(1)).min(1),
+  /** Relative to dataRoot, e.g. servers/<id>/home */
+  homeRel: z.string().min(1),
+  manage: ImportHintManageSchema,
+});
+
+export type ManageCutoverArgs = z.infer<typeof ManageCutoverArgsSchema>;
+
+export const ManageCutoverResultSchema = z.object({
+  serverName: z.string().optional(),
+  unitName: z.string().optional(),
+  /** Absolute HOME path on the node for Start (servers/<id>/home). */
+  playonHome: z.string().min(1),
+  playonHomeRel: z.string().min(1),
+  userdataBytes: z.number().int().nonnegative(),
+  warnings: z.array(z.string()).default([]),
+});
+
+export type ManageCutoverResult = z.infer<typeof ManageCutoverResultSchema>;
 
 /** Home-side marker: game files live on the node; do not push empty Home tree over them. */
 export const NODE_AUTHORITATIVE_MARKER = ".playon-node-authoritative";

@@ -316,7 +316,13 @@ export const api = {
     }),
   manageFromNode: (
     nodeId: string,
-    body: { sourcePath: string; serverName?: string; skillName?: string },
+    body: {
+      sourcePath: string;
+      serverName?: string;
+      skillName?: string;
+      game?: string;
+      hintIds?: string[];
+    },
   ) =>
     request<{
       manage: {

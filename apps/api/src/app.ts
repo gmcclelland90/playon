@@ -1557,6 +1557,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           sourcePath: z.string().min(1),
           serverName: z.string().min(1).optional(),
           skillName: z.string().min(1).optional(),
+          game: z.string().min(1).optional(),
+          hintIds: z.array(z.string().min(1)).optional(),
         })
         .parse(await c.req.json());
       const report = await manageSuggest.manageFromNode({

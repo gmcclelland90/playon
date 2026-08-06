@@ -60,5 +60,15 @@ hints:
       - StartServer64.sh
       - StartServer64.bat
       - projectzomboid-server.sh
+      - start-server.sh
     suggestedGame: Project Zomboid
     suggestedSkillName: games.project-zomboid
+    manage:
+      userdataHomeDirs:
+        - Zomboid
+      serverNameArg: servername
+      adminPasswordArg: true
+      worldSubdirs:
+        - Server
+        - db
+        - Saves/Multiplayer

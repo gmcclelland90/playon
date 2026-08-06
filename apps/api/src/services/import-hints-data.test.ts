@@ -7,12 +7,15 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../
 const skillsRoot = path.join(repoRoot, "skills");
 
 describe("import-hints-data", () => {
-  it("loads Zomboid fingerprint from import-hints.yaml", () => {
+  it("loads Zomboid fingerprint and manage cutover metadata from import-hints.yaml", () => {
     const hints = loadImportHintRules([skillsRoot]);
     const z = hints.find((h) => h.id === "project_zomboid_layout");
     expect(z).toBeTruthy();
     expect(z?.suggestedSkillName).toBe("games.project-zomboid");
     expect(z?.anyFiles.length).toBeGreaterThan(0);
+    expect(z?.manage?.userdataHomeDirs).toContain("Zomboid");
+    expect(z?.manage?.serverNameArg).toBe("servername");
+    expect(z?.manage?.adminPasswordArg).toBe(true);
   });
 
   it("loads linux scan roots for install trees (Steam/opt/servers)", () => {

@@ -15,11 +15,13 @@ import {
 import {
   ImportPackArgsSchema,
   ImportProbeArgsSchema,
+  ManageCutoverArgsSchema,
   ManagePackReadArgsSchema,
   ManageSeedArgsSchema,
   type NodeJobKind,
 } from "@playon/shared";
 import { assertPackPathAllowed, runImportProbe } from "./import-probe.js";
+import { runManageCutover } from "./manage-cutover.js";
 import { probeCapabilities } from "./capabilities.js";
 import { performNodeSelfUpdate } from "./self-update.js";
 
@@ -446,6 +448,11 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
     } finally {
       fs.closeSync(fd);
     }
+  }
+
+  if (job.kind === "manage_cutover") {
+    const args = ManageCutoverArgsSchema.parse(job.args);
+    return runManageCutover(args, dataRoot);
   }
 
   throw new Error(`unsupported_job_kind: ${String((job as { kind: string }).kind)}`);
