@@ -10,7 +10,13 @@ import { LOCAL_NODE_ID } from "@playon/shared";
 import { findRepoRoot, type AppConfig } from "../../config.js";
 import type { Db } from "../../db/client.js";
 import { nodes } from "../../db/schema.js";
-import { defaultSshExec, type SshExec } from "./add-node.js";
+import {
+  classifyBootstrapFailure,
+  classifySshAuthError,
+  defaultSshExec,
+  wrapRemotePrivilegedScript,
+  type SshExec,
+} from "./add-node.js";
 
 export type InstallDockerTokenRecord = {
   token: string;
@@ -75,10 +81,6 @@ function readEnsureDockerBody(): string {
   return fs.readFileSync(p, "utf8");
 }
 
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
-}
-
 export function dockerManualInstallCommand(os: string): string {
   if (os === "windows") {
     return DOCKER_DESKTOP_URL;
@@ -141,19 +143,29 @@ export class InstallDockerService {
     }
     const row = await this.requireLinuxNode(opts.nodeId);
     const script = buildInstallDockerScript();
-    const result = await this.sshExec({
-      host: opts.host,
-      port: opts.port ?? 22,
+    const wrapped = wrapRemotePrivilegedScript(script, {
       username: opts.username,
       password: opts.password,
-      privateKey: opts.privateKey,
-      readyTimeoutMs: opts.readyTimeoutMs ?? 180_000,
-      script: `bash -lc ${shellQuote(script)}`,
     });
-    if (result.code !== 0) {
-      throw new Error(
-        `ssh_install_docker_failed: exit ${result.code}: ${(result.stderr || result.stdout).slice(0, 400)}`,
-      );
+    try {
+      const result = await this.sshExec({
+        host: opts.host,
+        port: opts.port ?? 22,
+        username: opts.username,
+        password: opts.password,
+        privateKey: opts.privateKey,
+        readyTimeoutMs: opts.readyTimeoutMs ?? 180_000,
+        script: wrapped.command,
+        stdin: wrapped.stdin,
+      });
+      if (result.code !== 0) {
+        const classified = classifyBootstrapFailure(result);
+        throw new Error(
+          classified.message.replace(/^ssh_bootstrap_failed/, "ssh_install_docker_failed"),
+        );
+      }
+    } catch (err) {
+      throw classifySshAuthError(err);
     }
     return { nodeId: row.id, detail: "install_docker_ok_waiting_heartbeat" };
   }

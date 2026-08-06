@@ -60,6 +60,8 @@ export type SshExec = (args: {
   privateKey?: string;
   readyTimeoutMs: number;
   script: string;
+  /** Written to remote stdin before close (e.g. sudo -S password). */
+  stdin?: string;
 }) => Promise<{ stdout: string; stderr: string; code: number }>;
 
 export const defaultSshExec: SshExec = (args) =>
@@ -92,6 +94,9 @@ export const defaultSshExec: SshExec = (args) =>
           stream.stderr.on("data", (d: Buffer) => {
             stderr += d.toString("utf8");
           });
+          if (args.stdin != null) {
+            stream.end(args.stdin);
+          }
         });
       })
       .on("error", (err) => {
@@ -110,6 +115,66 @@ export const defaultSshExec: SshExec = (args) =>
 
 function shellQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
+/**
+ * Install scripts need root. One-liner uses `| sudo bash`; SSH must elevate the same way.
+ * Password is never put on the remote argv — only on stdin for `sudo -S`.
+ */
+export function wrapRemotePrivilegedScript(
+  script: string,
+  opts: { username: string; password?: string },
+): { command: string; stdin?: string } {
+  const quoted = shellQuote(script);
+  const user = opts.username.trim();
+  if (!user || user === "root") {
+    return { command: `bash -lc ${quoted}` };
+  }
+  if (opts.password) {
+    return {
+      command: `sudo -S -p '' bash -lc ${quoted}`,
+      stdin: `${opts.password}\n`,
+    };
+  }
+  return { command: `sudo -n bash -lc ${quoted}` };
+}
+
+export function classifySshAuthError(err: unknown): Error {
+  const message = err instanceof Error ? err.message : String(err);
+  const lower = message.toLowerCase();
+  if (
+    lower.includes("all configured authentication methods failed") ||
+    lower.includes("authentication failure") ||
+    (lower.includes("permission denied") && lower.includes("publickey")) ||
+    lower.includes("ssh_auth_failed")
+  ) {
+    return new Error("ssh_auth_failed");
+  }
+  if (message === "ssh_timeout" || lower.includes("ssh_timeout")) {
+    return new Error("ssh_timeout");
+  }
+  return err instanceof Error ? err : new Error(message);
+}
+
+export function classifyBootstrapFailure(result: {
+  code: number;
+  stdout: string;
+  stderr: string;
+}): Error {
+  const detail = (result.stderr || result.stdout).slice(0, 400);
+  const lower = detail.toLowerCase();
+  if (
+    lower.includes("could not open lock file") ||
+    lower.includes("unable to lock directory") ||
+    lower.includes("permission denied") ||
+    lower.includes("run as root") ||
+    lower.includes("a password is required") ||
+    lower.includes("sudo: a password is required") ||
+    lower.includes("sudo: a terminal is required")
+  ) {
+    return new Error(`ssh_needs_root_or_sudo: exit ${result.code}: ${detail}`);
+  }
+  return new Error(`ssh_bootstrap_failed: exit ${result.code}: ${detail}`);
 }
 
 export function buildLanBootstrapScript(opts: {
@@ -179,8 +244,7 @@ export class AddNodeService {
     nodeId: string;
     name: string;
     kind: AddNodeKind;
-  }): Promise<void> {
-    const now = new Date();
+  }): Promise<{ created: boolean }> {
     const existing = await this.db.select().from(nodes).where(eq(nodes.id, opts.nodeId)).limit(1);
     if (existing[0]) {
       await this.db
@@ -192,8 +256,9 @@ export class AddNodeService {
           tunnelStatus: opts.kind === "cloud" ? "pending" : "none",
         })
         .where(eq(nodes.id, opts.nodeId));
-      return;
+      return { created: false };
     }
+    // Epoch lastSeen so presence is offline until the agent heartbeats (avoid online→stale flash).
     await this.db.insert(nodes).values({
       id: opts.nodeId,
       name: opts.name,
@@ -203,10 +268,31 @@ export class AddNodeService {
       steamcmd: false,
       freeDiskBytes: null,
       agentVersion: "pending",
-      lastSeenAt: now,
+      lastSeenAt: new Date(0),
       kind: opts.kind,
       tunnelStatus: opts.kind === "cloud" ? "pending" : "none",
     });
+    return { created: true };
+  }
+
+  /** Drop a never-heartbeated placeholder created by a failed SSH add. */
+  private async cleanupFailedSshPlaceholder(opts: {
+    nodeId: string;
+    created: boolean;
+    peerCreated: boolean;
+  }): Promise<void> {
+    if (opts.peerCreated) {
+      await this.tunnel.removeCloudPeer(opts.nodeId).catch(() => undefined);
+    }
+    if (!opts.created) return;
+
+    const row = await this.db.select().from(nodes).where(eq(nodes.id, opts.nodeId)).limit(1);
+    if (!row[0] || row[0].agentVersion !== "pending") return;
+
+    const bound = await this.db.select().from(servers).where(eq(servers.nodeId, opts.nodeId));
+    if (bound.length) return;
+
+    await this.db.delete(nodes).where(eq(nodes.id, opts.nodeId));
   }
 
   /** Create a short-lived one-liner token (console paste). */
@@ -217,6 +303,7 @@ export class AddNodeService {
     /** Required for cloud: VPS public IP/hostname for WireGuard Endpoint. */
     endpointHost?: string;
   }): Promise<{ token: string; nodeId: string; oneLiner: string; expiresAt: string }> {
+    if (!this.config.nodeToken) throw new Error("node_token_unset");
     const nodeId = opts.nodeId?.trim() || `node-${nanoid(8)}`;
     if (nodeId === LOCAL_NODE_ID) throw new Error("node_id_reserved");
     if (opts.kind === "cloud" && !opts.endpointHost?.trim()) {
@@ -284,60 +371,74 @@ export class AddNodeService {
     const nodeId = args.nodeId?.trim() || `node-${nanoid(8)}`;
     if (nodeId === LOCAL_NODE_ID) throw new Error("node_id_reserved");
     const name = args.nodeName?.trim() || nodeId;
-    await this.upsertPlaceholder({ nodeId, name, kind: args.kind });
+    const { created } = await this.upsertPlaceholder({ nodeId, name, kind: args.kind });
 
     const timeout = args.readyTimeoutMs ?? 180_000;
     let script: string;
     let overlayIp: string | undefined;
+    let peerCreated = false;
 
-    if (args.kind === "lan") {
-      script = buildLanBootstrapScript({
-        apiUrl: this.apiUrlForKind("lan"),
-        nodeToken: this.config.nodeToken,
-        nodeId,
-      });
-    } else {
-      if (!this.tunnel.toolsAvailable() && process.env.PLAYON_WG_MEMORY !== "1") {
-        // Still allow script generation in tests with memory runner.
-      }
-      const peer = await this.tunnel.createCloudPeer({
-        nodeId,
-        endpointHost: args.host,
-        listenPort: args.wgListenPort,
-      });
-      overlayIp = peer.overlayIp;
-      const wgConfig = await this.tunnel.remoteWgQuickConfig(peer);
-      script = buildCloudBootstrapScript({
-        apiUrl: this.apiUrlForKind("cloud"),
-        nodeToken: this.config.nodeToken,
-        nodeId,
-        wgConfig,
-        wgListenPort: peer.listenPort,
-      });
-      // Home side up before/while remote comes online
-      await this.tunnel.syncHomeInterface().catch(async (err) => {
-        await this.tunnel.markTunnelStatus(
+    try {
+      if (args.kind === "lan") {
+        script = buildLanBootstrapScript({
+          apiUrl: this.apiUrlForKind("lan"),
+          nodeToken: this.config.nodeToken,
           nodeId,
-          "unconfigured",
-          err instanceof Error ? err.message : "wg_sync_failed",
-        );
+        });
+      } else {
+        if (!this.tunnel.toolsAvailable() && process.env.PLAYON_WG_MEMORY !== "1") {
+          // Still allow script generation in tests with memory runner.
+        }
+        const peer = await this.tunnel.createCloudPeer({
+          nodeId,
+          endpointHost: args.host,
+          listenPort: args.wgListenPort,
+        });
+        peerCreated = true;
+        overlayIp = peer.overlayIp;
+        const wgConfig = await this.tunnel.remoteWgQuickConfig(peer);
+        script = buildCloudBootstrapScript({
+          apiUrl: this.apiUrlForKind("cloud"),
+          nodeToken: this.config.nodeToken,
+          nodeId,
+          wgConfig,
+          wgListenPort: peer.listenPort,
+        });
+        // Home side up before/while remote comes online
+        await this.tunnel.syncHomeInterface().catch(async (err) => {
+          await this.tunnel.markTunnelStatus(
+            nodeId,
+            "unconfigured",
+            err instanceof Error ? err.message : "wg_sync_failed",
+          );
+        });
+      }
+
+      const wrapped = wrapRemotePrivilegedScript(script, {
+        username: args.username,
+        password: args.password,
       });
-    }
+      const result = await this.sshExec({
+        host: args.host,
+        port: args.port ?? 22,
+        username: args.username,
+        password: args.password,
+        privateKey: args.privateKey,
+        readyTimeoutMs: timeout,
+        script: wrapped.command,
+        stdin: wrapped.stdin,
+      });
 
-    const result = await this.sshExec({
-      host: args.host,
-      port: args.port ?? 22,
-      username: args.username,
-      password: args.password,
-      privateKey: args.privateKey,
-      readyTimeoutMs: timeout,
-      script: `bash -lc ${shellQuote(script)}`,
-    });
-
-    if (result.code !== 0) {
-      throw new Error(
-        `ssh_bootstrap_failed: exit ${result.code}: ${(result.stderr || result.stdout).slice(0, 400)}`,
-      );
+      if (result.code !== 0) {
+        throw classifyBootstrapFailure(result);
+      }
+    } catch (err) {
+      await this.cleanupFailedSshPlaceholder({
+        nodeId,
+        created,
+        peerCreated,
+      });
+      throw classifySshAuthError(err);
     }
 
     if (args.kind === "cloud") {

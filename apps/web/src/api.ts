@@ -233,6 +233,8 @@ export const api = {
     request<{
       localComputeEnabled?: boolean;
       wireguardTools?: boolean;
+      /** False when PLAYON_NODE_TOKEN is unset — Add node via SSH / one-liner will fail. */
+      nodeTokenConfigured?: boolean;
       nodes: Array<{
         id: string;
         name: string;

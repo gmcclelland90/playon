@@ -1,0 +1,23 @@
+[Unit]
+Description=PlayOn local node-agent
+After=network-online.target playon.service docker.service
+Wants=network-online.target
+Requires=playon.service
+
+[Service]
+Type=simple
+User=playon
+Group=playon
+EnvironmentFile=/etc/playon/playon.env
+Environment=PLAYON_API_URL=http://127.0.0.1:8787
+Environment=PLAYON_NODE_ID=local
+Environment=PLAYON_NODE_NAME=%H
+WorkingDirectory=/home/playon/src/playon
+# Built agent from the monorepo checkout (pnpm build).
+ExecStart=/usr/bin/node apps/node-agent/dist/index.js
+Restart=always
+RestartSec=5
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

@@ -8,7 +8,16 @@ import {
   type PublicUser,
 } from "@playon/shared";
 import { api } from "../api";
+import {
+  isPendingNodeSetup,
+  nodePresenceHint,
+  nodePresenceLabel,
+  runtimeErrorHint,
+} from "../status";
 
+function nodeActionError(err: Error): string {
+  return runtimeErrorHint(err.message) ?? err.message;
+}
 
 export function SettingsPage({ user }: { user: PublicUser }) {
   const qc = useQueryClient();
@@ -40,6 +49,8 @@ export function SettingsPage({ user }: { user: PublicUser }) {
   const [oneLiner, setOneLiner] = useState<string | null>(null);
   const [nodeNotice, setNodeNotice] = useState<string | null>(null);
   const [nodeError, setNodeError] = useState<string | null>(null);
+  /** Shown after Remove hits node_has_servers for this id. */
+  const [forceRemoveNodeId, setForceRemoveNodeId] = useState<string | null>(null);
   const [dockerInstallNodeId, setDockerInstallNodeId] = useState<string | null>(null);
   const [dockerSshHost, setDockerSshHost] = useState("");
   const [dockerSshUser, setDockerSshUser] = useState("root");
@@ -107,7 +118,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
       await qc.invalidateQueries({ queryKey: ["nodes"] });
       window.setTimeout(() => setNodeNotice(null), 3000);
     },
-    onError: (err: Error) => setNodeError(err.message),
+    onError: (err: Error) => setNodeError(nodeActionError(err)),
   });
 
   const addNodeMut = useMutation({
@@ -124,7 +135,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
       setAddPassword("");
       await qc.invalidateQueries({ queryKey: ["nodes"] });
     },
-    onError: (err: Error) => setNodeError(err.message),
+    onError: (err: Error) => setNodeError(nodeActionError(err)),
   });
 
   const bootstrapTokenMut = useMutation({
@@ -138,16 +149,22 @@ export function SettingsPage({ user }: { user: PublicUser }) {
       setOneLiner(res.oneLiner);
       setNodeNotice(`One-liner ready (expires ${new Date(res.expiresAt).toLocaleString()})`);
     },
-    onError: (err: Error) => setNodeError(err.message),
+    onError: (err: Error) => setNodeError(nodeActionError(err)),
   });
 
   const removeNodeMut = useMutation({
-    mutationFn: (id: string) => api.removeNode(id),
+    mutationFn: ({ id, force }: { id: string; force?: boolean }) => api.removeNode(id, force),
     onSuccess: async () => {
+      setForceRemoveNodeId(null);
       setNodeNotice("Node removed.");
       await qc.invalidateQueries({ queryKey: ["nodes"] });
     },
-    onError: (err: Error) => setNodeError(err.message),
+    onError: (err: Error, vars) => {
+      if (err.message.startsWith("node_has_servers")) {
+        setForceRemoveNodeId(vars.id);
+      }
+      setNodeError(nodeActionError(err));
+    },
   });
 
   const installDockerSshMut = useMutation({
@@ -163,7 +180,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
       setNodeNotice("Docker install started — waiting for the node to report Docker…");
       await qc.invalidateQueries({ queryKey: ["nodes"] });
     },
-    onError: (err: Error) => setNodeError(err.message),
+    onError: (err: Error) => setNodeError(nodeActionError(err)),
   });
 
   const installDockerTokenMut = useMutation({
@@ -175,7 +192,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
         `One-liner ready (expires ${new Date(res.expiresAt).toLocaleString()}). Run it on the node, then wait for Docker.`,
       );
     },
-    onError: (err: Error) => setNodeError(err.message),
+    onError: (err: Error) => setNodeError(nodeActionError(err)),
   });
 
   useEffect(() => {
@@ -486,6 +503,12 @@ export function SettingsPage({ user }: { user: PublicUser }) {
             Windows before adding cloud nodes.
           </p>
         ) : null}
+        {nodesList.data?.nodeTokenConfigured === false ? (
+          <p className="error" role="alert">
+            PLAYON_NODE_TOKEN is not set on this control plane. Add a token to the PlayOn env file
+            and restart before adding LAN or cloud nodes. Home install sets this automatically.
+          </p>
+        ) : null}
 
         <h4>Add node</h4>
         <div className="stack tight">
@@ -494,6 +517,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
             <select
               value={addKind}
               onChange={(e) => setAddKind(e.target.value as "lan" | "cloud")}
+              disabled={nodesList.data?.nodeTokenConfigured === false}
             >
               <option value="lan">On my LAN (no tunnel)</option>
               <option value="cloud">In the cloud (WireGuard)</option>
@@ -505,12 +529,20 @@ export function SettingsPage({ user }: { user: PublicUser }) {
               value={addHost}
               onChange={(e) => setAddHost(e.target.value)}
               placeholder={addKind === "cloud" ? "203.0.113.9" : "192.168.1.50"}
+              disabled={nodesList.data?.nodeTokenConfigured === false}
             />
           </label>
           <label className="field">
             <span>SSH username</span>
-            <input value={addUser} onChange={(e) => setAddUser(e.target.value)} />
+            <input
+              value={addUser}
+              onChange={(e) => setAddUser(e.target.value)}
+              disabled={nodesList.data?.nodeTokenConfigured === false}
+            />
           </label>
+          <p className="muted status-inline">
+            Non-root users need passwordless sudo, or a password that unlocks sudo on the target.
+          </p>
           <label className="field">
             <span>SSH password (for Add via SSH)</span>
             <input
@@ -518,6 +550,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
               value={addPassword}
               onChange={(e) => setAddPassword(e.target.value)}
               autoComplete="off"
+              disabled={nodesList.data?.nodeTokenConfigured === false}
             />
           </label>
           <label className="field">
@@ -526,13 +559,18 @@ export function SettingsPage({ user }: { user: PublicUser }) {
               value={addNodeName}
               onChange={(e) => setAddNodeName(e.target.value)}
               placeholder="spare-pc"
+              disabled={nodesList.data?.nodeTokenConfigured === false}
             />
           </label>
           <div className="btn-row">
             <button
               className="btn btn-primary"
               type="button"
-              disabled={addNodeMut.isPending || !addHost.trim()}
+              disabled={
+                addNodeMut.isPending ||
+                !addHost.trim() ||
+                nodesList.data?.nodeTokenConfigured === false
+              }
               onClick={() => {
                 setNodeError(null);
                 addNodeMut.mutate();
@@ -543,7 +581,11 @@ export function SettingsPage({ user }: { user: PublicUser }) {
             <button
               className="btn"
               type="button"
-              disabled={bootstrapTokenMut.isPending || (addKind === "cloud" && !addHost.trim())}
+              disabled={
+                bootstrapTokenMut.isPending ||
+                (addKind === "cloud" && !addHost.trim()) ||
+                nodesList.data?.nodeTokenConfigured === false
+              }
               onClick={() => {
                 setNodeError(null);
                 bootstrapTokenMut.mutate();
@@ -570,6 +612,15 @@ export function SettingsPage({ user }: { user: PublicUser }) {
               const needsAgentUpdate = Boolean(nodeUpdate?.updateAvailable);
               const homeBlocksNodeUpdate =
                 Boolean(updates.data && !updates.data.homeCurrentEnoughForNodes) && n.id !== "local";
+              const pendingSetup = isPendingNodeSetup({
+                status: n.status,
+                agentVersion: n.agentVersion,
+              });
+              const presenceHint = nodePresenceHint({
+                id: n.id,
+                status: n.status,
+                agentVersion: n.agentVersion,
+              });
               return (
               <li key={n.id}>
                 <div className="btn-row" style={{ justifyContent: "space-between" }}>
@@ -577,18 +628,30 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                     <strong>{n.name}</strong>{" "}
                     <span className="muted">{n.badge ?? n.kind}</span>
                     <div className="muted">
-                      {n.status}
-                      {n.docker ? " · Docker" : " · no Docker"}
-                      {n.agentVersion ? ` · v${n.agentVersion}` : ""}
+                      {nodePresenceLabel({
+                        status: n.status,
+                        agentVersion: n.agentVersion,
+                      })}
+                      {pendingSetup
+                        ? ""
+                        : n.docker
+                          ? " · Docker"
+                          : " · no Docker"}
+                      {n.agentVersion && n.agentVersion !== "pending"
+                        ? ` · v${n.agentVersion}`
+                        : ""}
                       {needsAgentUpdate ? " · update available" : ""}
                       {n.tunnelStatus && n.tunnelStatus !== "none"
                         ? ` · tunnel ${n.tunnelStatus}`
                         : ""}
                       {dockerWaitingId === n.id ? " · waiting for Docker…" : ""}
                     </div>
+                    {presenceHint ? (
+                      <p className="muted status-inline">{presenceHint}</p>
+                    ) : null}
                   </div>
                   <div className="btn-row">
-                    {needsDocker && !isWindows ? (
+                    {needsDocker && !isWindows && !pendingSetup ? (
                       <button
                         className="btn btn-primary"
                         type="button"
@@ -631,14 +694,38 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                         type="button"
                         disabled={removeNodeMut.isPending}
                         onClick={() => {
-                          if (!window.confirm(`Remove node ${n.name}? Servers must be moved first.`)) {
+                          const msg = pendingSetup
+                            ? `Remove incomplete node “${n.name}”? Bootstrap never finished — safe to delete.`
+                            : `Remove node ${n.name}? Servers must be moved first.`;
+                          if (!window.confirm(msg)) {
                             return;
                           }
                           setNodeError(null);
-                          removeNodeMut.mutate(n.id);
+                          removeNodeMut.mutate({ id: n.id });
                         }}
                       >
                         Remove
+                      </button>
+                    ) : null}
+                    {n.id !== "local" && forceRemoveNodeId === n.id ? (
+                      <button
+                        className="btn"
+                        type="button"
+                        disabled={removeNodeMut.isPending}
+                        title="Delete the node record even if servers still reference it"
+                        onClick={() => {
+                          if (
+                            !window.confirm(
+                              `Force remove node ${n.name}? Bound server records will be left without this node.`,
+                            )
+                          ) {
+                            return;
+                          }
+                          setNodeError(null);
+                          removeNodeMut.mutate({ id: n.id, force: true });
+                        }}
+                      >
+                        Force remove
                       </button>
                     ) : null}
                   </div>

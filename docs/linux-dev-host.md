@@ -61,13 +61,15 @@ export PLAYON_ENV=production
 export PLAYON_HOST=0.0.0.0
 export PLAYON_ADVERTISE_HOST=172.16.0.155
 export PLAYON_SESSION_SECRET=lab-change-me
+export PLAYON_NODE_TOKEN=$(openssl rand -hex 24)   # required to Add node via SSH
 export PLAYON_RUNTIME=docker
 export PLAYON_LLM_MODE=openai_compatible
 export PLAYON_VENICE_API_KEY= # or rely on Settings DB
-pnpm start
+pnpm start &
+PLAYON_API_URL=http://127.0.0.1:8787 PLAYON_NODE_ID=local pnpm --filter @playon/node-agent start
 ```
 
-Open `http://172.16.0.155:8787`. For systemd, see [lan-install.md](lan-install.md) and `infra/control-plane/`.
+Open `http://172.16.0.155:8787`. Prefer systemd (`playon` + `playon-node`) — see [lan-install.md](lan-install.md) and `infra/control-plane/`. Without the node-agent, Local stays offline in the dashboard.
 
 ## Developer hot reload (optional)
 

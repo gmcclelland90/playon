@@ -1393,6 +1393,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     return c.json({
       localComputeEnabled: nodeSettings?.localComputeEnabled ?? true,
       wireguardTools: tunnel.toolsAvailable(),
+      /** True when PLAYON_NODE_TOKEN is set — required to add LAN/cloud nodes. */
+      nodeTokenConfigured: Boolean(config.nodeToken?.trim()),
       nodes: list.map((n) => {
         const kind = (n.kind as NodeKind) || (n.id === LOCAL_NODE_ID ? "local" : "lan");
         return {

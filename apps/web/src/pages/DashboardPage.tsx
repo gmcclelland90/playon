@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { can, type PublicUser } from "@playon/shared";
 import { api } from "../api";
-import { statusLabel } from "../status";
+import { nodePresenceHint, nodePresenceLabel, statusLabel } from "../status";
 
 function formatBytes(bytes: number | null | undefined): string {
   if (bytes == null || !Number.isFinite(bytes)) return "—";
@@ -289,14 +289,29 @@ export function DashboardPage({ user }: { user: PublicUser }) {
               </p>
             ) : nodes.data?.nodes?.length ? (
               <ul className="list compact-list">
-                {nodes.data.nodes.map((n) => (
+                {nodes.data.nodes.map((n) => {
+                  const presenceHint = nodePresenceHint({
+                    id: n.id,
+                    status: n.status,
+                    agentVersion: n.agentVersion,
+                  });
+                  return (
                   <li key={n.id}>
                     <div>
                       <strong>{n.name}</strong>{" "}
                       <span className="muted">{n.badge ?? n.placement ?? n.kind ?? ""}</span>
                       <div className="muted">
-                        <span className={`node-status node-${n.status}`}>
-                          {statusLabel(n.status)}
+                        <span
+                          className={`node-status node-${
+                            n.agentVersion === "pending" && n.status !== "online"
+                              ? "offline"
+                              : n.status
+                          }`}
+                        >
+                          {nodePresenceLabel({
+                            status: n.status,
+                            agentVersion: n.agentVersion,
+                          })}
                         </span>
                         {" · "}
                         {n.os}
@@ -315,9 +330,13 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                           : ""}
                       </div>
                       <div className="muted">Seen {relativeTime(String(n.lastSeenAt))}</div>
+                      {presenceHint ? (
+                        <p className="muted status-inline">{presenceHint}</p>
+                      ) : null}
                     </div>
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             ) : (
               <div className="empty-hint">

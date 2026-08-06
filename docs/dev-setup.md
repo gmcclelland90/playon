@@ -35,7 +35,7 @@ pnpm --filter @playon/web dev
 pnpm --filter @playon/node-agent dev
 ```
 
-For remote agents, set the same `PLAYON_NODE_TOKEN` on the API host and each node-agent. Heartbeats send `Authorization: Bearer …`. Without a token the API stays open for local single-host use; dashboard marks nodes `online` / `stale` / `offline` from `lastSeenAt`.
+For remote agents (and Settings → Nodes add via SSH / one-liner), set the same `PLAYON_NODE_TOKEN` on the API host and each node-agent. Heartbeats send `Authorization: Bearer …`. Without a token the API stays open for local single-host use, but adding nodes fails with `node_token_unset`. Dashboard marks nodes `online` / `stale` / `offline` from `lastSeenAt` — run the local node-agent (`playon-node`) so Local stays online.
 
 Blank-machine imaging: [`infra/blank-node/README.md`](../infra/blank-node/README.md).
 
