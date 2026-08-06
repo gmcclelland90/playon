@@ -112,6 +112,25 @@ describe("executeJob", () => {
       )) as { bytes: number; done: boolean; dataBase64: string };
       expect(chunk.bytes).toBeGreaterThan(0);
       expect(chunk.dataBase64.length).toBeGreaterThan(0);
+
+      const seeded = (await executeJob(
+        {
+          id: "j9",
+          nodeId: "n1",
+          kind: "manage_seed",
+          args: {
+            sourcePath: server,
+            allowRoots: [scan],
+            destRel: "servers/abc/game",
+          },
+        },
+        dataRoot,
+      )) as { bytesCopied: number; destRel: string };
+      expect(seeded.destRel).toBe("servers/abc/game");
+      expect(seeded.bytesCopied).toBeGreaterThan(0);
+      expect(fs.existsSync(path.join(dataRoot, "servers", "abc", "game", "StartServer64.sh"))).toBe(
+        true,
+      );
     } finally {
       fs.rmSync(dataRoot, { recursive: true, force: true });
       fs.rmSync(scan, { recursive: true, force: true });

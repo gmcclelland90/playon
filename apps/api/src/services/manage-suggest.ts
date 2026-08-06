@@ -1,13 +1,13 @@
 /**
- * Map "Scan for servers" — probe allowlisted roots on a node, then pack + manage.
+ * Map Scan → Manage: probe allowlisted roots, then seed on the node (no LAN haul).
  */
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { nanoid } from "nanoid";
 import {
-  ImportPackResultSchema,
   ImportProbeResultSchema,
-  ManagePackReadResultSchema,
+  ManageSeedResultSchema,
+  NODE_AUTHORITATIVE_MARKER,
   deriveNodePresence,
   isLocalNodeId,
   type ImportProbeCandidate,
@@ -15,16 +15,19 @@ import {
 import { runImportProbe } from "@playon/shared/import-probe-walk";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db/client.js";
-import { nodes } from "../db/schema.js";
 import { eq } from "drizzle-orm";
+import { nodes, servers } from "../db/schema.js";
 import { loadImportHintRules, loadImportScanRoots } from "./import-hints-data.js";
 import type { ImportLocalReport, ImportLocalService } from "./import-local.js";
-import { dispatchNodeJob } from "./node-runtime.js";
+import { PlacementService } from "./placement.js";
+import { SkillDraftService } from "./skill-drafts.js";
+import { writeSkillMarkerFromSkill } from "./skill-marker.js";
+import { listSkills, loadSkillMetadata } from "./skills.js";
+import type { ServerService } from "./servers.js";
+import type { SnapshotService } from "./snapshots.js";
+import { dispatchNodeJob, nodeServerRelPath } from "./node-runtime.js";
 
 const SUGGEST_CACHE_TTL_MS = 30_000;
-/** Large Steam installs (e.g. Zomboid ~7GiB) stage on the node data disk. */
-const PACK_MAX_BYTES = 32 * 1024 * 1024 * 1024;
-const PACK_CHUNK_BYTES = 8 * 1024 * 1024;
 
 type CacheEntry = {
   at: number;
@@ -39,6 +42,8 @@ export class ManageSuggestService {
     private readonly db: Db,
     private readonly config: AppConfig,
     private readonly importLocal: ImportLocalService,
+    private readonly serversSvc: ServerService,
+    private readonly snapshots: SnapshotService,
   ) {}
 
   private rootsAndHints() {
@@ -104,108 +109,142 @@ export class ManageSuggestService {
     sourcePath: string;
     serverName?: string;
     skillName?: string;
+    game?: string;
   }): Promise<ImportLocalReport> {
     await this.assertNode(args.nodeId);
     const sourcePath = args.sourcePath.trim();
     if (!sourcePath) throw new Error("source_path_required");
-
-    const { roots } = this.rootsAndHints();
 
     if (isLocalNodeId(args.nodeId)) {
       return this.importLocal.importFromPath({
         sourcePath,
         serverName: args.serverName,
         skillName: args.skillName,
+        game: args.game,
         nodeId: args.nodeId === "local" ? "local" : args.nodeId,
       });
     }
 
-    const pack = ImportPackResultSchema.parse(
+    const { roots } = this.rootsAndHints();
+    const followUp: string[] = [];
+    let skillName = args.skillName?.trim();
+    let skillSource: ImportLocalReport["skillSource"] = skillName ? "provided" : "detected";
+    let draftSlug: string | undefined;
+
+    if (skillName && !loadSkillMetadata(this.config.skillsRoots, skillName)) {
+      followUp.push(`skill_not_found:${skillName}`);
+      skillName = undefined;
+      skillSource = "draft";
+    }
+
+    if (!skillName) {
+      const drafts = new SkillDraftService(this.config);
+      const game = args.game?.trim() || path.basename(sourcePath);
+      const saved = drafts.save({
+        name: `managed-${game}`,
+        game,
+        description: `Scaffolded from manage of ${sourcePath} on node ${args.nodeId}`,
+        installGuide: [
+          `# Managed server: ${game}`,
+          "",
+          `Source path on node: \`${sourcePath}\``,
+          "",
+          "Files were copied on the node into PlayOn’s server jail. Review/promote this draft if needed.",
+        ].join("\n"),
+        containerSupport: "none",
+        warnings: "Managed from an existing install — stop the old host service before Start in PlayOn.",
+      });
+      draftSlug = saved.slug;
+      skillName = saved.skillName;
+      skillSource = "draft";
+      followUp.push("review_and_promote_draft_skill");
+    }
+
+    const skill = loadSkillMetadata(this.config.skillsRoots, skillName!);
+    if (!skill) throw new Error(`unknown_skill: ${skillName}`);
+
+    const placement = new PlacementService(this.db, this.config);
+    const resolvedNodeId = await placement.resolveNodeId(skill.metadata.name, args.nodeId);
+
+    const id = nanoid();
+    const dataPath = path.join(this.config.dataRoot, "servers", id);
+    fs.mkdirSync(path.join(dataPath, "game"), { recursive: true });
+
+    const metaName = skill.metadata.name;
+    const gameLabel = args.game?.trim() || skill.metadata.game || path.basename(sourcePath);
+    const serverName = args.serverName?.trim() || gameLabel;
+
+    writeSkillMarkerFromSkill(dataPath, skill, this.config.runtimeMode, resolvedNodeId, {
+      managedFrom: sourcePath,
+      managedAt: new Date().toISOString(),
+      nodeAuthoritative: true,
+    });
+    fs.writeFileSync(path.join(dataPath, NODE_AUTHORITATIVE_MARKER), `${args.nodeId}\n`);
+
+    const now = new Date();
+    await this.db.insert(servers).values({
+      id,
+      name: serverName,
+      game: gameLabel,
+      nodeId: resolvedNodeId,
+      runtimeMode: this.config.runtimeMode,
+      status: "stopped",
+      dataPath,
+      createdAt: now,
+    });
+
+    const destRel = nodeServerRelPath(id, "game");
+    const seed = ManageSeedResultSchema.parse(
       await dispatchNodeJob({
         nodeId: args.nodeId,
-        kind: "manage_pack",
+        kind: "manage_seed",
         args: {
-          path: sourcePath,
+          sourcePath,
           allowRoots: roots,
-          maxBytes: PACK_MAX_BYTES,
+          destRel,
         },
         timeoutMs: 1_800_000,
         localHandler: async () => {
-          throw new Error("manage_pack_local_unreachable");
+          throw new Error("manage_seed_local_unreachable");
         },
       }),
     );
 
-    if (!pack.packRel || pack.bytes <= 0) {
-      throw new Error("manage_pack_empty");
+    const skillJson = fs.readFileSync(path.join(dataPath, "skill.json"), "utf8");
+    await dispatchNodeJob({
+      nodeId: args.nodeId,
+      kind: "fs_write_text",
+      args: {
+        path: nodeServerRelPath(id, "skill.json"),
+        content: skillJson,
+      },
+      timeoutMs: 60_000,
+      localHandler: async () => ({ ok: true }),
+    });
+
+    const baseline = await this.snapshots.create(id, "baseline-manage");
+    followUp.push("stop_old_host_service_before_start");
+    followUp.push("verify_start_and_join");
+
+    const knownSkills = listSkills(this.config.skillsRoots).map((s) => s.metadata.name);
+    if (skillSource === "detected" && !knownSkills.includes(metaName)) {
+      followUp.push("attach_or_install_matching_skill");
     }
 
-    const stagingRoot = path.join(this.config.dataRoot, "imports");
-    fs.mkdirSync(stagingRoot, { recursive: true });
-    const staging = fs.mkdtempSync(path.join(stagingRoot, "node-"));
-    const archive = path.join(staging, "tree.tar");
-    try {
-      await this.pullPackChunks(args.nodeId, pack.packRel, pack.bytes, archive);
-      execFileSync("tar", ["-xf", archive, "-C", staging], { stdio: "pipe" });
-      fs.rmSync(archive, { force: true });
+    this.cache.delete(args.nodeId);
+    const record = await this.serversSvc.get(id);
+    if (!record) throw new Error(`server_missing_after_manage: ${id}`);
 
-      const report = await this.importLocal.importFromPath({
-        sourcePath: staging,
-        serverName: args.serverName,
-        skillName: args.skillName,
-        nodeId: args.nodeId,
-      });
-      this.cache.delete(args.nodeId);
-      return report;
-    } finally {
-      fs.rmSync(staging, { recursive: true, force: true });
-      await dispatchNodeJob({
-        nodeId: args.nodeId,
-        kind: "fs_remove",
-        args: { path: pack.packRel },
-        timeoutMs: 60_000,
-        localHandler: async () => ({ ok: true }),
-      }).catch(() => undefined);
-    }
-  }
-
-  private async pullPackChunks(
-    nodeId: string,
-    packRel: string,
-    totalBytes: number,
-    destFile: string,
-  ): Promise<void> {
-    const fd = fs.openSync(destFile, "w");
-    try {
-      let offset = 0;
-      while (offset < totalBytes) {
-        const chunk = ManagePackReadResultSchema.parse(
-          await dispatchNodeJob({
-            nodeId,
-            kind: "manage_pack_read",
-            args: {
-              packRel,
-              offset,
-              length: PACK_CHUNK_BYTES,
-            },
-            timeoutMs: 120_000,
-            localHandler: async () => {
-              throw new Error("manage_pack_read_local_unreachable");
-            },
-          }),
-        );
-        if (chunk.bytes <= 0) break;
-        const buf = Buffer.from(chunk.dataBase64, "base64");
-        fs.writeSync(fd, buf);
-        offset += chunk.bytes;
-        if (chunk.done) break;
-      }
-      if (offset !== totalBytes) {
-        throw new Error(`manage_pack_incomplete: got ${offset} of ${totalBytes} bytes`);
-      }
-    } finally {
-      fs.closeSync(fd);
-    }
+    return {
+      server: record,
+      skillName: metaName,
+      skillSource,
+      draftSlug,
+      baselineSnapshotId: baseline.id,
+      copiedBytes: seed.bytesCopied,
+      detectedHints: [],
+      followUp,
+    };
   }
 
   private async assertNode(nodeId: string): Promise<void> {

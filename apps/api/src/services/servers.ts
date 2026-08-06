@@ -36,7 +36,7 @@ import {
   writeSkillMarkerFromSkill,
 } from "./skill-marker.js";
 import { loadSkillMetadata, type SkillEntry } from "./skills.js";
-import { isLocalNodeId, type SkillMetadata } from "@playon/shared";
+import { isLocalNodeId, NODE_AUTHORITATIVE_MARKER, type SkillMetadata } from "@playon/shared";
 import { dispatchNodeJob, nodeServerRelPath } from "./node-runtime.js";
 
 export interface ServerRecord {
@@ -607,11 +607,17 @@ export class ServerService {
     const id = server.id;
     const nodeId = server.nodeId!;
     await this.provisionRemoteDirs(server);
-    await pushServerDirToNode({
-      nodeId,
-      serverId: id,
-      localDataPath: server.dataPath,
-    }).catch(() => undefined);
+    // Manage-seeded servers keep game files on the node; don't wipe them with an empty Home tree.
+    const nodeAuthoritative = fs.existsSync(
+      path.join(server.dataPath, NODE_AUTHORITATIVE_MARKER),
+    );
+    if (!nodeAuthoritative) {
+      await pushServerDirToNode({
+        nodeId,
+        serverId: id,
+        localDataPath: server.dataPath,
+      }).catch(() => undefined);
+    }
     await this.ensureCloudGateway(server, skillName);
 
     if (this.wantsNativeRuntime(server, skillName, skillMeta.containerSupport)) {

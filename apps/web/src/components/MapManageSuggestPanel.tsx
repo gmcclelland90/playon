@@ -70,9 +70,9 @@ export function MapManageSuggestPanel({
         </button>
       </div>
       <p className="muted small">
-        PlayOn copies the install into its own server tree and leaves the original on disk as a
-        fallback. Starting under PlayOn is a cutover: stop any existing host service first — this
-        needs a maintenance window (players will disconnect).
+        PlayOn copies the install on that host into its own server directory and leaves the original
+        in place as a fallback. Nothing is hauled to Home. Starting under PlayOn is a cutover: stop
+        any existing host service first — players need a maintenance window.
       </p>
 
       {suggest.isLoading ? <p className="muted">Scanning…</p> : null}
@@ -107,7 +107,7 @@ export function MapManageSuggestPanel({
                       [
                         `Manage “${label}” with PlayOn on ${nodeName}?`,
                         "",
-                        "PlayOn will copy this install and leave the original in place.",
+                        "PlayOn will copy this install on that host into its jail and leave the original in place.",
                         "It does not stop your current server process — do that yourself before Start in PlayOn.",
                         "Cutover needs downtime; players cannot stay online through this.",
                       ].join("\n"),

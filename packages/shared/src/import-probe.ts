@@ -71,3 +71,24 @@ export const ManagePackReadResultSchema = z.object({
 });
 
 export type ManagePackReadResult = z.infer<typeof ManagePackReadResultSchema>;
+
+/** Copy an allowlisted install into the node's PlayOn server jail (no Home transfer). */
+export const ManageSeedArgsSchema = z.object({
+  sourcePath: z.string().min(1),
+  allowRoots: z.array(z.string().min(1)).min(1),
+  /** Relative to dataRoot, e.g. servers/<id>/game */
+  destRel: z.string().min(1),
+});
+
+export type ManageSeedArgs = z.infer<typeof ManageSeedArgsSchema>;
+
+export const ManageSeedResultSchema = z.object({
+  destRel: z.string(),
+  sourcePath: z.string(),
+  bytesCopied: z.number().int().nonnegative(),
+});
+
+export type ManageSeedResult = z.infer<typeof ManageSeedResultSchema>;
+
+/** Home-side marker: game files live on the node; do not push empty Home tree over them. */
+export const NODE_AUTHORITATIVE_MARKER = ".playon-node-authoritative";

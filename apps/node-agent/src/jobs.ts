@@ -13,6 +13,7 @@ import {
   ImportPackArgsSchema,
   ImportProbeArgsSchema,
   ManagePackReadArgsSchema,
+  ManageSeedArgsSchema,
   type NodeJobKind,
 } from "@playon/shared";
 import { assertPackPathAllowed, runImportProbe } from "./import-probe.js";
@@ -54,11 +55,25 @@ function approxDirBytes(dir: string): number {
   try {
     const out = execFileSync("du", ["-sb", dir], { encoding: "utf8" });
     const n = Number(out.trim().split(/\s+/)[0]);
-    if (Number.isFinite(n) && n >= 0) return n;
+    if (Number.isFinite(n) && n > 0) return n;
   } catch {
-    /* ignore */
+    /* Windows / missing du — walk */
   }
-  return 0;
+  let total = 0;
+  const walk = (p: string) => {
+    for (const name of fs.readdirSync(p)) {
+      const abs = path.join(p, name);
+      const st = fs.statSync(abs);
+      if (st.isDirectory()) walk(abs);
+      else total += st.size;
+    }
+  };
+  try {
+    walk(dir);
+  } catch {
+    return 0;
+  }
+  return total;
 }
 
 export type RemoteJobKind = NodeJobKind;
@@ -368,6 +383,28 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
       fs.rmSync(archive, { force: true });
       throw err;
     }
+  }
+
+  if (job.kind === "manage_seed") {
+    const args = ManageSeedArgsSchema.parse(job.args);
+    const source = assertPackPathAllowed(args.sourcePath, args.allowRoots);
+    if (args.destRel.includes("..") || path.isAbsolute(args.destRel)) {
+      throw new Error("invalid_destRel");
+    }
+    if (!args.destRel.startsWith("servers/") || !args.destRel.endsWith("/game")) {
+      throw new Error("destRel_must_be_servers_id_game");
+    }
+    const dest = resolveInJail(dataRoot, args.destRel);
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.rmSync(dest, { recursive: true, force: true });
+    // On-host copy into the PlayOn jail — never ships the tree to Home.
+    fs.cpSync(source, dest, { recursive: true });
+    const bytesCopied = approxDirBytes(dest);
+    return {
+      destRel: args.destRel,
+      sourcePath: source,
+      bytesCopied,
+    };
   }
 
   if (job.kind === "manage_pack_read") {

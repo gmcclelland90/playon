@@ -79,6 +79,7 @@ export const NodeJobKindSchema = z.enum([
   "manage_probe",
   "manage_pack",
   "manage_pack_read",
+  "manage_seed",
 ]);
 
 export type SetupStatus = z.infer<typeof SetupStatusSchema>;

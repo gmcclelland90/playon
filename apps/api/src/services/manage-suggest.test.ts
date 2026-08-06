@@ -71,7 +71,13 @@ describe("ManageSuggestService.suggest (local)", () => {
       }),
     };
 
-    const svc = new ManageSuggestService(db as never, config, importLocal as never);
+    const svc = new ManageSuggestService(
+      db as never,
+      config,
+      importLocal as never,
+      { get: vi.fn() } as never,
+      { create: vi.fn() } as never,
+    );
     const result = await svc.suggest("local");
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0]?.suggestedGame).toBe("Project Zomboid");
@@ -102,6 +108,8 @@ describe("ManageSuggestService.suggest (local)", () => {
       { select: () => ({ from: () => ({ where: () => ({ limit: async () => [] }) }) }) } as never,
       { dataRoot, skillsRoots: [skillsRoot] } as AppConfig,
       importLocal as never,
+      { get: vi.fn() } as never,
+      { create: vi.fn() } as never,
     );
     await svc.manageFromNode({ nodeId: "local", sourcePath: source, serverName: "Demo" });
     expect(importLocal.importFromPath).toHaveBeenCalledWith(

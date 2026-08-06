@@ -75,7 +75,7 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
   const migrate = new MigrateService(db, servers, snapshots, placement, eventHub);
   const offNode = new OffNodeBackupService(db, config, snapshots);
   const importLocal = new ImportLocalService(db, config, servers, snapshots);
-  const manageSuggest = new ManageSuggestService(db, config, importLocal);
+  const manageSuggest = new ManageSuggestService(db, config, importLocal, servers, snapshots);
   const importSftp = new ImportSftpService(db, config, servers, snapshots);
   const agentProgress = new AgentProgressService(db);
   const serverFs = new ServerFsService(servers);
