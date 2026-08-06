@@ -47,6 +47,7 @@ hints:
     suggestedGame: Factorio
     suggestedSkillName: games.factorio
 
+  # Binaries/launchers only — ~/Zomboid + Server/*.ini are user data, not the install.
   - id: project_zomboid_layout
     anyFiles:
       - ProjectZomboid64.exe
@@ -54,7 +55,5 @@ hints:
       - StartServer64.sh
       - StartServer64.bat
       - projectzomboid-server.sh
-      - servertest.ini
-      - Server/servertest.ini
     suggestedGame: Project Zomboid
     suggestedSkillName: games.project-zomboid

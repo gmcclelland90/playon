@@ -3,8 +3,7 @@
 # trailing /* segment (immediate children of that directory).
 version: 1
 linux:
-  - "~/Zomboid"
-  - "~/Zomboid/Server"
+  # Install trees only (Steam /opt /servers). Skip ~/Zomboid — that's saves/config.
   - "~/.steam/steam/steamapps/common"
   - "~/.steam/steam/steamapps/common/*"
   - "~/Steam/steamapps/common"
@@ -19,13 +18,10 @@ linux:
   - "/opt/pzserver"
   - "/opt/game-servers"
   - "/opt/game-servers/*"
-  - "/home/*/Zomboid"
-  - "/home/*/Zomboid/Server"
-  - "/home/*/Zomboid/*"
   - "/home/*/.steam/steam/steamapps/common/*"
+  - "/home/*/servers"
+  - "/home/*/servers/*"
 windows:
-  - "%USERPROFILE%\\Zomboid"
-  - "%USERPROFILE%\\Zomboid\\Server"
   - "%USERPROFILE%\\Steam\\steamapps\\common"
   - "%USERPROFILE%\\Steam\\steamapps\\common\\*"
   - "C:\\Steam\\steamapps\\common\\*"
