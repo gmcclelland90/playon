@@ -137,6 +137,8 @@ WorkingDirectory=${PLAYON_ROOT}
 ExecStart=${NODE_BIN} apps/api/dist/index.js
 Restart=always
 RestartSec=5
+# Keep OTA/apply helpers alive when the main process exits for self-update.
+KillMode=process
 LimitNOFILE=65535
 
 [Install]
@@ -161,6 +163,7 @@ WorkingDirectory=${PLAYON_ROOT}
 ExecStart=${NODE_BIN} apps/node-agent/dist/index.js
 Restart=always
 RestartSec=5
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target

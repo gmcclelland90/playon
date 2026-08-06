@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -219,6 +219,34 @@ function resolveHomeRoot(): string {
   return findRepoRoot(process.cwd());
 }
 
+/** Staging must never live under the install tree (swapping `apps/` would delete the source). */
+export function resolveUpdateStagingRoot(homeRoot: string, dataRoot: string): string {
+  const home = path.resolve(homeRoot);
+  const data = path.resolve(dataRoot);
+  const rel = path.relative(home, data);
+  const dataInsideHome = Boolean(rel) && !rel.startsWith("..") && !path.isAbsolute(rel);
+  if (dataInsideHome) {
+    return fs.mkdtempSync(path.join(os.tmpdir(), "playon-home-update-"));
+  }
+  const staging = path.join(data, ".updates", "home");
+  fs.rmSync(staging, { recursive: true, force: true });
+  fs.mkdirSync(staging, { recursive: true });
+  return staging;
+}
+
+/** Top-level + nested paths to keep across a Home package swap. */
+export function preservePathsForHomeUpdate(homeRoot: string, dataRoot: string): string[] {
+  const names = ["data", "env"];
+  const home = path.resolve(homeRoot);
+  const data = path.resolve(dataRoot);
+  const rel = path.relative(home, data);
+  if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+    const norm = rel.split(path.sep).join("/");
+    if (norm && !names.includes(norm)) names.push(norm);
+  }
+  return names;
+}
+
 function resolveApplyScript(homeRoot: string): string {
   const candidates = [
     path.join(homeRoot, "deploy", "portable", "apply-update.mjs"),
@@ -228,6 +256,31 @@ function resolveApplyScript(homeRoot: string): string {
     if (fs.existsSync(c)) return c;
   }
   throw new Error("apply_update_script_missing");
+}
+
+function relaunchPortableHome(homeRoot: string, nodeBin: string): void {
+  if (process.platform === "win32") {
+    const ps1 = path.join(homeRoot, "Start-PlayOn.ps1");
+    if (!fs.existsSync(ps1)) return;
+    spawn("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps1], {
+      cwd: homeRoot,
+      detached: true,
+      stdio: "ignore",
+    }).unref();
+    return;
+  }
+  const sh = path.join(homeRoot, "start-playon.sh");
+  if (fs.existsSync(sh)) {
+    spawn(sh, [], { cwd: homeRoot, detached: true, stdio: "ignore" }).unref();
+    return;
+  }
+  // Fallback when package.json start is enough (service-style tree without launcher).
+  spawn(nodeBin, [path.join(homeRoot, "apps", "api", "dist", "index.js")], {
+    cwd: homeRoot,
+    detached: true,
+    stdio: "ignore",
+    env: { ...process.env },
+  }).unref();
 }
 
 function bundledNodeBin(homeRoot: string): string | null {
@@ -344,10 +397,8 @@ export class UpdateService {
       const platform = currentUpdatePlatform();
       const asset = pickAsset(manifest, "home", platform);
       const homeRoot = resolveHomeRoot();
-      const stagingRoot = path.join(this.config.dataRoot, ".updates", "home");
-      fs.rmSync(stagingRoot, { recursive: true, force: true });
-      fs.mkdirSync(stagingRoot, { recursive: true });
-      const archiveName = path.basename(new URL(asset.downloadUrl).pathname);
+      const stagingRoot = resolveUpdateStagingRoot(homeRoot, this.config.dataRoot);
+      const archiveName = path.basename(new URL(asset.downloadUrl).pathname) || "playon-home.tar.gz";
       const archivePath = path.join(stagingRoot, archiveName);
 
       await downloadAndVerifyUpdate({
@@ -363,39 +414,64 @@ export class UpdateService {
       const sourceRoot = extractUpdateArchive(archivePath, extractDir);
 
       const mode = detectInstallMode(homeRoot);
-      const applySrc = resolveApplyScript(homeRoot);
+      // Prefer the incoming package's apply helper so apply-time bugfixes ship with the release.
+      const bundledApply = path.join(sourceRoot, "deploy", "portable", "apply-update.mjs");
+      const applySrc = fs.existsSync(bundledApply) ? bundledApply : resolveApplyScript(homeRoot);
       const runnerDir = fs.mkdtempSync(path.join(os.tmpdir(), "playon-apply-"));
       const applyDest = path.join(runnerDir, "apply-update.mjs");
       fs.copyFileSync(applySrc, applyDest);
 
       const nodeBin = bundledNodeBin(homeRoot) || process.execPath;
-      const args = [
+      const preserve = preservePathsForHomeUpdate(homeRoot, this.config.dataRoot).join(",");
+      const baseArgs = [
         applyDest,
         "--target",
         homeRoot,
         "--source",
         sourceRoot,
         "--preserve",
-        "data,env",
+        preserve,
         "--mode",
         mode,
         "--kind",
         "home",
       ];
 
-      this.publishProgress("home", "restarting", "Restarting PlayOn…", undefined, 95);
-      const child = spawn(nodeBin, args, {
-        detached: true,
-        stdio: "ignore",
-        cwd: runnerDir,
-        env: { ...process.env },
-      });
-      child.unref();
+      this.publishProgress("home", "applying", "Installing update…", undefined, 90);
 
-      // Give the apply helper a moment to start, then exit so files can be replaced.
-      setTimeout(() => {
-        process.exit(0);
-      }, 500);
+      if (process.platform === "win32") {
+        // Windows locks running binaries — swap after this process exits.
+        this.publishProgress("home", "restarting", "Restarting PlayOn…", undefined, 95);
+        const child = spawn(nodeBin, baseArgs, {
+          detached: true,
+          stdio: "ignore",
+          cwd: runnerDir,
+          env: { ...process.env },
+        });
+        child.unref();
+        setTimeout(() => {
+          process.exit(0);
+        }, 500);
+      } else {
+        // Linux/macOS: swap while still alive so a systemd cgroup kill cannot abort the apply
+        // helper, then exit and let Restart=always (service) or a portable relaunch take over.
+        const applied = spawnSync(nodeBin, [...baseArgs, "--swap-only"], {
+          cwd: runnerDir,
+          env: { ...process.env },
+          encoding: "utf8",
+        });
+        if (applied.status !== 0) {
+          const detail = (applied.stderr || applied.stdout || "").trim();
+          throw new Error(detail || `update_apply_failed: exit ${applied.status}`);
+        }
+        this.publishProgress("home", "restarting", "Restarting PlayOn…", undefined, 95);
+        if (mode === "portable") {
+          relaunchPortableHome(homeRoot, nodeBin);
+        }
+        setTimeout(() => {
+          process.exit(0);
+        }, 300);
+      }
 
       return { ok: true, version: manifest.version, restarting: true };
     } catch (err) {

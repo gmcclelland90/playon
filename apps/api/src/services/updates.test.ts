@@ -10,7 +10,9 @@ import {
   downloadAndVerifyUpdate,
   extractUpdateArchive,
   pickAsset,
+  preservePathsForHomeUpdate,
   resolveUpdateManifestUrl,
+  resolveUpdateStagingRoot,
 } from "./updates.js";
 
 afterEach(() => {
@@ -112,6 +114,60 @@ describe("extractUpdateArchive", () => {
       const dest = path.join(root, "out");
       const extracted = extractUpdateArchive(archive, dest);
       expect(fs.existsSync(path.join(extracted, "package.json"))).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("resolveUpdateStagingRoot", () => {
+  it("uses tmp when dataRoot is inside the install tree", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "playon-home-"));
+    try {
+      const dataRoot = path.join(home, "apps", "api", "data");
+      fs.mkdirSync(dataRoot, { recursive: true });
+      const staging = resolveUpdateStagingRoot(home, dataRoot);
+      expect(staging.startsWith(os.tmpdir())).toBe(true);
+      expect(staging.includes(path.join("apps", "api", "data"))).toBe(false);
+      fs.rmSync(staging, { recursive: true, force: true });
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  it("uses dataRoot/.updates/home when data is outside the install tree", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-split-"));
+    try {
+      const home = path.join(root, "home");
+      const dataRoot = path.join(root, "var-data");
+      fs.mkdirSync(home, { recursive: true });
+      fs.mkdirSync(dataRoot, { recursive: true });
+      const staging = resolveUpdateStagingRoot(home, dataRoot);
+      expect(staging).toBe(path.join(dataRoot, ".updates", "home"));
+      expect(fs.existsSync(staging)).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("preservePathsForHomeUpdate", () => {
+  it("includes nested data roots used by monorepo/lab installs", () => {
+    const home = path.join(os.tmpdir(), "playon-preserve-home");
+    const dataRoot = path.join(home, "apps", "api", "data");
+    const paths = preservePathsForHomeUpdate(home, dataRoot);
+    expect(paths).toContain("data");
+    expect(paths).toContain("env");
+    expect(paths).toContain("apps/api/data");
+  });
+
+  it("does not add absolute external data roots", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-preserve-ext-"));
+    try {
+      const home = path.join(root, "home");
+      const dataRoot = path.join(root, "var-data");
+      const paths = preservePathsForHomeUpdate(home, dataRoot);
+      expect(paths).toEqual(["data", "env"]);
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

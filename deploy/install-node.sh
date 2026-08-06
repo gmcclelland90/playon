@@ -183,6 +183,7 @@ WorkingDirectory=${PLAYON_ROOT}
 ExecStart=${EXEC_START}
 Restart=always
 RestartSec=5
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target

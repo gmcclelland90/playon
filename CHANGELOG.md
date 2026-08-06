@@ -2,6 +2,20 @@
 
 All notable changes to PlayOn Home (root `package.json` version) are listed here.
 
+## [0.1.7] — 2026-08-06
+
+### Fixed
+
+- **In-app Update & restart** — Home OTA now applies the downloaded package instead of rebooting onto the old build. Staging runs outside the install tree, Linux swaps before process exit (avoids systemd cgroup kill), nested data roots like `apps/api/data` are preserved, and pnpm workspace symlinks are copied correctly.
+
+### Changed
+
+- systemd unit templates set `KillMode=process` so future apply helpers can outlive the main process during self-update.
+
+### Notes
+
+- Hosts stuck on broken 0.1.5/0.1.6 OTA need a one-time non-OTA upgrade (re-run the install one-liner, or `git pull` + build on lab). After **0.1.7**, Update & restart works for later releases.
+
 ## [0.1.6] — 2026-08-06
 
 ### Added

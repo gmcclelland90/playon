@@ -10,8 +10,23 @@ function copyTree(from: string, to: string): void {
   for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
     const src = path.join(from, entry.name);
     const dest = path.join(to, entry.name);
-    if (entry.isDirectory()) copyTree(src, dest);
-    else fs.copyFileSync(src, dest);
+    if (entry.isSymbolicLink()) {
+      const link = fs.readlinkSync(src);
+      try {
+        fs.symlinkSync(link, dest);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+          fs.rmSync(dest, { recursive: true, force: true });
+          fs.symlinkSync(link, dest);
+        } else {
+          throw err;
+        }
+      }
+    } else if (entry.isDirectory()) {
+      copyTree(src, dest);
+    } else {
+      fs.copyFileSync(src, dest);
+    }
   }
 }
 
