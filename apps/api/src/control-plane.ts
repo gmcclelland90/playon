@@ -11,6 +11,7 @@ import { EventHub } from "./services/event-hub.js";
 import { ServerFsService } from "./services/fs-tools.js";
 import { HealthService } from "./services/health.js";
 import { ImportLocalService } from "./services/import-local.js";
+import { ImportSuggestService } from "./services/import-suggest.js";
 import { ImportSftpService } from "./services/import-sftp.js";
 import { MigrateService } from "./services/migrate.js";
 import { NetToolsService } from "./services/net-tools.js";
@@ -42,6 +43,7 @@ export type ControlPlane = {
   migrate: MigrateService;
   offNode: OffNodeBackupService;
   importLocal: ImportLocalService;
+  importSuggest: ImportSuggestService;
   importSftp: ImportSftpService;
   agentProgress: AgentProgressService;
   serverFs: ServerFsService;
@@ -73,6 +75,7 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
   const migrate = new MigrateService(db, servers, snapshots, placement, eventHub);
   const offNode = new OffNodeBackupService(db, config, snapshots);
   const importLocal = new ImportLocalService(db, config, servers, snapshots);
+  const importSuggest = new ImportSuggestService(db, config, importLocal);
   const importSftp = new ImportSftpService(db, config, servers, snapshots);
   const agentProgress = new AgentProgressService(db);
   const serverFs = new ServerFsService(servers);
@@ -97,6 +100,7 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
     migrate,
     offNode,
     importLocal,
+    importSuggest,
     importSftp,
     agentProgress,
     serverFs,

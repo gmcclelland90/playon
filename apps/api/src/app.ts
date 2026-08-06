@@ -208,6 +208,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     migrate: migrateService,
     offNode: offNodeBackup,
     importLocal,
+    importSuggest,
     importSftp,
     agentProgress,
     skillPackages,
@@ -1525,6 +1526,60 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     } catch (err) {
       const message = err instanceof Error ? err.message : "remove_node_failed";
       const status = message.startsWith("unknown_node") ? 404 : 400;
+      return c.json({ error: message }, status);
+    }
+  });
+
+  app.post("/api/nodes/:nodeId/import/suggest", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "servers.manage")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    try {
+      const result = await importSuggest.suggest(c.req.param("nodeId"));
+      return c.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "import_suggest_failed";
+      const status =
+        message.startsWith("unknown_node") ? 404 : message.startsWith("node_not_online") ? 409 : 400;
+      return c.json({ error: message }, status);
+    }
+  });
+
+  app.post("/api/nodes/:nodeId/import", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "servers.manage")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    try {
+      const body = z
+        .object({
+          sourcePath: z.string().min(1),
+          serverName: z.string().min(1).optional(),
+          skillName: z.string().min(1).optional(),
+        })
+        .parse(await c.req.json());
+      const report = await importSuggest.importFromNode({
+        nodeId: c.req.param("nodeId"),
+        ...body,
+      });
+      await playerPanel.publishForStatus(report.server.id, "stopped");
+      return c.json({
+        import: {
+          server: report.server,
+          skillName: report.skillName,
+          skillSource: report.skillSource,
+          draftSlug: report.draftSlug,
+          baselineSnapshotId: report.baselineSnapshotId,
+          copiedBytes: report.copiedBytes,
+          detectedHints: report.detectedHints,
+          followUp: report.followUp,
+        },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "import_failed";
+      const status =
+        message.startsWith("unknown_node") ? 404 : message.startsWith("node_not_online") ? 409 : 400;
       return c.json({ error: message }, status);
     }
   });

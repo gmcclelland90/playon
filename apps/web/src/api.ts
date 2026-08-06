@@ -300,6 +300,39 @@ export const api = {
       `/api/nodes/${encodeURIComponent(nodeId)}${force ? "?force=1" : ""}`,
       { method: "DELETE" },
     ),
+  suggestNodeImport: (nodeId: string) =>
+    request<{
+      candidates: Array<{
+        path: string;
+        hintIds: string[];
+        suggestedGame?: string;
+        suggestedSkillName?: string;
+      }>;
+      scannedRoots: string[];
+      cached: boolean;
+    }>(`/api/nodes/${encodeURIComponent(nodeId)}/import/suggest`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  importFromNode: (
+    nodeId: string,
+    body: { sourcePath: string; serverName?: string; skillName?: string },
+  ) =>
+    request<{
+      import: {
+        server: ServerRow;
+        skillName: string;
+        skillSource: string;
+        draftSlug?: string;
+        baselineSnapshotId: string;
+        copiedBytes: number;
+        detectedHints: string[];
+        followUp: string[];
+      };
+    }>(`/api/nodes/${encodeURIComponent(nodeId)}/import`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   installDockerViaSsh: (
     nodeId: string,
     body: {

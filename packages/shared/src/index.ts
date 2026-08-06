@@ -8,3 +8,4 @@ export * from "./events.js";
 export * from "./api.js";
 export * from "./llm-presets.js";
 export * from "./updates.js";
+export * from "./import-probe.js";

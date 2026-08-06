@@ -9,7 +9,12 @@ import {
   type DockerAdapter,
   type ProcessSupervisor,
 } from "@playon/runtime";
-import type { NodeJobKind } from "@playon/shared";
+import {
+  ImportPackArgsSchema,
+  ImportProbeArgsSchema,
+  type NodeJobKind,
+} from "@playon/shared";
+import { assertPackPathAllowed, runImportProbe } from "./import-probe.js";
 import { probeCapabilities } from "./capabilities.js";
 import { performNodeSelfUpdate } from "./self-update.js";
 
@@ -283,6 +288,34 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
       preserve,
       skipExit: job.args.skipExit === true,
     });
+  }
+
+  if (job.kind === "import_probe") {
+    const args = ImportProbeArgsSchema.parse(job.args);
+    return runImportProbe(args);
+  }
+
+  if (job.kind === "import_pack") {
+    const args = ImportPackArgsSchema.parse(job.args);
+    const target = assertPackPathAllowed(args.path, args.allowRoots);
+    const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-import-pack-"));
+    const archive = path.join(staging, "tree.tar");
+    try {
+      execFileSync("tar", ["-cf", archive, "-C", target, "."], { stdio: "pipe" });
+      const st = fs.statSync(archive);
+      if (st.size > args.maxBytes) {
+        throw new Error(
+          `archive_too_large: ${st.size} bytes (max ${args.maxBytes})`,
+        );
+      }
+      return {
+        archiveBase64: fs.readFileSync(archive).toString("base64"),
+        bytes: st.size,
+        path: target,
+      };
+    } finally {
+      fs.rmSync(staging, { recursive: true, force: true });
+    }
   }
 
   throw new Error(`unsupported_job_kind: ${String((job as { kind: string }).kind)}`);

@@ -46,3 +46,15 @@ hints:
       - factorio
     suggestedGame: Factorio
     suggestedSkillName: games.factorio
+
+  - id: project_zomboid_layout
+    anyFiles:
+      - ProjectZomboid64.exe
+      - ProjectZomboid64
+      - StartServer64.sh
+      - StartServer64.bat
+      - projectzomboid-server.sh
+      - servertest.ini
+      - Server/servertest.ini
+    suggestedGame: Project Zomboid
+    suggestedSkillName: games.project-zomboid

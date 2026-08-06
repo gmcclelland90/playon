@@ -1,52 +1,16 @@
 import fs from "node:fs";
 import path from "node:path";
-import yaml from "js-yaml";
 import { nanoid } from "nanoid";
-import { z } from "zod";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db/client.js";
 import { servers } from "../db/schema.js";
+import { loadImportHintRules } from "./import-hints-data.js";
 import { PlacementService } from "./placement.js";
 import { SkillDraftService } from "./skill-drafts.js";
 import { writeSkillMarkerFromSkill } from "./skill-marker.js";
 import { loadSkillMetadata, listSkills } from "./skills.js";
 import type { ServerRecord, ServerService } from "./servers.js";
 import type { SnapshotService } from "./snapshots.js";
-
-const ImportHintRuleSchema = z.object({
-  id: z.string().min(1),
-  anyFiles: z.array(z.string().min(1)).default([]),
-  suggestedGame: z.string().optional(),
-  suggestedSkillName: z.string().optional(),
-});
-
-const ImportHintsFileSchema = z.object({
-  version: z.number().int().positive().default(1),
-  hints: z.array(ImportHintRuleSchema).default([]),
-});
-
-type ImportHintRule = z.infer<typeof ImportHintRuleSchema>;
-
-function resolveImportHintsPath(skillsRoots: string[]): string | null {
-  for (const root of skillsRoots) {
-    const beside = path.join(path.dirname(root), "import-hints.yaml");
-    if (fs.existsSync(beside)) return beside;
-    const inside = path.join(root, "import-hints.yaml");
-    if (fs.existsSync(inside)) return inside;
-  }
-  return null;
-}
-
-function loadImportHintRules(skillsRoots: string[]): ImportHintRule[] {
-  const file = resolveImportHintsPath(skillsRoots);
-  if (!file) return [];
-  try {
-    const raw = yaml.load(fs.readFileSync(file, "utf8"));
-    return ImportHintsFileSchema.parse(raw).hints;
-  } catch {
-    return [];
-  }
-}
 
 function sourceHasAnyFile(sourcePath: string, relPaths: string[]): boolean {
   for (const rel of relPaths) {

@@ -44,6 +44,8 @@ type Props = {
   onAddNode?: () => void;
   /** Remove a stuck pending/offline remote node. */
   onRemoveNode?: (nodeId: string) => void;
+  /** Open Scan / import panel for an online host pad (incl. local). */
+  onSelectHost?: (nodeId: string) => void;
   /** Hide floating add when the chat dock already covers that corner. */
   showAddButton?: boolean;
 };
@@ -231,6 +233,7 @@ export function AgentCanvas({
   onAddServer,
   onAddNode,
   onRemoveNode,
+  onSelectHost,
   showAddButton = true,
 }: Props) {
   void _skills;
@@ -244,11 +247,13 @@ export function AgentCanvas({
   const onDescribeRef = useRef(onDescribe);
   const onAddServerRef = useRef(onAddServer);
   const onRemoveNodeRef = useRef(onRemoveNode);
+  const onSelectHostRef = useRef(onSelectHost);
   const [stageReady, setStageReady] = useState(false);
   onSelectRef.current = onSelect;
   onDescribeRef.current = onDescribe;
   onAddServerRef.current = onAddServer;
   onRemoveNodeRef.current = onRemoveNode;
+  onSelectHostRef.current = onSelectHost;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -417,10 +422,11 @@ export function AgentCanvas({
         const nodeId = cluster.node.id;
         pad.on("pointertap", () => {
           const n = hostNodes.find((x) => x.id === nodeId);
-          if (!n || n.id === "local") return;
+          if (!n) return;
           if (
-            isPendingNodeSetup({ agentVersion: n.agentVersion, status: n.status }) ||
-            n.status === "offline"
+            n.id !== "local" &&
+            (isPendingNodeSetup({ agentVersion: n.agentVersion, status: n.status }) ||
+              n.status === "offline")
           ) {
             if (
               window.confirm(
@@ -429,6 +435,10 @@ export function AgentCanvas({
             ) {
               onRemoveNodeRef.current?.(n.id);
             }
+            return;
+          }
+          if (n.status === "online" || n.id === "local") {
+            onSelectHostRef.current?.(n.id);
           }
         });
         world.addChild(pad);
@@ -687,7 +697,7 @@ export function AgentCanvas({
           <p className="agent-canvas-map-hint muted" aria-hidden>
             Drag to pan · Scroll to zoom
             {hostNodes.some((n) => n.id !== "local")
-              ? " · Click a pending host pad to remove it"
+              ? " · Click a pending host pad to remove it · Click an online pad to scan for servers"
               : ""}
           </p>
           {liveBusy ? (

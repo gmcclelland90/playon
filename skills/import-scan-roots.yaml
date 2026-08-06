@@ -1,0 +1,31 @@
+# Allowlisted host roots for Map "Scan for servers" (shallow walk).
+# Paths may use ~ (home) or %USERPROFILE% / $HOME. Globs only as a single
+# trailing /* segment (immediate children of that directory).
+version: 1
+linux:
+  - "~/Zomboid"
+  - "~/Zomboid/Server"
+  - "~/.steam/steam/steamapps/common"
+  - "~/.steam/steam/steamapps/common/*"
+  - "~/Steam/steamapps/common"
+  - "~/Steam/steamapps/common/*"
+  - "~/steamapps/common"
+  - "~/steamapps/common/*"
+  - "~/servers"
+  - "~/servers/*"
+  - "/opt/*-server"
+  - "/opt/game-servers"
+  - "/opt/game-servers/*"
+  - "/home/*/Zomboid"
+  - "/home/*/Zomboid/Server"
+  - "/home/*/.steam/steam/steamapps/common/*"
+windows:
+  - "%USERPROFILE%\\Zomboid"
+  - "%USERPROFILE%\\Zomboid\\Server"
+  - "%USERPROFILE%\\Steam\\steamapps\\common"
+  - "%USERPROFILE%\\Steam\\steamapps\\common\\*"
+  - "C:\\Steam\\steamapps\\common\\*"
+  - "C:\\Servers"
+  - "C:\\Servers\\*"
+  - "D:\\Servers"
+  - "D:\\Servers\\*"

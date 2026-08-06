@@ -21,6 +21,7 @@ import {
   type AgentActivityView,
 } from "../components/agent-canvas/AgentCanvas";
 import { MapAddNodePanel } from "../components/MapAddNodePanel";
+import { MapImportSuggestPanel } from "../components/MapImportSuggestPanel";
 import { runtimeErrorHint, statusHint, statusLabel } from "../status";
 import { playonSocket } from "../ws";
 
@@ -150,6 +151,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const servers = useQuery({ queryKey: ["servers"], queryFn: api.servers, refetchInterval: 4000 });
   const nodes = useQuery({ queryKey: ["nodes"], queryFn: api.nodes, refetchInterval: 8_000 });
   const [addNodeOpen, setAddNodeOpen] = useState(false);
+  const [scanNodeId, setScanNodeId] = useState<string | null>(null);
   const removeNodeMut = useMutation({
     mutationFn: (id: string) => api.removeNode(id),
     onSuccess: async () => {
@@ -548,14 +550,33 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         onSelect={selectServer}
         onDescribe={openInstallChat}
         onAddServer={openInstallChat}
-        onAddNode={() => setAddNodeOpen(true)}
+        onAddNode={() => {
+          setScanNodeId(null);
+          setAddNodeOpen(true);
+        }}
         onRemoveNode={(id) => removeNodeMut.mutate(id)}
-        showAddButton={!dockOpen && !addNodeOpen}
+        onSelectHost={(id) => {
+          setAddNodeOpen(false);
+          setScanNodeId(id);
+        }}
+        showAddButton={!dockOpen && !addNodeOpen && !scanNodeId}
       />
 
       {addNodeOpen ? (
         <div className="map-add-node-overlay">
           <MapAddNodePanel onClose={() => setAddNodeOpen(false)} />
+        </div>
+      ) : null}
+
+      {scanNodeId ? (
+        <div className="map-add-node-overlay">
+          <MapImportSuggestPanel
+            nodeId={scanNodeId}
+            nodeName={
+              (nodes.data?.nodes ?? []).find((n) => n.id === scanNodeId)?.name ?? scanNodeId
+            }
+            onClose={() => setScanNodeId(null)}
+          />
         </div>
       ) : null}
 
