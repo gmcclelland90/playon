@@ -28,6 +28,8 @@ export type AddNodeSshArgs = {
   /** Cloud WG listen port on the VPS (default 51820). */
   wgListenPort?: number;
   readyTimeoutMs?: number;
+  /** Wait for first agent heartbeat after SSH (default 90s). 0 = skip. */
+  heartbeatWaitMs?: number;
 };
 
 export type AddNodeResult = {
@@ -177,22 +179,56 @@ export function classifyBootstrapFailure(result: {
   return new Error(`ssh_bootstrap_failed: exit ${result.code}: ${detail}`);
 }
 
+/** After install-node: force friendly name even when published script lacks --name. */
+export function buildNodeNameOverrideSnippet(opts: {
+  nodeName: string;
+}): string {
+  const name = opts.nodeName.trim();
+  if (!name) return "";
+  return `
+# Keep the Home-chosen display name (works with older install-node without --name).
+if [[ -f /etc/playon/node.env ]]; then
+  if grep -q '^PLAYON_NODE_NAME=' /etc/playon/node.env; then
+    sed -i ${shellQuote(`s|^PLAYON_NODE_NAME=.*|PLAYON_NODE_NAME=${name}|`)} /etc/playon/node.env
+  else
+    echo ${shellQuote(`PLAYON_NODE_NAME=${name}`)} >> /etc/playon/node.env
+  fi
+  systemctl restart playon-node-agent.service 2>/dev/null || true
+fi
+`;
+}
+
+function installNodeInvocation(opts: {
+  apiUrl: string;
+  nodeToken: string;
+  nodeId: string;
+  nodeName?: string;
+}): string {
+  const nameArg = opts.nodeName?.trim()
+    ? ` --name ${shellQuote(opts.nodeName.trim())}`
+    : "";
+  return `bash /tmp/playon-install-node.sh --api ${shellQuote(opts.apiUrl)} --token ${shellQuote(opts.nodeToken)} --node-id ${shellQuote(opts.nodeId)}${nameArg} --runtime docker || \\
+  bash /tmp/playon-install-node.sh --api ${shellQuote(opts.apiUrl)} --token ${shellQuote(opts.nodeToken)} --node-id ${shellQuote(opts.nodeId)}${nameArg}`;
+}
+
 export function buildLanBootstrapScript(opts: {
   apiUrl: string;
   nodeToken: string;
   nodeId: string;
+  nodeName?: string;
 }): string {
+  const name = opts.nodeName?.trim();
   return `set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 if ! command -v curl >/dev/null 2>&1; then apt-get update -y && apt-get install -y curl; fi
 # Prefer published install-node when available; fall back to agent hint.
 if curl -fsSL https://playon.games/install-node -o /tmp/playon-install-node.sh 2>/dev/null; then
-  bash /tmp/playon-install-node.sh --api ${shellQuote(opts.apiUrl)} --token ${shellQuote(opts.nodeToken)} --node-id ${shellQuote(opts.nodeId)} --runtime docker || \\
-  bash /tmp/playon-install-node.sh --api ${shellQuote(opts.apiUrl)} --token ${shellQuote(opts.nodeToken)} --node-id ${shellQuote(opts.nodeId)}
+  ${installNodeInvocation(opts)}
 else
   echo "playon_install_node_unavailable: ensure node-agent is installed manually"
   exit 2
 fi
+${name ? buildNodeNameOverrideSnippet({ nodeName: name }) : ""}
 `;
 }
 
@@ -200,10 +236,12 @@ export function buildCloudBootstrapScript(opts: {
   apiUrl: string;
   nodeToken: string;
   nodeId: string;
+  nodeName?: string;
   wgConfig: string;
   wgListenPort: number;
 }): string {
   const b64 = Buffer.from(opts.wgConfig, "utf8").toString("base64");
+  const name = opts.nodeName?.trim();
   return `set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
@@ -216,12 +254,12 @@ wg-quick up playon0
 # Allow WG
 if command -v ufw >/dev/null 2>&1; then ufw allow ${opts.wgListenPort}/udp || true; fi
 if curl -fsSL https://playon.games/install-node -o /tmp/playon-install-node.sh 2>/dev/null; then
-  bash /tmp/playon-install-node.sh --api ${shellQuote(opts.apiUrl)} --token ${shellQuote(opts.nodeToken)} --node-id ${shellQuote(opts.nodeId)} --runtime docker || \\
-  bash /tmp/playon-install-node.sh --api ${shellQuote(opts.apiUrl)} --token ${shellQuote(opts.nodeToken)} --node-id ${shellQuote(opts.nodeId)}
+  ${installNodeInvocation(opts)}
 else
   echo "playon_install_node_unavailable"
   exit 2
 fi
+${name ? buildNodeNameOverrideSnippet({ nodeName: name }) : ""}
 `;
 }
 
@@ -244,7 +282,9 @@ export class AddNodeService {
     nodeId: string;
     name: string;
     kind: AddNodeKind;
+    joinHost?: string | null;
   }): Promise<{ created: boolean }> {
+    const joinHost = opts.joinHost?.trim() || null;
     const existing = await this.db.select().from(nodes).where(eq(nodes.id, opts.nodeId)).limit(1);
     if (existing[0]) {
       await this.db
@@ -254,6 +294,7 @@ export class AddNodeService {
           kind: opts.kind,
           lastSeenAt: existing[0].lastSeenAt,
           tunnelStatus: opts.kind === "cloud" ? "pending" : "none",
+          ...(joinHost ? { joinHost } : {}),
         })
         .where(eq(nodes.id, opts.nodeId));
       return { created: false };
@@ -271,8 +312,24 @@ export class AddNodeService {
       lastSeenAt: new Date(0),
       kind: opts.kind,
       tunnelStatus: opts.kind === "cloud" ? "pending" : "none",
+      joinHost,
     });
     return { created: true };
+  }
+
+  private async waitForHeartbeat(
+    nodeId: string,
+    timeoutMs: number = 90_000,
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const row = await this.db.select().from(nodes).where(eq(nodes.id, nodeId)).limit(1);
+      if (row[0] && row[0].agentVersion && row[0].agentVersion !== "pending") {
+        return true;
+      }
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+    return false;
   }
 
   /** Drop a never-heartbeated placeholder created by a failed SSH add. */
@@ -310,7 +367,8 @@ export class AddNodeService {
       throw new Error("endpoint_host_required");
     }
     const name = opts.nodeName?.trim() || nodeId;
-    await this.upsertPlaceholder({ nodeId, name, kind: opts.kind });
+    const joinHost = opts.endpointHost?.trim() || null;
+    await this.upsertPlaceholder({ nodeId, name, kind: opts.kind, joinHost });
 
     const token = nanoid(24);
     const expiresAt = Date.now() + 30 * 60 * 1000;
@@ -342,6 +400,7 @@ export class AddNodeService {
         apiUrl: this.apiUrlForKind("lan"),
         nodeToken: this.config.nodeToken,
         nodeId: rec.nodeId,
+        nodeName: rec.name,
       });
     }
 
@@ -357,6 +416,7 @@ export class AddNodeService {
       apiUrl: this.apiUrlForKind("cloud"),
       nodeToken: this.config.nodeToken,
       nodeId: rec.nodeId,
+      nodeName: rec.name,
       wgConfig,
       wgListenPort: peer.listenPort,
     });
@@ -371,7 +431,12 @@ export class AddNodeService {
     const nodeId = args.nodeId?.trim() || `node-${nanoid(8)}`;
     if (nodeId === LOCAL_NODE_ID) throw new Error("node_id_reserved");
     const name = args.nodeName?.trim() || nodeId;
-    const { created } = await this.upsertPlaceholder({ nodeId, name, kind: args.kind });
+    const { created } = await this.upsertPlaceholder({
+      nodeId,
+      name,
+      kind: args.kind,
+      joinHost: args.host,
+    });
 
     const timeout = args.readyTimeoutMs ?? 180_000;
     let script: string;
@@ -384,6 +449,7 @@ export class AddNodeService {
           apiUrl: this.apiUrlForKind("lan"),
           nodeToken: this.config.nodeToken,
           nodeId,
+          nodeName: name,
         });
       } else {
         if (!this.tunnel.toolsAvailable() && process.env.PLAYON_WG_MEMORY !== "1") {
@@ -401,6 +467,7 @@ export class AddNodeService {
           apiUrl: this.apiUrlForKind("cloud"),
           nodeToken: this.config.nodeToken,
           nodeId,
+          nodeName: name,
           wgConfig,
           wgListenPort: peer.listenPort,
         });
@@ -445,13 +512,25 @@ export class AddNodeService {
       await this.tunnel.syncHomeInterface().catch(() => undefined);
     }
 
+    const waitMs = args.heartbeatWaitMs ?? 90_000;
+    if (waitMs <= 0) {
+      return {
+        nodeId,
+        kind: args.kind,
+        name,
+        overlayIp,
+        tunnelStatus: args.kind === "cloud" ? "pending" : "none",
+        detail: "bootstrap_ok_waiting_heartbeat",
+      };
+    }
+    const online = await this.waitForHeartbeat(nodeId, waitMs);
     return {
       nodeId,
       kind: args.kind,
       name,
       overlayIp,
       tunnelStatus: args.kind === "cloud" ? "pending" : "none",
-      detail: "bootstrap_ok_waiting_heartbeat",
+      detail: online ? "online" : "bootstrap_heartbeat_timeout",
     };
   }
 

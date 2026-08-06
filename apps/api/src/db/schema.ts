@@ -40,6 +40,8 @@ export const nodes = sqliteTable("nodes", {
   overlayIp: text("overlay_ip"),
   /** none | unconfigured | pending | up | down */
   tunnelStatus: text("tunnel_status").notNull().default("none"),
+  /** SSH / public host used when adding this node (LAN IP or cloud endpoint). */
+  joinHost: text("join_host"),
 });
 
 export const servers = sqliteTable("servers", {

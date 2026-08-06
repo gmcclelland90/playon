@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   can,
@@ -41,12 +42,6 @@ export function SettingsPage({ user }: { user: PublicUser }) {
   const [backupRoot, setBackupRoot] = useState("");
   const [backupSaved, setBackupSaved] = useState(false);
 
-  const [addKind, setAddKind] = useState<"lan" | "cloud">("lan");
-  const [addHost, setAddHost] = useState("");
-  const [addUser, setAddUser] = useState("root");
-  const [addPassword, setAddPassword] = useState("");
-  const [addNodeName, setAddNodeName] = useState("");
-  const [oneLiner, setOneLiner] = useState<string | null>(null);
   const [nodeNotice, setNodeNotice] = useState<string | null>(null);
   const [nodeError, setNodeError] = useState<string | null>(null);
   /** Shown after Remove hits node_has_servers for this id. */
@@ -117,37 +112,6 @@ export function SettingsPage({ user }: { user: PublicUser }) {
       await qc.invalidateQueries({ queryKey: ["node-settings"] });
       await qc.invalidateQueries({ queryKey: ["nodes"] });
       window.setTimeout(() => setNodeNotice(null), 3000);
-    },
-    onError: (err: Error) => setNodeError(nodeActionError(err)),
-  });
-
-  const addNodeMut = useMutation({
-    mutationFn: () =>
-      api.addNode({
-        kind: addKind,
-        host: addHost.trim(),
-        username: addUser.trim(),
-        password: addPassword || undefined,
-        nodeName: addNodeName.trim() || undefined,
-      }),
-    onSuccess: async (res) => {
-      setNodeNotice(`Added ${res.node.name} (${res.node.kind}) — ${res.node.detail}`);
-      setAddPassword("");
-      await qc.invalidateQueries({ queryKey: ["nodes"] });
-    },
-    onError: (err: Error) => setNodeError(nodeActionError(err)),
-  });
-
-  const bootstrapTokenMut = useMutation({
-    mutationFn: () =>
-      api.createNodeBootstrapToken({
-        kind: addKind,
-        nodeName: addNodeName.trim() || undefined,
-        endpointHost: addKind === "cloud" ? addHost.trim() : undefined,
-      }),
-    onSuccess: (res) => {
-      setOneLiner(res.oneLiner);
-      setNodeNotice(`One-liner ready (expires ${new Date(res.expiresAt).toLocaleString()})`);
     },
     onError: (err: Error) => setNodeError(nodeActionError(err)),
   });
@@ -482,8 +446,9 @@ export function SettingsPage({ user }: { user: PublicUser }) {
       <section className="panel stack tight">
         <h3>Nodes</h3>
         <p className="muted status-inline">
-          Home is the control plane. Optionally host games here, or add LAN / cloud machines via SSH
-          (cloud nodes get WireGuard + a LAN join gateway).
+          Add and monitor hosts on the{" "}
+          <Link to="/">Map</Link> (host pads + Add node). Below: Local hosting toggle and
+          maintenance for existing nodes.
         </p>
         <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>
           <input
@@ -509,98 +474,6 @@ export function SettingsPage({ user }: { user: PublicUser }) {
             and restart before adding LAN or cloud nodes. Home install sets this automatically.
           </p>
         ) : null}
-
-        <h4>Add node</h4>
-        <div className="stack tight">
-          <label className="field">
-            <span>Where is this machine?</span>
-            <select
-              value={addKind}
-              onChange={(e) => setAddKind(e.target.value as "lan" | "cloud")}
-              disabled={nodesList.data?.nodeTokenConfigured === false}
-            >
-              <option value="lan">On my LAN (no tunnel)</option>
-              <option value="cloud">In the cloud (WireGuard)</option>
-            </select>
-          </label>
-          <label className="field">
-            <span>{addKind === "cloud" ? "Public IP / hostname" : "SSH host"}</span>
-            <input
-              value={addHost}
-              onChange={(e) => setAddHost(e.target.value)}
-              placeholder={addKind === "cloud" ? "203.0.113.9" : "192.168.1.50"}
-              disabled={nodesList.data?.nodeTokenConfigured === false}
-            />
-          </label>
-          <label className="field">
-            <span>SSH username</span>
-            <input
-              value={addUser}
-              onChange={(e) => setAddUser(e.target.value)}
-              disabled={nodesList.data?.nodeTokenConfigured === false}
-            />
-          </label>
-          <p className="muted status-inline">
-            Non-root users need passwordless sudo, or a password that unlocks sudo on the target.
-          </p>
-          <label className="field">
-            <span>SSH password (for Add via SSH)</span>
-            <input
-              type="password"
-              value={addPassword}
-              onChange={(e) => setAddPassword(e.target.value)}
-              autoComplete="off"
-              disabled={nodesList.data?.nodeTokenConfigured === false}
-            />
-          </label>
-          <label className="field">
-            <span>Node name (optional)</span>
-            <input
-              value={addNodeName}
-              onChange={(e) => setAddNodeName(e.target.value)}
-              placeholder="spare-pc"
-              disabled={nodesList.data?.nodeTokenConfigured === false}
-            />
-          </label>
-          <div className="btn-row">
-            <button
-              className="btn btn-primary"
-              type="button"
-              disabled={
-                addNodeMut.isPending ||
-                !addHost.trim() ||
-                nodesList.data?.nodeTokenConfigured === false
-              }
-              onClick={() => {
-                setNodeError(null);
-                addNodeMut.mutate();
-              }}
-            >
-              {addNodeMut.isPending ? "Adding…" : "Add via SSH"}
-            </button>
-            <button
-              className="btn"
-              type="button"
-              disabled={
-                bootstrapTokenMut.isPending ||
-                (addKind === "cloud" && !addHost.trim()) ||
-                nodesList.data?.nodeTokenConfigured === false
-              }
-              onClick={() => {
-                setNodeError(null);
-                bootstrapTokenMut.mutate();
-              }}
-            >
-              {bootstrapTokenMut.isPending ? "…" : "Copy one-liner instead"}
-            </button>
-          </div>
-          {oneLiner ? (
-            <label className="field">
-              <span>Run on the target machine</span>
-              <textarea readOnly rows={3} value={oneLiner} />
-            </label>
-          ) : null}
-        </div>
 
         {nodesList.data?.nodes?.length ? (
           <ul className="list compact-list">

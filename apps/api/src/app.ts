@@ -1418,6 +1418,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           tunnelStatus: n.tunnelStatus,
           overlayIp: n.overlayIp,
           tunnelEndpoint: n.tunnelEndpoint,
+          joinHost: n.joinHost ?? null,
         };
       }),
     });
@@ -1839,10 +1840,16 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       (existing[0]?.kind as NodeKind | undefined) ??
       (body.nodeId === LOCAL_NODE_ID ? "local" : "lan");
     if (existing[0]) {
+      const keepName =
+        existing[0].name &&
+        existing[0].name !== body.nodeId &&
+        body.name === body.nodeId
+          ? existing[0].name
+          : body.name;
       await db
         .update(nodes)
         .set({
-          name: body.name,
+          name: keepName,
           os: body.os,
           docker: body.docker,
           native: body.native ?? true,

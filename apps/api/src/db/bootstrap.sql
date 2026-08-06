@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS nodes (
   wg_private_key_encrypted TEXT,
   tunnel_endpoint TEXT,
   overlay_ip TEXT,
-  tunnel_status TEXT NOT NULL DEFAULT 'none'
+  tunnel_status TEXT NOT NULL DEFAULT 'none',
+  join_host TEXT
 );
 
 CREATE TABLE IF NOT EXISTS servers (

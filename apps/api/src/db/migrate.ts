@@ -57,6 +57,9 @@ function ensureNodeCapabilityColumns(raw: Database.Database) {
   if (!names.has("tunnel_status")) {
     raw.exec(`ALTER TABLE nodes ADD COLUMN tunnel_status TEXT NOT NULL DEFAULT 'none'`);
   }
+  if (!names.has("join_host")) {
+    raw.exec(`ALTER TABLE nodes ADD COLUMN join_host TEXT`);
+  }
 }
 
 /** Dev reset: replace legacy persona/per-server progress with skill-keyed table. */

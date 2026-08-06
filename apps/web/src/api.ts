@@ -252,6 +252,7 @@ export const api = {
         tunnelStatus?: string;
         overlayIp?: string | null;
         tunnelEndpoint?: string | null;
+        joinHost?: string | null;
       }>;
     }>("/api/nodes"),
   getNodeSettings: () =>

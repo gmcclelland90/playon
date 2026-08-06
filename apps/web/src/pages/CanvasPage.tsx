@@ -20,6 +20,7 @@ import {
   skillShortLabel,
   type AgentActivityView,
 } from "../components/agent-canvas/AgentCanvas";
+import { MapAddNodePanel } from "../components/MapAddNodePanel";
 import { runtimeErrorHint, statusHint, statusLabel } from "../status";
 import { playonSocket } from "../ws";
 
@@ -147,6 +148,14 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const chatLogRef = useRef<HTMLDivElement>(null);
 
   const servers = useQuery({ queryKey: ["servers"], queryFn: api.servers, refetchInterval: 4000 });
+  const nodes = useQuery({ queryKey: ["nodes"], queryFn: api.nodes, refetchInterval: 8_000 });
+  const [addNodeOpen, setAddNodeOpen] = useState(false);
+  const removeNodeMut = useMutation({
+    mutationFn: (id: string) => api.removeNode(id),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["nodes"] });
+    },
+  });
   const agents = useQuery({
     queryKey: ["agents"],
     queryFn: api.agents,
@@ -519,6 +528,15 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     <div className="canvas-page">
       <AgentCanvas
         servers={servers.data?.servers ?? []}
+        nodes={(nodes.data?.nodes ?? []).map((n) => ({
+          id: n.id,
+          name: n.name,
+          kind: n.kind,
+          status: n.status,
+          agentVersion: n.agentVersion,
+          joinHost: n.joinHost,
+          badge: n.badge,
+        }))}
         serversLoading={servers.isLoading || (servers.isFetching && !servers.data)}
         selectedId={selectedId}
         activity={activity}
@@ -530,8 +548,16 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         onSelect={selectServer}
         onDescribe={openInstallChat}
         onAddServer={openInstallChat}
-        showAddButton={!dockOpen}
+        onAddNode={() => setAddNodeOpen(true)}
+        onRemoveNode={(id) => removeNodeMut.mutate(id)}
+        showAddButton={!dockOpen && !addNodeOpen}
       />
+
+      {addNodeOpen ? (
+        <div className="map-add-node-overlay">
+          <MapAddNodePanel onClose={() => setAddNodeOpen(false)} />
+        </div>
+      ) : null}
 
       {celebration ? (
         <div className="celebration-banner canvas-toast" role="status">

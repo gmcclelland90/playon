@@ -1,7 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Application, Container, Graphics, Text } from "pixi.js";
 import type { ServerRow } from "../../api";
-import { statusLabel } from "../../status";
+import { isPendingNodeSetup, nodePresenceLabel, statusLabel } from "../../status";
+import {
+  clusterServersByNode,
+  crateOffsetInCluster,
+  padPresenceClass,
+  type MapNodeInput,
+} from "./map-node-layout";
 
 export type AgentActivityView = {
   serverId: string;
@@ -17,8 +23,11 @@ export type AgentSkillView = {
   title: string;
 };
 
+export type { MapNodeInput };
+
 type Props = {
   servers: ServerRow[];
+  nodes?: MapNodeInput[];
   /** True while the servers query has not settled — avoid false empty CTA. */
   serversLoading?: boolean;
   selectedId?: string;
@@ -31,6 +40,10 @@ type Props = {
   onDescribe: () => void;
   /** Non-empty map: deselect + open install chat for another server. */
   onAddServer: () => void;
+  /** Open on-map Add node panel. */
+  onAddNode?: () => void;
+  /** Remove a stuck pending/offline remote node. */
+  onRemoveNode?: (nodeId: string) => void;
   /** Hide floating add when the chat dock already covers that corner. */
   showAddButton?: boolean;
 };
@@ -93,14 +106,32 @@ export function skillColor(skill: string): number {
   return SKILL_COLORS[skill] ?? IDLE_COLOR;
 }
 
-function layoutPosition(index: number): { x: number; y: number } {
-  const col = index % 3;
-  const row = Math.floor(index / 3);
-  return { x: col * 280 - 280, y: row * 200 - 40 };
-}
-
 function homeSpot(): { x: number; y: number } {
   return { x: 0, y: 140 };
+}
+
+const PAD_COLORS: Record<string, { fill: number; stroke: number }> = {
+  online: { fill: 0x2a3d38, stroke: 0x5ed4c8 },
+  stale: { fill: 0x3d3528, stroke: 0xc4a35a },
+  offline: { fill: 0x3a282c, stroke: 0xc45a6a },
+  pending_setup: { fill: 0x2e2a38, stroke: 0x8a7fd4 },
+};
+
+function drawHostPad(
+  g: Graphics,
+  presence: string,
+  label: string,
+  subtitle: string,
+  width: number,
+  height: number,
+): void {
+  const colors = PAD_COLORS[presence] ?? PAD_COLORS.offline!;
+  g.clear();
+  g.roundRect(-width / 2, -36, width, height, 18);
+  g.fill({ color: colors.fill, alpha: 0.72 });
+  g.stroke({ width: 2, color: colors.stroke, alpha: 0.85 });
+  void label;
+  void subtitle;
 }
 
 function verbOffset(verb: string): { x: number; y: number } {
@@ -190,6 +221,7 @@ function prefersReducedMotion(): boolean {
  */
 export function AgentCanvas({
   servers,
+  nodes: hostNodes = [],
   serversLoading = false,
   selectedId,
   activity,
@@ -197,6 +229,8 @@ export function AgentCanvas({
   onSelect,
   onDescribe,
   onAddServer,
+  onAddNode,
+  onRemoveNode,
   showAddButton = true,
 }: Props) {
   void _skills;
@@ -204,14 +238,17 @@ export function AgentCanvas({
   const appRef = useRef<Application | null>(null);
   const worldRef = useRef<Container | null>(null);
   const nodesRef = useRef<Map<string, ServerNode>>(new Map());
+  const padsRef = useRef<Map<string, Container>>(new Map());
   const agentRef = useRef<AgentSprite | null>(null);
   const onSelectRef = useRef(onSelect);
   const onDescribeRef = useRef(onDescribe);
   const onAddServerRef = useRef(onAddServer);
+  const onRemoveNodeRef = useRef(onRemoveNode);
   const [stageReady, setStageReady] = useState(false);
   onSelectRef.current = onSelect;
   onDescribeRef.current = onDescribe;
   onAddServerRef.current = onAddServer;
+  onRemoveNodeRef.current = onRemoveNode;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -235,6 +272,7 @@ export function AgentCanvas({
       appRef.current = app;
 
       const world = new Container();
+      world.sortableChildren = true;
       world.x = host.clientWidth / 2;
       world.y = host.clientHeight / 2;
       worldRef.current = world;
@@ -330,81 +368,171 @@ export function AgentCanvas({
       appRef.current = null;
       worldRef.current = null;
       nodesRef.current.clear();
+      padsRef.current.clear();
       agentRef.current = null;
     };
   }, []);
 
-  // Sync server crates
+  // Sync host pads + server crates (clustered by node)
   useEffect(() => {
     const world = worldRef.current;
     if (!world || !stageReady) return;
 
-    const seen = new Set<string>();
-    servers.forEach((server, index) => {
-      seen.add(server.id);
-      let node = nodesRef.current.get(server.id);
-      if (!node) {
-        const pos = layoutPosition(index);
-        const root = new Container();
-        root.x = pos.x;
-        root.y = pos.y;
-        root.eventMode = "static";
-        root.cursor = "pointer";
+    const clusters = clusterServersByNode(hostNodes, servers);
+    const serverById = new Map(servers.map((s) => [s.id, s]));
+    const seenPads = new Set<string>();
+    const seenCrates = new Set<string>();
 
-        const crate = new Graphics();
-        crate.label = "crate";
-        root.addChild(crate);
+    for (const cluster of clusters) {
+      seenPads.add(cluster.node.id);
+      const presence = padPresenceClass(cluster.node);
+      const padW = Math.max(280, 160 + cluster.serverIds.length * 40);
+      const padH = Math.max(200, 120 + Math.ceil(Math.max(cluster.serverIds.length, 1) / 2) * 160);
 
-        const label = new Text({
-          text: server.name,
-          style: { fill: 0xf2e8ee, fontSize: 13, fontFamily: "DM Sans, sans-serif" },
+      let pad = padsRef.current.get(cluster.node.id);
+      if (!pad) {
+        pad = new Container();
+        pad.zIndex = 0;
+        const g = new Graphics();
+        g.label = "pad";
+        pad.addChild(g);
+        const title = new Text({
+          text: "",
+          style: { fill: 0xf2e8ee, fontSize: 14, fontFamily: "DM Sans, sans-serif", fontWeight: "600" },
         });
-        label.anchor.set(0.5, 0);
-        label.y = 50;
-        label.label = "name";
-        root.addChild(label);
-
-        const status = new Text({
+        title.anchor.set(0.5, 0);
+        title.y = -28;
+        title.label = "title";
+        pad.addChild(title);
+        const sub = new Text({
           text: "",
           style: { fill: 0xa898a0, fontSize: 11, fontFamily: "DM Sans, sans-serif" },
         });
-        status.anchor.set(0.5, 0);
-        status.y = 68;
-        status.label = "status";
-        root.addChild(status);
-
-        root.on("pointertap", () => {
-          onSelectRef.current(server.id);
+        sub.anchor.set(0.5, 0);
+        sub.y = -10;
+        sub.label = "sub";
+        pad.addChild(sub);
+        pad.eventMode = "static";
+        pad.cursor = "pointer";
+        const nodeId = cluster.node.id;
+        pad.on("pointertap", () => {
+          const n = hostNodes.find((x) => x.id === nodeId);
+          if (!n || n.id === "local") return;
+          if (
+            isPendingNodeSetup({ agentVersion: n.agentVersion, status: n.status }) ||
+            n.status === "offline"
+          ) {
+            if (
+              window.confirm(
+                `Remove incomplete node “${n.name}”? Bootstrap never finished or the agent is offline.`,
+              )
+            ) {
+              onRemoveNodeRef.current?.(n.id);
+            }
+          }
         });
-
-        world.addChild(root);
-        node = { id: server.id, x: pos.x, y: pos.y, root };
-        nodesRef.current.set(server.id, node);
+        world.addChild(pad);
+        padsRef.current.set(cluster.node.id, pad);
       }
 
-      const crate = node.root.getChildByLabel("crate") as Graphics;
-      const name = node.root.getChildByLabel("name") as Text;
-      const status = node.root.getChildByLabel("status") as Text;
-      const selected = server.id === selectedId;
-      const busyHere =
-        activity && activity.serverId === server.id && activity.phase !== "idle"
-          ? activity
-          : undefined;
-      drawCrate(crate, selected, server.status === "running");
-      name.text = server.name;
-      status.text = busyHere
-        ? `${statusLabel(server.status)} · ${busyHere.label || busyHere.verb}`
-        : statusLabel(server.status);
-    });
+      pad.x = cluster.origin.x;
+      pad.y = cluster.origin.y;
+      const g = pad.getChildByLabel("pad") as Graphics;
+      const title = pad.getChildByLabel("title") as Text;
+      const sub = pad.getChildByLabel("sub") as Text;
+      drawHostPad(g, presence, cluster.node.name, "", padW, padH);
+      title.text = cluster.node.name;
+      const presenceLabel = nodePresenceLabel({
+        status: cluster.node.status,
+        agentVersion: cluster.node.agentVersion,
+      });
+      const bits = [cluster.node.badge || cluster.node.kind || "", presenceLabel];
+      if (cluster.node.joinHost) bits.push(cluster.node.joinHost);
+      sub.text = bits.filter(Boolean).join(" · ");
 
+      cluster.serverIds.forEach((serverId, index) => {
+        const server = serverById.get(serverId);
+        if (!server) return;
+        seenCrates.add(server.id);
+        const offset = crateOffsetInCluster(index);
+        const pos = {
+          x: cluster.origin.x + offset.x,
+          y: cluster.origin.y + offset.y,
+        };
+        let node = nodesRef.current.get(server.id);
+        if (!node) {
+          const root = new Container();
+          root.zIndex = 2;
+          root.eventMode = "static";
+          root.cursor = "pointer";
+
+          const crate = new Graphics();
+          crate.label = "crate";
+          root.addChild(crate);
+
+          const label = new Text({
+            text: server.name,
+            style: { fill: 0xf2e8ee, fontSize: 13, fontFamily: "DM Sans, sans-serif" },
+          });
+          label.anchor.set(0.5, 0);
+          label.y = 50;
+          label.label = "name";
+          root.addChild(label);
+
+          const status = new Text({
+            text: "",
+            style: { fill: 0xa898a0, fontSize: 11, fontFamily: "DM Sans, sans-serif" },
+          });
+          status.anchor.set(0.5, 0);
+          status.y = 68;
+          status.label = "status";
+          root.addChild(status);
+
+          root.on("pointertap", () => {
+            onSelectRef.current(server.id);
+          });
+
+          world.addChild(root);
+          node = { id: server.id, x: pos.x, y: pos.y, root };
+          nodesRef.current.set(server.id, node);
+        }
+
+        node.x = pos.x;
+        node.y = pos.y;
+        node.root.x = pos.x;
+        node.root.y = pos.y;
+
+        const crate = node.root.getChildByLabel("crate") as Graphics;
+        const name = node.root.getChildByLabel("name") as Text;
+        const status = node.root.getChildByLabel("status") as Text;
+        const selected = server.id === selectedId;
+        const busyHere =
+          activity && activity.serverId === server.id && activity.phase !== "idle"
+            ? activity
+            : undefined;
+        drawCrate(crate, selected, server.status === "running");
+        name.text = server.name;
+        status.text = busyHere
+          ? `${statusLabel(server.status)} · ${busyHere.label || busyHere.verb}`
+          : statusLabel(server.status);
+      });
+    }
+
+    for (const [id, pad] of padsRef.current) {
+      if (!seenPads.has(id)) {
+        world.removeChild(pad);
+        pad.destroy({ children: true });
+        padsRef.current.delete(id);
+      }
+    }
     for (const [id, node] of nodesRef.current) {
-      if (!seen.has(id)) {
+      if (!seenCrates.has(id)) {
         world.removeChild(node.root);
         node.root.destroy({ children: true });
         nodesRef.current.delete(id);
       }
     }
-  }, [servers, selectedId, activity, stageReady]);
+  }, [servers, hostNodes, selectedId, activity, stageReady]);
 
   // Sync single agent sprite
   useEffect(() => {
@@ -506,6 +634,7 @@ export function AgentCanvas({
   };
 
   const liveBusy = activity && activity.phase !== "idle" ? activity : undefined;
+  const mapEmpty = servers.length === 0 && hostNodes.length === 0;
 
   return (
     <div className="agent-canvas-host">
@@ -514,12 +643,12 @@ export function AgentCanvas({
         className="agent-canvas-stage"
         role="img"
         aria-label={
-          servers.length === 0
+          mapEmpty
             ? "Empty LAN map"
-            : `LAN map with ${servers.length} server${servers.length === 1 ? "" : "s"}`
+            : `LAN map with ${hostNodes.length} host${hostNodes.length === 1 ? "" : "s"} and ${servers.length} server${servers.length === 1 ? "" : "s"}`
         }
       />
-      {serversLoading && servers.length === 0 ? (
+      {serversLoading && mapEmpty ? (
         <div className="agent-canvas-empty" aria-busy="true">
           <div className="empty-hint">
             <strong>Loading map…</strong>
@@ -530,24 +659,36 @@ export function AgentCanvas({
             <div className="skeleton-row" />
           </div>
         </div>
-      ) : servers.length === 0 ? (
+      ) : mapEmpty ? (
         <div className="agent-canvas-empty">
           <div className="empty-hint">
             <strong>Your LAN map is empty</strong>
-            <p className="muted status-inline">Tell the agent what to stand up tonight.</p>
+            <p className="muted status-inline">
+              Add a host, or tell the agent what to stand up tonight.
+            </p>
           </div>
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => onDescribeRef.current()}
-          >
-            Describe a server
-          </button>
+          <div className="btn-row">
+            {onAddNode ? (
+              <button type="button" className="btn" onClick={() => onAddNode()}>
+                Add node
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => onDescribeRef.current()}
+            >
+              Describe a server
+            </button>
+          </div>
         </div>
       ) : (
         <>
           <p className="agent-canvas-map-hint muted" aria-hidden>
             Drag to pan · Scroll to zoom
+            {hostNodes.some((n) => n.id !== "local")
+              ? " · Click a pending host pad to remove it"
+              : ""}
           </p>
           {liveBusy ? (
             <p className="agent-canvas-live-chip" role="status">
@@ -555,66 +696,95 @@ export function AgentCanvas({
             </p>
           ) : null}
           <div className="agent-canvas-rail">
-            <p className="agent-canvas-rail-label" id="server-list-label">
-              Servers
+            <p className="agent-canvas-rail-label" id="host-list-label">
+              Hosts
             </p>
-            <ul
-              className="agent-canvas-list"
-              role="listbox"
-              aria-labelledby="server-list-label"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (!servers.length) return;
-                const idx = Math.max(
-                  0,
-                  servers.findIndex((s) => s.id === selectedId),
-                );
-                if (e.key === "ArrowDown" || e.key === "ArrowRight") {
-                  e.preventDefault();
-                  const next = servers[(idx + 1) % servers.length]!;
-                  onSelectRef.current(next.id);
-                } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
-                  e.preventDefault();
-                  const prev = servers[(idx - 1 + servers.length) % servers.length]!;
-                  onSelectRef.current(prev.id);
-                } else if (e.key === "Escape") {
-                  e.preventDefault();
-                  onSelectRef.current(undefined);
-                }
-              }}
-            >
-              {servers.map((server) => {
-                const selected = server.id === selectedId;
-                const busyLabel = serverBusyLabel(server.id);
-                return (
-                  <li key={server.id} role="option" aria-selected={selected}>
-                    <button
-                      type="button"
-                      className={
-                        selected
-                          ? "agent-canvas-list-item selected"
-                          : "agent-canvas-list-item"
-                      }
-                      onClick={() => onSelectRef.current(server.id)}
-                    >
-                      <span className="agent-canvas-list-name">{server.name}</span>
-                      <span className="muted">
-                        {busyLabel || statusLabel(server.status)}
-                      </span>
-                    </button>
-                  </li>
-                );
-              })}
+            <ul className="agent-canvas-list" aria-labelledby="host-list-label">
+              {hostNodes.map((n) => (
+                <li key={n.id}>
+                  <div className="agent-canvas-list-item static">
+                    <span className="agent-canvas-list-name">{n.name}</span>
+                    <span className={`node-status node-${padPresenceClass(n)}`}>
+                      {nodePresenceLabel({
+                        status: n.status,
+                        agentVersion: n.agentVersion,
+                      })}
+                    </span>
+                  </div>
+                </li>
+              ))}
             </ul>
+            {servers.length ? (
+              <>
+                <p className="agent-canvas-rail-label" id="server-list-label">
+                  Servers
+                </p>
+                <ul
+                  className="agent-canvas-list"
+                  role="listbox"
+                  aria-labelledby="server-list-label"
+                  tabIndex={0}
+                  onKeyDown={(e) => {
+                    if (!servers.length) return;
+                    const idx = Math.max(
+                      0,
+                      servers.findIndex((s) => s.id === selectedId),
+                    );
+                    if (e.key === "ArrowDown" || e.key === "ArrowRight") {
+                      e.preventDefault();
+                      const next = servers[(idx + 1) % servers.length]!;
+                      onSelectRef.current(next.id);
+                    } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
+                      e.preventDefault();
+                      const prev = servers[(idx - 1 + servers.length) % servers.length]!;
+                      onSelectRef.current(prev.id);
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      onSelectRef.current(undefined);
+                    }
+                  }}
+                >
+                  {servers.map((server) => {
+                    const selected = server.id === selectedId;
+                    const busyLabel = serverBusyLabel(server.id);
+                    return (
+                      <li key={server.id} role="option" aria-selected={selected}>
+                        <button
+                          type="button"
+                          className={
+                            selected
+                              ? "agent-canvas-list-item selected"
+                              : "agent-canvas-list-item"
+                          }
+                          onClick={() => onSelectRef.current(server.id)}
+                        >
+                          <span className="agent-canvas-list-name">{server.name}</span>
+                          <span className="muted">
+                            {busyLabel || statusLabel(server.status)}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
+            ) : null}
           </div>
           {showAddButton ? (
-            <button
-              type="button"
-              className="btn btn-primary agent-canvas-add"
-              onClick={() => onAddServerRef.current()}
-            >
-              + Add server
-            </button>
+            <div className="agent-canvas-add-row">
+              {onAddNode ? (
+                <button type="button" className="btn agent-canvas-add-node" onClick={() => onAddNode()}>
+                  + Add node
+                </button>
+              ) : null}
+              <button
+                type="button"
+                className="btn btn-primary agent-canvas-add"
+                onClick={() => onAddServerRef.current()}
+              >
+                + Add server
+              </button>
+            </div>
           ) : null}
         </>
       )}

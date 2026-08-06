@@ -9,6 +9,7 @@ set -euo pipefail
 API_URL=""
 NODE_TOKEN=""
 NODE_ID=""
+NODE_NAME=""
 PLAYON_ROOT="${PLAYON_ROOT:-/opt/playon-node}"
 PLAYON_DATA="${PLAYON_DATA_ROOT:-/var/lib/playon-node}"
 PLAYON_USER="${PLAYON_USER:-playon}"
@@ -20,13 +21,14 @@ while [[ $# -gt 0 ]]; do
     --api) API_URL="$2"; shift 2 ;;
     --token) NODE_TOKEN="$2"; shift 2 ;;
     --node-id) NODE_ID="$2"; shift 2 ;;
+    --name) NODE_NAME="$2"; shift 2 ;;
     --runtime) RUNTIME="$2"; shift 2 ;;
     *) echo "Unknown arg: $1"; exit 1 ;;
   esac
 done
 
 if [[ -z "${API_URL}" || -z "${NODE_TOKEN}" ]]; then
-  echo "Usage: bash install-node.sh --api http://192.168.1.10:8787 --token <PLAYON_NODE_TOKEN> [--node-id spare-1]"
+  echo "Usage: bash install-node.sh --api http://192.168.1.10:8787 --token <PLAYON_NODE_TOKEN> [--node-id spare-1] [--name friendly]"
   exit 1
 fi
 
@@ -36,6 +38,8 @@ if [[ "$(id -u)" -ne 0 ]]; then
 fi
 
 NODE_ID="${NODE_ID:-$(hostname -s 2>/dev/null || hostname)}"
+NODE_NAME="${NODE_NAME:-$(hostname -s 2>/dev/null || hostname)}"
+NODE_NAME="${NODE_NAME:-${NODE_ID}}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # When this file lives in deploy/, bundle root is parent; when curl'd to /tmp, no bundle.
 if [[ -f "${SCRIPT_DIR}/../apps/node-agent/dist/index.js" ]] || [[ -f "${SCRIPT_DIR}/../package.json" && -d "${SCRIPT_DIR}/../apps/node-agent" ]]; then
@@ -161,7 +165,7 @@ cat >/etc/playon/node.env <<EOF
 PLAYON_API_URL=${API_URL}
 PLAYON_NODE_TOKEN=${NODE_TOKEN}
 PLAYON_NODE_ID=${NODE_ID}
-PLAYON_NODE_NAME=${NODE_ID}
+PLAYON_NODE_NAME=${NODE_NAME}
 PLAYON_DATA_ROOT=${PLAYON_DATA}
 PLAYON_RUNTIME=${RUNTIME}
 PLAYON_INSTALL_ROOT=${PLAYON_ROOT}

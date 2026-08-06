@@ -235,11 +235,84 @@ a.brand-mark:hover {
   pointer-events: auto;
 }
 
-.agent-canvas-add {
+.agent-canvas-add-row {
   position: absolute;
   top: 1rem;
   right: 1rem;
   z-index: 2;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.agent-canvas-add,
+.agent-canvas-add-node {
+  position: static;
+}
+
+.node-pending_setup {
+  color: oklch(0.72 0.12 290);
+}
+
+.agent-canvas-list-item.static {
+  cursor: default;
+  pointer-events: none;
+}
+
+.map-add-node-overlay {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  z-index: 5;
+  width: min(22rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 2rem);
+  overflow: auto;
+}
+
+.map-add-node-panel {
+  padding: var(--space-3);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.map-add-node-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.35rem;
+}
+
+.map-add-node-steps li {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  text-align: center;
+  padding: 0.35rem 0.2rem;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.map-add-node-steps li.active {
+  color: var(--fg);
+  border-color: var(--accent);
+  background: oklch(0.78 0.12 185 / 0.12);
+}
+
+.map-add-node-steps li.done {
+  color: var(--accent);
+  border-color: oklch(0.78 0.12 185 / 0.35);
+}
+
+.map-add-node-steps li.failed {
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 .agent-canvas-rail {

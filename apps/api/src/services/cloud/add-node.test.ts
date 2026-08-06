@@ -47,9 +47,12 @@ describe("bootstrap scripts", () => {
       apiUrl: "http://192.168.1.10:8787",
       nodeToken: "tok",
       nodeId: "spare-1",
+      nodeName: "zomboid",
     });
     expect(script).toContain("--api 'http://192.168.1.10:8787'");
     expect(script).toContain("--node-id 'spare-1'");
+    expect(script).toContain("--name 'zomboid'");
+    expect(script).toContain("PLAYON_NODE_NAME=zomboid");
   });
 
   it("builds cloud script with wireguard", () => {
@@ -193,15 +196,44 @@ describe("AddNodeService.addViaSsh", () => {
       password: "ok",
       nodeName: "spare",
       nodeId: "node-ok",
+      heartbeatWaitMs: 0,
     });
 
     expect(result.detail).toBe("bootstrap_ok_waiting_heartbeat");
     expect(seenScript).toContain("sudo -S");
+    expect(seenScript).toMatch(/--name\s+/);
+    expect(seenScript).toContain("spare");
     expect(seenStdin).toBe("ok\n");
     const rows = await db.select().from(nodes).where(eq(nodes.id, "node-ok"));
     expect(rows).toHaveLength(1);
     expect(rows[0]?.agentVersion).toBe("pending");
     expect(rows[0]?.lastSeenAt.getTime()).toBe(0);
+    expect(rows[0]?.joinHost).toBe("192.168.1.50");
+    sqlite.close();
+  });
+
+  it("returns online when heartbeat arrives during wait", async () => {
+    const { config } = tempConfig();
+    const { db, sqlite } = createDb(config.dbPath);
+    const tunnel = new TunnelService(db, config, new MemoryWireGuardRunner());
+    const sshExec: SshExec = async () => {
+      await db
+        .update(nodes)
+        .set({ agentVersion: "0.1.7" })
+        .where(eq(nodes.id, "node-hb"));
+      return { code: 0, stdout: "ok", stderr: "" };
+    };
+    const svc = new AddNodeService(db, config, tunnel, sshExec);
+    const result = await svc.addViaSsh({
+      kind: "lan",
+      host: "192.168.1.50",
+      username: "root",
+      password: "x",
+      nodeName: "box",
+      nodeId: "node-hb",
+      heartbeatWaitMs: 5_000,
+    });
+    expect(result.detail).toBe("online");
     sqlite.close();
   });
 
