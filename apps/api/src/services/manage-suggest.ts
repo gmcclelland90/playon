@@ -173,8 +173,13 @@ export class ManageSuggestService {
     const metaName = skill.metadata.name;
     const gameLabel = args.game?.trim() || skill.metadata.game || path.basename(sourcePath);
     const serverName = args.serverName?.trim() || gameLabel;
+    // Match createFromSkill: containerSupport=none must be native or reconcile treats Start as a missing Docker container.
+    const runtimeMode =
+      this.config.runtimeMode === "native" || skill.metadata.containerSupport === "none"
+        ? "native"
+        : "docker";
 
-    writeSkillMarkerFromSkill(dataPath, skill, this.config.runtimeMode, resolvedNodeId, {
+    writeSkillMarkerFromSkill(dataPath, skill, runtimeMode, resolvedNodeId, {
       managedFrom: sourcePath,
       managedAt: new Date().toISOString(),
       nodeAuthoritative: true,
@@ -187,7 +192,7 @@ export class ManageSuggestService {
       name: serverName,
       game: gameLabel,
       nodeId: resolvedNodeId,
-      runtimeMode: this.config.runtimeMode,
+      runtimeMode,
       status: "stopped",
       dataPath,
       createdAt: now,

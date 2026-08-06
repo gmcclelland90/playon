@@ -383,7 +383,42 @@ export class ServerService {
   }
 
   private async reconcileStatus(server: ServerRecord): Promise<void> {
-    if (server.runtimeMode === "native") {
+    const skillMeta = this.readSkillMeta(server.dataPath);
+    const useNative = this.wantsNativeRuntime(
+      server,
+      skillMeta.skillName,
+      skillMeta.containerSupport,
+    );
+
+    if (useNative) {
+      if (this.isRemoteNode(server) && server.nodeId) {
+        const procId = this.processes.get(server.id);
+        if (procId) {
+          try {
+            const info = await dispatchNodeJob<{ status: string }>({
+              nodeId: server.nodeId,
+              kind: "process_status",
+              args: { id: procId },
+              timeoutMs: 15_000,
+              localHandler: async () => {
+                throw new Error("remote_only");
+              },
+            });
+            const next = info.status === "running" ? "running" : "stopped";
+            if (next === "stopped") this.processes.delete(server.id);
+            if (next !== server.status) {
+              await this.db.update(servers).set({ status: next }).where(eq(servers.id, server.id));
+              this.emitStatus(server.id, next);
+            }
+          } catch {
+            // Agent restart loses in-memory process ids; don't flip to stopped via Docker inspect.
+          }
+          return;
+        }
+        // No tracked remote process — local pgrep can't see the node. Leave status alone.
+        return;
+      }
+
       const next = this.nativeProcessAlive(server) ? "running" : "stopped";
       if (next !== server.status) {
         await this.db.update(servers).set({ status: next }).where(eq(servers.id, server.id));
@@ -391,6 +426,7 @@ export class ServerService {
       }
       return;
     }
+
     await this.ensureRuntime();
     const adapter = this.adapterFor(server.id);
     try {

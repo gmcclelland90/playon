@@ -180,7 +180,12 @@ export class ImportLocalService {
       args.game?.trim() || skill.metadata.game || detection.suggestedGame || path.basename(source);
     const serverName = args.serverName?.trim() || gameLabel;
 
-    writeSkillMarkerFromSkill(dataPath, skill, this.config.runtimeMode, resolvedNodeId, {
+    const runtimeMode =
+      this.config.runtimeMode === "native" || skill.metadata.containerSupport === "none"
+        ? "native"
+        : "docker";
+
+    writeSkillMarkerFromSkill(dataPath, skill, runtimeMode, resolvedNodeId, {
       importedFrom: source,
       importedAt: new Date().toISOString(),
     });
@@ -191,8 +196,7 @@ export class ImportLocalService {
       name: serverName,
       game: gameLabel,
       nodeId: resolvedNodeId,
-      runtimeMode:
-        this.config.runtimeMode,
+      runtimeMode,
       status: "stopped",
       dataPath,
       createdAt: now,
