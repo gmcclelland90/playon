@@ -15,9 +15,10 @@ describe("import-hints-data", () => {
     expect(z?.anyFiles.length).toBeGreaterThan(0);
   });
 
-  it("loads linux scan roots including Zomboid homes", () => {
+  it("loads linux scan roots for install trees (Steam/opt/servers)", () => {
     const roots = loadImportScanRoots([skillsRoot], "linux");
-    expect(roots.some((r) => r.includes("Zomboid"))).toBe(true);
     expect(roots.some((r) => r.includes("steamapps"))).toBe(true);
+    expect(roots.some((r) => r.includes("/opt/"))).toBe(true);
+    expect(roots.some((r) => r.includes("Zomboid"))).toBe(false);
   });
 });
