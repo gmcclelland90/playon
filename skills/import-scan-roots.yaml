@@ -13,11 +13,15 @@ linux:
   - "~/steamapps/common/*"
   - "~/servers"
   - "~/servers/*"
+  # Match both `foo-server` and compact names like `pzserver`
   - "/opt/*-server"
+  - "/opt/*server"
+  - "/opt/pzserver"
   - "/opt/game-servers"
   - "/opt/game-servers/*"
   - "/home/*/Zomboid"
   - "/home/*/Zomboid/Server"
+  - "/home/*/Zomboid/*"
   - "/home/*/.steam/steam/steamapps/common/*"
 windows:
   - "%USERPROFILE%\\Zomboid"
