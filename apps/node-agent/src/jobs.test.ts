@@ -46,7 +46,7 @@ describe("executeJob", () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
-  it("import_probe finds allowlisted trees and import_pack rejects escapes", async () => {
+  it("manage_probe finds allowlisted trees and manage_pack rejects escapes", async () => {
     const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-"));
     const scan = fs.mkdtempSync(path.join(os.tmpdir(), "playon-scan-"));
     const server = path.join(scan, "game");
@@ -57,7 +57,7 @@ describe("executeJob", () => {
         {
           id: "j5",
           nodeId: "n1",
-          kind: "import_probe",
+          kind: "manage_probe",
           args: {
             roots: [scan],
             hints: [
@@ -80,7 +80,7 @@ describe("executeJob", () => {
           {
             id: "j6",
             nodeId: "n1",
-            kind: "import_pack",
+            kind: "manage_pack",
             args: { path: dataRoot, allowRoots: [scan], maxBytes: 1024 * 1024 },
           },
           dataRoot,
@@ -91,7 +91,7 @@ describe("executeJob", () => {
         {
           id: "j7",
           nodeId: "n1",
-          kind: "import_pack",
+          kind: "manage_pack",
           args: { path: server, allowRoots: [scan], maxBytes: 1024 * 1024 },
         },
         dataRoot,

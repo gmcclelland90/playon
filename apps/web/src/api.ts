@@ -300,7 +300,7 @@ export const api = {
       `/api/nodes/${encodeURIComponent(nodeId)}${force ? "?force=1" : ""}`,
       { method: "DELETE" },
     ),
-  suggestNodeImport: (nodeId: string) =>
+  suggestNodeManage: (nodeId: string) =>
     request<{
       candidates: Array<{
         path: string;
@@ -310,16 +310,16 @@ export const api = {
       }>;
       scannedRoots: string[];
       cached: boolean;
-    }>(`/api/nodes/${encodeURIComponent(nodeId)}/import/suggest`, {
+    }>(`/api/nodes/${encodeURIComponent(nodeId)}/manage/suggest`, {
       method: "POST",
       body: JSON.stringify({}),
     }),
-  importFromNode: (
+  manageFromNode: (
     nodeId: string,
     body: { sourcePath: string; serverName?: string; skillName?: string },
   ) =>
     request<{
-      import: {
+      manage: {
         server: ServerRow;
         skillName: string;
         skillSource: string;
@@ -329,7 +329,7 @@ export const api = {
         detectedHints: string[];
         followUp: string[];
       };
-    }>(`/api/nodes/${encodeURIComponent(nodeId)}/import`, {
+    }>(`/api/nodes/${encodeURIComponent(nodeId)}/manage`, {
       method: "POST",
       body: JSON.stringify(body),
     }),

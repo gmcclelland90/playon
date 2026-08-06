@@ -23,8 +23,8 @@ export function MapManageSuggestPanel({
   const [managingPath, setManagingPath] = useState<string | null>(null);
 
   const suggest = useQuery({
-    queryKey: ["import-suggest", nodeId],
-    queryFn: () => api.suggestNodeImport(nodeId),
+    queryKey: ["manage-suggest", nodeId],
+    queryFn: () => api.suggestNodeManage(nodeId),
     staleTime: 15_000,
     retry: 1,
   });
@@ -36,7 +36,7 @@ export function MapManageSuggestPanel({
 
   const manageMut = useMutation({
     mutationFn: (c: Candidate) =>
-      api.importFromNode(nodeId, {
+      api.manageFromNode(nodeId, {
         sourcePath: c.path,
         serverName: c.suggestedGame,
         skillName: c.suggestedSkillName,
@@ -47,9 +47,9 @@ export function MapManageSuggestPanel({
     },
     onSuccess: async (res) => {
       setManagingPath(null);
-      setNotice(`“${res.import.server.name}” is now managed on this pad.`);
+      setNotice(`“${res.manage.server.name}” is now managed on this pad.`);
       await qc.invalidateQueries({ queryKey: ["servers"] });
-      await qc.invalidateQueries({ queryKey: ["import-suggest", nodeId] });
+      await qc.invalidateQueries({ queryKey: ["manage-suggest", nodeId] });
     },
     onError: (err) => {
       setManagingPath(null);

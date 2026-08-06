@@ -1,5 +1,5 @@
 /**
- * Map "Scan for servers" — probe allowlisted roots on a node, then pack + import.
+ * Map "Scan for servers" — probe allowlisted roots on a node, then pack + manage.
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -30,7 +30,7 @@ type CacheEntry = {
   scannedRoots: string[];
 };
 
-export class ImportSuggestService {
+export class ManageSuggestService {
   private readonly cache = new Map<string, CacheEntry>();
 
   constructor(
@@ -62,12 +62,12 @@ export class ImportSuggestService {
 
     const { roots, hints } = this.rootsAndHints();
     if (!roots.length) {
-      throw new Error("import_scan_roots_missing");
+      throw new Error("manage_scan_roots_missing");
     }
 
     const probe = await dispatchNodeJob({
       nodeId,
-      kind: "import_probe",
+      kind: "manage_probe",
       args: {
         roots,
         hints,
@@ -97,7 +97,7 @@ export class ImportSuggestService {
     };
   }
 
-  async importFromNode(args: {
+  async manageFromNode(args: {
     nodeId: string;
     sourcePath: string;
     serverName?: string;
@@ -120,7 +120,7 @@ export class ImportSuggestService {
 
     const pack = await dispatchNodeJob({
       nodeId: args.nodeId,
-      kind: "import_pack",
+      kind: "manage_pack",
       args: {
         path: sourcePath,
         allowRoots: roots,
@@ -128,20 +128,20 @@ export class ImportSuggestService {
       },
       timeoutMs: 300_000,
       localHandler: async () => {
-        throw new Error("import_pack_local_unreachable");
+        throw new Error("manage_pack_local_unreachable");
       },
     });
 
     const parsed = ImportPackResultSchema.parse(pack);
     if (!parsed.archiveBase64) {
-      throw new Error("import_pack_empty");
+      throw new Error("manage_pack_empty");
     }
 
     const stagingRoot = path.join(this.config.dataRoot, "imports");
     fs.mkdirSync(stagingRoot, { recursive: true });
     const staging = fs.mkdtempSync(path.join(stagingRoot, "node-"));
     try {
-      const archive = path.join(os.tmpdir(), `playon-import-${Date.now()}.tar`);
+      const archive = path.join(os.tmpdir(), `playon-manage-${Date.now()}.tar`);
       fs.writeFileSync(archive, Buffer.from(parsed.archiveBase64, "base64"));
       try {
         execFileSync("tar", ["-xf", archive, "-C", staging], { stdio: "pipe" });

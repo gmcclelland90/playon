@@ -208,7 +208,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     migrate: migrateService,
     offNode: offNodeBackup,
     importLocal,
-    importSuggest,
+    manageSuggest,
     importSftp,
     agentProgress,
     skillPackages,
@@ -1530,23 +1530,23 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     }
   });
 
-  app.post("/api/nodes/:nodeId/import/suggest", async (c) => {
+  app.post("/api/nodes/:nodeId/manage/suggest", async (c) => {
     const user = c.get("user");
     if (!user || !can(user.role, "servers.manage")) {
       return c.json({ error: "forbidden" }, 403);
     }
     try {
-      const result = await importSuggest.suggest(c.req.param("nodeId"));
+      const result = await manageSuggest.suggest(c.req.param("nodeId"));
       return c.json(result);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "import_suggest_failed";
+      const message = err instanceof Error ? err.message : "manage_suggest_failed";
       const status =
         message.startsWith("unknown_node") ? 404 : message.startsWith("node_not_online") ? 409 : 400;
       return c.json({ error: message }, status);
     }
   });
 
-  app.post("/api/nodes/:nodeId/import", async (c) => {
+  app.post("/api/nodes/:nodeId/manage", async (c) => {
     const user = c.get("user");
     if (!user || !can(user.role, "servers.manage")) {
       return c.json({ error: "forbidden" }, 403);
@@ -1559,13 +1559,13 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           skillName: z.string().min(1).optional(),
         })
         .parse(await c.req.json());
-      const report = await importSuggest.importFromNode({
+      const report = await manageSuggest.manageFromNode({
         nodeId: c.req.param("nodeId"),
         ...body,
       });
       await playerPanel.publishForStatus(report.server.id, "stopped");
       return c.json({
-        import: {
+        manage: {
           server: report.server,
           skillName: report.skillName,
           skillSource: report.skillSource,
@@ -1577,7 +1577,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         },
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "import_failed";
+      const message = err instanceof Error ? err.message : "manage_failed";
       const status =
         message.startsWith("unknown_node") ? 404 : message.startsWith("node_not_online") ? 409 : 400;
       return c.json({ error: message }, status);

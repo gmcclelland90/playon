@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-/** Fingerprint rule shipped to node-agent in import_probe job args. */
+/** Fingerprint rule shipped to node-agent in manage_probe job args. */
 export const ImportHintRuleSchema = z.object({
   id: z.string().min(1),
   anyFiles: z.array(z.string().min(1)).default([]),

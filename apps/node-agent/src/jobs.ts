@@ -290,12 +290,12 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
     });
   }
 
-  if (job.kind === "import_probe") {
+  if (job.kind === "manage_probe") {
     const args = ImportProbeArgsSchema.parse(job.args);
     return runImportProbe(args);
   }
 
-  if (job.kind === "import_pack") {
+  if (job.kind === "manage_pack") {
     const args = ImportPackArgsSchema.parse(job.args);
     const target = assertPackPathAllowed(args.path, args.allowRoots);
     const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-import-pack-"));
