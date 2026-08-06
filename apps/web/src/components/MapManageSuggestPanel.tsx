@@ -47,7 +47,9 @@ export function MapManageSuggestPanel({
     },
     onSuccess: async (res) => {
       setManagingPath(null);
-      setNotice(`“${res.manage.server.name}” is now managed on this pad.`);
+      setNotice(
+        `“${res.manage.server.name}” is on this pad (stopped). Stop the old host service, then Start here to cut over.`,
+      );
       await qc.invalidateQueries({ queryKey: ["servers"] });
       await qc.invalidateQueries({ queryKey: ["manage-suggest", nodeId] });
     },
@@ -68,7 +70,9 @@ export function MapManageSuggestPanel({
         </button>
       </div>
       <p className="muted small">
-        Look for known installs on this host. Confirm to manage one with PlayOn.
+        PlayOn copies the install into its own server tree and leaves the original on disk as a
+        fallback. Starting under PlayOn is a cutover: stop any existing host service first — this
+        needs a maintenance window (players will disconnect).
       </p>
 
       {suggest.isLoading ? <p className="muted">Scanning…</p> : null}
@@ -97,9 +101,16 @@ export function MapManageSuggestPanel({
                 type="button"
                 disabled={manageMut.isPending}
                 onClick={() => {
+                  const label = c.suggestedGame ?? c.path;
                   if (
                     window.confirm(
-                      `Manage “${c.suggestedGame ?? c.path}” with PlayOn on ${nodeName}?`,
+                      [
+                        `Manage “${label}” with PlayOn on ${nodeName}?`,
+                        "",
+                        "PlayOn will copy this install and leave the original in place.",
+                        "It does not stop your current server process — do that yourself before Start in PlayOn.",
+                        "Cutover needs downtime; players cannot stay online through this.",
+                      ].join("\n"),
                     )
                   ) {
                     manageMut.mutate(c);
