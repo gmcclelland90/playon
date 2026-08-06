@@ -3,11 +3,11 @@
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
   ImportPackResultSchema,
   ImportProbeResultSchema,
+  ManagePackReadResultSchema,
   deriveNodePresence,
   isLocalNodeId,
   type ImportProbeCandidate,
@@ -22,7 +22,9 @@ import type { ImportLocalReport, ImportLocalService } from "./import-local.js";
 import { dispatchNodeJob } from "./node-runtime.js";
 
 const SUGGEST_CACHE_TTL_MS = 30_000;
-const PACK_MAX_BYTES = 512 * 1024 * 1024;
+/** Large Steam installs (e.g. Zomboid ~7GiB) stage on the node data disk. */
+const PACK_MAX_BYTES = 32 * 1024 * 1024 * 1024;
+const PACK_CHUNK_BYTES = 8 * 1024 * 1024;
 
 type CacheEntry = {
   at: number;
@@ -118,36 +120,34 @@ export class ManageSuggestService {
       });
     }
 
-    const pack = await dispatchNodeJob({
-      nodeId: args.nodeId,
-      kind: "manage_pack",
-      args: {
-        path: sourcePath,
-        allowRoots: roots,
-        maxBytes: PACK_MAX_BYTES,
-      },
-      timeoutMs: 300_000,
-      localHandler: async () => {
-        throw new Error("manage_pack_local_unreachable");
-      },
-    });
+    const pack = ImportPackResultSchema.parse(
+      await dispatchNodeJob({
+        nodeId: args.nodeId,
+        kind: "manage_pack",
+        args: {
+          path: sourcePath,
+          allowRoots: roots,
+          maxBytes: PACK_MAX_BYTES,
+        },
+        timeoutMs: 1_800_000,
+        localHandler: async () => {
+          throw new Error("manage_pack_local_unreachable");
+        },
+      }),
+    );
 
-    const parsed = ImportPackResultSchema.parse(pack);
-    if (!parsed.archiveBase64) {
+    if (!pack.packRel || pack.bytes <= 0) {
       throw new Error("manage_pack_empty");
     }
 
     const stagingRoot = path.join(this.config.dataRoot, "imports");
     fs.mkdirSync(stagingRoot, { recursive: true });
     const staging = fs.mkdtempSync(path.join(stagingRoot, "node-"));
+    const archive = path.join(staging, "tree.tar");
     try {
-      const archive = path.join(os.tmpdir(), `playon-manage-${Date.now()}.tar`);
-      fs.writeFileSync(archive, Buffer.from(parsed.archiveBase64, "base64"));
-      try {
-        execFileSync("tar", ["-xf", archive, "-C", staging], { stdio: "pipe" });
-      } finally {
-        fs.rmSync(archive, { force: true });
-      }
+      await this.pullPackChunks(args.nodeId, pack.packRel, pack.bytes, archive);
+      execFileSync("tar", ["-xf", archive, "-C", staging], { stdio: "pipe" });
+      fs.rmSync(archive, { force: true });
 
       const report = await this.importLocal.importFromPath({
         sourcePath: staging,
@@ -159,6 +159,52 @@ export class ManageSuggestService {
       return report;
     } finally {
       fs.rmSync(staging, { recursive: true, force: true });
+      await dispatchNodeJob({
+        nodeId: args.nodeId,
+        kind: "fs_remove",
+        args: { path: pack.packRel },
+        timeoutMs: 60_000,
+        localHandler: async () => ({ ok: true }),
+      }).catch(() => undefined);
+    }
+  }
+
+  private async pullPackChunks(
+    nodeId: string,
+    packRel: string,
+    totalBytes: number,
+    destFile: string,
+  ): Promise<void> {
+    const fd = fs.openSync(destFile, "w");
+    try {
+      let offset = 0;
+      while (offset < totalBytes) {
+        const chunk = ManagePackReadResultSchema.parse(
+          await dispatchNodeJob({
+            nodeId,
+            kind: "manage_pack_read",
+            args: {
+              packRel,
+              offset,
+              length: PACK_CHUNK_BYTES,
+            },
+            timeoutMs: 120_000,
+            localHandler: async () => {
+              throw new Error("manage_pack_read_local_unreachable");
+            },
+          }),
+        );
+        if (chunk.bytes <= 0) break;
+        const buf = Buffer.from(chunk.dataBase64, "base64");
+        fs.writeSync(fd, buf);
+        offset += chunk.bytes;
+        if (chunk.done) break;
+      }
+      if (offset !== totalBytes) {
+        throw new Error(`manage_pack_incomplete: got ${offset} of ${totalBytes} bytes`);
+      }
+    } finally {
+      fs.closeSync(fd);
     }
   }
 

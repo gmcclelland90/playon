@@ -39,16 +39,35 @@ export const ImportPackArgsSchema = z.object({
   path: z.string().min(1),
   /** Absolute roots that are allowed as pack sources (expanded). */
   allowRoots: z.array(z.string().min(1)).min(1),
-  /** Max archive bytes before reject (default 512 MiB). */
-  maxBytes: z.number().int().positive().default(512 * 1024 * 1024),
+  /** Max archive bytes before reject (default 32 GiB — staged on data disk, not /tmp). */
+  maxBytes: z.number().int().positive().default(32 * 1024 * 1024 * 1024),
 });
 
 export type ImportPackArgs = z.infer<typeof ImportPackArgsSchema>;
 
+/** Pack lands under node dataRoot; Home pulls via manage_pack_read chunks. */
 export const ImportPackResultSchema = z.object({
-  archiveBase64: z.string(),
+  packRel: z.string().min(1),
   bytes: z.number().int().nonnegative(),
   path: z.string(),
 });
 
 export type ImportPackResult = z.infer<typeof ImportPackResultSchema>;
+
+export const ManagePackReadArgsSchema = z.object({
+  packRel: z.string().min(1),
+  offset: z.number().int().nonnegative(),
+  /** Max bytes to return in this chunk (default 4 MiB). */
+  length: z.number().int().positive().max(16 * 1024 * 1024).default(4 * 1024 * 1024),
+});
+
+export type ManagePackReadArgs = z.infer<typeof ManagePackReadArgsSchema>;
+
+export const ManagePackReadResultSchema = z.object({
+  dataBase64: z.string(),
+  bytes: z.number().int().nonnegative(),
+  offset: z.number().int().nonnegative(),
+  done: z.boolean(),
+});
+
+export type ManagePackReadResult = z.infer<typeof ManagePackReadResultSchema>;

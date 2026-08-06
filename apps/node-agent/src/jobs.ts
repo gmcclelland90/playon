@@ -12,11 +12,54 @@ import {
 import {
   ImportPackArgsSchema,
   ImportProbeArgsSchema,
+  ManagePackReadArgsSchema,
   type NodeJobKind,
 } from "@playon/shared";
 import { assertPackPathAllowed, runImportProbe } from "./import-probe.js";
 import { probeCapabilities } from "./capabilities.js";
 import { performNodeSelfUpdate } from "./self-update.js";
+
+function managePackStagingDir(dataRoot: string): string {
+  const dir = path.join(dataRoot, "tmp", "manage-packs");
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function freeBytesFor(dir: string): number | null {
+  try {
+    const statfs = (
+      fs as typeof fs & {
+        statfsSync?: (p: string) => { bavail: bigint | number; bsize: bigint | number };
+      }
+    ).statfsSync;
+    if (typeof statfs === "function") {
+      const s = statfs(dir);
+      return Number(s.bavail) * Number(s.bsize);
+    }
+  } catch {
+    /* fall through */
+  }
+  try {
+    const out = execFileSync("df", ["-Pk", dir], { encoding: "utf8" });
+    const line = out.trim().split("\n")[1];
+    const availK = Number(line?.trim().split(/\s+/)[3]);
+    if (Number.isFinite(availK)) return availK * 1024;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function approxDirBytes(dir: string): number {
+  try {
+    const out = execFileSync("du", ["-sb", dir], { encoding: "utf8" });
+    const n = Number(out.trim().split(/\s+/)[0]);
+    if (Number.isFinite(n) && n >= 0) return n;
+  } catch {
+    /* ignore */
+  }
+  return 0;
+}
 
 export type RemoteJobKind = NodeJobKind;
 
@@ -298,23 +341,61 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
   if (job.kind === "manage_pack") {
     const args = ImportPackArgsSchema.parse(job.args);
     const target = assertPackPathAllowed(args.path, args.allowRoots);
-    const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-import-pack-"));
-    const archive = path.join(staging, "tree.tar");
+    // Stage on the data disk — never /tmp (often a small tmpfs).
+    const packsDir = managePackStagingDir(dataRoot);
+    const sourceBytes = approxDirBytes(target);
+    const free = freeBytesFor(packsDir);
+    if (sourceBytes > 0 && free != null && free < sourceBytes + 64 * 1024 * 1024) {
+      throw new Error(
+        `not_enough_disk: need ~${sourceBytes} bytes free under ${packsDir}, have ${free}`,
+      );
+    }
+    const archive = path.join(packsDir, `pack-${job.id}.tar`);
     try {
+      if (fs.existsSync(archive)) fs.rmSync(archive, { force: true });
       execFileSync("tar", ["-cf", archive, "-C", target, "."], { stdio: "pipe" });
       const st = fs.statSync(archive);
       if (st.size > args.maxBytes) {
-        throw new Error(
-          `archive_too_large: ${st.size} bytes (max ${args.maxBytes})`,
-        );
+        fs.rmSync(archive, { force: true });
+        throw new Error(`archive_too_large: ${st.size} bytes (max ${args.maxBytes})`);
       }
       return {
-        archiveBase64: fs.readFileSync(archive).toString("base64"),
+        packRel: path.relative(dataRoot, archive).split(path.sep).join("/"),
         bytes: st.size,
         path: target,
       };
+    } catch (err) {
+      fs.rmSync(archive, { force: true });
+      throw err;
+    }
+  }
+
+  if (job.kind === "manage_pack_read") {
+    const args = ManagePackReadArgsSchema.parse(job.args);
+    if (args.packRel.includes("..") || path.isAbsolute(args.packRel)) {
+      throw new Error("invalid_packRel");
+    }
+    const abs = resolveInJail(dataRoot, args.packRel);
+    const packs = path.resolve(managePackStagingDir(dataRoot));
+    if (!path.resolve(abs).startsWith(packs + path.sep)) {
+      throw new Error("packRel_not_in_manage_packs");
+    }
+    if (!fs.existsSync(abs)) throw new Error(`pack_not_found: ${args.packRel}`);
+    const fd = fs.openSync(abs, "r");
+    try {
+      const buf = Buffer.alloc(args.length);
+      const read = fs.readSync(fd, buf, 0, args.length, args.offset);
+      const slice = buf.subarray(0, read);
+      const st = fs.fstatSync(fd);
+      const next = args.offset + read;
+      return {
+        dataBase64: slice.toString("base64"),
+        bytes: read,
+        offset: args.offset,
+        done: next >= st.size,
+      };
     } finally {
-      fs.rmSync(staging, { recursive: true, force: true });
+      fs.closeSync(fd);
     }
   }
 

@@ -95,9 +95,23 @@ describe("executeJob", () => {
           args: { path: server, allowRoots: [scan], maxBytes: 1024 * 1024 },
         },
         dataRoot,
-      )) as { archiveBase64: string; bytes: number };
+      )) as { packRel: string; bytes: number };
       expect(packed.bytes).toBeGreaterThan(0);
-      expect(packed.archiveBase64.length).toBeGreaterThan(0);
+      expect(packed.packRel.startsWith("tmp/manage-packs/")).toBe(true);
+      const absPack = path.join(dataRoot, ...packed.packRel.split("/"));
+      expect(fs.existsSync(absPack)).toBe(true);
+
+      const chunk = (await executeJob(
+        {
+          id: "j8",
+          nodeId: "n1",
+          kind: "manage_pack_read",
+          args: { packRel: packed.packRel, offset: 0, length: 1024 },
+        },
+        dataRoot,
+      )) as { bytes: number; done: boolean; dataBase64: string };
+      expect(chunk.bytes).toBeGreaterThan(0);
+      expect(chunk.dataBase64.length).toBeGreaterThan(0);
     } finally {
       fs.rmSync(dataRoot, { recursive: true, force: true });
       fs.rmSync(scan, { recursive: true, force: true });
