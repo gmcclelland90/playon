@@ -64,8 +64,8 @@ describe("detectImportHints", () => {
   it("detects minecraft paper layouts via import-hints.yaml", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mc-"));
     try {
+      fs.writeFileSync(path.join(dir, "paper.jar"), "jar");
       fs.writeFileSync(path.join(dir, "server.properties"), "motd=hi\n");
-      fs.writeFileSync(path.join(dir, "paper.yml"), "x: 1\n");
       const gamesRoot = path.join(findRepoRoot(process.cwd()), "skills", "platform");
       const hints = detectImportHints(dir, [gamesRoot]);
       expect(hints.suggestedSkillName).toBe("games.minecraft-paper");

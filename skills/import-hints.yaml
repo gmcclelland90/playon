@@ -1,12 +1,16 @@
 # Layout sniffers for local/SFTP import → suggested catalog skill.
 # Keep game-specific detection here — not in the control plane.
 version: 1
+# Rule of thumb: fingerprint install binaries/launchers, not save/config-only trees.
 hints:
   - id: minecraft_java_layout
     anyFiles:
-      - server.properties
-      - paper.yml
-      - spigot.yml
+      - paper.jar
+      - purpur.jar
+      - spigot.jar
+      - server.jar
+      - minecraft_server.jar
+      - fabric-server-launch.jar
     suggestedGame: Minecraft
     suggestedSkillName: games.minecraft-paper
 
@@ -29,7 +33,7 @@ hints:
     anyFiles:
       - UCC.exe
       - ucc-bin
-      - System/UnrealTournament.ini
+      - ucc-bin-linux-amd64
     suggestedGame: Unreal Tournament 99
     suggestedSkillName: games.unreal-tournament-99
 
@@ -43,11 +47,12 @@ hints:
   - id: factorio_layout
     anyFiles:
       - bin/x64/factorio
+      - bin/x64/factorio.exe
       - factorio
+      - factorio.exe
     suggestedGame: Factorio
     suggestedSkillName: games.factorio
 
-  # Binaries/launchers only — ~/Zomboid + Server/*.ini are user data, not the install.
   - id: project_zomboid_layout
     anyFiles:
       - ProjectZomboid64.exe
