@@ -29,6 +29,17 @@ They should be able to bring those servers under PlayOn management with minimal 
 - Reduce the “I already have this working, I don’t want to start over” objection
 - Produce a clean, manageable server at the end of the process
 
+## Map Scan → Manage (shipped)
+
+On a remote node pad, **Scan** finds allowlisted installs; **Manage** copies the install into the node’s PlayOn jail (no Home haul), then **cutover**:
+
+1. Sniff systemd units whose `WorkingDirectory` / `ExecStart` reference the install.
+2. Parse launch identity (`-servername`, `-world`, `+server.identity`, `--start-server`, …).
+3. Copy hint-defined external userdata (e.g. `~/Zomboid`, Valheim/Terraria XDG paths) into `servers/<id>/home`.
+4. Write `start.sh` + `.playon-start.env` (`PLAYON_HOME`, optional admin password).
+
+Does **not** stop the old host unit — host must cut over with downtime. Fingerprint + cutover rules: `skills/import-hints.yaml`.
+
 ## Future Enhancements
 
 - Incremental / sync-style imports

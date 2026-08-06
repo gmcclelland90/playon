@@ -3,8 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  normalizeWorldKey,
   parseCliArg,
   parseSystemdUnit,
+  remapLaunchValue,
   runManageCutover,
   unitReferencesInstall,
   worldSelectiveSources,
@@ -43,8 +45,35 @@ describe("manage-cutover parsers", () => {
     expect(unitReferencesInstall(unit, "/opt/other")).toBe(false);
   });
 
-  it("parses --arg=value form", () => {
+  it("parses --arg=value and +arg forms", () => {
     expect(parseCliArg("./bin --servername=WorldOne", "servername")).toBe("WorldOne");
+    expect(parseCliArg("./RustDedicated -batchmode +server.identity rust_main", "+server.identity")).toBe(
+      "rust_main",
+    );
+    expect(parseCliArg("./factorio --start-server /data/saves/game.zip", "--start-server")).toBe(
+      "/data/saves/game.zip",
+    );
+  });
+
+  it("normalizes world keys and remaps launch paths into PLAYON_HOME", () => {
+    expect(normalizeWorldKey("/home/t/.local/share/Terraria/Worlds/Island.wld")).toBe("Island");
+    expect(normalizeWorldKey("Midgard")).toBe("Midgard");
+    expect(
+      remapLaunchValue(
+        "/home/t/.local/share/Terraria/Worlds/Island.wld",
+        "/var/lib/playon-node/servers/x/home",
+        [".local/share/Terraria"],
+      ),
+    ).toBe(
+      path.join(
+        "/var/lib/playon-node/servers/x/home",
+        ".local",
+        "share",
+        "Terraria",
+        "Worlds",
+        "Island.wld",
+      ),
+    );
   });
 
   it("selects world files under userdata", () => {

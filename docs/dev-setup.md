@@ -39,10 +39,13 @@ For remote agents (and Settings → Nodes add via SSH / one-liner), set the same
 
 Blank-machine imaging: [`infra/blank-node/README.md`](../infra/blank-node/README.md).
 
-## Import existing servers
+## Import / Manage existing servers
 
+- **Map Scan → Manage (preferred on a remote node):** Dashboard map → click an online host pad → Scan. PlayOn fingerprints allowlisted install roots (`skills/import-scan-roots.yaml` + `skills/import-hints.yaml`), then **Manage** seeds the install on that node (no LAN haul to Home), runs **cutover** (systemd launch args + external userdata into `servers/<id>/home`), and writes `game/start.sh`. Stop the old host service before Start in PlayOn.
 - **Local path:** Servers → Import, or `POST /api/servers/import` with an absolute `sourcePath`.
 - **SFTP:** same UI (SFTP mode) or `POST /api/servers/import/sftp` with host/username/password (or private key via the agent tool) and `remotePath`. Files stage under `data/imports/` then run the local import pipeline (skill attach/draft + baseline snapshot).
+
+Cutover metadata lives on each fingerprint’s optional `manage:` block in `skills/import-hints.yaml` (userdata home dirs, `serverNameArg`, `adminPasswordArg`, `worldSubdirs`).
 
 ## Test layers
 

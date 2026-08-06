@@ -50,23 +50,52 @@ export function parseSystemdUnit(unitName: string, body: string): ParsedSystemdU
   return out;
 }
 
-/** Extract `-arg value` or `--arg=value` from an ExecStart line. */
+/** Extract `-arg` / `--arg` / `+arg` values from an ExecStart line. */
 export function parseCliArg(execStart: string | undefined, argName: string): string | undefined {
   if (!execStart || !argName) return undefined;
-  const name = argName.replace(/^-+/, "");
+  const name = argName.replace(/^[-+]+/, "");
   const tokens = execStart.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) ?? [];
   for (let i = 0; i < tokens.length; i++) {
     const t = stripQuotes(tokens[i]!);
-    if (t === `-${name}` || t === `--${name}`) {
+    if (t === `-${name}` || t === `--${name}` || t === `+${name}`) {
       const next = tokens[i + 1];
-      if (next && !stripQuotes(next).startsWith("-")) return stripQuotes(next);
+      if (next && !/^[-+]/.test(stripQuotes(next))) return stripQuotes(next);
     }
-    const prefixLong = `--${name}=`;
-    const prefixShort = `-${name}=`;
-    if (t.startsWith(prefixLong)) return stripQuotes(t.slice(prefixLong.length));
-    if (t.startsWith(prefixShort)) return stripQuotes(t.slice(prefixShort.length));
+    for (const prefix of [`--${name}=`, `-${name}=`, `+${name}=`]) {
+      if (t.startsWith(prefix)) return stripQuotes(t.slice(prefix.length));
+    }
   }
   return undefined;
+}
+
+/** Basename used for world-selective copy (strips path + common save extensions). */
+export function normalizeWorldKey(raw: string | undefined): string | undefined {
+  if (!raw?.trim()) return undefined;
+  let s = path.basename(raw.trim());
+  s = s.replace(/\.(wld|zip|db|fwl|sav|old|bak)$/i, "");
+  return s || undefined;
+}
+
+/** Remap an absolute launch path under the old user home into PLAYON_HOME userdata. */
+export function remapLaunchValue(
+  raw: string | undefined,
+  playonHome: string | undefined,
+  userdataHomeDirs: string[],
+): string | undefined {
+  if (!raw) return undefined;
+  if (!playonHome) return raw;
+  const norm = raw.replace(/\\/g, "/");
+  if (!norm.includes("/")) return raw;
+  for (const dir of userdataHomeDirs) {
+    const marker = dir.replace(/\\/g, "/").replace(/^\.\//, "");
+    const idx = norm.toLowerCase().indexOf("/" + marker.toLowerCase());
+    const idx0 = norm.toLowerCase().indexOf(marker.toLowerCase());
+    const at = idx >= 0 ? idx + 1 : idx0 === 0 ? 0 : -1;
+    if (at < 0) continue;
+    const rest = norm.slice(at + marker.length).replace(/^\//, "");
+    return path.join(playonHome, ...marker.split("/"), ...(rest ? rest.split("/") : []));
+  }
+  return raw;
 }
 
 function stripQuotes(s: string): string {
@@ -259,32 +288,34 @@ export async function runManageCutover(
     warnings.push(`multiple_systemd_units:${units.map((u) => u.unitName).join(",")}`);
   }
 
-  const serverName = manage.serverNameArg
+  const rawServerName = manage.serverNameArg
     ? parseCliArg(unit?.execStart, manage.serverNameArg)
     : undefined;
+  const worldKey = normalizeWorldKey(rawServerName);
+  const launchServerName = remapLaunchValue(rawServerName, playonHome, manage.userdataHomeDirs);
 
   const serviceHome = resolveServiceHome(unit?.user, source);
   let userdataBytes = 0;
 
   if (!manage.userdataHomeDirs.length) {
-    warnings.push("no_userdata_dirs_in_hint");
+    // Install-local games (Rust identity, Minecraft world/) — seed already covers data.
   } else if (!serviceHome) {
     warnings.push("userdata_home_unresolved");
   } else {
     for (const dirName of manage.userdataHomeDirs) {
-      const userdataRoot = path.join(serviceHome, dirName);
+      const userdataRoot = path.join(serviceHome, ...dirName.split("/"));
       if (!fs.existsSync(userdataRoot) || !fs.statSync(userdataRoot).isDirectory()) {
         warnings.push(`userdata_missing:${userdataRoot}`);
         continue;
       }
-      const destRoot = path.join(playonHome, dirName);
+      const destRoot = path.join(playonHome, ...dirName.split("/"));
       fs.mkdirSync(destRoot, { recursive: true });
 
       try {
-        if (serverName) {
-          const sources = worldSelectiveSources(userdataRoot, serverName, manage.worldSubdirs);
+        if (worldKey) {
+          const sources = worldSelectiveSources(userdataRoot, worldKey, manage.worldSubdirs);
           if (!sources.length) {
-            warnings.push(`world_files_missing:${serverName}`);
+            warnings.push(`world_files_missing:${worldKey}`);
             await copyPathAsync(userdataRoot, destRoot);
           } else {
             for (const src of sources) {
@@ -313,7 +344,8 @@ export async function runManageCutover(
   if (!unit) warnings.push("no_systemd_unit_for_install");
 
   return ManageCutoverResultSchema.parse({
-    serverName: serverName || undefined,
+    // Prefer remapped launch path when present; else world key / raw identity.
+    serverName: launchServerName || worldKey || rawServerName || undefined,
     unitName: unit?.unitName,
     playonHome,
     playonHomeRel: args.homeRel.split(path.sep).join("/"),

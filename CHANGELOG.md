@@ -2,6 +2,29 @@
 
 All notable changes to PlayOn Home (root `package.json` version) are listed here.
 
+## [0.1.8] — 2026-08-07
+
+### Added
+
+- **Map Scan → Manage cutover** — after seeding an existing install into the node jail, PlayOn sniffs systemd for launch args, copies hint-defined external world/config into a per-server `HOME`, and writes `start.sh` + `.playon-start.env` so Start works without hand repair.
+- **Per-game manage hints** in `skills/import-hints.yaml` for Project Zomboid, Valheim, Terraria, Factorio, Rust, Minecraft, and UT99 (userdata paths + CLI flag forms including `+server.identity` / `--start-server`).
+
+### Fixed
+
+- Managed native skills no longer store `runtimeMode: docker`, which had made reconcile flip a successful process Start back to stopped.
+- `manage_seed` copies asynchronously so the node-agent keeps heartbeating during large installs.
+- Non-interactive `-adminpassword` for Zomboid-style first boots under the agent (no TTY).
+
+### Changed
+
+- Map Manage UI copy: install **and** known external world/config are copied on the host; original install is left in place; stop the old host unit before Start.
+
+### Notes
+
+- Manage never auto-stops the old systemd unit — follow-up includes `stop_host_unit:<name>` when detected.
+- The node-agent user must be able to read the service user’s userdata (e.g. ACL on `~/Zomboid`) for external cutover copies.
+- After Home is on **0.1.8**, update remote node-agents from **Settings → Nodes** so they gain `manage_cutover`.
+
 ## [0.1.7] — 2026-08-06
 
 ### Fixed

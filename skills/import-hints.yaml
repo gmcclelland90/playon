@@ -2,6 +2,12 @@
 # Keep game-specific detection here — not in the control plane.
 version: 1
 # Rule of thumb: fingerprint install binaries/launchers, not save/config-only trees.
+#
+# manage: optional cutover metadata for Map Scan → Manage
+#   userdataHomeDirs — dirs under the service user $HOME (use nested paths as needed)
+#   serverNameArg    — CLI flag name; use +arg / --arg when the game expects that form
+#   adminPasswordArg — supply a non-interactive -adminpassword on Start
+#   worldSubdirs     — subdirs under userdata used for world-selective copy
 hints:
   - id: minecraft_java_layout
     anyFiles:
@@ -13,6 +19,10 @@ hints:
       - fabric-server-launch.jar
     suggestedGame: Minecraft
     suggestedSkillName: games.minecraft-paper
+    # World + server.properties live inside the install tree; seed alone is enough.
+    manage:
+      userdataHomeDirs: []
+      adminPasswordArg: false
 
   - id: rust_dedicated_layout
     anyFiles:
@@ -20,6 +30,11 @@ hints:
       - RustDedicated.exe
     suggestedGame: Rust
     suggestedSkillName: games.rust
+    # Identity/saves live under install server/<identity>/ (copied by manage_seed).
+    manage:
+      userdataHomeDirs: []
+      serverNameArg: "+server.identity"
+      adminPasswordArg: false
 
   - id: valheimish_layout
     anyFiles:
@@ -28,6 +43,16 @@ hints:
       - valheim_server.exe
     suggestedGame: Valheim
     suggestedSkillName: games.valheim
+    # Default Linux saves: ~/.config/unity3d/IronGate/Valheim/{worlds,worlds_local}
+    # -world is the save name; -name is only the browser display title.
+    manage:
+      userdataHomeDirs:
+        - .config/unity3d/IronGate/Valheim
+      serverNameArg: world
+      adminPasswordArg: false
+      worldSubdirs:
+        - worlds
+        - worlds_local
 
   - id: ut99_layout
     anyFiles:
@@ -36,6 +61,10 @@ hints:
       - ucc-bin-linux-amd64
     suggestedGame: Unreal Tournament 99
     suggestedSkillName: games.unreal-tournament-99
+    # Maps/ini live under the install System/ tree; seed alone is enough.
+    manage:
+      userdataHomeDirs: []
+      adminPasswordArg: false
 
   - id: terraria_layout
     anyFiles:
@@ -43,6 +72,15 @@ hints:
       - TerrariaServer.bin.x86_64
     suggestedGame: Terraria
     suggestedSkillName: games.terraria
+    # Linux worlds: ~/.local/share/Terraria/Worlds/*.wld
+    # systemd often passes -world /absolute/path/to/World.wld
+    manage:
+      userdataHomeDirs:
+        - .local/share/Terraria
+      serverNameArg: world
+      adminPasswordArg: false
+      worldSubdirs:
+        - Worlds
 
   - id: factorio_layout
     anyFiles:
@@ -52,6 +90,15 @@ hints:
       - factorio.exe
     suggestedGame: Factorio
     suggestedSkillName: games.factorio
+    # Headless often keeps saves under the install; Steam/user installs also use ~/.factorio.
+    # --start-server <save.zip> or relative name under WorkingDirectory.
+    manage:
+      userdataHomeDirs:
+        - .factorio
+      serverNameArg: "--start-server"
+      adminPasswordArg: false
+      worldSubdirs:
+        - saves
 
   - id: project_zomboid_layout
     anyFiles:
