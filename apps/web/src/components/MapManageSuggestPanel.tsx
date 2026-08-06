@@ -9,7 +9,7 @@ type Candidate = {
   suggestedSkillName?: string;
 };
 
-export function MapImportSuggestPanel({
+export function MapManageSuggestPanel({
   nodeId,
   nodeName,
   onClose,
@@ -20,7 +20,7 @@ export function MapImportSuggestPanel({
 }) {
   const qc = useQueryClient();
   const [notice, setNotice] = useState<string | null>(null);
-  const [importingPath, setImportingPath] = useState<string | null>(null);
+  const [managingPath, setManagingPath] = useState<string | null>(null);
 
   const suggest = useQuery({
     queryKey: ["import-suggest", nodeId],
@@ -31,10 +31,10 @@ export function MapImportSuggestPanel({
 
   useEffect(() => {
     setNotice(null);
-    setImportingPath(null);
+    setManagingPath(null);
   }, [nodeId]);
 
-  const importMut = useMutation({
+  const manageMut = useMutation({
     mutationFn: (c: Candidate) =>
       api.importFromNode(nodeId, {
         sourcePath: c.path,
@@ -42,18 +42,18 @@ export function MapImportSuggestPanel({
         skillName: c.suggestedSkillName,
       }),
     onMutate: (c) => {
-      setImportingPath(c.path);
+      setManagingPath(c.path);
       setNotice(null);
     },
     onSuccess: async (res) => {
-      setImportingPath(null);
-      setNotice(`Imported “${res.import.server.name}” onto this pad.`);
+      setManagingPath(null);
+      setNotice(`“${res.import.server.name}” is now managed on this pad.`);
       await qc.invalidateQueries({ queryKey: ["servers"] });
       await qc.invalidateQueries({ queryKey: ["import-suggest", nodeId] });
     },
     onError: (err) => {
-      setImportingPath(null);
-      setNotice(err instanceof Error ? err.message : "Import failed");
+      setManagingPath(null);
+      setNotice(err instanceof Error ? err.message : "Could not add server");
     },
   });
 
@@ -68,7 +68,7 @@ export function MapImportSuggestPanel({
         </button>
       </div>
       <p className="muted small">
-        Look for known install roots on this host. Confirm before importing into PlayOn.
+        Look for known installs on this host. Confirm to manage one with PlayOn.
       </p>
 
       {suggest.isLoading ? <p className="muted">Scanning…</p> : null}
@@ -95,18 +95,18 @@ export function MapImportSuggestPanel({
               </div>
               <button
                 type="button"
-                disabled={importMut.isPending}
+                disabled={manageMut.isPending}
                 onClick={() => {
                   if (
                     window.confirm(
-                      `Import “${c.suggestedGame ?? c.path}” into PlayOn on ${nodeName}?`,
+                      `Manage “${c.suggestedGame ?? c.path}” with PlayOn on ${nodeName}?`,
                     )
                   ) {
-                    importMut.mutate(c);
+                    manageMut.mutate(c);
                   }
                 }}
               >
-                {importingPath === c.path ? "Importing…" : "Import"}
+                {managingPath === c.path ? "Adding…" : "Manage"}
               </button>
             </li>
           ))}

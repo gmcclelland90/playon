@@ -21,7 +21,7 @@ import {
   type AgentActivityView,
 } from "../components/agent-canvas/AgentCanvas";
 import { MapAddNodePanel } from "../components/MapAddNodePanel";
-import { MapImportSuggestPanel } from "../components/MapImportSuggestPanel";
+import { MapManageSuggestPanel } from "../components/MapManageSuggestPanel";
 import { runtimeErrorHint, statusHint, statusLabel } from "../status";
 import { playonSocket } from "../ws";
 
@@ -570,7 +570,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
 
       {scanNodeId ? (
         <div className="map-add-node-overlay">
-          <MapImportSuggestPanel
+          <MapManageSuggestPanel
             nodeId={scanNodeId}
             nodeName={
               (nodes.data?.nodes ?? []).find((n) => n.id === scanNodeId)?.name ?? scanNodeId

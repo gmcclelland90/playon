@@ -44,7 +44,7 @@ type Props = {
   onAddNode?: () => void;
   /** Remove a stuck pending/offline remote node. */
   onRemoveNode?: (nodeId: string) => void;
-  /** Open Scan / import panel for an online host pad (incl. local). */
+  /** Open Scan / manage panel for an online host pad (incl. local). */
   onSelectHost?: (nodeId: string) => void;
   /** Hide floating add when the chat dock already covers that corner. */
   showAddButton?: boolean;
