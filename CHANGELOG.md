@@ -2,6 +2,23 @@
 
 All notable changes to PlayOn Home (root `package.json` version) are listed here.
 
+## [0.1.6] — 2026-08-06
+
+### Added
+
+- **Skills admin page** — dedicated `/skills` nav with Platform / Installed / Catalog / Drafts tabs, detail panel, catalog install, zip import/export, draft promote, and uninstall (with in-use server warning).
+- **Skill management APIs** — `GET /api/skills/:name`, enriched list with `source`, drafts list/promote REST, `DELETE /api/skills/:name`.
+- **Resilient catalog fetch** — invalid catalog rows are skipped with `warnings` instead of failing the whole library.
+
+### Changed
+
+- Skill library removed from Settings; local skills panel removed from Dashboard (use **Skills**).
+- Host docs point at **Skills → Catalog** for installs.
+
+### Notes
+
+- playon.games catalog metadata fixed (`containerSupport` / theme enums) so catalog browse works on older Homes too; this release is the UI/API overhaul.
+
 ## [0.1.5] — 2026-08-06
 
 ### Added

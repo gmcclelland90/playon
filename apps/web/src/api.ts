@@ -74,6 +74,8 @@ export type PanelBlockRow = {
   updatedAt: string;
 };
 
+export type SkillSource = "platform" | "installed" | "draft" | "server" | "fixture";
+
 export type SkillRow = {
   id: string;
   name: string;
@@ -81,7 +83,69 @@ export type SkillRow = {
   game?: string;
   description: string;
   tags: string[];
+  theme?: { id: string; primaryHue?: number } | null;
+  containerSupport?: string;
+  dependencies?: string[];
+  minRamMb?: number;
+  source?: SkillSource;
   scope?: "global" | "server";
+};
+
+export type SkillDetail = {
+  id: string;
+  path: string;
+  source: SkillSource;
+  metadata: Record<string, unknown> & {
+    name: string;
+    version: string;
+    game?: string;
+    description?: string;
+    tags?: string[];
+    containerSupport?: string;
+    dockerImage?: string;
+    os?: string[];
+    arch?: string[];
+    minRamMb?: number;
+    requiredTools?: string[];
+    ports?: Array<{ name: string; protocol?: string; default?: number }>;
+    dependencies?: string[];
+    adminDialect?: string;
+    queryDialect?: string;
+    join?: { clientSetupNotes?: string; connectCommand?: string };
+  };
+  dependencies: Array<{ name: string; present: boolean }>;
+};
+
+export type CatalogSkillRow = {
+  name: string;
+  version: string;
+  game?: string;
+  description?: string;
+  tags: string[];
+  dependencies: string[];
+  containerSupport?: string;
+  minRamMb?: number;
+  downloadUrl: string;
+  sha256?: string;
+  official?: boolean;
+  installed: boolean;
+};
+
+export type CatalogWarning = {
+  name?: string;
+  index: number;
+  message: string;
+};
+
+export type SkillDraftRow = {
+  slug: string;
+  skillName: string;
+  path: string;
+  version: string;
+  game?: string;
+  description: string;
+  tags: string[];
+  containerSupport: string;
 };
 
 export type ConversationRow = {
@@ -387,6 +451,46 @@ export const api = {
     request<{ skills: SkillRow[] }>(
       serverId ? `/api/skills?serverId=${encodeURIComponent(serverId)}` : "/api/skills",
     ),
+  skillDetail: (name: string) =>
+    request<{ skill: SkillDetail }>(`/api/skills/${encodeURIComponent(name)}`),
+  skillDrafts: () => request<{ drafts: SkillDraftRow[] }>("/api/skills/drafts"),
+  promoteSkillDraft: (slug: string) =>
+    request<{ skill: { skillName: string; path: string } }>(
+      `/api/skills/drafts/${encodeURIComponent(slug)}/promote`,
+      { method: "POST" },
+    ),
+  uninstallSkill: async (name: string, force = false) => {
+    const res = await fetch(
+      `/api/skills/${encodeURIComponent(name)}${force ? "?force=1" : ""}`,
+      { method: "DELETE", credentials: "include" },
+    );
+    const body = (await res.json().catch(() => ({}))) as {
+      ok?: true;
+      skill?: { skillName: string; path: string };
+      servers?: Array<{ id: string; name: string }>;
+      error?: string;
+    };
+    if (res.status === 409 && body.error === "skill_in_use") {
+      const err = new Error("skill_in_use") as Error & {
+        servers?: Array<{ id: string; name: string }>;
+      };
+      err.servers = body.servers ?? [];
+      throw err;
+    }
+    if (!res.ok) {
+      throw new Error(body.error?.trim() || `uninstall_failed_${res.status}`);
+    }
+    return body as {
+      ok: true;
+      skill: { skillName: string; path: string };
+      servers: Array<{ id: string; name: string }>;
+    };
+  },
+  promoteServerSkill: (body: { serverId: string; skillSlug: string; overwrite?: boolean }) =>
+    request<{ skill: { skillName: string; path: string } }>("/api/skills/promote-server", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   snapshots: (serverId?: string) =>
     request<{
       snapshots: Array<{ id: string; serverId: string; label: string; createdAt: string }>;
@@ -460,20 +564,9 @@ export const api = {
   skillsCatalog: (q = "") =>
     request<{
       catalogUrl: string;
-      skills: Array<{
-        name: string;
-        version: string;
-        game?: string;
-        description?: string;
-        tags: string[];
-        dependencies: string[];
-        containerSupport?: string;
-        minRamMb?: number;
-        downloadUrl: string;
-        sha256?: string;
-        official?: boolean;
-        installed: boolean;
-      }>;
+      skills: CatalogSkillRow[];
+      warnings?: CatalogWarning[];
+      updatedAt?: string;
       error?: string;
     }>(`/api/skills/catalog${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`),
   installSkillFromCatalog: (body: { name?: string; downloadUrl?: string; overwrite?: boolean }) =>

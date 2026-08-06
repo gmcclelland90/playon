@@ -4,6 +4,7 @@ import {
   CatalogIndexSchema,
   downloadCatalogSkillZip,
   findCatalogSkill,
+  parseCatalogIndex,
   resolveSkillsCatalogUrl,
   searchCatalog,
 } from "./skills-catalog.js";
@@ -110,6 +111,30 @@ describe("skills catalog", () => {
     await expect(downloadCatalogSkillZip("http://example.com/x.skill.zip")).rejects.toThrow(
       /https_required/,
     );
+  });
+
+  it("skips invalid catalog rows with warnings", () => {
+    const result = parseCatalogIndex({
+      updatedAt: "2026-08-06T00:00:00Z",
+      skills: [
+        {
+          name: "games.good",
+          version: "0.1.0",
+          downloadUrl: "https://playon.games/skills/packages/games.good-0.1.0.skill.zip",
+          containerSupport: "full",
+        },
+        {
+          name: "games.bad",
+          version: "0.1.0",
+          downloadUrl: "https://playon.games/skills/packages/games.bad-0.1.0.skill.zip",
+          containerSupport: "optional",
+        },
+      ],
+    });
+    expect(result.skills.map((s) => s.name)).toEqual(["games.good"]);
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]?.name).toBe("games.bad");
+    expect(result.warnings[0]?.message).toMatch(/containerSupport/i);
   });
 });
 

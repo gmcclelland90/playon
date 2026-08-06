@@ -1,11 +1,12 @@
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { can, type PublicUser } from "@playon/shared";
+import { can, roleAtLeast, type PublicUser } from "@playon/shared";
 import { api } from "../api";
 import { UpdateBanner } from "../components/UpdateBanner";
 import { CanvasPage } from "./CanvasPage";
 import { DashboardPage } from "./DashboardPage";
 import { SettingsPage } from "./SettingsPage";
+import { SkillsPage } from "./SkillsPage";
 
 function roleLabel(role: string): string {
   switch (role) {
@@ -31,6 +32,7 @@ export function AdminShell({ user }: { user: PublicUser }) {
 
   const showChat = can(user.role, "chat.agent");
   const showSettings = can(user.role, "settings.llm");
+  const showSkills = roleAtLeast(user.role, "operator");
   const home = showChat ? "/" : "/dashboard";
 
   return (
@@ -54,6 +56,11 @@ export function AdminShell({ user }: { user: PublicUser }) {
           <NavLink to="/dashboard" className={({ isActive }) => (isActive ? "active" : undefined)}>
             Dashboard
           </NavLink>
+          {showSkills ? (
+            <NavLink to="/skills" className={({ isActive }) => (isActive ? "active" : undefined)}>
+              Skills
+            </NavLink>
+          ) : null}
           {showSettings ? (
             <NavLink to="/settings" className={({ isActive }) => (isActive ? "active" : undefined)}>
               Settings
@@ -81,6 +88,9 @@ export function AdminShell({ user }: { user: PublicUser }) {
         <Routes>
           {showChat ? <Route path="/" element={<CanvasPage user={user} />} /> : null}
           <Route path="/dashboard" element={<DashboardPage user={user} />} />
+          {showSkills ? (
+            <Route path="/skills" element={<SkillsPage user={user} />} />
+          ) : null}
           {showSettings ? (
             <Route path="/settings" element={<SettingsPage user={user} />} />
           ) : null}

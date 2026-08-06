@@ -47,7 +47,6 @@ export function DashboardPage({ user }: { user: PublicUser }) {
   }
 
   const servers = useQuery({ queryKey: ["servers"], queryFn: api.servers, refetchInterval: 5000 });
-  const skills = useQuery({ queryKey: ["skills"], queryFn: () => api.skills() });
   const nodes = useQuery({ queryKey: ["nodes"], queryFn: api.nodes, refetchInterval: 10_000 });
   const updates = useQuery({
     queryKey: ["updates"],
@@ -135,7 +134,6 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                 </>
               ) : null}
               {" · "}
-              <strong>{skills.data?.skills?.length ?? 0}</strong> skills ·{" "}
               <strong>{nodes.data?.nodes?.length ?? 0}</strong> nodes
             </>
           )}
@@ -429,45 +427,6 @@ export function DashboardPage({ user }: { user: PublicUser }) {
           </div>
 
           <div className="dash-quiet">
-            <section className="panel stack">
-              <div className="dash-section-head">
-                <h3>Skills</h3>
-              </div>
-              {skills.isLoading ? (
-                <div className="skeleton" aria-hidden>
-                  <div className="skeleton-row" />
-                  <div className="skeleton-row compact" />
-                </div>
-              ) : skills.data?.skills?.length ? (
-                <ul className="list compact-list">
-                  {skills.data.skills.slice(0, 8).map((skill) => (
-                    <li key={skill.id}>
-                      <div>
-                        <strong>{skill.name}</strong>
-                        <div className="muted">
-                          {skill.game ?? skill.id} · v{skill.version}
-                          {skill.tags?.length ? ` · ${skill.tags.slice(0, 3).join(", ")}` : ""}
-                        </div>
-                        {skill.description ? (
-                          <div className="muted dash-clip">{skill.description}</div>
-                        ) : null}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <div className="empty-hint">
-                  <strong>No skills discovered</strong>
-                  <p className="muted status-inline">Global skill packs show up here once loaded.</p>
-                </div>
-              )}
-              {!skills.isLoading && (skills.data?.skills?.length ?? 0) > 8 ? (
-                <p className="muted status-inline">
-                  +{(skills.data?.skills.length ?? 0) - 8} more skills available to agents
-                </p>
-              ) : null}
-            </section>
-
             <section className="panel stack">
               <div className="dash-section-head">
                 <h3>Agent activity</h3>

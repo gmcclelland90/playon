@@ -107,4 +107,29 @@ describe("SkillPackageService", () => {
     });
     expect(() => pkg.importZip(evil)).toThrow(/unsafe_zip_path/);
   });
+
+  it("uninstalls skills under dataRoot and refuses platform roots", () => {
+    const config = tempConfig();
+    const platformRoot = path.join(config.dataRoot, "platform-skills");
+    const platformDir = path.join(platformRoot, "platform.demo");
+    fs.mkdirSync(platformDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(platformDir, "metadata.yaml"),
+      [
+        "name: platform.demo",
+        "version: 1.0.0",
+        "description: Built-in",
+        "tags: [platform]",
+        "containerSupport: none",
+      ].join("\n"),
+    );
+    config.skillsRoots = [platformRoot, path.join(config.dataRoot, "skills")];
+    const pkg = new SkillPackageService(config);
+
+    expect(pkg.uninstall("demo.skill").skillName).toBe("demo.skill");
+    expect(listSkills(config.skillsRoots).some((s) => s.metadata.name === "demo.skill")).toBe(
+      false,
+    );
+    expect(() => pkg.uninstall("platform.demo")).toThrow(/skill_not_uninstallable/);
+  });
 });

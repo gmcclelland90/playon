@@ -31,11 +31,6 @@ export function SettingsPage({ user }: { user: PublicUser }) {
   const [userCreated, setUserCreated] = useState<string | null>(null);
   const [backupRoot, setBackupRoot] = useState("");
   const [backupSaved, setBackupSaved] = useState(false);
-  const [skillNotice, setSkillNotice] = useState<string | null>(null);
-  const [skillError, setSkillError] = useState<string | null>(null);
-  const [catalogQuery, setCatalogQuery] = useState("");
-  const [catalogSearch, setCatalogSearch] = useState("");
-  const [installingSkill, setInstallingSkill] = useState<string | null>(null);
 
   const [addKind, setAddKind] = useState<"lan" | "cloud">("lan");
   const [addHost, setAddHost] = useState("");
@@ -195,12 +190,6 @@ export function SettingsPage({ user }: { user: PublicUser }) {
     }
   }, [dockerWaitingId, nodesList.data?.nodes]);
 
-  const catalog = useQuery({
-    queryKey: ["skills-catalog", catalogSearch],
-    queryFn: () => api.skillsCatalog(catalogSearch),
-    enabled: can(user.role, "skills.package"),
-  });
-
   const ollamaStatus = useQuery({
     queryKey: ["ollama-status", baseUrl],
     queryFn: () => api.getOllamaStatus(baseUrl || undefined),
@@ -284,23 +273,6 @@ export function SettingsPage({ user }: { user: PublicUser }) {
       setModel(tagged ?? names[0]!);
     }
   }, [preset, ollamaStatus.data?.ollama.models, model, ollamaCustomModel]);
-
-  const installFromCatalog = useMutation({
-    mutationFn: (name: string) => api.installSkillFromCatalog({ name }),
-    onMutate: (name) => {
-      setInstallingSkill(name);
-      setSkillNotice(null);
-      setSkillError(null);
-    },
-    onSuccess: async (result) => {
-      setSkillNotice(`Installed ${result.skill.skillName} v${result.skill.version}`);
-      await qc.invalidateQueries({ queryKey: ["skills-catalog"] });
-      await qc.invalidateQueries({ queryKey: ["skills"] });
-      window.setTimeout(() => setSkillNotice(null), 4000);
-    },
-    onError: (err: Error) => setSkillError(err.message),
-    onSettled: () => setInstallingSkill(null),
-  });
 
   useEffect(() => {
     if (!llm.data?.llm) return;
@@ -1102,102 +1074,6 @@ export function SettingsPage({ user }: { user: PublicUser }) {
         </div>
         {saveBackup.isError ? <p className="error">{(saveBackup.error as Error).message}</p> : null}
       </form>
-
-      {can(user.role, "skills.package") ? (
-        <div className="panel stack tight">
-          <h3>Skill library</h3>
-          <p className="muted status-inline">
-            Install curated game skills from playon.games one at a time. Platform core skills are already
-            on this host.
-          </p>
-          <form
-            className="btn-row"
-            onSubmit={(e) => {
-              e.preventDefault();
-              setCatalogSearch(catalogQuery.trim());
-            }}
-          >
-            <label className="field" style={{ flex: 1 }}>
-              <span>Search</span>
-              <input
-                value={catalogQuery}
-                onChange={(e) => setCatalogQuery(e.target.value)}
-                placeholder="minecraft, rust, …"
-              />
-            </label>
-            <button className="btn" type="submit" disabled={catalog.isFetching}>
-              {catalog.isFetching ? "Searching…" : "Search"}
-            </button>
-          </form>
-          {catalog.isError ? (
-            <p className="error">{(catalog.error as Error).message}</p>
-          ) : null}
-          {catalog.data?.error ? <p className="error">{catalog.data.error}</p> : null}
-          {catalog.data?.skills?.length ? (
-            <ul className="list compact-list">
-              {catalog.data.skills.map((s) => (
-                <li key={s.name}>
-                  <div>
-                    <strong>{s.game ?? s.name}</strong>
-                    <div className="muted">
-                      {s.name} · v{s.version}
-                      {s.official ? " · official" : ""}
-                      {s.containerSupport ? ` · ${s.containerSupport}` : ""}
-                      {s.installed ? " · installed" : ""}
-                    </div>
-                    {s.description ? <p className="muted status-inline">{s.description}</p> : null}
-                  </div>
-                  <button
-                    className="btn btn-primary"
-                    type="button"
-                    disabled={s.installed || installingSkill === s.name || installFromCatalog.isPending}
-                    onClick={() => installFromCatalog.mutate(s.name)}
-                  >
-                    {s.installed
-                      ? "Installed"
-                      : installingSkill === s.name
-                        ? "Installing…"
-                        : "Install"}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : catalog.isSuccess && !catalog.data?.error ? (
-            <p className="muted status-inline">No matching skills in the catalog.</p>
-          ) : null}
-          {skillNotice ? <span className="ok">{skillNotice}</span> : null}
-          {skillError ? <p className="error">{skillError}</p> : null}
-
-          <details className="confirm-always-details">
-            <summary>Advanced — offline / custom package</summary>
-            <p className="muted status-inline">
-              Air-gapped hosts can import a local skill package file. Normal installs use the library
-              above or chat.
-            </p>
-            <label className="field">
-              <span>Import package file</span>
-              <input
-                type="file"
-                accept=".zip,application/zip"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  if (!file) return;
-                  setSkillNotice(null);
-                  setSkillError(null);
-                  void api
-                    .importSkill(file)
-                    .then((result) => {
-                      setSkillNotice(`Imported ${result.skill.skillName} v${result.skill.version}`);
-                      e.target.value = "";
-                      window.setTimeout(() => setSkillNotice(null), 4000);
-                    })
-                    .catch((err: Error) => setSkillError(err.message));
-                }}
-              />
-            </label>
-          </details>
-        </div>
-      ) : null}
 
       {can(user.role, "users.manage") ? (
         <form className="panel stack tight" onSubmit={onCreateUser}>

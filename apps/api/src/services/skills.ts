@@ -9,6 +9,36 @@ export interface SkillEntry {
   metadata: SkillMetadata;
 }
 
+/** Where a skill tree lives on disk (for library UI tabs). */
+export type SkillSource = "platform" | "installed" | "draft" | "server" | "fixture";
+
+export function classifySkillSource(
+  entry: SkillEntry,
+  dataRoot: string,
+  serverId?: string | null,
+): SkillSource {
+  const normalized = entry.path.replace(/\\/g, "/");
+  const dataRootNorm = path.resolve(dataRoot).replace(/\\/g, "/");
+  const draftsMarker = `${dataRootNorm}/skills/_drafts/`;
+  if (normalized.includes("/skills/_drafts/") || normalized.startsWith(draftsMarker)) {
+    return "draft";
+  }
+  if (entry.metadata.name.startsWith("drafts.")) return "draft";
+  if (serverId && normalized.includes(`/servers/${serverId}/skills`)) return "server";
+  if (normalized.includes("/servers/") && normalized.includes("/skills/")) return "server";
+  if (entry.metadata.name.startsWith("fixtures.") || normalized.includes("/fixtures/")) {
+    return "fixture";
+  }
+  const installedRoot = `${dataRootNorm}/skills`;
+  if (normalized === installedRoot || normalized.startsWith(`${installedRoot}/`)) {
+    return "installed";
+  }
+  if (entry.metadata.name.startsWith("platform.") || normalized.includes("/platform/")) {
+    return "platform";
+  }
+  return "platform";
+}
+
 function skillIdFromPath(skillDir: string, root: string): string {
   const rel = path.relative(root, skillDir).replace(/\\/g, "/");
   return rel || path.basename(skillDir);

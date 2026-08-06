@@ -76,12 +76,18 @@ import {
   installSkillFromCatalog,
 } from "./services/catalog-install.js";
 import {
-  fetchSkillsCatalog,
+  fetchSkillsCatalogDetailed,
   resolveSkillsCatalogUrl,
   searchCatalog,
 } from "./services/skills-catalog.js";
 import { createControlPlane, type ControlPlane } from "./control-plane.js";
-import { listSkills, skillsRootsForWorkspace } from "./services/skills.js";
+import {
+  classifySkillSource,
+  listSkills,
+  loadSkillMetadata,
+  skillsRootsForWorkspace,
+} from "./services/skills.js";
+import { readSkillMarker } from "./services/skill-marker.js";
 import { ConfirmService } from "./services/confirm.js";
 import { EventHub } from "./services/event-hub.js";
 import { safeQueryLive } from "./services/server-panel.js";
@@ -205,6 +211,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     importSftp,
     agentProgress,
     skillPackages,
+    drafts: draftService,
     tunnel,
     addNode,
     installDocker,
@@ -737,16 +744,23 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     );
     const q = c.req.query("q")?.trim() || "";
     try {
+      const fetched = await fetchSkillsCatalogDetailed(catalogUrl);
       const skills = annotateCatalogInstalled(
-        searchCatalog(await fetchSkillsCatalog(catalogUrl), q),
+        searchCatalog(fetched.skills, q),
         config.skillsRoots,
       );
-      return c.json({ catalogUrl, skills });
+      return c.json({
+        catalogUrl,
+        skills,
+        warnings: fetched.warnings,
+        updatedAt: fetched.updatedAt,
+      });
     } catch (err) {
       return c.json(
         {
           catalogUrl,
           skills: [],
+          warnings: [],
           error: err instanceof Error ? err.message : "catalog_unavailable",
         },
         502,
@@ -822,10 +836,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     }
     const roots = skillsRootsForWorkspace(config.skillsRoots, config.dataRoot, serverId);
     const skills = listSkills(roots).map((s) => {
-      const normalized = s.path.replace(/\\/g, "/");
-      const isServerSkill = Boolean(
-        serverId && normalized.includes(`/servers/${serverId}/skills`),
-      );
+      const source = classifySkillSource(s, config.dataRoot, serverId);
       return {
         id: s.id,
         name: s.metadata.name,
@@ -834,10 +845,54 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         description: s.metadata.description,
         tags: s.metadata.tags,
         theme: s.metadata.theme ?? null,
-        scope: isServerSkill ? ("server" as const) : ("global" as const),
+        containerSupport: s.metadata.containerSupport,
+        dependencies: s.metadata.dependencies,
+        minRamMb: s.metadata.minRamMb,
+        source,
+        scope: source === "server" ? ("server" as const) : ("global" as const),
       };
     });
     return c.json({ skills });
+  });
+
+  app.get("/api/skills/drafts", async (c) => {
+    const user = c.get("user");
+    if (!user || !roleAtLeast(user.role, "operator")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const drafts = draftService.list().map((d) => {
+      const entry = loadSkillMetadata(config.skillsRoots, d.skillName);
+      return {
+        slug: d.slug,
+        skillName: d.skillName,
+        path: d.path,
+        version: entry?.metadata.version ?? "0.0.1-draft",
+        game: entry?.metadata.game,
+        description: entry?.metadata.description ?? "",
+        tags: entry?.metadata.tags ?? ["draft"],
+        containerSupport: entry?.metadata.containerSupport ?? "none",
+      };
+    });
+    return c.json({ drafts });
+  });
+
+  app.post("/api/skills/drafts/:slug/promote", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "skills.package")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    try {
+      const promoted = draftService.promote(decodeURIComponent(c.req.param("slug")));
+      return c.json({ skill: promoted });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "promote_failed";
+      const status = message.startsWith("unknown_draft")
+        ? 404
+        : message.startsWith("skill_exists")
+          ? 409
+          : 400;
+      return c.json({ error: message }, status);
+    }
   });
 
   app.get("/api/skills/:name/export", async (c) => {
@@ -856,6 +911,64 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     } catch (err) {
       const message = err instanceof Error ? err.message : "export_failed";
       const status = message.startsWith("unknown_skill") ? 404 : 400;
+      return c.json({ error: message }, status);
+    }
+  });
+
+  app.get("/api/skills/:name", async (c) => {
+    const user = c.get("user");
+    if (!user || !roleAtLeast(user.role, "operator")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const name = decodeURIComponent(c.req.param("name"));
+    const entry = loadSkillMetadata(config.skillsRoots, name);
+    if (!entry) return c.json({ error: "unknown_skill" }, 404);
+    const source = classifySkillSource(entry, config.dataRoot);
+    const localNames = new Set(listSkills(config.skillsRoots).map((s) => s.metadata.name));
+    const dependencies = (entry.metadata.dependencies ?? []).map((dep) => ({
+      name: dep,
+      present: localNames.has(dep),
+    }));
+    return c.json({
+      skill: {
+        id: entry.id,
+        path: entry.path,
+        source,
+        metadata: entry.metadata,
+        dependencies,
+      },
+    });
+  });
+
+  app.delete("/api/skills/:name", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "skills.package")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const name = decodeURIComponent(c.req.param("name"));
+    const force =
+      c.req.query("force") === "1" ||
+      c.req.query("force") === "true";
+    try {
+      const servers = await serverService.list();
+      const inUse = servers
+        .filter((s) => readSkillMarker(s.dataPath)?.skillName === name)
+        .map((s) => ({ id: s.id, name: s.name }));
+      if (inUse.length && !force) {
+        return c.json(
+          { error: "skill_in_use", servers: inUse },
+          409,
+        );
+      }
+      const removed = skillPackages.uninstall(name);
+      return c.json({ ok: true, skill: removed, servers: inUse });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "uninstall_failed";
+      const status = message.startsWith("unknown_skill")
+        ? 404
+        : message.startsWith("skill_not_uninstallable")
+          ? 400
+          : 400;
       return c.json({ error: message }, status);
     }
   });

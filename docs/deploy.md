@@ -95,7 +95,7 @@ Still run a **host-native** `playon-node` (or install-node against `http://127.0
 - Home ships **platform core** only (`PLAYON_SKILLS_PROFILE=minimal`). Curated `games.*` skills are **not** bundled.
 - Install games individually on demand:
   - **Chat** — ask to install / create a server (agent uses the playon.games catalog)
-  - **Settings → Skill library → Install** — one click per skill
+  - **Skills → Catalog → Install** — one click per skill
 - Catalog URL defaults to `https://playon.games/skills/index.json` (`PLAYON_SKILLS_CATALOG_URL`). Hosts never download zip files by hand.
 - Curated `games.*` live only in the sibling **playon-games** repo (`skills-src/` → `pnpm catalog` → `public/skills/`). Never present in Home or monorepo `skills/`.
 

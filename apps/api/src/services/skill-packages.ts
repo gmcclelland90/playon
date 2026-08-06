@@ -148,6 +148,26 @@ export class SkillPackageService {
     return { skillName: metadata.name, path: targetDir };
   }
 
+  /**
+   * Remove an installed or draft skill under dataRoot/skills.
+   * Refuses platform / fixture / non-dataRoot trees.
+   */
+  uninstall(skillName: string): { skillName: string; path: string } {
+    const entry = loadSkillMetadata(this.config.skillsRoots, skillName);
+    if (!entry) throw new Error(`unknown_skill: ${skillName}`);
+
+    const resolved = path.resolve(entry.path);
+    const globalRoot = path.resolve(globalSkillsRoot(this.config));
+    const underGlobal =
+      resolved === globalRoot || resolved.startsWith(`${globalRoot}${path.sep}`);
+    if (!underGlobal) {
+      throw new Error(`skill_not_uninstallable: ${skillName}`);
+    }
+
+    fs.rmSync(resolved, { recursive: true, force: true });
+    return { skillName: entry.metadata.name, path: resolved };
+  }
+
   /** Convenience for tests / agent tools: pack a directory that already has metadata.yaml. */
   packDirectory(skillDir: string): Uint8Array {
     const files = walkFiles(skillDir);

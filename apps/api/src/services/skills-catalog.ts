@@ -24,6 +24,23 @@ export const CatalogIndexSchema = z.object({
 
 export type CatalogSkill = z.infer<typeof CatalogSkillSchema>;
 
+export type CatalogWarning = {
+  name?: string;
+  index: number;
+  message: string;
+};
+
+export type CatalogFetchResult = {
+  skills: CatalogSkill[];
+  warnings: CatalogWarning[];
+  updatedAt?: string;
+};
+
+const CatalogIndexLooseSchema = z.object({
+  updatedAt: z.string().optional(),
+  skills: z.array(z.unknown()),
+});
+
 export function resolveSkillsCatalogUrl(
   envUrl?: string | null,
   storedUrl?: string | null,
@@ -31,17 +48,51 @@ export function resolveSkillsCatalogUrl(
   return envUrl?.trim() || storedUrl?.trim() || DEFAULT_SKILLS_CATALOG_URL;
 }
 
-export async function fetchSkillsCatalog(
+/** Parse a catalog index, skipping invalid skill rows instead of failing the whole fetch. */
+export function parseCatalogIndex(json: unknown): CatalogFetchResult {
+  const loose = CatalogIndexLooseSchema.parse(json);
+  const skills: CatalogSkill[] = [];
+  const warnings: CatalogWarning[] = [];
+
+  loose.skills.forEach((raw, index) => {
+    const parsed = CatalogSkillSchema.safeParse(raw);
+    if (parsed.success) {
+      skills.push(parsed.data);
+      return;
+    }
+    const name =
+      raw && typeof raw === "object" && "name" in raw && typeof (raw as { name: unknown }).name === "string"
+        ? (raw as { name: string }).name
+        : undefined;
+    const issue = parsed.error.issues[0];
+    const path = issue?.path?.length ? issue.path.join(".") : "skill";
+    const detail = issue?.message ?? "invalid_skill";
+    warnings.push({
+      name,
+      index,
+      message: `${path}: ${detail}`,
+    });
+  });
+
+  return { skills, warnings, updatedAt: loose.updatedAt };
+}
+
+export async function fetchSkillsCatalogDetailed(
   catalogUrl: string = DEFAULT_SKILLS_CATALOG_URL,
-): Promise<CatalogSkill[]> {
+): Promise<CatalogFetchResult> {
   const res = await fetch(catalogUrl, {
     headers: { accept: "application/json" },
   });
   if (!res.ok) {
     throw new Error(`skills_catalog_fetch_failed: ${res.status}`);
   }
-  const json = CatalogIndexSchema.parse(await res.json());
-  return json.skills;
+  return parseCatalogIndex(await res.json());
+}
+
+export async function fetchSkillsCatalog(
+  catalogUrl: string = DEFAULT_SKILLS_CATALOG_URL,
+): Promise<CatalogSkill[]> {
+  return (await fetchSkillsCatalogDetailed(catalogUrl)).skills;
 }
 
 export function searchCatalog(skills: CatalogSkill[], query: string): CatalogSkill[] {
