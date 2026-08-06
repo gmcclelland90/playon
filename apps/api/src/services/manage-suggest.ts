@@ -222,6 +222,32 @@ export class ManageSuggestService {
       localHandler: async () => ({ ok: true }),
     });
 
+    // Remote Start looks for start.sh; many installs use start-server.sh / game binaries instead.
+    const startWrapper = [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'cd "$(dirname "$0")"',
+      'if [[ -x ./start-server.sh ]]; then exec ./start-server.sh "$@"; fi',
+      'if [[ -f ./start-server.sh ]]; then exec /bin/bash ./start-server.sh "$@"; fi',
+      'if [[ -x ./StartServer64.sh ]]; then exec ./StartServer64.sh "$@"; fi',
+      'if [[ -f ./StartServer64.sh ]]; then exec /bin/bash ./StartServer64.sh "$@"; fi',
+      'if [[ -x ./ProjectZomboid64 ]]; then exec ./ProjectZomboid64 "$@"; fi',
+      'if [[ -x ./start.sh && "$0" != ./start.sh ]]; then exec ./start.sh "$@"; fi',
+      'echo "playon: no launch script/binary found in $(pwd)" >&2',
+      "exit 1",
+      "",
+    ].join("\n");
+    await dispatchNodeJob({
+      nodeId: args.nodeId,
+      kind: "fs_write_text",
+      args: {
+        path: nodeServerRelPath(id, "game", "start.sh"),
+        content: startWrapper,
+      },
+      timeoutMs: 60_000,
+      localHandler: async () => ({ ok: true }),
+    });
+
     const baseline = await this.snapshots.create(id, "baseline-manage");
     followUp.push("stop_old_host_service_before_start");
     followUp.push("verify_start_and_join");

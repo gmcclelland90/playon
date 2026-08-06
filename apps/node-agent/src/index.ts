@@ -55,13 +55,26 @@ async function tickJobs() {
   }
 }
 
+/** Serialize jobs so long seeds don't overlap; heartbeats keep firing while a job awaits I/O. */
+let jobBusy = false;
+
+async function tickJobsGuarded() {
+  if (jobBusy) return;
+  jobBusy = true;
+  try {
+    await tickJobs();
+  } finally {
+    jobBusy = false;
+  }
+}
+
 console.log(`PlayOn node-agent starting → ${apiBase}`);
 await tickHeartbeat();
 setInterval(() => {
   void tickHeartbeat();
 }, intervalMs);
 setInterval(() => {
-  void tickJobs();
+  void tickJobsGuarded();
 }, jobPollMs);
 // Immediate job poll so int tests don't wait a full interval.
-void tickJobs();
+void tickJobsGuarded();

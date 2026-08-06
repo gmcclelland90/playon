@@ -1,7 +1,10 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 import {
   createRuntime,
   resolveInJail,
@@ -397,8 +400,17 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
     const dest = resolveInJail(dataRoot, args.destRel);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.rmSync(dest, { recursive: true, force: true });
-    // On-host copy into the PlayOn jail — never ships the tree to Home.
-    fs.cpSync(source, dest, { recursive: true });
+    fs.mkdirSync(dest, { recursive: true });
+    // Async host copy so heartbeats keep ticking (fs.cpSync blocks the event loop).
+    if (process.platform === "win32") {
+      await new Promise<void>((resolve, reject) => {
+        fs.cp(source, dest, { recursive: true }, (err) => (err ? reject(err) : resolve()));
+      });
+    } else {
+      await execFileAsync("cp", ["-a", `${source}/.`, dest], {
+        maxBuffer: 16 * 1024 * 1024,
+      });
+    }
     const bytesCopied = approxDirBytes(dest);
     return {
       destRel: args.destRel,

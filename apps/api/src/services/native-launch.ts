@@ -25,7 +25,7 @@ function resolveScriptLaunch(gameDir: string): NativeLaunch | null {
     return null;
   }
 
-  for (const name of ["start.sh", "runds.sh", "run.sh"]) {
+  for (const name of ["start.sh", "start-server.sh", "StartServer64.sh", "runds.sh", "run.sh"]) {
     const full = path.join(gameDir, name);
     if (fs.existsSync(full)) {
       return {
