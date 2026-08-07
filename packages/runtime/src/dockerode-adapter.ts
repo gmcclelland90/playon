@@ -1,5 +1,6 @@
 import { PassThrough } from "node:stream";
 import Docker from "dockerode";
+import { demuxDockerLogBuffer, splitLogLines } from "./docker-log-demux.js";
 import type { ContainerInfo, ContainerSpec, DockerAdapter, LogFollowHandle } from "./types.js";
 
 function mapStatus(status: string | undefined): ContainerInfo["status"] {
@@ -86,14 +87,17 @@ export class DockerodeAdapter implements DockerAdapter {
   }
 
   async logs(id: string, tail = 100): Promise<string[]> {
-    const buf = await this.docker.getContainer(id).logs({
+    const raw = await this.docker.getContainer(id).logs({
       stdout: true,
       stderr: true,
       tail,
       timestamps: false,
     });
-    const text = Buffer.isBuffer(buf) ? buf.toString("utf8") : String(buf);
-    return text.split(/\r?\n/).filter(Boolean);
+    // Non-TTY containers return multiplexed frames; decoding as UTF-8 leaves junk prefixes.
+    const buf = Buffer.isBuffer(raw)
+      ? raw
+      : Buffer.from(raw as unknown as ArrayBuffer);
+    return splitLogLines(demuxDockerLogBuffer(buf));
   }
 
   async followLogs(
