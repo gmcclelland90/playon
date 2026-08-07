@@ -75,7 +75,8 @@ export class ServerQueryService {
     }
 
     const { gamePort, queryPort } = this.resolveQueryPorts(skillName, meta);
-    const host = "127.0.0.1";
+    // Probe the node players join (LAN joinHost / Home advertise), not API loopback.
+    const host = await this.dbServers.resolveJoinAddress(server);
     const connectorRel =
       meta?.queryConnector ?? marker.queryConnector ?? DEFAULT_QUERY_CONNECTOR;
     const target: QueryTarget = {

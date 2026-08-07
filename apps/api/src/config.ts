@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { resolveCatalogGamesRoot } from "./lab-games-root.js";
 
 export interface AppConfig {
   port: number;
@@ -173,6 +174,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     }
   }
   skillsRoots.push(path.join(dataRoot, "skills"));
+
+  // Lab / sibling playon-games checkout (never shipped in Home tarballs).
+  const catalogGames = resolveCatalogGamesRoot(repoRoot);
+  if (catalogGames && skillsProfile !== "minimal") {
+    skillsRoots.push(catalogGames);
+  }
 
   return {
     port,

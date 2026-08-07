@@ -597,7 +597,7 @@ export function createPlayOnToolRegistry(
     {
       name: "skill_read",
       description:
-        "Read guides/*.md (and optional path) from an installed skill so you can follow INSTALL steps. Prefer this before drafting a new skill.",
+        "Read guides/*.md from an installed skill (default INSTALL.md; use MODDING.md for Workshop/mod runbooks). Prefer this before drafting a new skill.",
       parameters: {
         type: "object",
         properties: {
@@ -1001,7 +1001,7 @@ export function createPlayOnToolRegistry(
     });
     await snapshots.create(server.id, "baseline");
     await playerPanel.publishForStatus(server.id, "stopped");
-    const join = servers.joinInfoFor(server);
+    const join = await servers.joinInfoFor(server);
     return {
       serverId: server.id,
       name: server.name,

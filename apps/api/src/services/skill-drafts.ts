@@ -15,6 +15,13 @@ export interface SkillDraftSaveArgs {
   queryConnectorSource?: string;
   /** Optional guides/QUERY.md content. */
   queryGuide?: string;
+  /** Optional metadata copied from a catalog skill when drafting as fallback. */
+  steamAppId?: number;
+  adminDialect?: string;
+  queryDialect?: string;
+  ports?: unknown[];
+  healthChecks?: unknown[];
+  dependencies?: string[];
 }
 
 export interface SkillDraftRecord {
@@ -58,9 +65,16 @@ export class SkillDraftService {
       tags: ["draft"],
       containerSupport: args.containerSupport ?? "none",
     };
+    if (args.steamAppId != null) metadata.steamAppId = args.steamAppId;
+    if (args.adminDialect) metadata.adminDialect = args.adminDialect;
+    if (args.ports?.length) metadata.ports = args.ports;
+    if (args.healthChecks?.length) metadata.healthChecks = args.healthChecks;
+    if (args.dependencies?.length) metadata.dependencies = args.dependencies;
     if (hasConnector) {
       metadata.queryDialect = "skill_module";
       metadata.queryConnector = "query/connector.mjs";
+    } else if (args.queryDialect) {
+      metadata.queryDialect = args.queryDialect;
     }
 
     fs.writeFileSync(path.join(draftDir, "metadata.yaml"), yaml.dump(metadata));

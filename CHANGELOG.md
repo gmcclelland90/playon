@@ -2,6 +2,25 @@
 
 All notable changes to PlayOn Home (root `package.json` version) are listed here.
 
+## [0.1.9] — 2026-08-07
+
+### Fixed
+
+- **LAN / node-authoritative thrash** — join, health, and live query now use the node’s `join_host` (not Home `advertiseHost` / `127.0.0.1`), so remote servers are not “healed” against the wrong host.
+- **No invented Minecraft `:25565`** — skills without a TCP game port (UDP-only or portless drafts) no longer get a default TCP health probe that forces restart loops.
+- **Map Manage binds catalog skills** — `manageFromNode` uses `import-hints` `suggestedSkillName` (e.g. `games.project-zomboid`) instead of always scaffolding an empty `drafts.managed-*`.
+- **Node-authoritative `fs_*`** — list/read/write/delete/rename/copy route to the live node jail; node-agent gains `fs_read_text` (with archive fallback on older agents).
+
+### Changed
+
+- Agent prompts: Steam Workshop refresh path vs zip/URL mods; trust skill join metadata; resume finishes the stated task instead of blindly start + panel publish.
+- Lab can mount sibling `playon-games` via `PLAYON_GAMES_SKILLS_ROOT` / auto sibling discovery.
+
+### Notes
+
+- Update remote node-agents from **Settings → Nodes** after Home is on **0.1.9** so they gain `fs_read_text` (and stop using the slower archive read fallback).
+- Catalog skill `games.project-zomboid` **0.1.1** adds a Workshop `MODDING.md` runbook (ship via playon-games catalog).
+
 ## [0.1.8] — 2026-08-07
 
 ### Added

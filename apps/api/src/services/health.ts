@@ -41,17 +41,17 @@ export class HealthService {
     const declared = meta?.healthChecks ?? [];
     if (declared.length) return { meta, checks: declared };
 
-    // Default: process/container running + primary game port when known
+    // Default: process/container running + TCP game port when the skill declares one.
+    // UDP-only / unknown-port skills must not invent Minecraft :25565.
     const defaults: HealthCheck[] = [
       { id: "process", type: "process_running", onFail: "restart" },
     ];
-    const port = this.dbServers.gamePortForSkill(skillName);
-    if (port) {
+    const port = this.dbServers.tcpGamePortForSkill(skillName);
+    if (port > 0) {
       defaults.push({
         id: "game-port",
         type: "tcp_port",
         port,
-        host: this.config.advertiseHost,
         onFail: "restart",
       });
     }
@@ -66,6 +66,7 @@ export class HealthService {
     if (!server) throw new Error(`unknown_server: ${serverId}`);
 
     const { checks } = this.resolveChecks(server);
+    const joinHost = await this.dbServers.resolveJoinAddress(server);
     const results: HealthCheckResult[] = [];
     const escalations: string[] = [];
     let needsRestart = false;
@@ -85,12 +86,13 @@ export class HealthService {
       }
 
       if (check.type === "tcp_port") {
+        const skillName = readSkillName(server.dataPath);
         const port =
           check.port ??
           (check.portName
-            ? this.dbServers.gamePortForSkill(readSkillName(server.dataPath))
-            : this.dbServers.gamePortForSkill(readSkillName(server.dataPath)));
-        const host = check.host ?? this.config.advertiseHost ?? "127.0.0.1";
+            ? this.dbServers.tcpGamePortForSkill(skillName)
+            : this.dbServers.tcpGamePortForSkill(skillName));
+        const host = check.host ?? joinHost;
         if (!port) {
           results.push({
             id: check.id,

@@ -250,6 +250,82 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
     return { path: rel, ok: true };
   }
 
+  if (job.kind === "fs_read_text") {
+    const rel = strArg(job.args, "path");
+    const target = resolveInJail(dataRoot, rel);
+    if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
+      throw new Error(`not_found: ${rel}`);
+    }
+    const size = fs.statSync(target).size;
+    const offset = Math.max(0, Math.floor(Number(job.args.offset ?? 0) || 0));
+    const maxCap = 512_000;
+    const maxBytes = Math.min(
+      maxCap,
+      Math.max(1, Math.floor(Number(job.args.maxBytes ?? maxCap) || maxCap)),
+    );
+    if (offset > size) {
+      return { path: rel, content: "", bytesRead: 0, truncated: false, size };
+    }
+    const fd = fs.openSync(target, "r");
+    try {
+      const length = Math.min(maxBytes, size - offset);
+      const buf = Buffer.alloc(length);
+      const bytesRead = fs.readSync(fd, buf, 0, length, offset);
+      return {
+        path: rel,
+        content: buf.subarray(0, bytesRead).toString("utf8"),
+        bytesRead,
+        truncated: offset + bytesRead < size,
+        size,
+      };
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+
+  if (job.kind === "fs_rename") {
+    const fromRel = strArg(job.args, "from");
+    const toRel = strArg(job.args, "to");
+    const from = resolveInJail(dataRoot, fromRel);
+    const to = resolveInJail(dataRoot, toRel);
+    if (!fs.existsSync(from)) throw new Error(`not_found: ${fromRel}`);
+    const overwrite = job.args.overwrite === true;
+    if (fs.existsSync(to) && !overwrite) throw new Error(`already_exists: ${toRel}`);
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    if (fs.existsSync(to) && overwrite) {
+      fs.rmSync(to, { recursive: true, force: true });
+    }
+    fs.renameSync(from, to);
+    return { from: fromRel, to: toRel };
+  }
+
+  if (job.kind === "fs_copy") {
+    const fromRel = strArg(job.args, "from");
+    const toRel = strArg(job.args, "to");
+    const from = resolveInJail(dataRoot, fromRel);
+    const to = resolveInJail(dataRoot, toRel);
+    if (!fs.existsSync(from)) throw new Error(`not_found: ${fromRel}`);
+    const overwrite = job.args.overwrite === true;
+    if (fs.existsSync(to) && !overwrite) throw new Error(`already_exists: ${toRel}`);
+    if (fs.existsSync(to) && overwrite) {
+      fs.rmSync(to, { recursive: true, force: true });
+    }
+    const copyRecursive = (src: string, dest: string): void => {
+      const stat = fs.statSync(src);
+      if (stat.isDirectory()) {
+        fs.mkdirSync(dest, { recursive: true });
+        for (const name of fs.readdirSync(src)) {
+          copyRecursive(path.join(src, name), path.join(dest, name));
+        }
+        return;
+      }
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(src, dest);
+    };
+    copyRecursive(from, to);
+    return { from: fromRel, to: toRel };
+  }
+
   const { docker, process: proc } = await ensureAdapters();
 
   if (job.kind === "container_create") {

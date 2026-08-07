@@ -54,6 +54,29 @@ describe("SkillDraftService", () => {
     expect(found?.metadata.tags).toContain("draft");
   });
 
+  it("copies catalog ports and steamAppId onto draft metadata", () => {
+    const { config, drafts } = tempConfig();
+    const saved = drafts.save({
+      name: "managed-Project Zomboid",
+      game: "Project Zomboid",
+      description: "Scaffolded draft",
+      installGuide: "# Managed",
+      steamAppId: 380870,
+      adminDialect: "source_rcon",
+      queryDialect: "none",
+      ports: [{ name: "game", protocol: "udp", default: 16261 }],
+      healthChecks: [{ id: "process", type: "process_running", onFail: "restart" }],
+      dependencies: ["platform.steamcmd"],
+    });
+
+    const found = listSkills(config.skillsRoots).find((s) => s.metadata.name === saved.skillName);
+    expect(found?.metadata.steamAppId).toBe(380870);
+    expect(found?.metadata.adminDialect).toBe("source_rcon");
+    expect(found?.metadata.ports[0]?.default).toBe(16261);
+    expect(found?.metadata.healthChecks[0]?.id).toBe("process");
+    expect(found?.metadata.dependencies).toContain("platform.steamcmd");
+  });
+
   it("promotes a draft to an installable skill", () => {
     const { config, drafts } = tempConfig();
     drafts.save({

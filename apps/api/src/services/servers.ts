@@ -174,7 +174,17 @@ export class ServerService {
     if (fromMeta > 0) return fromMeta;
     const native = nativeGamePort(this.resolveSkill(skillName)?.metadata);
     if (native != null) return native;
-    return 25565;
+    // No Minecraft-style invent: skills without a declared game port return 0.
+    return 0;
+  }
+
+  /** TCP game port only — used for default health probes (UDP games must not get tcp_port). */
+  tcpGamePortForSkill(skillName: string): number {
+    const skill = this.resolveSkill(skillName);
+    const hit = skill?.metadata.ports.find(
+      (p) => p.name === "game" && p.protocol === "tcp" && p.default,
+    );
+    return hit?.default ?? 0;
   }
 
   rconPortForSkill(skillName: string, _game?: string | null): number {
@@ -276,11 +286,28 @@ export class ServerService {
     }
   }
 
-  joinInfoFor(server: ServerRecord): { address: string; port: number } {
+  /**
+   * Join/probe host for a server:
+   * - cloud → Home advertiseHost (LAN gateway)
+   * - lan/local with nodes.joinHost → that host
+   * - else → advertiseHost
+   */
+  async resolveJoinAddress(server: ServerRecord): Promise<string> {
+    if (!server.nodeId || isLocalNodeId(server.nodeId)) {
+      return this.config.advertiseHost;
+    }
+    const node = await this.nodeRow(server.nodeId);
+    if (!node) return this.config.advertiseHost;
+    if (node.kind === "cloud") return this.config.advertiseHost;
+    const joinHost = node.joinHost?.trim();
+    if (joinHost) return joinHost;
+    return this.config.advertiseHost;
+  }
+
+  async joinInfoFor(server: ServerRecord): Promise<{ address: string; port: number }> {
     const skillName = this.readSkillName(server.dataPath);
-    // Cloud servers are joined via Home LAN gateway — always advertise Home.
     return {
-      address: this.config.advertiseHost,
+      address: await this.resolveJoinAddress(server),
       port: this.gamePortForSkill(skillName, server.game),
     };
   }
@@ -449,7 +476,7 @@ export class ServerService {
     if (!server) return null;
 
     const skillName = this.readSkillName(server.dataPath);
-    const join = this.joinInfoFor(server);
+    const join = await this.joinInfoFor(server);
     const cached = this.readSkillMeta(server.dataPath);
 
     if (server.runtimeMode === "native") {

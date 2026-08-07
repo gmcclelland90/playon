@@ -203,11 +203,16 @@ export class ManageSuggestService {
 
     const { roots, hints } = this.rootsAndHints();
     const followUp: string[] = [];
-    let skillName = args.skillName?.trim();
-    let skillSource: ImportLocalReport["skillSource"] = skillName ? "provided" : "detected";
-    let draftSlug: string | undefined;
     const hint = this.resolveManageHint(args.nodeId, sourcePath, hints, args.hintIds);
     const manageMeta: ImportHintManage | undefined = hint?.manage;
+
+    let skillName = args.skillName?.trim() || hint?.suggestedSkillName;
+    let skillSource: ImportLocalReport["skillSource"] = args.skillName?.trim()
+      ? "provided"
+      : hint?.suggestedSkillName
+        ? "detected"
+        : "draft";
+    let draftSlug: string | undefined;
 
     if (skillName && !loadSkillMetadata(this.config.skillsRoots, skillName)) {
       followUp.push(`skill_not_found:${skillName}`);
@@ -218,6 +223,14 @@ export class ManageSuggestService {
     if (!skillName) {
       const drafts = new SkillDraftService(this.config);
       const game = args.game?.trim() || hint?.suggestedGame || path.basename(sourcePath);
+      // Prefer copying ports/health/steamAppId from the catalog skill the hint named,
+      // even when that skill isn't currently mounted in skillsRoots (unavailable).
+      const catalogHintName = hint?.suggestedSkillName;
+      const catalog =
+        catalogHintName != null
+          ? loadSkillMetadata(this.config.skillsRoots, catalogHintName)
+          : null;
+      const m = catalog?.metadata;
       const saved = drafts.save({
         name: `managed-${game}`,
         game,
@@ -228,9 +241,20 @@ export class ManageSuggestService {
           `Source path on node: \`${sourcePath}\``,
           "",
           "Files were copied on the node into PlayOn’s server jail. Review/promote this draft if needed.",
-        ].join("\n"),
-        containerSupport: "none",
+          catalogHintName
+            ? `\nHinted catalog skill \`${catalogHintName}\` was not available; draft may lack full guides.`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        containerSupport: m?.containerSupport ?? "none",
         warnings: "Managed from an existing install — stop the old host service before Start in PlayOn.",
+        steamAppId: m?.steamAppId,
+        adminDialect: m?.adminDialect,
+        queryDialect: m?.queryDialect,
+        ports: m?.ports,
+        healthChecks: m?.healthChecks,
+        dependencies: m?.dependencies,
       });
       draftSlug = saved.slug;
       skillName = saved.skillName;

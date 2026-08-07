@@ -76,9 +76,9 @@ const RESUME_USER_RE =
   /^(continue|resume|keep going|go ahead|go on|proceed)([.!?]|\s+please)?$/i;
 
 const RESUME_SYSTEM_PROMPT = [
-  "The host asked to resume an unfinished install.",
-  "Do only: servers_list (if you lack the server id) → servers_start → panel_publish with join_info + client_setup → brief reply with the join address.",
-  "Do not draft/promote skills, fetch URLs, or browse the filesystem unless servers_start fails.",
+  "The host asked to resume unfinished work from this conversation.",
+  "Finish their stated task with the fewest tools. Prefer skill_read + targeted fs_* / restart over broad directory walks.",
+  "Do not blindly servers_start + panel_publish if the task is already done or verified. Do not draft/promote skills or fetch Workshop HTML unless the task requires it.",
 ].join(" ");
 
 const SELF_HEAL_SYSTEM_PROMPT = [
