@@ -201,16 +201,16 @@ a.brand-mark:hover {
 .server-console-bubble {
   position: absolute;
   z-index: 3;
-  width: min(40rem, calc(100vw - 2rem));
   transform: translate(-50%, calc(-100% - 12px));
   pointer-events: none;
 }
 
 .server-console-bubble-panel {
+  position: relative;
   pointer-events: auto;
   display: grid;
   gap: 0.4rem;
-  padding: 0.55rem 0.65rem 0.5rem;
+  padding: 0.55rem 0.65rem 1.05rem;
   background: oklch(0.16 0.02 350 / 0.96);
   border: 1px solid oklch(0.45 0.04 350);
   border-radius: 10px;
@@ -240,7 +240,7 @@ a.brand-mark:hover {
 }
 
 .server-console-bubble-log {
-  height: 16rem;
+  min-height: 7.5rem;
   overflow: auto;
   padding: 0.45rem 0.5rem;
   border-radius: 6px;
@@ -250,6 +250,125 @@ a.brand-mark:hover {
   font-size: 0.78rem;
   line-height: 1.4;
   color: oklch(0.86 0.02 120);
+}
+
+/* Invisible edge/corner hit targets + visible SE grip */
+.server-console-resize {
+  position: absolute;
+  z-index: 2;
+  touch-action: none;
+}
+
+.server-console-resize-n,
+.server-console-resize-s {
+  left: 10px;
+  right: 10px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.server-console-resize-n {
+  top: -3px;
+}
+
+.server-console-resize-s {
+  bottom: -3px;
+}
+
+.server-console-resize-e,
+.server-console-resize-w {
+  top: 10px;
+  bottom: 10px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.server-console-resize-e {
+  right: -3px;
+}
+
+.server-console-resize-w {
+  left: -3px;
+}
+
+.server-console-resize-ne,
+.server-console-resize-nw,
+.server-console-resize-se,
+.server-console-resize-sw {
+  width: 14px;
+  height: 14px;
+}
+
+.server-console-resize-ne {
+  top: -4px;
+  right: -4px;
+  cursor: nesw-resize;
+}
+
+.server-console-resize-nw {
+  top: -4px;
+  left: -4px;
+  cursor: nwse-resize;
+}
+
+.server-console-resize-se {
+  bottom: -4px;
+  right: -4px;
+  cursor: nwse-resize;
+}
+
+.server-console-resize-sw {
+  bottom: -4px;
+  left: -4px;
+  cursor: nesw-resize;
+}
+
+.server-console-resize-grip {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  width: 14px;
+  height: 14px;
+  z-index: 3;
+  cursor: nwse-resize;
+  touch-action: none;
+  /* Diagonal grip marks — reads as a resize affordance in the corner */
+  background:
+    linear-gradient(
+      135deg,
+      transparent 35%,
+      oklch(0.72 0.04 350) 36%,
+      oklch(0.72 0.04 350) 40%,
+      transparent 41%
+    ),
+    linear-gradient(
+      135deg,
+      transparent 50%,
+      oklch(0.72 0.04 350) 51%,
+      oklch(0.72 0.04 350) 55%,
+      transparent 56%
+    ),
+    linear-gradient(
+      135deg,
+      transparent 65%,
+      oklch(0.78 0.05 190) 66%,
+      oklch(0.78 0.05 190) 70%,
+      transparent 71%
+    );
+  opacity: 0.9;
+}
+
+.server-console-resize-grip:hover {
+  opacity: 1;
+}
+
+body.server-console-resizing {
+  cursor: grabbing;
+  user-select: none;
+}
+
+body.server-console-resizing iframe {
+  pointer-events: none;
 }
 
 .server-console-bubble-empty {
