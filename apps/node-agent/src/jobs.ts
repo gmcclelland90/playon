@@ -402,7 +402,17 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
   }
 
   if (job.kind === "process_stop") {
-    await proc.stop(strArg(job.args, "id"));
+    const id = typeof job.args.id === "string" ? job.args.id : "";
+    const cwdRel = typeof job.args.cwd === "string" ? job.args.cwd : "";
+    const name = typeof job.args.name === "string" ? job.args.name : "";
+    if (id) {
+      await proc.stop(id).catch(() => undefined);
+    }
+    // Always reclaim by cwd/name so stop works after node-agent restart (lost map).
+    if (cwdRel && typeof proc.reclaim === "function") {
+      const cwd = resolveInJail(dataRoot, cwdRel);
+      await proc.reclaim(name || `server-unknown`, cwd);
+    }
     return { ok: true };
   }
 

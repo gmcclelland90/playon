@@ -814,14 +814,29 @@ export class ServerService {
         command = "/bin/bash";
         args = ["start.sh"];
       }
+      const cwd = nodeServerRelPath(id, "game");
+      const procName = `server-${id}`;
+      // Reclaim orphans before start (API/node-agent restarts lose the process id map).
+      await dispatchNodeJob({
+        nodeId,
+        kind: "process_stop",
+        args: {
+          id: this.processes.get(id) ?? "",
+          name: procName,
+          cwd,
+        },
+        timeoutMs: 60_000,
+        localHandler: async () => ({ ok: true }),
+      }).catch(() => undefined);
+      this.processes.delete(id);
       const info = await dispatchNodeJob<{ id: string }>({
         nodeId,
         kind: "process_start",
         args: {
-          name: `server-${id}`,
+          name: procName,
           command,
           args,
-          cwd: nodeServerRelPath(id, "game"),
+          cwd,
           env: { PLAYON_SERVER_ID: id, ...(native?.env ?? {}) },
         },
         timeoutMs: 60_000,
@@ -1039,15 +1054,19 @@ export class ServerService {
 
     if (this.isRemoteNode(server) && server.nodeId) {
       const processId = this.processes.get(id);
-      if (processId) {
-        await dispatchNodeJob({
-          nodeId: server.nodeId,
-          kind: "process_stop",
-          args: { id: processId },
-          localHandler: async () => ({ ok: true }),
-        }).catch(() => undefined);
-        this.processes.delete(id);
-      }
+      // Always pass cwd/name so the node can kill orphans even when the tracked id
+      // was lost (node-agent restart / API restart).
+      await dispatchNodeJob({
+        nodeId: server.nodeId,
+        kind: "process_stop",
+        args: {
+          id: processId ?? "",
+          name: `server-${id}`,
+          cwd: nodeServerRelPath(id, "game"),
+        },
+        localHandler: async () => ({ ok: true }),
+      }).catch(() => undefined);
+      this.processes.delete(id);
       await dispatchNodeJob({
         nodeId: server.nodeId,
         kind: "container_stop",

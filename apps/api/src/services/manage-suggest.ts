@@ -64,6 +64,13 @@ export function buildManagedStartWrapper(serverNameArg = "servername"): string {
     // XDG dirs under PLAYON_HOME so Unity/.local games resolve userdata
     '  export XDG_CONFIG_HOME="${PLAYON_HOME}/.config"',
     '  export XDG_DATA_HOME="${PLAYON_HOME}/.local/share"',
+    // Some JVMs resolve user.home from passwd and ignore HOME — pin into the jail.
+    '  export JAVA_TOOL_OPTIONS="-Duser.home=${PLAYON_HOME}${JAVA_TOOL_OPTIONS:+ $JAVA_TOOL_OPTIONS}"',
+    // Project Zomboid: -cachedir is the authoritative userdata root (passwd-home bypass).
+    '  if [[ -x ./ProjectZomboid64 || -f ./ProjectZomboid64.json ]]; then',
+    '    mkdir -p "${PLAYON_HOME}/Zomboid"',
+    '    EXTRA+=(-cachedir="${PLAYON_HOME}/Zomboid")',
+    "  fi",
     "fi",
     'if [[ -n "${PLAYON_ADMIN_PASSWORD:-}" ]]; then',
     '  EXTRA+=(-adminpassword "$PLAYON_ADMIN_PASSWORD")',

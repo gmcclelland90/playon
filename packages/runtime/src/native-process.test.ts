@@ -48,4 +48,30 @@ describe("NativeProcessSupervisor", () => {
       }),
     ).rejects.toBeInstanceOf(PathJailError);
   });
+
+  it("reclaim stops a prior tracked process with the same name before restart", async () => {
+    if (process.platform === "win32") return;
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-reclaim-"));
+    temps.push(jail);
+
+    const supervisor = new NativeProcessSupervisor(jail);
+    const first = await supervisor.start({
+      name: "server-x",
+      command: "sleep",
+      args: ["30"],
+      cwd: ".",
+    });
+    expect(first.status).toBe("running");
+    const second = await supervisor.start({
+      name: "server-x",
+      command: "sleep",
+      args: ["30"],
+      cwd: ".",
+    });
+    expect(second.status).toBe("running");
+    expect(second.id).not.toBe(first.id);
+    const firstStatus = await supervisor.status(first.id);
+    expect(firstStatus.status).toBe("stopped");
+    await supervisor.stop(second.id);
+  });
 });

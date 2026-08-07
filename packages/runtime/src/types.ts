@@ -63,4 +63,9 @@ export interface ProcessSupervisor {
   start(spec: ProcessSpec): Promise<ProcessInfo>;
   stop(id: string): Promise<void>;
   status(id: string): Promise<ProcessInfo>;
+  /**
+   * Stop tracked processes with this name and best-effort kill OS orphans whose
+   * cwd is under `cwd` (covers node-agent restarts that lose the in-memory map).
+   */
+  reclaim?(name: string, cwd: string): Promise<void>;
 }
