@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Orchestrator } from "./orchestrator.js";
+import { ChatAbortedError, Orchestrator } from "./orchestrator.js";
 
 describe("Orchestrator tool exposure", () => {
   it("exposes all registered tools to the LLM", () => {
@@ -21,5 +21,20 @@ describe("Orchestrator tool exposure", () => {
       "panel_publish",
       "servers_stop",
     ]);
+  });
+
+  it("stops when abortSignal is already aborted", async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const orch = new Orchestrator(
+      {
+        mode: "openai_compatible",
+        async complete() {
+          throw new Error("llm_should_not_be_called");
+        },
+      },
+      { abortSignal: ac.signal },
+    );
+    await expect(orch.handle("hello")).rejects.toBeInstanceOf(ChatAbortedError);
   });
 });

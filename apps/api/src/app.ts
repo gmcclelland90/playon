@@ -8,7 +8,7 @@ import { and, asc, count, desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import type { ConfirmGate, LlmMessage } from "@playon/agent-core";
-import { surfaceSkill } from "@playon/agent-core";
+import { ChatAbortedError, surfaceSkill } from "@playon/agent-core";
 import {
   BootstrapOwnerSchema,
   LLM_PRESET_IDS,
@@ -2279,6 +2279,13 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       });
     };
 
+    const abortSignal = c.req.raw.signal;
+    let streamedReply = "";
+    const onClientAbort = () => {
+      confirmService.cancelAll();
+    };
+    abortSignal.addEventListener("abort", onClientAbort, { once: true });
+
     try {
       const llm = await createLlmClient(db, config);
 
@@ -2300,9 +2307,11 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       const orchestrator = createOrchestrator(plane, llm, {
         confirmGate,
         workspaceServerId,
+        abortSignal,
         stream: {
           conversationId,
           onToken: (token) => {
+            streamedReply += token;
             eventHub.publish({ type: "chat.token", conversationId, token });
           },
           onTool: ({ toolName, status, detail }) => {
@@ -2427,11 +2436,35 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         })),
       });
     } catch (err) {
+      const aborted =
+        err instanceof ChatAbortedError ||
+        abortSignal.aborted ||
+        (err instanceof Error && err.name === "AbortError");
+      if (aborted) {
+        confirmService.cancelAll();
+        const safeReply = redactString(streamedReply.trim() || "Stopped.");
+        await db.insert(messages).values({
+          id: nanoid(),
+          conversationId,
+          role: "assistant",
+          content: safeReply,
+          createdAt: new Date(),
+        });
+        return c.json({
+          conversationId,
+          serverId: workspaceServerId,
+          reply: safeReply,
+          llmMode: config.llmMode,
+          toolTrace: [],
+          aborted: true,
+        });
+      }
       const messageText = err instanceof Error ? err.message : "chat_failed";
       console.error("chat failed:", messageText);
       const status = messageText.includes("llm_api_key_required") ? 400 : 502;
       return c.json({ error: messageText }, status);
     } finally {
+      abortSignal.removeEventListener("abort", onClientAbort);
       publishActivity("idle");
     }
   });

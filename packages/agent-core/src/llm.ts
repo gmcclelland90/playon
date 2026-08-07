@@ -19,9 +19,17 @@ export interface LlmCompletion {
   toolCalls?: LlmToolCall[];
 }
 
+export type LlmCompleteOptions = {
+  signal?: AbortSignal;
+};
+
 export interface LlmClient {
   readonly mode: "openai_compatible" | "ollama";
-  complete(messages: LlmMessage[], tools?: ToolDefinition[]): Promise<LlmCompletion>;
+  complete(
+    messages: LlmMessage[],
+    tools?: ToolDefinition[],
+    opts?: LlmCompleteOptions,
+  ): Promise<LlmCompletion>;
 }
 
 interface OpenAiChatResponse {
@@ -145,7 +153,11 @@ export class OpenAICompatibleLlmClient implements LlmClient {
     this.mode = mode;
   }
 
-  async complete(messages: LlmMessage[], tools?: ToolDefinition[]): Promise<LlmCompletion> {
+  async complete(
+    messages: LlmMessage[],
+    tools?: ToolDefinition[],
+    opts?: LlmCompleteOptions,
+  ): Promise<LlmCompletion> {
     const url = `${this.baseUrl.replace(/\/$/, "")}/chat/completions`;
     const body: Record<string, unknown> = {
       model: this.model,
@@ -203,6 +215,7 @@ export class OpenAICompatibleLlmClient implements LlmClient {
       method: "POST",
       headers,
       body: JSON.stringify(body),
+      signal: opts?.signal,
     });
 
     if (!res.ok) {

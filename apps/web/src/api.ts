@@ -192,7 +192,10 @@ export const api = {
     }),
   me: () => request<{ user: PublicUser }>("/api/auth/me"),
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
-  chat: (message: string, opts: { conversationId?: string; serverId?: string } = {}) =>
+  chat: (
+    message: string,
+    opts: { conversationId?: string; serverId?: string; signal?: AbortSignal } = {},
+  ) =>
     request<{
       conversationId: string;
       serverId?: string;
@@ -216,6 +219,7 @@ export const api = {
       }>;
     }>("/api/chat", {
       method: "POST",
+      signal: opts.signal,
       body: JSON.stringify({
         message,
         conversationId: opts.conversationId,

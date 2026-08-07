@@ -56,6 +56,18 @@ export class ConfirmService implements ConfirmGate {
     return true;
   }
 
+  /** Deny every waiting confirm (used when the host stops a chat turn). */
+  cancelAll(): number {
+    let n = 0;
+    for (const [requestId, entry] of this.pending) {
+      this.pending.delete(requestId);
+      clearTimeout(entry.timer);
+      entry.resolve(false);
+      n += 1;
+    }
+    return n;
+  }
+
   get size(): number {
     return this.pending.size;
   }

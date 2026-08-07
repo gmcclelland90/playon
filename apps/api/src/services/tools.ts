@@ -1647,6 +1647,7 @@ export function createOrchestrator(
     confirmGate?: ConfirmGate;
     stream?: ChatStreamSink;
     workspaceServerId?: string;
+    abortSignal?: AbortSignal;
   } = {},
 ): Orchestrator {
   const registry = createPlayOnToolRegistry(plane, {
@@ -1657,6 +1658,7 @@ export function createOrchestrator(
     confirmGate: options.confirmGate,
     stream: options.stream,
     workspaceServerId: options.workspaceServerId,
+    abortSignal: options.abortSignal,
   });
   registry.registerInto(orch);
   return orch;

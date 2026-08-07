@@ -47,6 +47,20 @@ export interface OrchestratorOptions {
   stream?: ChatStreamSink;
   /** When set, agents operate inside this server workspace. */
   workspaceServerId?: string;
+  /** When aborted, stop between LLM/tool steps (in-flight tool may finish). */
+  abortSignal?: AbortSignal;
+}
+
+/** Thrown when the host stops an in-flight chat turn. */
+export class ChatAbortedError extends Error {
+  constructor(message = "chat_aborted") {
+    super(message);
+    this.name = "ChatAbortedError";
+  }
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new ChatAbortedError();
 }
 
 function emitContentTokens(stream: ChatStreamSink | undefined, content: string): void {
@@ -182,10 +196,24 @@ export class Orchestrator {
     const toolDefs = this.getToolDefinitions().map(toLlmToolDefinition);
 
     const stream = this.options.stream;
+    const abortSignal = this.options.abortSignal;
     let selfHealNudged = false;
 
     for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
-      const completion = await this.llm.complete(messages, toolDefs.length ? toolDefs : undefined);
+      throwIfAborted(abortSignal);
+      let completion;
+      try {
+        completion = await this.llm.complete(
+          messages,
+          toolDefs.length ? toolDefs : undefined,
+          { signal: abortSignal },
+        );
+      } catch (err) {
+        if (abortSignal?.aborted || (err instanceof Error && err.name === "AbortError")) {
+          throw new ChatAbortedError();
+        }
+        throw err;
+      }
 
       if (!completion.toolCalls?.length) {
         emitContentTokens(stream, completion.content);
@@ -203,6 +231,7 @@ export class Orchestrator {
       let roundHadFailure = false;
 
       for (const call of completion.toolCalls) {
+        throwIfAborted(abortSignal);
         const entry = this.tools.get(call.name);
         stream?.onTool({
           toolName: call.name,

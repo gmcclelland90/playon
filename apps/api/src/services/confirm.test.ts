@@ -39,4 +39,19 @@ describe("ConfirmService", () => {
     });
     expect(result.approved).toBe(false);
   });
+
+  it("cancelAll denies waiting confirms", async () => {
+    const hub = new EventHub();
+    const confirms = new ConfirmService(hub, 5_000);
+    const wait = confirms.requestConfirmation({
+      toolName: "servers_stop",
+      summary: "stop?",
+      arguments: {},
+    });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(confirms.size).toBe(1);
+    expect(confirms.cancelAll()).toBe(1);
+    expect(confirms.size).toBe(0);
+    await expect(wait).resolves.toMatchObject({ approved: false });
+  });
 });

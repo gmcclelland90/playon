@@ -21,11 +21,19 @@ import {
   type AgentActivityView,
   type SelectedAnchor,
 } from "../components/agent-canvas/AgentCanvas";
+import { ChatMarkdown } from "../components/ChatMarkdown";
 import { MapAddNodePanel } from "../components/MapAddNodePanel";
 import { MapManageSuggestPanel } from "../components/MapManageSuggestPanel";
 import { ServerConsoleBubble } from "../components/ServerConsoleBubble";
 import { runtimeErrorHint, statusHint, statusLabel } from "../status";
 import { playonSocket } from "../ws";
+
+function isAbortError(err: unknown): boolean {
+  return (
+    (err instanceof DOMException && err.name === "AbortError") ||
+    (err instanceof Error && err.name === "AbortError")
+  );
+}
 
 type ChatLine = {
   role: "user" | "assistant";
@@ -151,6 +159,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [selectedAnchor, setSelectedAnchor] = useState<SelectedAnchor | null>(null);
   const chatLogRef = useRef<HTMLDivElement>(null);
+  const chatAbortRef = useRef<AbortController | null>(null);
 
   const servers = useQuery({ queryKey: ["servers"], queryFn: api.servers, refetchInterval: 4000 });
   const nodes = useQuery({ queryKey: ["nodes"], queryFn: api.nodes, refetchInterval: 8_000 });
@@ -409,10 +418,16 @@ export function CanvasPage({ user }: { user: PublicUser }) {
 
   const chat = useMutation({
     mutationFn: (text: string) => {
+      const ac = new AbortController();
+      chatAbortRef.current = ac;
       if (selectedId) {
-        return api.chat(text, { conversationId, serverId: selectedId });
+        return api.chat(text, {
+          conversationId,
+          serverId: selectedId,
+          signal: ac.signal,
+        });
       }
-      return api.chat(text, { conversationId });
+      return api.chat(text, { conversationId, signal: ac.signal });
     },
     onMutate: (text) => {
       setLiveConversationId(conversationId);
@@ -457,14 +472,28 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         localStorage.setItem("playon.lastServerId", data.serverId);
       }
     },
-    onError: () => {
+    onError: (err) => {
       setLiveConversationId(undefined);
+      if (isAbortError(err)) {
+        setLines((prev) => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last?.role === "assistant" && !last.content.trim()) {
+            next[next.length - 1] = { ...last, content: "Stopped." };
+          }
+          return next;
+        });
+        return;
+      }
       setLines((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
         if (last?.role === "assistant" && !last.content) next.pop();
         return next;
       });
+    },
+    onSettled: () => {
+      chatAbortRef.current = null;
     },
   });
 
@@ -487,6 +516,18 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     const text = message.trim();
     if (!text || !dockOpen || chat.isPending) return;
     chat.mutate(text);
+  }
+
+  function stopChat() {
+    chatAbortRef.current?.abort();
+    if (pendingConfirm) {
+      const requestId = pendingConfirm.requestId;
+      setPendingConfirm(null);
+      setConfirmError(null);
+      void api.confirm(requestId, false).catch(() => {
+        /* ignore — server abort also denies */
+      });
+    }
   }
 
   async function answerConfirm(decision: "approve" | "deny" | "always-tool" | "always-all") {
@@ -919,7 +960,11 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                     className={`msg ${line.role}${streaming ? " streaming" : ""}`}
                   >
                     <span className="meta">{line.role === "user" ? "You" : "Agent"}</span>
-                    {line.content}
+                    {line.role === "assistant" ? (
+                      <ChatMarkdown content={line.content} />
+                    ) : (
+                      line.content
+                    )}
                     {streaming ? <span className="stream-caret" aria-hidden /> : null}
                     {line.tools?.length ? (
                       <details className="tool-trace">
@@ -955,16 +1000,33 @@ export function CanvasPage({ user }: { user: PublicUser }) {
               />
             </label>
             <div className="btn-row">
-              <button
-                type="submit"
-                className="btn btn-primary"
-                disabled={chat.isPending || !message.trim()}
-              >
-                {chat.isPending ? "Working…" : "Send"}
-              </button>
-              <span className="muted canvas-busy-hint">Enter to send · Shift+Enter for line</span>
+              {chat.isPending ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-danger"
+                  onClick={stopChat}
+                  aria-label="Stop agent response"
+                >
+                  Stop
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  className="btn btn-primary"
+                  disabled={!message.trim()}
+                >
+                  Send
+                </button>
+              )}
+              <span className="muted canvas-busy-hint">
+                {chat.isPending
+                  ? "Working… Stop cancels this turn"
+                  : "Enter to send · Shift+Enter for line"}
+              </span>
             </div>
-            {chat.isError ? <p className="error">{(chat.error as Error).message}</p> : null}
+            {chat.isError && !isAbortError(chat.error) ? (
+              <p className="error">{(chat.error as Error).message}</p>
+            ) : null}
           </form>
         </aside>
       ) : null}
