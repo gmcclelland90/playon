@@ -74,4 +74,24 @@ describe("NativeProcessSupervisor", () => {
     expect(firstStatus.status).toBe("stopped");
     await supervisor.stop(second.id);
   });
+
+  it("redirects stdout to logFile when provided", async () => {
+    if (process.platform === "win32") return;
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-log-"));
+    temps.push(jail);
+    const logFile = path.join(jail, "logs", "console.log");
+    const supervisor = new NativeProcessSupervisor(jail);
+    const info = await supervisor.start({
+      name: "echo-log",
+      command: "sh",
+      args: ["-c", "echo hello-from-native; sleep 1"],
+      cwd: ".",
+      logFile: "logs/console.log",
+    });
+    expect(info.status).toBe("running");
+    await new Promise((r) => setTimeout(r, 400));
+    await supervisor.stop(info.id);
+    expect(fs.existsSync(logFile)).toBe(true);
+    expect(fs.readFileSync(logFile, "utf8")).toContain("hello-from-native");
+  });
 });

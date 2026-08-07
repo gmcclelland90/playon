@@ -20,6 +20,11 @@ export interface ProcessSpec {
   args?: string[];
   cwd: string;
   env?: Record<string, string>;
+  /**
+   * When set, stdout+stderr are appended here (keeps detached spawns workable).
+   * Used for live Terminal log follow across native skills.
+   */
+  logFile?: string;
 }
 
 export interface ProcessInfo {

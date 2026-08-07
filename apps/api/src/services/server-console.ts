@@ -1,5 +1,5 @@
 import type { AdminDialect } from "@playon/shared";
-import { rconBodyIndicatesFailure, rconExecWithSelfHeal } from "./rcon.js";
+import { rconBodyIndicatesFailure, rconExec, rconExecWithSelfHeal } from "./rcon.js";
 import type { ServerService } from "./servers.js";
 
 export const CONSOLE_COMMAND_MAX_LEN = 2048;
@@ -91,10 +91,32 @@ const drivers: Record<AdminDialect, ConsoleDriver> = {
     }
   },
 
-  source_rcon: unsupported(
-    "source_rcon",
-    "Source RCON console driver is not implemented yet.",
-  ),
+  source_rcon: async (servers, serverId, command) => {
+    const endpoint = await servers.getRconEndpoint(serverId);
+    if (!endpoint) {
+      return {
+        dialect: "source_rcon",
+        ok: false,
+        error: "rcon_not_configured",
+        hint: "Set RCON password in the server config (or restart so PlayOn can provision rcon.json), then retry.",
+      };
+    }
+    try {
+      // Source wire format matches MC RCON; do not apply Minecraft gamerule self-heal.
+      const result = await rconExec(endpoint, command);
+      return {
+        dialect: "source_rcon",
+        ok: true,
+        body: result.body,
+      };
+    } catch (err) {
+      return {
+        dialect: "source_rcon",
+        ok: false,
+        error: err instanceof Error ? err.message : "rcon_failed",
+      };
+    }
+  },
   rust_web_rcon: unsupported(
     "rust_web_rcon",
     "Rust web RCON console driver is not implemented yet.",

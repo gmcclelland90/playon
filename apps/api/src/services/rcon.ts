@@ -287,10 +287,18 @@ export function readRconConfig(serverDataPath: string): RconEndpoint | null {
         return { host: parsed.host, port: parsed.port, password: parsed.password };
       }
     } catch {
-      // fall through to server.properties
+      // fall through to discovery
     }
   }
 
+  return (
+    discoverMcRconFromProperties(serverDataPath) ??
+    discoverSourceRconFromTree(serverDataPath)
+  );
+}
+
+/** Minecraft Java `server.properties` RCON keys. */
+export function discoverMcRconFromProperties(serverDataPath: string): RconEndpoint | null {
   const propsPath = path.join(serverDataPath, "game", "server.properties");
   if (!fs.existsSync(propsPath)) return null;
   const text = fs.readFileSync(propsPath, "utf8");
@@ -301,6 +309,153 @@ export function readRconConfig(serverDataPath: string): RconEndpoint | null {
   const port = portRaw ? Number(portRaw) : 25575;
   if (!Number.isFinite(port)) return null;
   return { host: "127.0.0.1", port, password };
+}
+
+/** Parse Source-style RCON keys from ini/cfg text (PZ, TF2, etc.). */
+export function parseSourceRconText(
+  text: string,
+  defaults: { port: number } = { port: 27015 },
+): { port: number; password: string } | null {
+  const iniPass = text.match(/^\s*RCONPassword\s*=\s*(.*)$/im)?.[1]?.trim();
+  const iniPort = text.match(/^\s*RCONPort\s*=\s*(\d+)\s*$/im)?.[1]?.trim();
+  const cfgPass = text.match(/^\s*rcon_password\s+"?([^"\r\n]+)"?\s*$/im)?.[1]?.trim();
+  const cfgPort = text.match(/^\s*rcon_port\s+(\d+)\s*$/im)?.[1]?.trim();
+  const password = (iniPass || cfgPass || "").trim();
+  if (!password) return null;
+  const portRaw = iniPort || cfgPort;
+  const port = portRaw ? Number(portRaw) : defaults.port;
+  if (!Number.isFinite(port)) return null;
+  return { port, password };
+}
+
+/**
+ * Best-effort scan under server data for Source RCON credentials.
+ * Caps walk depth/file count so detail() stays cheap.
+ */
+export function discoverSourceRconFromTree(serverDataPath: string): RconEndpoint | null {
+  const roots = [serverDataPath, path.join(serverDataPath, "game")].filter((p) =>
+    fs.existsSync(p),
+  );
+  const files: string[] = [];
+  const visit = (dir: string, depth: number) => {
+    if (files.length >= 40 || depth > 4) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      if (files.length >= 40) return;
+      const abs = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        if (ent.name === "node_modules" || ent.name === ".git" || ent.name === "steamapps") {
+          continue;
+        }
+        visit(abs, depth + 1);
+      } else if (ent.isFile() && /\.(ini|cfg)$/i.test(ent.name)) {
+        files.push(abs);
+      }
+    }
+  };
+  for (const root of roots) visit(root, 0);
+
+  for (const file of files) {
+    try {
+      const parsed = parseSourceRconText(fs.readFileSync(file, "utf8"));
+      if (parsed) return { host: "127.0.0.1", ...parsed };
+    } catch {
+      // skip unreadable
+    }
+  }
+  return null;
+}
+
+/** Patch ini text that already mentions RCON keys; returns null when unchanged/unrelated. */
+export function patchSourceRconIniText(
+  text: string,
+  endpoint: RconEndpoint,
+): string | null {
+  if (!/RCONPassword\s*=/i.test(text) && !/RCONPort\s*=/i.test(text)) return null;
+  let next = text;
+  if (/^\s*RCONPassword\s*=/im.test(next)) {
+    next = next.replace(/^\s*RCONPassword\s*=.*$/im, `RCONPassword=${endpoint.password}`);
+  } else {
+    next += `\nRCONPassword=${endpoint.password}\n`;
+  }
+  if (/^\s*RCONPort\s*=/im.test(next)) {
+    next = next.replace(/^\s*RCONPort\s*=.*$/im, `RCONPort=${endpoint.port}`);
+  } else {
+    next += `RCONPort=${endpoint.port}\n`;
+  }
+  return next === text ? null : next;
+}
+
+/** Patch Source server.cfg-style text; returns null when unchanged. */
+export function patchSourceRconCfgText(
+  text: string,
+  endpoint: RconEndpoint,
+): string | null {
+  let next = text;
+  if (/^\s*rcon_password\s+/im.test(next)) {
+    next = next.replace(/^\s*rcon_password\s+.+$/im, `rcon_password "${endpoint.password}"`);
+  } else if (/rcon_password/i.test(next) || /rcon_port/i.test(next)) {
+    next += `\nrcon_password "${endpoint.password}"\n`;
+  } else {
+    return null;
+  }
+  return next === text ? null : next;
+}
+
+/** Best-effort write-back of RCON password/port into a discovered ini/cfg. */
+export function patchSourceRconConfigFiles(
+  serverDataPath: string,
+  endpoint: RconEndpoint,
+): boolean {
+  const roots = [serverDataPath, path.join(serverDataPath, "game")].filter((p) =>
+    fs.existsSync(p),
+  );
+  let patched = false;
+  const visit = (dir: string, depth: number) => {
+    if (depth > 4) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const ent of entries) {
+      const abs = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        if (ent.name === "node_modules" || ent.name === ".git" || ent.name === "steamapps") {
+          continue;
+        }
+        visit(abs, depth + 1);
+      } else if (ent.isFile() && /\.ini$/i.test(ent.name)) {
+        try {
+          const text = fs.readFileSync(abs, "utf8");
+          const next = patchSourceRconIniText(text, endpoint);
+          if (next == null) continue;
+          fs.writeFileSync(abs, next, "utf8");
+          patched = true;
+        } catch {
+          // skip
+        }
+      } else if (ent.isFile() && /(^|\/)server\.cfg$/i.test(ent.name.replace(/\\/g, "/"))) {
+        try {
+          const text = fs.readFileSync(abs, "utf8");
+          const next = patchSourceRconCfgText(text, endpoint);
+          if (next == null) continue;
+          fs.writeFileSync(abs, next, "utf8");
+          patched = true;
+        } catch {
+          // skip
+        }
+      }
+    }
+  };
+  for (const root of roots) visit(root, 0);
+  return patched;
 }
 
 /** Poll until RCON accepts auth+command or timeout. */

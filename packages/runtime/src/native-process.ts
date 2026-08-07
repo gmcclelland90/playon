@@ -1,5 +1,6 @@
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 import { resolveInJail } from "./path-jail.js";
 import type { ProcessInfo, ProcessSpec, ProcessSupervisor } from "./types.js";
 
@@ -7,6 +8,7 @@ interface TrackedProcess {
   info: ProcessInfo;
   child: ChildProcess;
   cwdJail: string;
+  logFd?: number;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -28,13 +30,26 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     // Never stack duplicates: stop prior tracked + OS orphans for this server cwd.
     await this.reclaim(spec.name, cwd);
 
+    let logFd: number | undefined;
+    let stdio: "ignore" | Array<"ignore" | number> = "ignore";
+    if (spec.logFile) {
+      const logPath = path.isAbsolute(spec.logFile)
+        ? spec.logFile
+        : this.jailRoot
+          ? resolveInJail(this.jailRoot, spec.logFile)
+          : path.resolve(cwd, spec.logFile);
+      fs.mkdirSync(path.dirname(logPath), { recursive: true });
+      logFd = fs.openSync(logPath, "a");
+      stdio = ["ignore", logFd, logFd];
+    }
+
     const id = `native-${spec.name}-${++this.seq}`;
     const child = spawn(spec.command, spec.args ?? [], {
       cwd,
       env: { ...process.env, ...(spec.env ?? {}) },
       shell: false,
       windowsHide: true,
-      stdio: "ignore",
+      stdio,
       // Detach long-running game servers so start() cannot stall on child I/O/session.
       detached: process.platform !== "win32",
     });
@@ -54,10 +69,11 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
       if (tracked) {
         tracked.info.status = "stopped";
         tracked.info.pid = undefined;
+        this.closeLogFd(tracked);
       }
     });
 
-    this.procs.set(id, { info, child, cwdJail: cwd });
+    this.procs.set(id, { info, child, cwdJail: cwd, logFd });
     return { ...info };
   }
 
@@ -68,6 +84,7 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     this.signalTracked(tracked);
     tracked.info.status = "stopped";
     tracked.info.pid = undefined;
+    this.closeLogFd(tracked);
     // Children may re-parent outside the process group after detach.
     if (process.platform !== "win32") {
       await this.killOrphansByCwd(cwd);
@@ -85,10 +102,21 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
       this.signalTracked(tracked);
       tracked.info.status = "stopped";
       tracked.info.pid = undefined;
+      this.closeLogFd(tracked);
     }
     if (process.platform !== "win32") {
       await this.killOrphansByCwd(cwd);
     }
+  }
+
+  private closeLogFd(tracked: TrackedProcess): void {
+    if (tracked.logFd == null) return;
+    try {
+      fs.closeSync(tracked.logFd);
+    } catch {
+      // already closed
+    }
+    tracked.logFd = undefined;
   }
 
   private signalTracked(tracked: TrackedProcess): void {

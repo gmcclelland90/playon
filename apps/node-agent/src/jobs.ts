@@ -23,6 +23,11 @@ import {
 import { assertPackPathAllowed, runImportProbe } from "./import-probe.js";
 import { runManageCutover } from "./manage-cutover.js";
 import { probeCapabilities } from "./capabilities.js";
+import {
+  beginContainerLogFollow,
+  beginFileLogFollow,
+  stopLogFollow,
+} from "./log-follow.js";
 import { performNodeSelfUpdate } from "./self-update.js";
 
 function managePackStagingDir(dataRoot: string): string {
@@ -353,12 +358,25 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
 
   if (job.kind === "container_start") {
     if (!docker) throw new Error("docker_unavailable");
-    await docker.start(strArg(job.args, "id"));
+    const id = strArg(job.args, "id");
+    await docker.start(id);
+    const serverId = typeof job.args.serverId === "string" ? job.args.serverId : "";
+    if (serverId) {
+      await beginContainerLogFollow(serverId, docker, id).catch((err) => {
+        console.warn(
+          `[node-agent] container log follow failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      });
+    }
     return { ok: true };
   }
 
   if (job.kind === "container_stop") {
     if (!docker) throw new Error("docker_unavailable");
+    const serverId = typeof job.args.serverId === "string" ? job.args.serverId : "";
+    if (serverId) stopLogFollow(serverId);
     await docker.stop(strArg(job.args, "id"));
     return { ok: true };
   }
@@ -398,13 +416,22 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
     const cwdRel = typeof job.args.cwd === "string" ? job.args.cwd : ".";
     const cwd = resolveInJail(dataRoot, cwdRel);
     const env = (job.args.env as Record<string, string> | undefined) ?? {};
-    return proc.start({ name, command, args, cwd, env });
+    const serverId = typeof job.args.serverId === "string" ? job.args.serverId : "";
+    const logRel = typeof job.args.logRel === "string" ? job.args.logRel : "";
+    const logFile = logRel ? resolveInJail(dataRoot, logRel) : undefined;
+    const info = await proc.start({ name, command, args, cwd, env, logFile });
+    if (serverId && logFile) {
+      beginFileLogFollow(serverId, logFile);
+    }
+    return info;
   }
 
   if (job.kind === "process_stop") {
     const id = typeof job.args.id === "string" ? job.args.id : "";
     const cwdRel = typeof job.args.cwd === "string" ? job.args.cwd : "";
     const name = typeof job.args.name === "string" ? job.args.name : "";
+    const serverId = typeof job.args.serverId === "string" ? job.args.serverId : "";
+    if (serverId) stopLogFollow(serverId);
     if (id) {
       await proc.stop(id).catch(() => undefined);
     }

@@ -5,6 +5,8 @@ import { eq, inArray } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   createRuntime,
+  followLogFile,
+  readLogFileTail,
   type DockerAdapter,
   type LogFollowHandle,
   type ProcessSupervisor,
@@ -26,6 +28,10 @@ import { PlacementService } from "./placement.js";
 import { pushServerDirToNode } from "./node-sync.js";
 import {
   generateRconPassword,
+  parseSourceRconText,
+  patchSourceRconCfgText,
+  patchSourceRconConfigFiles,
+  patchSourceRconIniText,
   readRconConfig,
   writeRconConfig,
   type RconEndpoint,
@@ -125,6 +131,14 @@ export class ServerService {
     this.logFollows.delete(serverId);
   }
 
+  private consoleLogAbs(serverDataPath: string): string {
+    return path.join(serverDataPath, "logs", "console.log");
+  }
+
+  private consoleLogRel(serverId: string): string {
+    return nodeServerRelPath(serverId, "logs", "console.log");
+  }
+
   private async beginLogFollow(serverId: string, containerId: string): Promise<void> {
     this.stopLogFollow(serverId);
     await this.ensureRuntime();
@@ -138,6 +152,286 @@ export class ServerService {
     } catch {
       // follow is best-effort; REST detail still has snapshots
     }
+  }
+
+  private beginFileLogFollow(serverId: string, logPath: string): void {
+    this.stopLogFollow(serverId);
+    try {
+      fs.mkdirSync(path.dirname(logPath), { recursive: true });
+      const handle = followLogFile(logPath, (line) => {
+        this.events?.publish({ type: "server.log", serverId, line });
+      });
+      this.logFollows.set(serverId, handle);
+    } catch {
+      // best-effort
+    }
+  }
+
+  private async readNativeLogTail(server: ServerRecord, lines: number): Promise<string[]> {
+    if (!this.isRemoteNode(server)) {
+      return readLogFileTail(this.consoleLogAbs(server.dataPath), lines);
+    }
+    try {
+      const result = await dispatchNodeJob<{ content?: string; text?: string }>({
+        nodeId: server.nodeId,
+        kind: "fs_read_text",
+        args: { path: this.consoleLogRel(server.id), maxBytes: 128_000 },
+        timeoutMs: 15_000,
+        localHandler: async () => ({
+          content: fs.existsSync(this.consoleLogAbs(server.dataPath))
+            ? fs.readFileSync(this.consoleLogAbs(server.dataPath), "utf8")
+            : "",
+        }),
+      });
+      const text = String(result.content ?? result.text ?? "");
+      return text
+        .split(/\r?\n/)
+        .filter((l) => l.length > 0)
+        .slice(-lines);
+    } catch {
+      return [];
+    }
+  }
+
+  private isNodeAuthoritative(server: ServerRecord): boolean {
+    return (
+      this.isRemoteNode(server) &&
+      fs.existsSync(path.join(server.dataPath, NODE_AUTHORITATIVE_MARKER))
+    );
+  }
+
+  private async syncRconJsonToNode(server: ServerRecord, endpoint: RconEndpoint): Promise<void> {
+    if (!server.nodeId || isLocalNodeId(server.nodeId)) return;
+    const body = JSON.stringify(
+      { host: "127.0.0.1", port: endpoint.port, password: endpoint.password },
+      null,
+      2,
+    );
+    await dispatchNodeJob({
+      nodeId: server.nodeId,
+      kind: "fs_write_text",
+      args: { path: nodeServerRelPath(server.id, "rcon.json"), content: body },
+      timeoutMs: 15_000,
+      localHandler: async () => {
+        writeRconConfig(server.dataPath, endpoint);
+        return { ok: true as const };
+      },
+    });
+  }
+
+  private nodeJailRel(serverId: string, relPath: string): string {
+    const parts = relPath
+      .replace(/\\/g, "/")
+      .replace(/^\.\//, "")
+      .split("/")
+      .filter((p) => p && p !== ".");
+    return parts.length ? nodeServerRelPath(serverId, ...parts) : nodeServerRelPath(serverId);
+  }
+
+  private async readNodeText(server: ServerRecord, relPath: string): Promise<string | null> {
+    if (!server.nodeId || isLocalNodeId(server.nodeId)) return null;
+    try {
+      const result = await dispatchNodeJob<{ content?: string; text?: string }>({
+        nodeId: server.nodeId,
+        kind: "fs_read_text",
+        args: {
+          path: this.nodeJailRel(server.id, relPath),
+          maxBytes: 256_000,
+        },
+        timeoutMs: 30_000,
+        localHandler: async () => {
+          throw new Error("remote_only");
+        },
+      });
+      return String(result.content ?? result.text ?? "");
+    } catch {
+      return null;
+    }
+  }
+
+  private async writeNodeText(
+    server: ServerRecord,
+    relPath: string,
+    content: string,
+  ): Promise<boolean> {
+    if (!server.nodeId || isLocalNodeId(server.nodeId)) return false;
+    try {
+      await dispatchNodeJob({
+        nodeId: server.nodeId,
+        kind: "fs_write_text",
+        args: {
+          path: this.nodeJailRel(server.id, relPath),
+          content,
+        },
+        timeoutMs: 30_000,
+        localHandler: async () => {
+          throw new Error("remote_only");
+        },
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async listNodeDir(
+    server: ServerRecord,
+    relPath: string,
+  ): Promise<Array<{ name: string; type: "file" | "dir" }>> {
+    if (!server.nodeId || isLocalNodeId(server.nodeId)) return [];
+    try {
+      const result = await dispatchNodeJob<{
+        entries?: Array<{ name: string; type: "file" | "dir" }>;
+      }>({
+        nodeId: server.nodeId,
+        kind: "fs_list",
+        args: {
+          path: this.nodeJailRel(server.id, relPath),
+        },
+        timeoutMs: 30_000,
+        localHandler: async () => {
+          throw new Error("remote_only");
+        },
+      });
+      return result.entries ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  /** Walk node jail for *.ini / *.cfg candidates (bounded). */
+  private async collectNodeConfigCandidates(server: ServerRecord): Promise<string[]> {
+    const files: string[] = [];
+    const skip = new Set(["node_modules", ".git", "steamapps", "logs", "Workshop"]);
+    const visit = async (rel: string, depth: number): Promise<void> => {
+      if (files.length >= 40 || depth > 4) return;
+      const entries = await this.listNodeDir(server, rel);
+      for (const ent of entries) {
+        if (files.length >= 40) return;
+        const child = rel === "." ? ent.name : `${rel}/${ent.name}`;
+        if (ent.type === "dir") {
+          if (skip.has(ent.name)) continue;
+          await visit(child, depth + 1);
+        } else if (/\.(ini|cfg)$/i.test(ent.name)) {
+          files.push(child);
+        }
+      }
+    };
+    await visit(".", 0);
+    return files;
+  }
+
+  private async discoverSourceRconOnNode(server: ServerRecord): Promise<RconEndpoint | null> {
+    for (const rel of await this.collectNodeConfigCandidates(server)) {
+      const text = await this.readNodeText(server, rel);
+      if (!text) continue;
+      const parsed = parseSourceRconText(text);
+      if (parsed) return { host: "127.0.0.1", ...parsed };
+    }
+    return null;
+  }
+
+  private async discoverMcRconOnNode(server: ServerRecord): Promise<RconEndpoint | null> {
+    const text = await this.readNodeText(server, "game/server.properties");
+    if (!text) return null;
+    const password = text.match(/^rcon\.password=(.*)$/m)?.[1]?.trim();
+    const portRaw = text.match(/^rcon\.port=(.*)$/m)?.[1]?.trim();
+    const enabled = text.match(/^enable-rcon=(.*)$/m)?.[1]?.trim();
+    if (!password || enabled === "false") return null;
+    const port = portRaw ? Number(portRaw) : 25575;
+    if (!Number.isFinite(port)) return null;
+    return { host: "127.0.0.1", port, password };
+  }
+
+  private async patchSourceRconOnNode(
+    server: ServerRecord,
+    endpoint: RconEndpoint,
+  ): Promise<boolean> {
+    let patched = false;
+    for (const rel of await this.collectNodeConfigCandidates(server)) {
+      const text = await this.readNodeText(server, rel);
+      if (!text) continue;
+      const next = /\.ini$/i.test(rel)
+        ? patchSourceRconIniText(text, endpoint)
+        : /server\.cfg$/i.test(rel)
+          ? patchSourceRconCfgText(text, endpoint)
+          : null;
+      if (next == null) continue;
+      if (await this.writeNodeText(server, rel, next)) patched = true;
+    }
+    return patched;
+  }
+
+  /**
+   * Resolve RCON credentials for local or node-authoritative servers.
+   * Prefer existing rcon.json / game configs; only generate when missing.
+   */
+  private async resolveRconConfig(
+    server: ServerRecord,
+    skillName: string,
+  ): Promise<RconEndpoint | null> {
+    if (!this.wantsAnyRcon(skillName)) {
+      return readRconConfig(server.dataPath);
+    }
+
+    const local = readRconConfig(server.dataPath);
+    if (local) {
+      if (this.isRemoteNode(server)) {
+        await this.syncRconJsonToNode(server, local).catch(() => undefined);
+      }
+      return local;
+    }
+
+    if (this.isNodeAuthoritative(server)) {
+      const nodeJson = await this.readNodeText(server, "rcon.json");
+      if (nodeJson) {
+        try {
+          const parsed = JSON.parse(nodeJson) as Partial<RconEndpoint>;
+          if (
+            typeof parsed.port === "number" &&
+            typeof parsed.password === "string" &&
+            parsed.password
+          ) {
+            const endpoint: RconEndpoint = {
+              host: "127.0.0.1",
+              port: parsed.port,
+              password: parsed.password,
+            };
+            writeRconConfig(server.dataPath, endpoint);
+            return endpoint;
+          }
+        } catch {
+          // fall through
+        }
+      }
+      const discovered = this.wantsSourceRcon(skillName)
+        ? await this.discoverSourceRconOnNode(server)
+        : this.wantsMcRcon(skillName)
+          ? await this.discoverMcRconOnNode(server)
+          : null;
+      if (discovered) {
+        writeRconConfig(server.dataPath, discovered);
+        await this.syncRconJsonToNode(server, discovered).catch(() => undefined);
+        return discovered;
+      }
+    }
+
+    const endpoint: RconEndpoint = {
+      host: "127.0.0.1",
+      port: this.rconPortForSkill(skillName),
+      password: generateRconPassword(),
+    };
+    writeRconConfig(server.dataPath, endpoint);
+    if (this.wantsSourceRcon(skillName)) {
+      patchSourceRconConfigFiles(server.dataPath, endpoint);
+      if (this.isNodeAuthoritative(server)) {
+        await this.patchSourceRconOnNode(server, endpoint).catch(() => undefined);
+      }
+    }
+    if (this.isRemoteNode(server)) {
+      await this.syncRconJsonToNode(server, endpoint).catch(() => undefined);
+    }
+    return endpoint;
   }
 
   private async ensureRuntime(): Promise<void> {
@@ -207,24 +501,38 @@ export class ServerService {
     if (fromMeta > 0) return fromMeta;
     const native = nativeRconPort(this.resolveSkill(skillName)?.metadata);
     if (native != null) return native;
-    return 25575;
+    const dialect = this.resolveSkill(skillName)?.metadata.adminDialect;
+    return dialect === "source_rcon" ? 27015 : 25575;
   }
 
   private wantsMcRcon(skillName: string): boolean {
     return this.resolveSkill(skillName)?.metadata.adminDialect === "mc_rcon";
   }
 
-  /** Ensure a local RCON endpoint config exists when the skill uses Minecraft RCON. */
+  private wantsSourceRcon(skillName: string): boolean {
+    return this.resolveSkill(skillName)?.metadata.adminDialect === "source_rcon";
+  }
+
+  private wantsAnyRcon(skillName: string): boolean {
+    return this.wantsMcRcon(skillName) || this.wantsSourceRcon(skillName);
+  }
+
+  /** Ensure rcon.json exists for mc_rcon / source_rcon skills (local FS only). */
   ensureRconConfig(server: ServerRecord, skillName: string): RconEndpoint | null {
-    if (!this.wantsMcRcon(skillName)) return readRconConfig(server.dataPath);
+    if (!this.wantsAnyRcon(skillName)) return readRconConfig(server.dataPath);
     const existing = readRconConfig(server.dataPath);
     if (existing) return existing;
+    // Node-authoritative trees are resolved asynchronously via resolveRconConfig.
+    if (this.isNodeAuthoritative(server)) return null;
     const endpoint: RconEndpoint = {
       host: "127.0.0.1",
       port: this.rconPortForSkill(skillName),
       password: generateRconPassword(),
     };
     writeRconConfig(server.dataPath, endpoint);
+    if (this.wantsSourceRcon(skillName)) {
+      patchSourceRconConfigFiles(server.dataPath, endpoint);
+    }
     return endpoint;
   }
 
@@ -232,7 +540,15 @@ export class ServerService {
     const server = await this.get(serverId);
     if (!server) return null;
     const skillName = this.readSkillName(server.dataPath);
-    return this.ensureRconConfig(server, skillName) ?? readRconConfig(server.dataPath);
+    const local =
+      (await this.resolveRconConfig(server, skillName)) ?? readRconConfig(server.dataPath);
+    if (!local) return null;
+    // Remote nodes: talk to the node's LAN/overlay address, not Home loopback.
+    if (this.isRemoteNode(server)) {
+      const host = await this.resolveJoinAddress(server);
+      return { ...local, host };
+    }
+    return { ...local, host: "127.0.0.1" };
   }
 
   /** Resolve skill adminDialect for a server (defaults to none). */
@@ -263,14 +579,14 @@ export class ServerService {
     if (dialect === "none") {
       return { input: "unavailable", dialect };
     }
-    if (dialect === "source_rcon" || dialect === "rust_web_rcon" || dialect === "http_rest") {
+    if (dialect === "rust_web_rcon" || dialect === "http_rest") {
       return { input: "unsupported", dialect };
     }
     if (server.status !== "running" && server.status !== "starting") {
       return { input: "unavailable", dialect };
     }
 
-    if (dialect === "mc_rcon") {
+    if (dialect === "mc_rcon" || dialect === "source_rcon") {
       const endpoint = await this.getRconEndpoint(serverId);
       return { input: endpoint ? "ready" : "unavailable", dialect };
     }
@@ -589,12 +905,13 @@ export class ServerService {
     const consoleCap = await this.consoleCapability(id);
 
     if (server.runtimeMode === "native") {
+      const logs = await this.readNativeLogTail(server, 40);
       return {
         server,
         runtime: {
           kind: "native",
           join,
-          logs: [],
+          logs,
           console: consoleCap ?? undefined,
         },
       };
@@ -628,7 +945,7 @@ export class ServerService {
     };
   }
 
-  /** Tail runtime logs for a server (Docker adapter; native returns empty for now). */
+  /** Tail runtime logs for a server (Docker adapter or native console.log). */
   async tailLogs(
     id: string,
     lines = 80,
@@ -637,7 +954,11 @@ export class ServerService {
     if (!server) return null;
     const capped = Math.min(200, Math.max(1, Math.floor(lines)));
     if (server.runtimeMode === "native") {
-      return { status: server.status, runtime: "native", lines: [] };
+      return {
+        status: server.status,
+        runtime: "native",
+        lines: await this.readNativeLogTail(server, capped),
+      };
     }
     await this.ensureRuntime();
     const adapter = this.adapterFor(id);
@@ -829,6 +1150,8 @@ export class ServerService {
         localHandler: async () => ({ ok: true }),
       }).catch(() => undefined);
       this.processes.delete(id);
+      // Ensure RCON credentials (discover/patch on node when authoritative).
+      await this.resolveRconConfig(server, skillName).catch(() => undefined);
       const info = await dispatchNodeJob<{ id: string }>({
         nodeId,
         kind: "process_start",
@@ -838,6 +1161,8 @@ export class ServerService {
           args,
           cwd,
           env: { PLAYON_SERVER_ID: id, ...(native?.env ?? {}) },
+          serverId: id,
+          logRel: this.consoleLogRel(id),
         },
         timeoutMs: 60_000,
         localHandler: async () => {
@@ -857,7 +1182,7 @@ export class ServerService {
       );
     }
     const gamePort = this.gamePortForSkill(skillName, server.game);
-    const rcon = this.ensureRconConfig(server, skillName);
+    const rcon = await this.resolveRconConfig(server, skillName);
     const rconPort = rcon?.port ?? this.rconPortForSkill(skillName, server.game);
     const env: Record<string, string> = { ...docker.env };
     if (this.wantsMcRcon(skillName)) {
@@ -914,7 +1239,7 @@ export class ServerService {
     await dispatchNodeJob({
       nodeId,
       kind: "container_start",
-      args: { id: containerId },
+      args: { id: containerId, serverId: id },
       localHandler: async () => {
         throw new Error("remote_only");
       },
@@ -962,14 +1287,18 @@ export class ServerService {
             `native_binaries_missing: skill "${skillName}" has no startable process in game/.${hint}`,
           );
         }
+        this.ensureRconConfig(server, skillName);
+        const logFile = this.consoleLogAbs(server.dataPath);
         const info = await processSupervisor.start({
           name: `server-${id}`,
           command: launch.command,
           args: launch.args,
           cwd: gameDir,
           env: { PLAYON_SERVER_ID: id, ...launch.env },
+          logFile,
         });
         this.processes.set(id, info.id);
+        this.beginFileLogFollow(id, logFile);
         await this.db.update(servers).set({ status: "running" }).where(eq(servers.id, id));
         this.emitStatus(id, "running");
         return (await this.getRaw(id))!;
@@ -1063,6 +1392,7 @@ export class ServerService {
           id: processId ?? "",
           name: `server-${id}`,
           cwd: nodeServerRelPath(id, "game"),
+          serverId: id,
         },
         localHandler: async () => ({ ok: true }),
       }).catch(() => undefined);
@@ -1070,7 +1400,7 @@ export class ServerService {
       await dispatchNodeJob({
         nodeId: server.nodeId,
         kind: "container_stop",
-        args: { id: this.containerName(id) },
+        args: { id: this.containerName(id), serverId: id },
         localHandler: async () => ({ ok: true }),
       }).catch(() => undefined);
     } else {

@@ -64,13 +64,17 @@ describe("execConsoleCommand", () => {
     expect(result.error).toBe("console_unavailable");
   });
 
-  it("returns unsupported for source_rcon", async () => {
-    const servers = mockServers({ dialect: "source_rcon", input: "unsupported" });
-    const result = await execConsoleCommand(servers, "s1", "status");
+  it("routes source_rcon to rcon endpoint when ready", async () => {
+    const servers = mockServers({
+      dialect: "source_rcon",
+      input: "ready",
+      rcon: null,
+    });
+    const result = await execConsoleCommand(servers, "s1", "help");
     expect(result).toMatchObject({
       dialect: "source_rcon",
       ok: false,
-      error: "dialect_unsupported",
+      error: "rcon_not_configured",
     });
   });
 
