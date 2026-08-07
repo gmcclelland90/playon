@@ -201,7 +201,7 @@ a.brand-mark:hover {
 .server-console-bubble {
   position: absolute;
   z-index: 3;
-  width: min(22rem, calc(100vw - 2rem));
+  width: min(28rem, calc(100vw - 2rem));
   transform: translate(-50%, calc(-100% - 12px));
   pointer-events: none;
 }
@@ -240,15 +240,15 @@ a.brand-mark:hover {
 }
 
 .server-console-bubble-log {
-  height: 10.5rem;
+  height: 16rem;
   overflow: auto;
-  padding: 0.4rem 0.45rem;
+  padding: 0.45rem 0.5rem;
   border-radius: 6px;
   background: oklch(0.1 0.015 350);
   border: 1px solid oklch(0.28 0.02 350);
   font-family: "IBM Plex Mono", "Cascadia Code", "Consolas", monospace;
-  font-size: 0.72rem;
-  line-height: 1.35;
+  font-size: 0.78rem;
+  line-height: 1.4;
   color: oklch(0.86 0.02 120);
 }
 
