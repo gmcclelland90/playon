@@ -156,7 +156,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState(false);
   const [dockTab, setDockTab] = useState<DockTab>("chat");
-  const [consoleOpen, setConsoleOpen] = useState(false);
+  const [consoleOpen, setConsoleOpen] = useState(true);
   const [selectedAnchor, setSelectedAnchor] = useState<SelectedAnchor | null>(null);
   const chatLogRef = useRef<HTMLDivElement>(null);
   const chatAbortRef = useRef<AbortController | null>(null);
@@ -222,7 +222,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     }
     setInstallOpen(false);
     if (id !== selectedId) {
-      setConsoleOpen(false);
+      setConsoleOpen(true);
     }
     setSelectedId(id);
     setOpsError(null);
