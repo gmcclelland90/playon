@@ -23,7 +23,13 @@ export type AgentSkillView = {
   title: string;
 };
 
+/** Host-local CSS pixels for the top-center of the selected crate. */
+export type SelectedAnchor = { x: number; y: number };
+
 export type { MapNodeInput };
+
+/** Crate body is roundRect(-48, -40, 96, 80) — top edge is 40px above node center. */
+const CRATE_TOP_OFFSET = 40;
 
 type Props = {
   servers: ServerRow[];
@@ -46,6 +52,8 @@ type Props = {
   onRemoveNode?: (nodeId: string) => void;
   /** Open Scan / manage panel for an online host pad (incl. local). */
   onSelectHost?: (nodeId: string) => void;
+  /** Screen-space anchor for overlays above the selected crate. */
+  onSelectedAnchorChange?: (anchor: SelectedAnchor | null) => void;
   /** Hide floating add when the chat dock already covers that corner. */
   showAddButton?: boolean;
 };
@@ -234,6 +242,7 @@ export function AgentCanvas({
   onAddNode,
   onRemoveNode,
   onSelectHost,
+  onSelectedAnchorChange,
   showAddButton = true,
 }: Props) {
   void _skills;
@@ -248,12 +257,17 @@ export function AgentCanvas({
   const onAddServerRef = useRef(onAddServer);
   const onRemoveNodeRef = useRef(onRemoveNode);
   const onSelectHostRef = useRef(onSelectHost);
+  const onSelectedAnchorChangeRef = useRef(onSelectedAnchorChange);
+  const selectedIdRef = useRef(selectedId);
+  const lastAnchorRef = useRef<SelectedAnchor | null>(null);
   const [stageReady, setStageReady] = useState(false);
   onSelectRef.current = onSelect;
   onDescribeRef.current = onDescribe;
   onAddServerRef.current = onAddServer;
   onRemoveNodeRef.current = onRemoveNode;
   onSelectHostRef.current = onSelectHost;
+  onSelectedAnchorChangeRef.current = onSelectedAnchorChange;
+  selectedIdRef.current = selectedId;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -325,7 +339,45 @@ export function AgentCanvas({
       };
 
       const reduceMotion = prefersReducedMotion();
+      const publishAnchor = () => {
+        const cb = onSelectedAnchorChangeRef.current;
+        if (!cb) return;
+        const id = selectedIdRef.current;
+        const world = worldRef.current;
+        if (!id || !world) {
+          if (lastAnchorRef.current !== null) {
+            lastAnchorRef.current = null;
+            cb(null);
+          }
+          return;
+        }
+        const node = nodesRef.current.get(id);
+        if (!node) {
+          if (lastAnchorRef.current !== null) {
+            lastAnchorRef.current = null;
+            cb(null);
+          }
+          return;
+        }
+        const scale = world.scale.x;
+        const next: SelectedAnchor = {
+          x: world.x + node.x * scale,
+          y: world.y + (node.y - CRATE_TOP_OFFSET) * scale,
+        };
+        const prev = lastAnchorRef.current;
+        if (
+          prev &&
+          Math.abs(prev.x - next.x) < 0.5 &&
+          Math.abs(prev.y - next.y) < 0.5
+        ) {
+          return;
+        }
+        lastAnchorRef.current = next;
+        cb(next);
+      };
+
       const tickerFn = () => {
+        publishAnchor();
         const sprite = agentRef.current;
         if (!sprite) return;
         if (reduceMotion) {
@@ -365,6 +417,8 @@ export function AgentCanvas({
     return () => {
       destroyed = true;
       setStageReady(false);
+      lastAnchorRef.current = null;
+      onSelectedAnchorChangeRef.current?.(null);
       const app = appRef.current;
       if (app) {
         (app as Application & { __cleanup?: () => void }).__cleanup?.();

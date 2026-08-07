@@ -381,6 +381,16 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
     return { lines };
   }
 
+  if (job.kind === "container_stdin") {
+    if (!docker) throw new Error("docker_unavailable");
+    if (typeof docker.writeStdin !== "function") {
+      throw new Error("container_stdin_unsupported");
+    }
+    const line = strArg(job.args, "line");
+    await docker.writeStdin(strArg(job.args, "id"), line);
+    return { ok: true };
+  }
+
   if (job.kind === "process_start") {
     const name = strArg(job.args, "name");
     const command = strArg(job.args, "command");

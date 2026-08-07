@@ -38,6 +38,11 @@ export class DockerodeAdapter implements DockerAdapter {
       name: spec.name,
       Image: spec.image,
       Env: Object.entries(spec.env ?? {}).map(([k, v]) => `${k}=${v}`),
+      // Keep stdin open so adminDialect=stdin can attach and write console commands.
+      OpenStdin: true,
+      AttachStdin: true,
+      StdinOnce: false,
+      Tty: false,
       ExposedPorts: exposed,
       HostConfig: {
         PortBindings: portBindings as Docker.PortMap,
@@ -142,5 +147,28 @@ export class DockerodeAdapter implements DockerAdapter {
     stream.on("error", abort);
 
     return { abort };
+  }
+
+  async writeStdin(id: string, data: string): Promise<void> {
+    const container = this.docker.getContainer(id);
+    const payload = data.endsWith("\n") ? data : `${data}\n`;
+    const stream = (await container.attach({
+      stream: true,
+      hijack: true,
+      stdin: true,
+      stdout: false,
+      stderr: false,
+    })) as NodeJS.WritableStream;
+
+    await new Promise<void>((resolve, reject) => {
+      stream.write(payload, (err) => {
+        if (err) {
+          reject(err instanceof Error ? err : new Error(String(err)));
+          return;
+        }
+        // Close this attach session; OpenStdin+!StdinOnce keeps container stdin usable.
+        stream.end(() => resolve());
+      });
+    });
   }
 }

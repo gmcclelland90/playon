@@ -51,6 +51,21 @@ export type PlacementPlan = {
   }>;
 };
 
+export type ConsoleInputState = "ready" | "unsupported" | "unavailable";
+
+export type ServerConsoleCapability = {
+  input: ConsoleInputState;
+  dialect: string;
+};
+
+export type ServerConsoleResult = {
+  ok: boolean;
+  dialect: string;
+  body?: string;
+  error?: string;
+  hint?: string;
+};
+
 export type ServerDetail = {
   server: ServerRow;
   runtime: {
@@ -60,6 +75,7 @@ export type ServerDetail = {
     imageHint?: string;
     join?: { address: string; port: number };
     logs?: string[];
+    console?: ServerConsoleCapability;
   };
 };
 
@@ -626,6 +642,11 @@ export const api = {
   servers: () =>
     request<{ servers: ServerRow[]; advertiseHost?: string; runtimeMode?: string }>("/api/servers"),
   serverDetail: (id: string) => request<ServerDetail>(`/api/servers/${encodeURIComponent(id)}`),
+  serverConsole: (id: string, command: string) =>
+    request<ServerConsoleResult>(`/api/servers/${encodeURIComponent(id)}/console`, {
+      method: "POST",
+      body: JSON.stringify({ command }),
+    }),
   createServer: (body: { skillName: string; serverName?: string; nodeId?: string }) =>
     request<{ server: ServerRow }>("/api/servers", {
       method: "POST",

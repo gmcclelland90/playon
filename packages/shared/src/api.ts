@@ -73,6 +73,7 @@ export const NodeJobKindSchema = z.enum([
   "container_remove",
   "container_inspect",
   "container_logs",
+  "container_stdin",
   "process_start",
   "process_stop",
   "process_status",

@@ -47,6 +47,11 @@ export interface DockerAdapter {
     onLine: (line: string) => void,
     opts?: { tail?: number },
   ): Promise<LogFollowHandle>;
+  /**
+   * Write a line to the container's stdin (adminDialect=stdin).
+   * Requires the container to have been created with OpenStdin.
+   */
+  writeStdin?(id: string, data: string): Promise<void>;
 }
 
 /**

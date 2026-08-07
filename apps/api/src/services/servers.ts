@@ -36,7 +36,13 @@ import {
   writeSkillMarkerFromSkill,
 } from "./skill-marker.js";
 import { loadSkillMetadata, type SkillEntry } from "./skills.js";
-import { isLocalNodeId, NODE_AUTHORITATIVE_MARKER, type SkillMetadata } from "@playon/shared";
+import {
+  AdminDialectSchema,
+  isLocalNodeId,
+  NODE_AUTHORITATIVE_MARKER,
+  type AdminDialect,
+  type SkillMetadata,
+} from "@playon/shared";
 import { dispatchNodeJob, nodeServerRelPath } from "./node-runtime.js";
 
 export interface ServerRecord {
@@ -50,6 +56,13 @@ export interface ServerRecord {
   createdAt: Date;
 }
 
+export type ConsoleInputState = "ready" | "unsupported" | "unavailable";
+
+export interface ServerConsoleCapability {
+  input: ConsoleInputState;
+  dialect: AdminDialect;
+}
+
 export interface ServerRuntimeDetail {
   kind: "docker" | "native";
   containerName?: string;
@@ -57,6 +70,8 @@ export interface ServerRuntimeDetail {
   imageHint?: string;
   join?: { address: string; port: number };
   logs?: string[];
+  /** Dialect-agnostic admin console capability (never includes secrets). */
+  console?: ServerConsoleCapability;
 }
 
 export interface ServerDetail {
@@ -218,6 +233,99 @@ export class ServerService {
     if (!server) return null;
     const skillName = this.readSkillName(server.dataPath);
     return this.ensureRconConfig(server, skillName) ?? readRconConfig(server.dataPath);
+  }
+
+  /** Resolve skill adminDialect for a server (defaults to none). */
+  async getAdminDialect(serverId: string): Promise<AdminDialect | null> {
+    const server = await this.get(serverId);
+    if (!server) return null;
+    return this.adminDialectFor(server);
+  }
+
+  private adminDialectFor(server: ServerRecord): AdminDialect {
+    const skillName = this.readSkillName(server.dataPath);
+    const live = this.resolveSkill(skillName)?.metadata.adminDialect;
+    const cached = this.readSkillMeta(server.dataPath).adminDialect;
+    const raw = live ?? cached ?? "none";
+    const parsed = AdminDialectSchema.safeParse(raw);
+    return parsed.success ? parsed.data : "none";
+  }
+
+  /**
+   * Whether the browser/agent console can accept input for this server right now.
+   * Secrets and endpoints are never included.
+   */
+  async consoleCapability(serverId: string): Promise<ServerConsoleCapability | null> {
+    const server = await this.get(serverId);
+    if (!server) return null;
+    const dialect = this.adminDialectFor(server);
+
+    if (dialect === "none") {
+      return { input: "unavailable", dialect };
+    }
+    if (dialect === "source_rcon" || dialect === "rust_web_rcon" || dialect === "http_rest") {
+      return { input: "unsupported", dialect };
+    }
+    if (server.status !== "running" && server.status !== "starting") {
+      return { input: "unavailable", dialect };
+    }
+
+    if (dialect === "mc_rcon") {
+      const endpoint = await this.getRconEndpoint(serverId);
+      return { input: endpoint ? "ready" : "unavailable", dialect };
+    }
+
+    // stdin — Docker only in this slice (native supervisor uses stdio:ignore).
+    if (dialect === "stdin") {
+      if (server.runtimeMode === "native") {
+        return { input: "unavailable", dialect };
+      }
+      try {
+        await this.ensureRuntime();
+        const adapter = this.adapterFor(serverId);
+        if (typeof adapter.writeStdin !== "function") {
+          return { input: "unsupported", dialect };
+        }
+        const info = await adapter.inspect(this.containerName(serverId));
+        return { input: info.status === "running" ? "ready" : "unavailable", dialect };
+      } catch {
+        return { input: "unavailable", dialect };
+      }
+    }
+
+    return { input: "unsupported", dialect };
+  }
+
+  /** Write a console line to the server's container stdin (local or remote node). */
+  async writeContainerStdin(serverId: string, line: string): Promise<void> {
+    const server = await this.get(serverId);
+    if (!server) throw new Error("unknown_server");
+    if (server.runtimeMode === "native") {
+      throw new Error("stdin_unavailable_native");
+    }
+    await this.ensureRuntime();
+    const name = this.containerName(serverId);
+    await dispatchNodeJob({
+      nodeId: server.nodeId,
+      kind: "container_stdin",
+      args: { id: name, line },
+      timeoutMs: 30_000,
+      localHandler: async () => {
+        const adapter = this.adapterFor(serverId);
+        if (typeof adapter.writeStdin !== "function") {
+          throw new Error("container_stdin_unsupported");
+        }
+        let containerId = name;
+        try {
+          const info = await adapter.inspect(name);
+          containerId = info.id;
+        } catch {
+          throw new Error("container_missing");
+        }
+        await adapter.writeStdin(containerId, line);
+        return { ok: true as const };
+      },
+    });
   }
 
   private readSkillMeta(dataPath: string): {
@@ -478,6 +586,7 @@ export class ServerService {
     const skillName = this.readSkillName(server.dataPath);
     const join = await this.joinInfoFor(server);
     const cached = this.readSkillMeta(server.dataPath);
+    const consoleCap = await this.consoleCapability(id);
 
     if (server.runtimeMode === "native") {
       return {
@@ -486,6 +595,7 @@ export class ServerService {
           kind: "native",
           join,
           logs: [],
+          console: consoleCap ?? undefined,
         },
       };
     }
@@ -513,6 +623,7 @@ export class ServerService {
           this.resolveSkill(skillName)?.metadata.dockerImage ?? cached.dockerImage,
         join,
         logs,
+        console: consoleCap ?? undefined,
       },
     };
   }

@@ -19,9 +19,11 @@ import {
   AgentCanvas,
   skillShortLabel,
   type AgentActivityView,
+  type SelectedAnchor,
 } from "../components/agent-canvas/AgentCanvas";
 import { MapAddNodePanel } from "../components/MapAddNodePanel";
 import { MapManageSuggestPanel } from "../components/MapManageSuggestPanel";
+import { ServerConsoleBubble } from "../components/ServerConsoleBubble";
 import { runtimeErrorHint, statusHint, statusLabel } from "../status";
 import { playonSocket } from "../ws";
 
@@ -146,6 +148,8 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState(false);
   const [dockTab, setDockTab] = useState<DockTab>("chat");
+  const [consoleOpen, setConsoleOpen] = useState(false);
+  const [selectedAnchor, setSelectedAnchor] = useState<SelectedAnchor | null>(null);
   const chatLogRef = useRef<HTMLDivElement>(null);
 
   const servers = useQuery({ queryKey: ["servers"], queryFn: api.servers, refetchInterval: 4000 });
@@ -177,6 +181,8 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     if (!selectedId || !servers.data?.servers.length) return;
     if (!servers.data.servers.some((s) => s.id === selectedId)) {
       setSelectedId(undefined);
+      setConsoleOpen(false);
+      setSelectedAnchor(null);
     }
   }, [selectedId, servers.data?.servers]);
 
@@ -188,6 +194,8 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     setOpsError(null);
     setSessionError(null);
     setDockTab("chat");
+    setConsoleOpen(false);
+    setSelectedAnchor(null);
     try {
       localStorage.removeItem("playon.lastServerId");
     } catch {
@@ -199,9 +207,14 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     if (!id) {
       setSelectedId(undefined);
       setInstallOpen(false);
+      setConsoleOpen(false);
+      setSelectedAnchor(null);
       return;
     }
     setInstallOpen(false);
+    if (id !== selectedId) {
+      setConsoleOpen(false);
+    }
     setSelectedId(id);
     setOpsError(null);
     setSessionError(null);
@@ -559,8 +572,18 @@ export function CanvasPage({ user }: { user: PublicUser }) {
           setAddNodeOpen(false);
           setScanNodeId(id);
         }}
+        onSelectedAnchorChange={setSelectedAnchor}
         showAddButton={!dockOpen && !addNodeOpen && !scanNodeId}
       />
+
+      {consoleOpen && selectedId && selected ? (
+        <ServerConsoleBubble
+          serverId={selectedId}
+          serverName={selected.name}
+          anchor={selectedAnchor}
+          detail={detail.data}
+        />
+      ) : null}
 
       {addNodeOpen ? (
         <div className="map-add-node-overlay">
@@ -596,6 +619,16 @@ export function CanvasPage({ user }: { user: PublicUser }) {
               <h3>{dockTitle}</h3>
               <div className="btn-row">
                 {selectedId ? (
+                  <button
+                    type="button"
+                    className={consoleOpen ? "linkish active" : "linkish"}
+                    aria-pressed={consoleOpen}
+                    onClick={() => setConsoleOpen((v) => !v)}
+                  >
+                    Terminal
+                  </button>
+                ) : null}
+                {selectedId ? (
                   <button type="button" className="linkish" onClick={openInstallChat}>
                     + Add
                   </button>
@@ -606,6 +639,8 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                   onClick={() => {
                     setSelectedId(undefined);
                     setInstallOpen(false);
+                    setConsoleOpen(false);
+                    setSelectedAnchor(null);
                   }}
                 >
                   Close

@@ -198,6 +198,115 @@ a.brand-mark:hover {
   min-height: 420px;
 }
 
+.server-console-bubble {
+  position: absolute;
+  z-index: 3;
+  width: min(22rem, calc(100vw - 2rem));
+  transform: translate(-50%, calc(-100% - 12px));
+  pointer-events: none;
+}
+
+.server-console-bubble-panel {
+  pointer-events: auto;
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.55rem 0.65rem 0.5rem;
+  background: oklch(0.16 0.02 350 / 0.96);
+  border: 1px solid oklch(0.45 0.04 350);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px oklch(0.08 0.02 350 / 0.55);
+}
+
+.server-console-bubble-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.server-console-bubble-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: oklch(0.78 0.06 190);
+}
+
+.server-console-bubble-name {
+  font-size: 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-console-bubble-log {
+  height: 10.5rem;
+  overflow: auto;
+  padding: 0.4rem 0.45rem;
+  border-radius: 6px;
+  background: oklch(0.1 0.015 350);
+  border: 1px solid oklch(0.28 0.02 350);
+  font-family: "IBM Plex Mono", "Cascadia Code", "Consolas", monospace;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: oklch(0.86 0.02 120);
+}
+
+.server-console-bubble-empty {
+  margin: 0;
+  font-size: 0.72rem;
+}
+
+.server-console-line {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.server-console-line-in {
+  color: oklch(0.82 0.08 190);
+}
+
+.server-console-line-out {
+  color: oklch(0.88 0.03 140);
+}
+
+.server-console-line-err {
+  color: oklch(0.72 0.14 25);
+}
+
+.server-console-bubble-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.35rem;
+}
+
+.server-console-bubble-form input {
+  min-width: 0;
+  font-family: "IBM Plex Mono", "Cascadia Code", "Consolas", monospace;
+  font-size: 0.75rem;
+}
+
+.server-console-bubble-form .btn {
+  font-size: 0.75rem;
+  padding: 0.35rem 0.65rem;
+}
+
+.server-console-bubble-hint {
+  margin: 0;
+  font-size: 0.7rem;
+}
+
+.server-console-bubble-tail {
+  width: 14px;
+  height: 14px;
+  margin: -1px auto 0;
+  background: oklch(0.16 0.02 350 / 0.96);
+  border-right: 1px solid oklch(0.45 0.04 350);
+  border-bottom: 1px solid oklch(0.45 0.04 350);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
 .agent-canvas-host {
   position: absolute;
   inset: 0;
@@ -1707,6 +1816,11 @@ a.btn {
 }
 
 .linkish:hover {
+  color: var(--ink);
+  background: var(--surface-2);
+}
+
+.linkish.active {
   color: var(--ink);
   background: var(--surface-2);
 }

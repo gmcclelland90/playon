@@ -91,6 +91,7 @@ import { readSkillMarker } from "./services/skill-marker.js";
 import { ConfirmService } from "./services/confirm.js";
 import { EventHub } from "./services/event-hub.js";
 import { safeQueryLive } from "./services/server-panel.js";
+import { execConsoleCommand } from "./services/server-console.js";
 import { labelForTool, verbForTool } from "./services/agent-activity.js";
 import { nodeJobService } from "./services/node-jobs.js";
 import {
@@ -1072,6 +1073,21 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       const message = err instanceof Error ? err.message : "health_failed";
       return c.json({ error: message }, 400);
     }
+  });
+
+  app.post("/api/servers/:id/console", async (c) => {
+    const user = c.get("user");
+    if (!user || !roleAtLeast(user.role, "operator")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const body = (await c.req.json().catch(() => null)) as { command?: unknown } | null;
+    const command = typeof body?.command === "string" ? body.command : "";
+    const result = await execConsoleCommand(serverService, c.req.param("id"), command);
+    if (result.error === "unknown_server") {
+      return c.json({ error: "not_found" }, 404);
+    }
+    // Business failures stay 200 so the UI can render dialect/body/hint without a throw.
+    return c.json(result);
   });
 
   app.get("/api/servers/:id/conversations", async (c) => {
