@@ -12,6 +12,7 @@
     "test:unit": "vitest run"
   },
   "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
     "@pixi/react": "^8.0.5",
     "@playon/shared": "workspace:*",
     "@tanstack/react-query": "^5.81.5",

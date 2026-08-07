@@ -7,6 +7,7 @@ import { CanvasPage } from "./CanvasPage";
 import { DashboardPage } from "./DashboardPage";
 import { SettingsPage } from "./SettingsPage";
 import { SkillsPage } from "./SkillsPage";
+import { FilesPage } from "./FilesPage";
 
 function roleLabel(role: string): string {
   switch (role) {
@@ -33,6 +34,7 @@ export function AdminShell({ user }: { user: PublicUser }) {
   const showChat = can(user.role, "chat.agent");
   const showSettings = can(user.role, "settings.llm");
   const showSkills = roleAtLeast(user.role, "operator");
+  const showFiles = roleAtLeast(user.role, "operator");
   const home = showChat ? "/" : "/dashboard";
 
   return (
@@ -59,6 +61,11 @@ export function AdminShell({ user }: { user: PublicUser }) {
           {showSkills ? (
             <NavLink to="/skills" className={({ isActive }) => (isActive ? "active" : undefined)}>
               Skills
+            </NavLink>
+          ) : null}
+          {showFiles ? (
+            <NavLink to="/files" className={({ isActive }) => (isActive ? "active" : undefined)}>
+              Files
             </NavLink>
           ) : null}
           {showSettings ? (
@@ -91,6 +98,7 @@ export function AdminShell({ user }: { user: PublicUser }) {
           {showSkills ? (
             <Route path="/skills" element={<SkillsPage user={user} />} />
           ) : null}
+          {showFiles ? <Route path="/files" element={<FilesPage user={user} />} /> : null}
           {showSettings ? (
             <Route path="/settings" element={<SettingsPage user={user} />} />
           ) : null}

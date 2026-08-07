@@ -164,6 +164,25 @@ export type SkillDraftRow = {
   containerSupport: string;
 };
 
+export type FsEntry = { name: string; type: "file" | "dir" };
+
+export type FsListResult = {
+  path: string;
+  entries: FsEntry[];
+  writable: boolean;
+  source?: SkillSource;
+};
+
+export type FsContentResult = {
+  path: string;
+  content: string;
+  size: number;
+  truncated: boolean;
+  bytesRead: number;
+  writable: boolean;
+  source?: SkillSource;
+};
+
 export type ConversationRow = {
   id: string;
   serverId: string | null;
@@ -651,6 +670,38 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ command }),
     }),
+  serverFsList: (serverId: string, path = ".") =>
+    request<FsListResult>(
+      `/api/servers/${encodeURIComponent(serverId)}/fs?path=${encodeURIComponent(path)}`,
+    ),
+  serverFsRead: (serverId: string, path: string) =>
+    request<FsContentResult>(
+      `/api/servers/${encodeURIComponent(serverId)}/fs/content?path=${encodeURIComponent(path)}`,
+    ),
+  serverFsWrite: (serverId: string, path: string, content: string) =>
+    request<{ path: string; bytes: number }>(
+      `/api/servers/${encodeURIComponent(serverId)}/fs/content`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ path, content }),
+      },
+    ),
+  skillFsList: (skillName: string, path = ".") =>
+    request<FsListResult>(
+      `/api/skills/${encodeURIComponent(skillName)}/fs?path=${encodeURIComponent(path)}`,
+    ),
+  skillFsRead: (skillName: string, path: string) =>
+    request<FsContentResult>(
+      `/api/skills/${encodeURIComponent(skillName)}/fs/content?path=${encodeURIComponent(path)}`,
+    ),
+  skillFsWrite: (skillName: string, path: string, content: string) =>
+    request<{ path: string; bytes: number }>(
+      `/api/skills/${encodeURIComponent(skillName)}/fs/content`,
+      {
+        method: "PUT",
+        body: JSON.stringify({ path, content }),
+      },
+    ),
   createServer: (body: { skillName: string; serverName?: string; nodeId?: string }) =>
     request<{ server: ServerRow }>("/api/servers", {
       method: "POST",

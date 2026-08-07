@@ -87,6 +87,7 @@ import {
   loadSkillMetadata,
   skillsRootsForWorkspace,
 } from "./services/skills.js";
+import { SkillFsService, skillFsHttpStatus } from "./services/skill-fs.js";
 import { readSkillMarker } from "./services/skill-marker.js";
 import { ConfirmService } from "./services/confirm.js";
 import { EventHub } from "./services/event-hub.js";
@@ -214,11 +215,13 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     agentProgress,
     skillPackages,
     drafts: draftService,
+    serverFs,
     tunnel,
     addNode,
     installDocker,
     updates: updateService,
   } = plane;
+  const skillFs = new SkillFsService(config);
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
   // Keep player panel in sync with runtime reconcile/start/stop (not only explicit tool calls).
@@ -897,6 +900,81 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     }
   });
 
+  app.get("/api/skills/:name/fs", async (c) => {
+    const user = c.get("user");
+    if (!user || !roleAtLeast(user.role, "operator")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const name = decodeURIComponent(c.req.param("name"));
+    const relPath = c.req.query("path")?.trim() || ".";
+    try {
+      const entries = skillFs.list(name, relPath);
+      const writable = skillFs.isWritable(name) && can(user.role, "skills.package");
+      return c.json({
+        path: relPath,
+        entries,
+        writable,
+        source: skillFs.source(name),
+      });
+    } catch (err) {
+      return c.json(
+        { error: err instanceof Error ? err.message : "fs_list_failed" },
+        skillFsHttpStatus(err),
+      );
+    }
+  });
+
+  app.get("/api/skills/:name/fs/content", async (c) => {
+    const user = c.get("user");
+    if (!user || !roleAtLeast(user.role, "operator")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const name = decodeURIComponent(c.req.param("name"));
+    const relPath = c.req.query("path")?.trim();
+    if (!relPath) return c.json({ error: "path_required" }, 400);
+    try {
+      const file = skillFs.read(name, relPath);
+      return c.json({
+        path: file.path,
+        content: file.content,
+        size: file.size,
+        truncated: file.truncated,
+        bytesRead: file.bytesRead,
+        writable: file.writable && can(user.role, "skills.package"),
+        source: file.source,
+      });
+    } catch (err) {
+      return c.json(
+        { error: err instanceof Error ? err.message : "fs_read_failed" },
+        skillFsHttpStatus(err),
+      );
+    }
+  });
+
+  app.put("/api/skills/:name/fs/content", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "skills.package")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const name = decodeURIComponent(c.req.param("name"));
+    const body = (await c.req.json().catch(() => null)) as {
+      path?: unknown;
+      content?: unknown;
+    } | null;
+    const relPath = typeof body?.path === "string" ? body.path.trim() : "";
+    if (!relPath) return c.json({ error: "path_required" }, 400);
+    if (typeof body?.content !== "string") return c.json({ error: "content_required" }, 400);
+    try {
+      const written = skillFs.write(name, relPath, body.content);
+      return c.json(written);
+    } catch (err) {
+      return c.json(
+        { error: err instanceof Error ? err.message : "fs_write_failed" },
+        skillFsHttpStatus(err),
+      );
+    }
+  });
+
   app.get("/api/skills/:name/export", async (c) => {
     const user = c.get("user");
     if (!user || !can(user.role, "skills.package")) {
@@ -1058,6 +1136,89 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     const detail = await serverService.detail(c.req.param("id"));
     if (!detail) return c.json({ error: "not_found" }, 404);
     return c.json(detail);
+  });
+
+  app.get("/api/servers/:id/fs", async (c) => {
+    const user = c.get("user");
+    if (!user || !roleAtLeast(user.role, "operator")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const serverId = c.req.param("id");
+    const server = await serverService.get(serverId);
+    if (!server) return c.json({ error: "not_found" }, 404);
+    const relPath = c.req.query("path")?.trim() || ".";
+    try {
+      const entries = await serverFs.list(serverId, relPath);
+      return c.json({ path: relPath, entries, writable: can(user.role, "servers.manage") });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "fs_list_failed";
+      const status = message.startsWith("not_found")
+        ? 404
+        : message.startsWith("unknown_server")
+          ? 404
+          : 400;
+      return c.json({ error: message }, status);
+    }
+  });
+
+  app.get("/api/servers/:id/fs/content", async (c) => {
+    const user = c.get("user");
+    if (!user || !roleAtLeast(user.role, "operator")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const serverId = c.req.param("id");
+    const server = await serverService.get(serverId);
+    if (!server) return c.json({ error: "not_found" }, 404);
+    const relPath = c.req.query("path")?.trim();
+    if (!relPath) return c.json({ error: "path_required" }, 400);
+    try {
+      const file = await serverFs.read(serverId, relPath);
+      return c.json({
+        path: file.path,
+        content: file.content,
+        size: file.size,
+        truncated: file.truncated,
+        bytesRead: file.bytesRead,
+        writable: can(user.role, "servers.manage"),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "fs_read_failed";
+      const status = message.startsWith("not_found")
+        ? 404
+        : message.startsWith("unknown_server")
+          ? 404
+          : 400;
+      return c.json({ error: message }, status);
+    }
+  });
+
+  app.put("/api/servers/:id/fs/content", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "servers.manage")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const serverId = c.req.param("id");
+    const server = await serverService.get(serverId);
+    if (!server) return c.json({ error: "not_found" }, 404);
+    const body = (await c.req.json().catch(() => null)) as {
+      path?: unknown;
+      content?: unknown;
+    } | null;
+    const relPath = typeof body?.path === "string" ? body.path.trim() : "";
+    if (!relPath) return c.json({ error: "path_required" }, 400);
+    if (typeof body?.content !== "string") return c.json({ error: "content_required" }, 400);
+    try {
+      const written = await serverFs.write(serverId, relPath, body.content);
+      return c.json(written);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "fs_write_failed";
+      const status = message.startsWith("not_found")
+        ? 404
+        : message.startsWith("unknown_server")
+          ? 404
+          : 400;
+      return c.json({ error: message }, status);
+    }
   });
 
   app.get("/api/servers/:id/health", async (c) => {
