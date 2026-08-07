@@ -172,10 +172,22 @@ export class ServerService {
       return readLogFileTail(this.consoleLogAbs(server.dataPath), lines);
     }
     try {
+      const rel = this.consoleLogRel(server.id);
+      // Probe size first — reading from offset 0 only returns the head of large logs.
+      const probe = await dispatchNodeJob<{ size?: number }>({
+        nodeId: server.nodeId,
+        kind: "fs_read_text",
+        args: { path: rel, offset: 0, maxBytes: 1 },
+        timeoutMs: 15_000,
+        localHandler: async () => ({ size: 0 }),
+      });
+      const size = Math.max(0, Number(probe.size ?? 0) || 0);
+      const maxBytes = 128_000;
+      const offset = Math.max(0, size - maxBytes);
       const result = await dispatchNodeJob<{ content?: string; text?: string }>({
         nodeId: server.nodeId,
         kind: "fs_read_text",
-        args: { path: this.consoleLogRel(server.id), maxBytes: 128_000 },
+        args: { path: rel, offset, maxBytes },
         timeoutMs: 15_000,
         localHandler: async () => ({
           content: fs.existsSync(this.consoleLogAbs(server.dataPath))
