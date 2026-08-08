@@ -43,6 +43,12 @@ export interface ServerRuntimeHandle {
   restart(): Promise<{ id: string }>;
   status(): Promise<ServerRuntimeStatus>;
   logs(tail?: number): Promise<string[]>;
+  /**
+   * Whether this quadrant has a console to write to at all. Callers need the
+   * capability before the state: "this runtime never accepts input" and "the
+   * server is not up yet" are different answers to give a player.
+   */
+  readonly canWriteStdin: boolean;
   writeStdin(line: string): Promise<void>;
 }
 
@@ -207,6 +213,10 @@ class DockerRuntimeHandle implements ServerRuntimeHandle {
     return this.transport.logs(id, tail);
   }
 
+  get canWriteStdin(): boolean {
+    return typeof this.transport.writeStdin === "function";
+  }
+
   async writeStdin(line: string): Promise<void> {
     const write = this.transport.writeStdin;
     if (!write) {
@@ -259,6 +269,7 @@ export interface NativeRuntimeTransport {
 
 export function localNativeTransport(supervisor: ProcessSupervisor): NativeRuntimeTransport {
   const reclaim = supervisor.reclaim?.bind(supervisor);
+  const writeStdin = supervisor.writeStdin?.bind(supervisor);
   return {
     locality: "local",
     resolve: (identity) => supervisor.find(identity.name, identity.cwd),
@@ -275,6 +286,10 @@ export function localNativeTransport(supervisor: ProcessSupervisor): NativeRunti
       if (!identity.logFile) return [];
       return readLogFileTail(identity.logFile, tail);
     },
+    // Identity-shaped like the rest: the supervisor owns the pipe, not the caller.
+    writeStdin: writeStdin
+      ? (identity, line) => writeStdin(identity.name, identity.cwd, line)
+      : undefined,
   };
 }
 
@@ -332,6 +347,10 @@ function tailLines(text: string, tail?: number): string[] {
  * job — the node owns the supervisor id, and this transport never stores one.
  * Paths in the identity and spec are jail-relative: the node resolves them under
  * its own data root.
+ *
+ * Console input is deliberately absent: the node job contract has no process
+ * stdin kind, and only the node-side supervisor holds that pipe. Leaving it off
+ * makes the handle report an unsupported capability instead of half-writing.
  */
 export function remoteNativeTransport(
   dispatch: ProcessJobDispatch,
@@ -467,6 +486,10 @@ class NativeRuntimeHandle implements ServerRuntimeHandle {
       throw new RuntimeUnsupportedError(`native logs over ${this.locality} transport`);
     }
     return read(this.identity, tail);
+  }
+
+  get canWriteStdin(): boolean {
+    return typeof this.transport.writeStdin === "function";
   }
 
   async writeStdin(line: string): Promise<void> {

@@ -71,7 +71,7 @@ const drivers: Record<AdminDialect, ConsoleDriver> = {
 
   stdin: async (servers, serverId, command) => {
     try {
-      await servers.writeContainerStdin(serverId, command);
+      await servers.writeStdin(serverId, command);
       return {
         dialect: "stdin",
         ok: true,
@@ -83,10 +83,9 @@ const drivers: Record<AdminDialect, ConsoleDriver> = {
         dialect: "stdin",
         ok: false,
         error: message,
-        hint:
-          message === "stdin_unavailable_native"
-            ? "Stdin console is only available for Docker-backed servers."
-            : undefined,
+        hint: message.startsWith("runtime_unsupported")
+          ? "This server's runtime has no console input on the host it runs on. Use RCON, or run it where stdin is supported."
+          : undefined,
       };
     }
   },
