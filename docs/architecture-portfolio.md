@@ -113,7 +113,7 @@ Frozen in W2 deep-grill (after W1 on `main`):
 - **Identity:** always re-resolve on the node (name/cwd or container name); drop durable CP in-memory process maps as call sites migrate.
 - **Obtain:** pure `openServerRuntime(server, deps)` factory + `servers.runtime(serverId)` as the only production choke point.
 - **Stop:** dual-fire process+container during migration; end state is mode-correct stop only.
-- **Slices:** local docker start/stop/status → remote docker → local native → remote native → logs → stdin/console → delete duplicated `startRemote` / local branches.
+- **Slices:** local docker start/stop/status (landed) → remote docker → local native → remote native → logs → stdin/console → delete duplicated `startRemote` / local branches.
 - **Done when:** all four quadrants + logs + stdin through Handle; `startRemote` duplication gone; lab `loop:verify` green. Health.ts DB status OK to leave.
 - **Tests:** unit with fake locality + mode stubs; int Paper docker path uses Handle; mocked remote-native unit — no full 4× int matrix.
 - **Git:** `arch/w2-integration` + worktree `playon-arch-w2-runtime-handle`; PRs into integration; promote to `main` after lab green.
