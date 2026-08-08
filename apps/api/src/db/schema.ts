@@ -25,6 +25,10 @@ export const nodes = sqliteTable("nodes", {
   docker: integer("docker", { mode: "boolean" }).notNull().default(false),
   native: integer("native", { mode: "boolean" }).notNull().default(true),
   steamcmd: integer("steamcmd", { mode: "boolean" }).notNull().default(false),
+  /** Configured LAN cache reachable (TCP :80) or managed stack running. */
+  lancache: integer("lancache", { mode: "boolean" }).notNull().default(false),
+  /** applied | removed | skipped | needs_elevation | error */
+  lancachePin: text("lancache_pin"),
   freeDiskBytes: integer("free_disk_bytes"),
   agentVersion: text("agent_version"),
   lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }).notNull(),

@@ -1,6 +1,11 @@
 import type { NodeHeartbeat } from "@playon/shared";
 import { probeCapabilities } from "./capabilities.js";
 import { SUPPORTED_JOB_KINDS } from "./jobs.js";
+import {
+  applyLancacheHeartbeatConfig,
+  getLancacheAdvertisement,
+  type LancacheAgentConfig,
+} from "./lancache-client.js";
 
 export function buildHeartbeat(opts: {
   nodeId: string;
@@ -9,6 +14,7 @@ export function buildHeartbeat(opts: {
   agentVersion?: string;
 }): NodeHeartbeat {
   const caps = probeCapabilities(opts.dataRoot);
+  const lancache = getLancacheAdvertisement();
   return {
     nodeId: opts.nodeId,
     name: opts.name,
@@ -16,6 +22,8 @@ export function buildHeartbeat(opts: {
     docker: caps.docker,
     native: caps.native,
     steamcmd: caps.steamcmd,
+    lancache: lancache.lancache,
+    lancachePin: lancache.lancachePin,
     freeDiskBytes: caps.freeDiskBytes,
     agentVersion: opts.agentVersion ?? "0.1.0",
     // Protocol advertisement so the control plane can refuse kinds we cannot run.
@@ -39,5 +47,11 @@ export async function postHeartbeat(
   });
   if (!res.ok) {
     throw new Error(`heartbeat failed: ${res.status} ${await res.text()}`);
+  }
+  try {
+    const body = (await res.json()) as { lancache?: LancacheAgentConfig };
+    await applyLancacheHeartbeatConfig(body.lancache);
+  } catch {
+    /* ignore malformed heartbeat body */
   }
 }

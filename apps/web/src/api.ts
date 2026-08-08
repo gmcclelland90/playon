@@ -311,6 +311,8 @@ export const api = {
         docker: boolean;
         native?: boolean;
         steamcmd?: boolean;
+        lancache?: boolean;
+        lancachePin?: string | null;
         freeDiskBytes?: number | null;
         agentVersion?: string | null;
         lastSeenAt: string | number;
@@ -331,6 +333,57 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  getLancacheSettings: () =>
+    request<{
+      lancache: {
+        enabled: boolean;
+        cacheIp?: string;
+        pinSteamcmd: boolean;
+        warnFreeDiskBytes: number;
+        warnCacheDirBytes: number;
+        partyNodeId?: string | null;
+        manageDns: boolean;
+        dataPath?: string;
+        tipSheet: string[];
+        diskWarn: boolean;
+      };
+    }>("/api/settings/lancache"),
+  putLancacheSettings: (body: {
+    enabled?: boolean;
+    cacheIp?: string | null;
+    pinSteamcmd?: boolean;
+    manageDns?: boolean;
+    partyNodeId?: string | null;
+    dataPath?: string | null;
+  }) =>
+    request<{ lancache: Record<string, unknown> }>("/api/settings/lancache", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  installLancache: (body: {
+    partyNodeId: string;
+    manageDns?: boolean;
+    dataPath?: string;
+    cacheIp?: string;
+  }) =>
+    request<{ lancache: Record<string, unknown>; ensure: unknown; dns?: unknown }>(
+      "/api/settings/lancache/install",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  lancacheStatus: () =>
+    request<{ status: unknown; lancache: Record<string, unknown> }>(
+      "/api/settings/lancache/status",
+    ),
+  stopLancache: () =>
+    request<{ lancache: Record<string, unknown> }>("/api/settings/lancache/stop", {
+      method: "POST",
+      body: "{}",
+    }),
+  pruneLancache: () =>
+    request<{ result: unknown; lancache: Record<string, unknown> }>(
+      "/api/settings/lancache/prune",
+      { method: "POST", body: "{}" },
+    ),
   addNode: (body: {
     kind: "lan" | "cloud";
     host: string;

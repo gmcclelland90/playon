@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS nodes (
   docker INTEGER NOT NULL DEFAULT 0,
   native INTEGER NOT NULL DEFAULT 1,
   steamcmd INTEGER NOT NULL DEFAULT 0,
+  lancache INTEGER NOT NULL DEFAULT 0,
+  lancache_pin TEXT,
   free_disk_bytes INTEGER,
   agent_version TEXT,
   last_seen_at INTEGER NOT NULL,

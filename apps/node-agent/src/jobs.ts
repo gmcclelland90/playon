@@ -8,6 +8,11 @@ const execFileAsync = promisify(execFile);
 import {
   createRuntime,
   resolveInJail,
+  runLancacheDnsEnsure,
+  runLancacheEnsure,
+  runLancachePrune,
+  runLancacheStatus,
+  runLancacheStop,
   steamcmdAppUpdate,
   type DockerAdapter,
   type ProcessSupervisor,
@@ -130,6 +135,11 @@ export const SUPPORTED_JOB_KINDS: readonly NodeJobKind[] = [
   "manage_pack_read",
   "manage_seed",
   "manage_cutover",
+  "lancache_ensure",
+  "lancache_dns_ensure",
+  "lancache_status",
+  "lancache_stop",
+  "lancache_prune",
 ];
 
 const SUPPORTED_JOB_KIND_SET: ReadonlySet<string> = new Set(SUPPORTED_JOB_KINDS);
@@ -623,6 +633,40 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
   if (job.kind === "manage_cutover") {
     const args = ManageCutoverArgsSchema.parse(job.args);
     return runManageCutover(args, dataRoot);
+  }
+
+  if (job.kind === "lancache_ensure") {
+    const dataPath =
+      typeof job.args.dataPath === "string" && job.args.dataPath.trim()
+        ? job.args.dataPath.trim()
+        : path.join(dataRoot, "lancache");
+    const cacheIp = typeof job.args.cacheIp === "string" ? job.args.cacheIp : undefined;
+    return runLancacheEnsure({ dataPath, cacheIp });
+  }
+
+  if (job.kind === "lancache_dns_ensure") {
+    const cacheIp = strArg(job.args, "cacheIp");
+    return runLancacheDnsEnsure({ cacheIp });
+  }
+
+  if (job.kind === "lancache_status") {
+    const dataPath =
+      typeof job.args.dataPath === "string" && job.args.dataPath.trim()
+        ? job.args.dataPath.trim()
+        : path.join(dataRoot, "lancache");
+    return runLancacheStatus({ dataPath });
+  }
+
+  if (job.kind === "lancache_stop") {
+    return runLancacheStop();
+  }
+
+  if (job.kind === "lancache_prune") {
+    const dataPath =
+      typeof job.args.dataPath === "string" && job.args.dataPath.trim()
+        ? job.args.dataPath.trim()
+        : path.join(dataRoot, "lancache");
+    return runLancachePrune({ dataPath });
   }
 
   throw new NodeJobError("unsupported_job_kind", {

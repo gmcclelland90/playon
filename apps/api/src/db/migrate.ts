@@ -38,6 +38,12 @@ function ensureNodeCapabilityColumns(raw: Database.Database) {
   if (!names.has("steamcmd")) {
     raw.exec(`ALTER TABLE nodes ADD COLUMN steamcmd INTEGER NOT NULL DEFAULT 0`);
   }
+  if (!names.has("lancache")) {
+    raw.exec(`ALTER TABLE nodes ADD COLUMN lancache INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!names.has("lancache_pin")) {
+    raw.exec(`ALTER TABLE nodes ADD COLUMN lancache_pin TEXT`);
+  }
   if (!names.has("kind")) {
     raw.exec(`ALTER TABLE nodes ADD COLUMN kind TEXT NOT NULL DEFAULT 'lan'`);
     raw.exec(`UPDATE nodes SET kind = 'local' WHERE id = 'local'`);

@@ -59,6 +59,7 @@ import {
   SKILLS_CATALOG_KEY,
   setSetting,
   llmSettingsFromPut,
+  lancacheSettingsFromPut,
   toPublicCloudSettings,
   toPublicLlmSettings,
   toPublicNodeSettings,
@@ -67,6 +68,16 @@ import {
   type SkillsCatalogSettings,
   type VultrCloudSettings,
 } from "./services/settings.js";
+import {
+  agentLancacheConfig,
+  installManagedLancache,
+  loadLancacheSettings,
+  pruneManagedLancache,
+  publicLancacheSettings,
+  saveLancacheSettings,
+  statusManagedLancache,
+  stopManagedLancache,
+} from "./services/lancache.js";
 import {
   buildVultrAuthorizeUrl,
   createVultrConnectSession,
@@ -1681,6 +1692,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           docker: n.docker,
           native: n.native ?? true,
           steamcmd: n.steamcmd ?? false,
+          lancache: n.lancache ?? false,
+          lancachePin: n.lancachePin ?? null,
           freeDiskBytes: n.freeDiskBytes,
           agentVersion: n.agentVersion,
           lastSeenAt: n.lastSeenAt.toISOString(),
@@ -1699,6 +1712,117 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         };
       }),
     });
+  });
+
+  app.get("/api/settings/lancache", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    return c.json({ lancache: await publicLancacheSettings(db) });
+  });
+
+  app.put("/api/settings/lancache", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const body = z
+      .object({
+        enabled: z.boolean().optional(),
+        cacheIp: z.string().nullable().optional(),
+        pinSteamcmd: z.boolean().optional(),
+        warnFreeDiskBytes: z.number().positive().optional(),
+        warnCacheDirBytes: z.number().positive().optional(),
+        partyNodeId: z.string().nullable().optional(),
+        manageDns: z.boolean().optional(),
+        dataPath: z.string().nullable().optional(),
+      })
+      .parse(await c.req.json());
+    const existing = await loadLancacheSettings(db);
+    try {
+      const next = lancacheSettingsFromPut(body, existing);
+      await saveLancacheSettings(db, next);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "lancache_settings_invalid";
+      return c.json({ error: message }, 400);
+    }
+    return c.json({ lancache: await publicLancacheSettings(db) });
+  });
+
+  app.post("/api/settings/lancache/install", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const body = z
+      .object({
+        partyNodeId: z.string().min(1),
+        manageDns: z.boolean().optional(),
+        dataPath: z.string().optional(),
+        cacheIp: z.string().optional(),
+      })
+      .parse(await c.req.json());
+    try {
+      const result = await installManagedLancache({
+        db,
+        config,
+        partyNodeId: body.partyNodeId,
+        manageDns: body.manageDns,
+        dataPath: body.dataPath,
+        cacheIp: body.cacheIp,
+      });
+      return c.json({
+        lancache: await publicLancacheSettings(db),
+        ensure: result.ensure,
+        dns: result.dns,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "lancache_install_failed";
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  app.get("/api/settings/lancache/status", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    try {
+      const status = await statusManagedLancache({ db });
+      return c.json({ status, lancache: await publicLancacheSettings(db) });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "lancache_status_failed";
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  app.post("/api/settings/lancache/stop", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    try {
+      await stopManagedLancache({ db });
+      return c.json({ lancache: await publicLancacheSettings(db) });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "lancache_stop_failed";
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  app.post("/api/settings/lancache/prune", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "settings.llm")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    try {
+      const result = await pruneManagedLancache({ db, config });
+      return c.json({ result, lancache: await publicLancacheSettings(db) });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "lancache_prune_failed";
+      return c.json({ error: message }, 400);
+    }
   });
 
   app.get("/api/settings/nodes", async (c) => {
@@ -2189,6 +2313,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           docker: body.docker,
           native: body.native ?? true,
           steamcmd: body.steamcmd ?? false,
+          lancache: body.lancache ?? false,
+          lancachePin: body.lancachePin ?? null,
           freeDiskBytes: body.freeDiskBytes ?? null,
           agentVersion: body.agentVersion,
           lastSeenAt: now,
@@ -2207,6 +2333,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         docker: body.docker,
         native: body.native ?? true,
         steamcmd: body.steamcmd ?? false,
+        lancache: body.lancache ?? false,
+        lancachePin: body.lancachePin ?? null,
         freeDiskBytes: body.freeDiskBytes ?? null,
         agentVersion: body.agentVersion,
         lastSeenAt: now,
@@ -2223,6 +2351,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         docker: body.docker,
         native: body.native ?? true,
         steamcmd: body.steamcmd ?? false,
+        lancache: body.lancache ?? false,
+        lancachePin: body.lancachePin,
         freeDiskBytes: body.freeDiskBytes,
       },
     });
@@ -2234,7 +2364,12 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       });
     }
 
-    return c.json({ ok: true, status: "online" as const });
+    const lancacheSettings = await loadLancacheSettings(db);
+    return c.json({
+      ok: true,
+      status: "online" as const,
+      lancache: agentLancacheConfig(lancacheSettings),
+    });
   });
 
   app.post("/api/nodes/:nodeId/logs", async (c) => {

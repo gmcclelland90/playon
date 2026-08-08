@@ -43,6 +43,10 @@ export const WsEventSchema = z.discriminatedUnion("type", [
       docker: z.boolean(),
       native: z.boolean().optional(),
       steamcmd: z.boolean().optional(),
+      lancache: z.boolean().optional(),
+      lancachePin: z
+        .enum(["applied", "removed", "skipped", "needs_elevation", "error"])
+        .optional(),
       freeDiskBytes: z.number().nonnegative().optional(),
     }),
   }),

@@ -58,6 +58,19 @@ export const NodeJobKindSchema = z.enum([
   "manage_pack_read",
   "manage_seed",
   "manage_cutover",
+  "lancache_ensure",
+  "lancache_dns_ensure",
+  "lancache_status",
+  "lancache_stop",
+  "lancache_prune",
+]);
+
+export const LancachePinStatusSchema = z.enum([
+  "applied",
+  "removed",
+  "skipped",
+  "needs_elevation",
+  "error",
 ]);
 
 /** Runtime capabilities advertised by a node (Local / Remote / Cloud). */
@@ -69,6 +82,10 @@ export const NodeCapabilitiesSchema = z.object({
   native: z.boolean().default(true),
   /** SteamCMD binary present or auto-provisionable on this node. */
   steamcmd: z.boolean().default(false),
+  /** Configured LAN cache reachable on TCP :80 (or local managed stack). */
+  lancache: z.boolean().default(false),
+  /** Last Steam CDN hosts-file pin attempt. */
+  lancachePin: LancachePinStatusSchema.optional(),
   freeDiskBytes: z.number().nonnegative().optional(),
   /**
    * Job kinds this agent can execute. Absent on agents older than the typed
@@ -79,6 +96,13 @@ export const NodeCapabilitiesSchema = z.object({
 
 export const NodeKindSchema = z.enum(["local", "lan", "cloud"]);
 
+/** Fleet lancache config pushed to agents on heartbeat response. */
+export const LancacheAgentConfigSchema = z.object({
+  enabled: z.boolean(),
+  cacheIp: z.string().optional(),
+  pinSteamcmd: z.boolean(),
+});
+
 export const NodeHeartbeatSchema = z.object({
   nodeId: z.string().min(1),
   name: z.string().min(1),
@@ -86,6 +110,8 @@ export const NodeHeartbeatSchema = z.object({
   docker: z.boolean(),
   native: z.boolean().default(true),
   steamcmd: z.boolean().default(false),
+  lancache: z.boolean().default(false),
+  lancachePin: LancachePinStatusSchema.optional(),
   freeDiskBytes: z.number().nonnegative().optional(),
   agentVersion: z.string().default("0.1.0"),
   /** Optional; control plane preserves kind set at Add-node time when omitted. */

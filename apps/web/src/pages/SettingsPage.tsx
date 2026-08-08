@@ -60,6 +60,14 @@ export function SettingsPage({ user }: { user: PublicUser }) {
   const [copiedManual, setCopiedManual] = useState(false);
   const [lastOllamaJobAt, setLastOllamaJobAt] = useState<string | null>(null);
 
+  const [lancacheEnabled, setLancacheEnabled] = useState(false);
+  const [lancacheIp, setLancacheIp] = useState("");
+  const [lancachePin, setLancachePin] = useState(false);
+  const [lancacheManageDns, setLancacheManageDns] = useState(false);
+  const [lancachePartyNodeId, setLancachePartyNodeId] = useState("");
+  const [lancacheNotice, setLancacheNotice] = useState<string | null>(null);
+  const [lancacheError, setLancacheError] = useState<string | null>(null);
+
   const backupTarget = useQuery({
     queryKey: ["backup-target"],
     queryFn: api.backupTarget,
@@ -69,6 +77,19 @@ export function SettingsPage({ user }: { user: PublicUser }) {
     queryKey: ["node-settings"],
     queryFn: api.getNodeSettings,
     enabled: can(user.role, "settings.llm"),
+  });
+
+  const lancacheSettings = useQuery({
+    queryKey: ["lancache-settings"],
+    queryFn: api.getLancacheSettings,
+    enabled: can(user.role, "settings.llm"),
+  });
+
+  const lancacheStatusQ = useQuery({
+    queryKey: ["lancache-status"],
+    queryFn: api.lancacheStatus,
+    enabled: can(user.role, "settings.llm") && Boolean(lancacheSettings.data?.lancache.partyNodeId),
+    refetchInterval: 15_000,
   });
 
   const nodesList = useQuery({
@@ -121,6 +142,69 @@ export function SettingsPage({ user }: { user: PublicUser }) {
       window.setTimeout(() => setNodeNotice(null), 3000);
     },
     onError: (err: Error) => setNodeError(nodeActionError(err)),
+  });
+
+  useEffect(() => {
+    const s = lancacheSettings.data?.lancache;
+    if (!s) return;
+    setLancacheEnabled(s.enabled);
+    setLancacheIp(s.cacheIp ?? "");
+    setLancachePin(s.pinSteamcmd);
+    setLancacheManageDns(s.manageDns);
+    setLancachePartyNodeId(s.partyNodeId ?? "");
+  }, [lancacheSettings.data]);
+
+  const saveLancache = useMutation({
+    mutationFn: () =>
+      api.putLancacheSettings({
+        enabled: lancacheEnabled,
+        cacheIp: lancacheIp.trim() || null,
+        pinSteamcmd: lancachePin,
+        manageDns: lancacheManageDns,
+      }),
+    onSuccess: async () => {
+      setLancacheNotice("LAN cache settings saved.");
+      setLancacheError(null);
+      await qc.invalidateQueries({ queryKey: ["lancache-settings"] });
+      window.setTimeout(() => setLancacheNotice(null), 3000);
+    },
+    onError: (err: Error) => setLancacheError(nodeActionError(err)),
+  });
+
+  const installLancache = useMutation({
+    mutationFn: () =>
+      api.installLancache({
+        partyNodeId: lancachePartyNodeId,
+        manageDns: lancacheManageDns,
+        cacheIp: lancacheIp.trim() || undefined,
+      }),
+    onSuccess: async () => {
+      setLancacheNotice("LANCache install started on the selected node.");
+      setLancacheError(null);
+      await qc.invalidateQueries({ queryKey: ["lancache-settings"] });
+      await qc.invalidateQueries({ queryKey: ["lancache-status"] });
+      await qc.invalidateQueries({ queryKey: ["nodes"] });
+    },
+    onError: (err: Error) => setLancacheError(nodeActionError(err)),
+  });
+
+  const stopLancache = useMutation({
+    mutationFn: api.stopLancache,
+    onSuccess: async () => {
+      setLancacheNotice("Managed LANCache stopped.");
+      await qc.invalidateQueries({ queryKey: ["lancache-settings"] });
+      await qc.invalidateQueries({ queryKey: ["lancache-status"] });
+    },
+    onError: (err: Error) => setLancacheError(nodeActionError(err)),
+  });
+
+  const pruneLancache = useMutation({
+    mutationFn: api.pruneLancache,
+    onSuccess: async () => {
+      setLancacheNotice("Cache data pruned.");
+      await qc.invalidateQueries({ queryKey: ["lancache-status"] });
+    },
+    onError: (err: Error) => setLancacheError(nodeActionError(err)),
   });
 
   const removeNodeMut = useMutation({
@@ -460,6 +544,132 @@ export function SettingsPage({ user }: { user: PublicUser }) {
         ) : null}
       </section>
 
+      {can(user.role, "settings.llm") ? (
+        <section className="panel stack tight">
+          <h3>LAN cache</h3>
+          <p className="muted status-inline">
+            Optional Steam/CDN caching (LANCache-compatible) for SteamCMD and LAN parties. See{" "}
+            <code>docs/lancache.md</code>.
+          </p>
+          <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>
+            <input
+              type="checkbox"
+              checked={lancacheEnabled}
+              onChange={(e) => setLancacheEnabled(e.target.checked)}
+              disabled={lancacheSettings.isLoading}
+            />
+            <span>Enable LAN cache for this fleet</span>
+          </label>
+          <label className="field">
+            <span>Cache IP (BYO or managed)</span>
+            <input
+              value={lancacheIp}
+              onChange={(e) => setLancacheIp(e.target.value)}
+              placeholder="192.168.1.50"
+              autoComplete="off"
+            />
+          </label>
+          <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>
+            <input
+              type="checkbox"
+              checked={lancachePin}
+              onChange={(e) => setLancachePin(e.target.checked)}
+            />
+            <span>Pin SteamCMD via hosts file (Steam CDN → cache IP)</span>
+          </label>
+          {lancacheSettings.data?.lancache.diskWarn ? (
+            <p className="error" role="alert">
+              Free disk on one or more nodes is below the soft warning threshold. Free space or prune
+              managed cache data.
+            </p>
+          ) : null}
+          <div className="btn-row">
+            <button
+              className="btn btn-primary"
+              type="button"
+              disabled={saveLancache.isPending}
+              onClick={() => saveLancache.mutate()}
+            >
+              Save LAN cache settings
+            </button>
+          </div>
+          <label className="field">
+            <span>Install managed LANCache on node (Linux + Docker)</span>
+            <select
+              value={lancachePartyNodeId}
+              onChange={(e) => setLancachePartyNodeId(e.target.value)}
+            >
+              <option value="">Select node…</option>
+              {(nodesList.data?.nodes ?? [])
+                .filter((n) => n.os === "linux" && n.docker)
+                .map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.name} ({n.id})
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>
+            <input
+              type="checkbox"
+              checked={lancacheManageDns}
+              onChange={(e) => setLancacheManageDns(e.target.checked)}
+            />
+            <span>Also start lancache-dns (point DHCP DNS at the cache IP)</span>
+          </label>
+          <div className="btn-row">
+            <button
+              className="btn btn-primary"
+              type="button"
+              disabled={!lancachePartyNodeId || installLancache.isPending}
+              onClick={() => installLancache.mutate()}
+            >
+              Install LANCache on node
+            </button>
+            <button
+              className="btn"
+              type="button"
+              disabled={stopLancache.isPending || !lancacheSettings.data?.lancache.partyNodeId}
+              onClick={() => stopLancache.mutate()}
+            >
+              Stop managed
+            </button>
+            <button
+              className="btn"
+              type="button"
+              disabled={pruneLancache.isPending || !lancacheSettings.data?.lancache.partyNodeId}
+              onClick={() => {
+                if (window.confirm("Clear managed LANCache data directory on the party node?")) {
+                  pruneLancache.mutate();
+                }
+              }}
+            >
+              Prune cache data
+            </button>
+          </div>
+          {lancacheStatusQ.data?.status ? (
+            <p className="muted status-inline">
+              Managed status: {JSON.stringify(lancacheStatusQ.data.status)}
+            </p>
+          ) : null}
+          {lancacheSettings.data?.lancache.tipSheet?.length ? (
+            <ul className="list compact-list">
+              {lancacheSettings.data.lancache.tipSheet.map((tip) => (
+                <li key={tip} className="muted">
+                  {tip}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {lancacheNotice ? <p className="muted status-inline">{lancacheNotice}</p> : null}
+          {lancacheError ? (
+            <p className="error" role="alert">
+              {lancacheError}
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+
       <section className="panel stack tight">
         <h3>Nodes</h3>
         <p className="muted status-inline">
@@ -527,6 +737,10 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                         : n.docker
                           ? " · Docker"
                           : " · no Docker"}
+                      {n.lancache ? " · LAN cache reachable" : ""}
+                      {n.lancachePin && n.lancachePin !== "skipped" && n.lancachePin !== "removed"
+                        ? ` · pin ${n.lancachePin}`
+                        : ""}
                       {n.agentVersion && n.agentVersion !== "pending"
                         ? ` · v${n.agentVersion}`
                         : ""}

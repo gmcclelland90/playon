@@ -7,3 +7,6 @@ export * from "./dockerode-adapter.js";
 export * from "./factory.js";
 export * from "./host-capabilities.js";
 export * from "./steamcmd.js";
+export * from "./lancache-hosts.js";
+export * from "./lancache-probe.js";
+export * from "./lancache-docker.js";

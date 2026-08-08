@@ -4,11 +4,22 @@ import path from "node:path";
 
 export type HostOs = "linux" | "windows";
 
+export type LancachePinAdvertisement =
+  | "applied"
+  | "removed"
+  | "skipped"
+  | "needs_elevation"
+  | "error";
+
 export interface HostCapabilities {
   os: HostOs;
   docker: boolean;
   native: boolean;
   steamcmd: boolean;
+  /** True when configured cache IP accepts TCP :80 (or local managed stack). */
+  lancache?: boolean;
+  /** Last hosts-file pin attempt result. */
+  lancachePin?: LancachePinAdvertisement;
   freeDiskBytes?: number;
 }
 

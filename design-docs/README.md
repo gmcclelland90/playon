@@ -28,6 +28,7 @@ The system is designed primarily for LAN parties and rapid multiplayer setup, wi
 | 16 | [Live Server Query](16-live-server-query.md) | Uniform live stats (GameQ-style), built-in dialects, agent-authored skill connectors |
 | 17 | [MCP & External Agents](17-mcp-and-external-agents.md) | Same tool registry via Venice, Ollama, or MCP; PATs for external agents |
 | 18 | [Watchers](18-watchers.md) | Scheduled / event-driven automations that wake Monitor tools or agent turns |
+| 19 | [LAN Content Cache](19-lan-content-cache.md) | Optional LANCache-style Steam/CDN caching: BYO + managed monolithic on Linux nodes |
 
 ## How to Use
 

@@ -19,6 +19,8 @@
 
 **Shipping:** [Watchers](18-watchers.md) — schedule + event/hook automations that run tool scripts or Monitor agent turns.
 
+**Shipping:** [LAN Content Cache](19-lan-content-cache.md) — BYO / managed `lancachenet` for SteamCMD + LAN-party bandwidth.
+
 ## Longer-Term / Exploratory
 
 - “Computer use” agents inside isolated VMs for stubborn proprietary launchers

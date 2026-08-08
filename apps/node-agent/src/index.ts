@@ -21,7 +21,7 @@ async function tickHeartbeat() {
   try {
     await postHeartbeat(apiBase, payload, nodeToken);
     console.log(
-      `[node-agent] heartbeat ok node=${nodeId} docker=${payload.docker} native=${payload.native} steamcmd=${payload.steamcmd}`,
+      `[node-agent] heartbeat ok node=${nodeId} docker=${payload.docker} native=${payload.native} steamcmd=${payload.steamcmd} lancache=${payload.lancache}`,
     );
   } catch (err) {
     console.warn(`[node-agent] heartbeat failed: ${(err as Error).message}`);
