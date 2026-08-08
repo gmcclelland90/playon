@@ -3,11 +3,12 @@ import { confirmActionLabel, confirmSummary } from "./confirm-summary.js";
 
 describe("confirmSummary", () => {
   it("uses friendly copy for tools still in the overlay table", () => {
-    expect(confirmSummary("snapshot_restore", { snapshotId: "s1" })).toBe(
-      "An agent wants to restore this server from a snapshot.",
-    );
     expect(confirmSummary("steamcmd_app_update", { serverId: "s1", appId: 258550 })).toBe(
       "An agent wants to download or update game files via Steam: app 258550",
+    );
+    // Migrated tools are gone from the overlay, so callers must pass their action.
+    expect(confirmSummary("snapshot_restore", { snapshotId: "s1" })).toBe(
+      'An agent wants to run "snapshot restore".',
     );
   });
 
@@ -68,9 +69,14 @@ describe("confirmSummary", () => {
 
 describe("confirmActionLabel", () => {
   it("returns the action phrase", () => {
-    expect(confirmActionLabel("snapshot_restore")).toBe("restore this server from a snapshot");
+    expect(confirmActionLabel("archive_extract")).toBe(
+      "extract an archive into the server folder",
+    );
     expect(confirmActionLabel("servers_restart", "restart this server")).toBe(
       "restart this server",
+    );
+    expect(confirmActionLabel("snapshot_restore", "restore this server from a snapshot")).toBe(
+      "restore this server from a snapshot",
     );
   });
 });

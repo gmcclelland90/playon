@@ -11,18 +11,6 @@ export const TOOL_SURFACE_OVERLAY = {
     confirmAction: "extract an archive into the server folder",
     activityVerb: "write",
   },
-  backup_offnode: {
-    skill: "backup",
-    activityVerb: "snapshot",
-    xp: { xp: 20, reason: "durable_backup" },
-  },
-  backup_offnode_list: { skill: "backup", activityVerb: "snapshot" },
-  backup_offnode_restore: {
-    skill: "backup",
-    confirmAction: "restore this server from an off-site backup",
-    activityVerb: "snapshot",
-    xp: { xp: 45, reason: "recovery_offnode", celebrate: true },
-  },
   fetch_url: {
     skill: "modder",
     confirmAction: "download a file into the server folder",
@@ -33,15 +21,6 @@ export const TOOL_SURFACE_OVERLAY = {
   nodes_remove: { skill: "installer", activityVerb: "run" },
   rcon_exec: { skill: "configurer", activityVerb: "run" },
   rcon_say: { skill: "configurer", activityVerb: "run" },
-  snapshot_create: { skill: "backup", activityVerb: "snapshot" },
-  snapshot_enforce_retention: { skill: "backup", activityVerb: "snapshot" },
-  snapshot_list: { skill: "backup", activityVerb: "snapshot" },
-  snapshot_restore: {
-    skill: "backup",
-    confirmAction: "restore this server from a snapshot",
-    activityVerb: "snapshot",
-    xp: { xp: 40, reason: "recovery", celebrate: true },
-  },
   steamcmd_app_update: {
     skill: "installer",
     confirmAction: "download or update game files via Steam",

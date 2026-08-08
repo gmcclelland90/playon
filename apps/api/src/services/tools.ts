@@ -34,7 +34,6 @@ import { SteamcmdNotFoundError, steamcmdAppUpdate } from "./steamcmd.js";
 import { composeToolEntries, toSurfaceEntry } from "./tools/index.js";
 import {
   createOrReinstallFromSkill,
-  resolveOptionalWorkspaceServerId,
   resolveWorkspaceServerId,
   workspaceCreateForbidden,
   type WorkspaceBinding,
@@ -141,7 +140,7 @@ export function createPlayOnToolRegistry(
     config.dataRoot,
     workspace.serverId,
   );
-  const { servers, snapshots, archives, net, placement, offNode, addNode } = plane;
+  const { servers, archives, net, placement, addNode } = plane;
 
   const tools = new Map<string, ToolEntry>();
   for (const entry of composeToolEntries({ plane, workspace, skillRoots })) {
@@ -163,49 +162,6 @@ export function createPlayOnToolRegistry(
 
   // Tool names must match ^[a-zA-Z0-9_-]+$ for Venice / many OpenAI-compatible gateways.
   const toolDefs: ToolDefinition[] = [
-    {
-      name: "snapshot_create",
-      description: "Create a snapshot of a server data directory",
-      parameters: {
-        type: "object",
-        properties: {
-          serverId: { type: "string" },
-          label: { type: "string" },
-        },
-        required: ["serverId"],
-      },
-    },
-    {
-      name: "snapshot_restore",
-      description: "Restore a server from a snapshot",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: { snapshotId: { type: "string" } },
-        required: ["snapshotId"],
-      },
-    },
-    {
-      name: "snapshot_list",
-      description: "List snapshots, optionally filtered by server",
-      parameters: {
-        type: "object",
-        properties: { serverId: { type: "string" } },
-      },
-    },
-    {
-      name: "snapshot_enforce_retention",
-      description:
-        "Prune quick/scheduled snapshots by count/age. Durable labels (baseline/backup) are kept.",
-      parameters: {
-        type: "object",
-        properties: {
-          serverId: { type: "string" },
-          maxCount: { type: "number" },
-          maxAgeHours: { type: "number" },
-        },
-      },
-    },
     {
       name: "archive_extract",
       description:
@@ -290,40 +246,6 @@ export function createPlayOnToolRegistry(
       },
     },
     {
-      name: "backup_offnode",
-      description:
-        "Create a durable snapshot and copy it to the configured off-node backup root (USB/NAS/second disk).",
-      parameters: {
-        type: "object",
-        properties: {
-          serverId: { type: "string" },
-          label: { type: "string" },
-        },
-        required: ["serverId"],
-      },
-    },
-    {
-      name: "backup_offnode_list",
-      description: "List off-node backups under the configured external target",
-      parameters: {
-        type: "object",
-        properties: { serverId: { type: "string" } },
-      },
-    },
-    {
-      name: "backup_offnode_restore",
-      description: "Restore a server from an off-node backup export",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: {
-          backupId: { type: "string" },
-          serverId: { type: "string" },
-        },
-        required: ["backupId"],
-      },
-    },
-    {
       name: "rcon_exec",
       description:
         "Run a Minecraft RCON command (no leading slash). Auto-heals known legacy gamerules (doDaylightCycle→advance_time, keepInventory→keep_inventory, etc.). Always-day: `time set day` then `gamerule advance_time false`. On rcon_command_failed: read body/hint, try one different approach, then explain — never spam the same failing command. Prefer rcon_say for chat.",
@@ -372,53 +294,6 @@ export function createPlayOnToolRegistry(
     if (!def) throw new Error(`missing_tool_def: ${name}`);
     return def;
   };
-
-  registerTool(tool("snapshot_create"), async (args) => {
-    const resolved = resolveWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    const label = args.label ? String(args.label) : `snapshot-${Date.now()}`;
-    const snapshot = await snapshots.create(resolved.serverId, label);
-    return { snapshotId: snapshot.id, label: snapshot.label, path: snapshot.path };
-  });
-
-  registerTool(tool("snapshot_restore"), async (args) => {
-    const snapshotId = String(args.snapshotId);
-    const snapshot = await snapshots.get(snapshotId);
-    if (!snapshot) throw new Error(`unknown_snapshot: ${snapshotId}`);
-    if (workspace.serverId && snapshot.serverId !== workspace.serverId) {
-      return {
-        error: "workspace_server_mismatch",
-        workspaceServerId: workspace.serverId,
-        requestedServerId: snapshot.serverId,
-      };
-    }
-
-    const server = await withSnapshot(snapshots, snapshot.serverId, "pre-restore", async () =>
-      snapshots.restore(snapshotId),
-    );
-    return { serverId: server.id, status: server.status, restoredFrom: snapshotId };
-  });
-
-  registerTool(tool("snapshot_list"), async (args) => {
-    const resolved = resolveOptionalWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    const rows = await snapshots.list(resolved.serverId);
-    return rows.map((s) => ({
-      id: s.id,
-      serverId: s.serverId,
-      label: s.label,
-      createdAt: s.createdAt.toISOString(),
-    }));
-  });
-
-  registerTool(tool("snapshot_enforce_retention"), async (args) => {
-    const resolved = resolveOptionalWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    return snapshots.enforceRetention(resolved.serverId, {
-      maxCount: args.maxCount !== undefined ? Number(args.maxCount) : 10,
-      maxAgeHours: args.maxAgeHours !== undefined ? Number(args.maxAgeHours) : 72,
-    });
-  });
 
   registerTool(tool("archive_extract"), async (args) => {
     const resolved = resolveWorkspaceServerId(args, workspace.serverId);
@@ -470,27 +345,6 @@ export function createPlayOnToolRegistry(
   registerTool(tool("nodes_remove"), async (args) =>
     addNode.removeNode(String(args.nodeId), { force: args.force === true }),
   );
-
-  registerTool(tool("backup_offnode"), async (args) => {
-    const resolved = resolveWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    return offNode.backupServer(
-      resolved.serverId,
-      args.label ? String(args.label) : undefined,
-    );
-  });
-
-  registerTool(tool("backup_offnode_list"), async (args) => {
-    const resolved = resolveOptionalWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    return offNode.list(resolved.serverId);
-  });
-
-  registerTool(tool("backup_offnode_restore"), async (args) => {
-    const resolved = resolveOptionalWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    return offNode.restore(String(args.backupId), resolved.serverId);
-  });
 
   registerTool(tool("rcon_exec"), async (args) => {
     const resolved = resolveWorkspaceServerId(args, workspace.serverId);
