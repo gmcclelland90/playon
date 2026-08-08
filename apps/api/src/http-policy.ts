@@ -9,6 +9,7 @@ import {
   type HttpErrorStatus,
   type Role,
 } from "@playon/shared";
+import { nodeTokenAuthorized, type NodeTokenCarrier } from "./auth/node-token.js";
 import type { AuthUser } from "./auth/session.js";
 
 /** Minimal view of the Hono context these guards need. */
@@ -42,6 +43,17 @@ export function requireCan(c: SessionCarrier, capability: Capability): AuthUser 
   const user = currentUser(c);
   if (!user || !can(user.role, capability)) throw HttpError.forbidden("forbidden");
   return user;
+}
+
+/**
+ * Node-agent protocol routes authenticate with `PLAYON_NODE_TOKEN` (Bearer or
+ * `x-playon-node-token`). When no token is configured the control plane stays
+ * open for local/dev — same rule as the pre-envelope routes.
+ */
+export function requireNodeToken(c: NodeTokenCarrier, expectedToken: string | undefined): void {
+  if (!nodeTokenAuthorized(c, expectedToken)) {
+    throw HttpError.unauthorized("unauthorized");
+  }
 }
 
 /**
