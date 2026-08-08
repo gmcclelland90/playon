@@ -595,19 +595,15 @@ export class ServerService {
       return { input: endpoint ? "ready" : "unavailable", dialect };
     }
 
-    // stdin — Docker only in this slice (native supervisor uses stdio:ignore).
+    // stdin — the server's own runtime answers, in whichever quadrant it lives.
     if (dialect === "stdin") {
-      if (server.runtimeMode === "native") {
-        return { input: "unavailable", dialect };
-      }
       try {
-        await this.ensureRuntime();
-        const adapter = this.adapterFor(serverId);
-        if (typeof adapter.writeStdin !== "function") {
-          return { input: "unsupported", dialect };
-        }
-        const info = await adapter.inspect(this.containerName(serverId));
-        return { input: info.status === "running" ? "ready" : "unavailable", dialect };
+        const handle = await this.openRuntime(server);
+        // A runtime with no console at all is a different answer than one that
+        // has a console but is not up yet.
+        if (!handle.canWriteStdin) return { input: "unsupported", dialect };
+        const status = await handle.status();
+        return { input: status.state === "running" ? "ready" : "unavailable", dialect };
       } catch {
         return { input: "unavailable", dialect };
       }
@@ -616,36 +612,9 @@ export class ServerService {
     return { input: "unsupported", dialect };
   }
 
-  /** Write a console line to the server's container stdin (local or remote node). */
-  async writeContainerStdin(serverId: string, line: string): Promise<void> {
-    const server = await this.get(serverId);
-    if (!server) throw new Error("unknown_server");
-    if (server.runtimeMode === "native") {
-      throw new Error("stdin_unavailable_native");
-    }
-    await this.ensureRuntime();
-    const name = this.containerName(serverId);
-    await dispatchNodeJob({
-      nodeId: server.nodeId,
-      kind: "container_stdin",
-      args: { id: name, line },
-      timeoutMs: 30_000,
-      localHandler: async () => {
-        const adapter = this.adapterFor(serverId);
-        if (typeof adapter.writeStdin !== "function") {
-          throw new Error("container_stdin_unsupported");
-        }
-        let containerId = name;
-        try {
-          const info = await adapter.inspect(name);
-          containerId = info.id;
-        } catch {
-          throw new Error("container_missing");
-        }
-        await adapter.writeStdin(containerId, line);
-        return { ok: true as const };
-      },
-    });
+  /** Write a console line to the server's runtime stdin (any mode × locality). */
+  async writeStdin(serverId: string, line: string): Promise<void> {
+    await (await this.runtime(serverId)).writeStdin(line);
   }
 
   private readSkillMeta(dataPath: string): {

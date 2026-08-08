@@ -78,4 +78,10 @@ export interface ProcessSupervisor {
    * cwd is under `cwd` (covers node-agent restarts that lose the in-memory map).
    */
   reclaim?(name: string, cwd: string): Promise<void>;
+  /**
+   * Write a console line to the process behind an identity (adminDialect=stdin).
+   * Only a process this supervisor still holds a stdin pipe for can be written
+   * to: an OS orphan it merely re-resolved has no console left to address.
+   */
+  writeStdin?(name: string, cwd: string, data: string): Promise<void>;
 }
