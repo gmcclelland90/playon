@@ -90,10 +90,10 @@ describe("dispatchNodeJob", () => {
   });
 
   it("keeps the untyped shim for unmigrated kinds", async () => {
-    const pending = dispatchNodeJob<{ entries: Array<{ name: string }> }>({
+    const pending = dispatchNodeJob<{ running: boolean }>({
       nodeId: "spare-4",
-      kind: "fs_list",
-      args: { path: "servers" },
+      kind: "container_inspect",
+      args: { id: "abc" },
       timeoutMs: 2_000,
       localHandler: () => {
         throw new Error("remote_only");
@@ -101,9 +101,9 @@ describe("dispatchNodeJob", () => {
     });
     await new Promise((r) => setTimeout(r, 50));
     const job = nodeJobService.claimNext("spare-4");
-    expect(job?.args).toEqual({ path: "servers" });
-    nodeJobService.complete(job!.id, { entries: [{ name: "a.txt" }] });
-    await expect(pending).resolves.toEqual({ entries: [{ name: "a.txt" }] });
+    expect(job?.args).toEqual({ id: "abc" });
+    nodeJobService.complete(job!.id, { running: true });
+    await expect(pending).resolves.toEqual({ running: true });
   });
 
   it("refuses kinds the node does not advertise", async () => {
@@ -114,12 +114,88 @@ describe("dispatchNodeJob", () => {
           nodeId: "spare-5",
           kind: "fs_list",
           args: { path: "." },
-          localHandler: () => ({}),
+          localHandler: () => ({ path: ".", entries: [] }),
         }),
       ).rejects.toMatchObject({ code: "unsupported_job_kind" });
     } finally {
       nodeJobService.forgetJobKinds("spare-5");
     }
+  });
+});
+
+describe("dispatchNodeJob — fs family", () => {
+  it("infers args and result from the fs kind", async () => {
+    const pending = dispatchNodeJob({
+      nodeId: "fs-1",
+      kind: "fs_read_text",
+      args: { path: "servers/a/logs/console.log", offset: 4 },
+      timeoutMs: 2_000,
+      localHandler: () => {
+        throw new Error("remote_only");
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const job = nodeJobService.claimNext("fs-1");
+    // Defaults are applied before the job is queued, so the agent sees full args.
+    expect(job?.args).toEqual({ path: "servers/a/logs/console.log", offset: 4 });
+    nodeJobService.complete(job!.id, {
+      path: "servers/a/logs/console.log",
+      content: "line",
+      bytesRead: 4,
+      truncated: false,
+      size: 8,
+    });
+    const result = await pending;
+    expect(result.content).toBe("line");
+    expect(result.truncated).toBe(false);
+  });
+
+  it("rejects an fs result that breaks the contract", async () => {
+    const pending = dispatchNodeJob({
+      nodeId: "fs-2",
+      kind: "fs_list",
+      args: { path: "servers/a" },
+      timeoutMs: 2_000,
+      localHandler: () => {
+        throw new Error("remote_only");
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const job = nodeJobService.claimNext("fs-2");
+    nodeJobService.complete(job!.id, { entries: [{ name: "game", type: "folder" }] });
+    await expect(pending).rejects.toMatchObject({ code: "validation_failed", kind: "fs_list" });
+  });
+
+  it("refuses a jail escape before enqueueing", async () => {
+    await expect(
+      dispatchNodeJob({
+        nodeId: "fs-3",
+        kind: "fs_remove",
+        args: { path: "servers/../../etc" },
+        localHandler: () => ({ path: "x", ok: true }),
+      }),
+    ).rejects.toMatchObject({ code: "validation_failed", kind: "fs_remove" });
+    expect(nodeJobService.claimNext("fs-3")).toBeNull();
+  });
+
+  it("validates fs results produced locally too", async () => {
+    await expect(
+      dispatchNodeJob({
+        nodeId: LOCAL_NODE_ID,
+        kind: "fs_write_text",
+        args: { path: "servers/a/x.ini", content: "k=v" },
+        localHandler: () => ({ ok: true }) as never,
+      }),
+    ).rejects.toMatchObject({ code: "validation_failed", kind: "fs_write_text" });
+
+    await expect(
+      dispatchNodeJob({
+        nodeId: LOCAL_NODE_ID,
+        kind: "fs_write_text",
+        args: { path: "servers/a/x.ini", content: "k=v" },
+        localHandler: () => ({ path: "servers/a/x.ini", bytes: 3 }),
+      }),
+    ).resolves.toEqual({ path: "servers/a/x.ini", bytes: 3 });
   });
 });
 

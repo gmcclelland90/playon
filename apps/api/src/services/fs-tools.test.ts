@@ -74,6 +74,45 @@ describe("ServerFsService node-authoritative routing", () => {
     expect(dispatch).toHaveBeenCalled();
   });
 
+  it("repairs a sloppy read window and answers renames in caller terms", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-fs-clamp-"));
+    temps.push(root);
+    const dataPath = path.join(root, "servers", "s3");
+    fs.mkdirSync(dataPath, { recursive: true });
+    fs.writeFileSync(path.join(dataPath, NODE_AUTHORITATIVE_MARKER), "node-z\n");
+
+    const seen: Array<Record<string, unknown>> = [];
+    vi.spyOn(nodeRuntime, "dispatchNodeJob").mockImplementation(async (opts) => {
+      seen.push({ kind: opts.kind, ...opts.args });
+      if (opts.kind === "fs_read_text") {
+        return { path: String(opts.args?.path), content: "", bytesRead: 0, truncated: false, size: 0 };
+      }
+      return { from: String(opts.args?.from), to: String(opts.args?.to) };
+    });
+
+    const servers = {
+      get: async () => ({
+        id: "s3",
+        name: "n",
+        game: "g",
+        nodeId: "node-z",
+        runtimeMode: "native",
+        status: "stopped",
+        dataPath,
+        createdAt: new Date(),
+      }),
+    };
+    const fsSvc = new ServerFsService(servers as never);
+
+    // An LLM-sourced window must not fail contract validation over a float or a zero.
+    await fsSvc.read("s3", "game/a.ini", { offset: 10.7, maxBytes: 0 });
+    expect(seen[0]).toMatchObject({ kind: "fs_read_text", offset: 10, maxBytes: 1 });
+
+    const renamed = await fsSvc.rename("s3", "game/a.ini", "game/b.ini");
+    expect(renamed).toEqual({ from: "game/a.ini", to: "game/b.ini" });
+    expect(seen[1]).toMatchObject({ from: "servers/s3/game/a.ini", to: "servers/s3/game/b.ini" });
+  });
+
   it("uses the Home jail when not node-authoritative", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-fs-home-"));
     temps.push(root);

@@ -176,29 +176,27 @@ export class ServerService {
     try {
       const rel = this.consoleLogRel(server.id);
       // Probe size first — reading from offset 0 only returns the head of large logs.
-      const probe = await dispatchNodeJob<{ size?: number }>({
+      const probe = await dispatchNodeJob({
         nodeId: server.nodeId,
         kind: "fs_read_text",
         args: { path: rel, offset: 0, maxBytes: 1 },
         timeoutMs: 15_000,
-        localHandler: async () => ({ size: 0 }),
+        localHandler: async () => {
+          throw new Error("remote_only");
+        },
       });
-      const size = Math.max(0, Number(probe.size ?? 0) || 0);
       const maxBytes = 128_000;
-      const offset = Math.max(0, size - maxBytes);
-      const result = await dispatchNodeJob<{ content?: string; text?: string }>({
+      const offset = Math.max(0, probe.size - maxBytes);
+      const result = await dispatchNodeJob({
         nodeId: server.nodeId,
         kind: "fs_read_text",
         args: { path: rel, offset, maxBytes },
         timeoutMs: 15_000,
-        localHandler: async () => ({
-          content: fs.existsSync(this.consoleLogAbs(server.dataPath))
-            ? fs.readFileSync(this.consoleLogAbs(server.dataPath), "utf8")
-            : "",
-        }),
+        localHandler: async () => {
+          throw new Error("remote_only");
+        },
       });
-      const text = String(result.content ?? result.text ?? "");
-      return text
+      return result.content
         .split(/\r?\n/)
         .filter((l) => l.length > 0)
         .slice(-lines);
@@ -221,14 +219,15 @@ export class ServerService {
       null,
       2,
     );
+    const rel = nodeServerRelPath(server.id, "rcon.json");
     await dispatchNodeJob({
       nodeId: server.nodeId,
       kind: "fs_write_text",
-      args: { path: nodeServerRelPath(server.id, "rcon.json"), content: body },
+      args: { path: rel, content: body },
       timeoutMs: 15_000,
       localHandler: async () => {
         writeRconConfig(server.dataPath, endpoint);
-        return { ok: true as const };
+        return { path: rel, bytes: Buffer.byteLength(body, "utf8") };
       },
     });
   }
@@ -245,7 +244,7 @@ export class ServerService {
   private async readNodeText(server: ServerRecord, relPath: string): Promise<string | null> {
     if (!server.nodeId || isLocalNodeId(server.nodeId)) return null;
     try {
-      const result = await dispatchNodeJob<{ content?: string; text?: string }>({
+      const result = await dispatchNodeJob({
         nodeId: server.nodeId,
         kind: "fs_read_text",
         args: {
@@ -257,7 +256,7 @@ export class ServerService {
           throw new Error("remote_only");
         },
       });
-      return String(result.content ?? result.text ?? "");
+      return result.content;
     } catch {
       return null;
     }
@@ -294,9 +293,7 @@ export class ServerService {
   ): Promise<Array<{ name: string; type: "file" | "dir" }>> {
     if (!server.nodeId || isLocalNodeId(server.nodeId)) return [];
     try {
-      const result = await dispatchNodeJob<{
-        entries?: Array<{ name: string; type: "file" | "dir" }>;
-      }>({
+      const result = await dispatchNodeJob({
         nodeId: server.nodeId,
         kind: "fs_list",
         args: {
@@ -307,7 +304,7 @@ export class ServerService {
           throw new Error("remote_only");
         },
       });
-      return result.entries ?? [];
+      return result.entries;
     } catch {
       return [];
     }
@@ -1100,11 +1097,12 @@ export class ServerService {
   /** Ensure server dirs exist on a remote node (idempotent). */
   private async provisionRemoteDirs(server: ServerRecord): Promise<void> {
     if (!this.isRemoteNode(server) || !server.nodeId) return;
+    const rel = nodeServerRelPath(server.id, "game");
     await dispatchNodeJob({
       nodeId: server.nodeId,
       kind: "fs_ensure_dir",
-      args: { path: nodeServerRelPath(server.id, "game") },
-      localHandler: async () => ({ ok: true }),
+      args: { path: rel },
+      localHandler: async () => ({ path: rel, ok: true }),
     });
   }
 
