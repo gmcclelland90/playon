@@ -17,7 +17,7 @@ function mockServers(opts: {
         : null,
     ),
     getRconEndpoint: vi.fn(async () => opts.rcon ?? null),
-    writeContainerStdin: vi.fn(opts.writeStdin ?? (async () => undefined)),
+    writeStdin: vi.fn(opts.writeStdin ?? (async () => undefined)),
   } as unknown as ServerService;
 }
 
@@ -84,7 +84,23 @@ describe("execConsoleCommand", () => {
     const result = await execConsoleCommand(servers, "s1", "help");
     expect(result).toEqual({ dialect: "stdin", ok: true, body: "" });
     expect(writeStdin).toHaveBeenCalledOnce();
-    expect(servers.writeContainerStdin).toHaveBeenCalledWith("s1", "help");
+    expect(servers.writeStdin).toHaveBeenCalledWith("s1", "help");
+  });
+
+  it("explains a runtime with no console instead of leaking the raw error", async () => {
+    const servers = mockServers({
+      dialect: "stdin",
+      input: "unsupported",
+      writeStdin: async () => {
+        throw new Error("runtime_unsupported: native stdin over remote transport");
+      },
+    });
+
+    const result = await execConsoleCommand(servers, "s1", "help");
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/runtime_unsupported/);
+    expect(result.hint).toMatch(/no console input/);
   });
 
   it("returns rcon_not_configured when mc_rcon has no endpoint", async () => {

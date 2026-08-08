@@ -284,6 +284,19 @@ describe("executeJob", () => {
         ),
       ).toMatchObject({ id: started.id, status: "running" });
 
+      // A caller that kept no id gets the same answer from name + cwd alone.
+      expect(
+        await executeJob(
+          {
+            id: "proc-status-by-identity",
+            nodeId: "n1",
+            kind: "process_status",
+            args: { name: "server-s1", cwd: gameRel },
+          },
+          root,
+        ),
+      ).toMatchObject({ name: "server-s1", status: "running" });
+
       expect(
         await executeJob(
           {
@@ -302,6 +315,19 @@ describe("executeJob", () => {
           root,
         ),
       ).toMatchObject({ id: started.id, status: "stopped" });
+
+      // An identity with nothing behind it is answered, not refused.
+      expect(
+        await executeJob(
+          {
+            id: "proc-status-gone",
+            nodeId: "n1",
+            kind: "process_status",
+            args: { name: "server-s1", cwd: gameRel },
+          },
+          root,
+        ),
+      ).toMatchObject({ name: "server-s1", status: "stopped" });
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

@@ -31,7 +31,9 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     await this.reclaim(spec.name, cwd);
 
     let logFd: number | undefined;
-    let stdio: "ignore" | Array<"ignore" | number> = "ignore";
+    // stdin stays a pipe so a stdin-dialect game keeps a console this supervisor
+    // can address; the child still blocks on an empty read instead of seeing EOF.
+    let stdio: Array<"pipe" | "ignore" | number> = ["pipe", "ignore", "ignore"];
     if (spec.logFile) {
       const logPath = path.isAbsolute(spec.logFile)
         ? spec.logFile
@@ -40,7 +42,7 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
           : path.resolve(cwd, spec.logFile);
       fs.mkdirSync(path.dirname(logPath), { recursive: true });
       logFd = fs.openSync(logPath, "a");
-      stdio = ["ignore", logFd, logFd];
+      stdio = ["pipe", logFd, logFd];
     }
 
     const id = `native-${spec.name}-${++this.seq}`;
@@ -55,6 +57,13 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     });
     if (process.platform !== "win32") {
       child.unref();
+    }
+    if (child.stdin) {
+      // A game that exits first must turn a late console write into a rejected
+      // promise, never an unhandled error event on the host.
+      child.stdin.on("error", () => undefined);
+      // The write end must not keep the host alive for a detached game.
+      (child.stdin as unknown as { unref?: () => void }).unref?.();
     }
 
     const info: ProcessInfo = {
@@ -95,6 +104,21 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     return { ...this.require(id).info };
   }
 
+  /**
+   * Answer "is a process running for this server" from identity alone: tracked
+   * entries first, then OS processes living in `cwd` (survives a supervisor restart).
+   */
+  async find(name: string, cwd: string): Promise<ProcessInfo | null> {
+    const resolved = this.jailRoot ? resolveInJail(this.jailRoot, cwd) : cwd;
+    const tracked = this.findTracked(name, resolved);
+    if (tracked) return { ...tracked.info };
+    if (process.platform === "win32") return null;
+    const pid = listPidsWithCwdUnder(resolved)[0] ?? firstPidWithCmdlineUnder(resolved);
+    if (pid == null) return null;
+    // Untracked survivor: the pid is the only identity we can offer.
+    return { id: `native-orphan-${pid}`, name, pid, status: "running" };
+  }
+
   async reclaim(name: string, cwd: string): Promise<void> {
     for (const tracked of this.procs.values()) {
       if (tracked.info.name !== name && tracked.cwdJail !== cwd) continue;
@@ -107,6 +131,36 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     if (process.platform !== "win32") {
       await this.killOrphansByCwd(cwd);
     }
+  }
+
+  /**
+   * Write a console line to the process behind an identity. Only a spawn this
+   * supervisor still holds the stdin pipe for can be addressed — an OS orphan
+   * `find` re-resolved after a restart has no console left to write to.
+   */
+  async writeStdin(name: string, cwd: string, data: string): Promise<void> {
+    const resolved = this.jailRoot ? resolveInJail(this.jailRoot, cwd) : cwd;
+    const tracked = this.findTracked(name, resolved);
+    if (!tracked) {
+      throw new Error("stdin_unavailable: no supervised process for this identity");
+    }
+    const stdin = tracked.child.stdin;
+    if (!stdin || stdin.destroyed) {
+      throw new Error("stdin_unavailable: process console is closed");
+    }
+    const line = data.endsWith("\n") ? data : `${data}\n`;
+    await new Promise<void>((resolve, reject) => {
+      stdin.write(line, (err) => (err ? reject(err) : resolve()));
+    });
+  }
+
+  /** Tracked process for an identity: supervisor name first, then jailed cwd. */
+  private findTracked(name: string, resolvedCwd: string): TrackedProcess | null {
+    for (const tracked of this.procs.values()) {
+      if (tracked.info.status !== "running") continue;
+      if (tracked.info.name === name || tracked.cwdJail === resolvedCwd) return tracked;
+    }
+    return null;
   }
 
   private closeLogFd(tracked: TrackedProcess): void {
@@ -179,6 +233,21 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     const p = this.procs.get(id);
     if (!p) throw new Error(`unknown process: ${id}`);
     return p;
+  }
+}
+
+/** Fallback for hosts where /proc/<pid>/cwd is unreadable: match the command line. */
+function firstPidWithCmdlineUnder(target: string): number | null {
+  try {
+    const out = execFileSync("pgrep", ["-f", target], { encoding: "utf8" });
+    for (const line of out.trim().split("\n")) {
+      const pid = Number(line.trim());
+      if (Number.isInteger(pid) && pid > 0 && pid !== process.pid) return pid;
+    }
+    return null;
+  } catch {
+    // exit 1 = no match
+    return null;
   }
 }
 

@@ -246,6 +246,11 @@ describe("parseNodeJobArgs", () => {
     expect(parseNodeJobArgs("process_status", { id: "native-server-a-1" })).toEqual({
       id: "native-server-a-1",
     });
+    // No id survives a restart on either shore, so identity is a first-class ask.
+    expect(parseNodeJobArgs("process_status", { name: "server-a", cwd: "servers/a/game" })).toEqual({
+      name: "server-a",
+      cwd: "servers/a/game",
+    });
   });
 
   it("rejects process args that could only be a mistake", () => {
@@ -253,6 +258,14 @@ describe("parseNodeJobArgs", () => {
       /validation_failed/,
     );
     expect(() => parseNodeJobArgs("process_status", { id: "" })).toThrow(/validation_failed/);
+    // An ask with neither an id nor a full identity has nothing to resolve.
+    expect(() => parseNodeJobArgs("process_status", {})).toThrow(/validation_failed/);
+    expect(() => parseNodeJobArgs("process_status", { name: "server-a" })).toThrow(
+      /validation_failed/,
+    );
+    expect(() => parseNodeJobArgs("process_status", { cwd: "servers/a/game" })).toThrow(
+      /validation_failed/,
+    );
     expect(() =>
       parseNodeJobArgs("process_start", {
         name: "server-a",

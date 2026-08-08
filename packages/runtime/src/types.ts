@@ -69,8 +69,19 @@ export interface ProcessSupervisor {
   stop(id: string): Promise<void>;
   status(id: string): Promise<ProcessInfo>;
   /**
+   * Re-resolve the process for an identity (supervisor name + cwd) without a stored id.
+   * Must also see OS orphans, so a restart that loses the in-memory map still answers.
+   */
+  find(name: string, cwd: string): Promise<ProcessInfo | null>;
+  /**
    * Stop tracked processes with this name and best-effort kill OS orphans whose
    * cwd is under `cwd` (covers node-agent restarts that lose the in-memory map).
    */
   reclaim?(name: string, cwd: string): Promise<void>;
+  /**
+   * Write a console line to the process behind an identity (adminDialect=stdin).
+   * Only a process this supervisor still holds a stdin pipe for can be written
+   * to: an OS orphan it merely re-resolved has no console left to address.
+   */
+  writeStdin?(name: string, cwd: string, data: string): Promise<void>;
 }
