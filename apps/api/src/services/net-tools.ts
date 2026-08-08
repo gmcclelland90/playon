@@ -1,11 +1,8 @@
 import dns from "node:dns/promises";
-import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
-import path from "node:path";
 import { URL } from "node:url";
-import { resolveInJail } from "@playon/runtime";
 import type { ServerService } from "./servers.js";
 
 const MAX_FETCH_BYTES = 100 * 1024 * 1024;
@@ -175,11 +172,7 @@ export class NetToolsService {
     destPath: string;
     headers?: Record<string, string>;
   }): Promise<{ path: string; bytes: number; contentType?: string; finalUrl: string }> {
-    const server = await this.servers.get(args.serverId);
-    if (!server) throw new Error(`unknown_server: ${args.serverId}`);
-
-    const target = resolveInJail(server.dataPath, args.destPath);
-    fs.mkdirSync(path.dirname(target), { recursive: true });
+    const store = await this.servers.files(args.serverId);
 
     const headers = sanitizeHeaders(args.headers);
     let current = parseUrl(args.url);
@@ -195,10 +188,10 @@ export class NetToolsService {
         continue;
       }
 
-      fs.writeFileSync(target, result.buffer);
+      const written = await store.writeBytes(args.destPath, result.buffer);
       return {
-        path: args.destPath,
-        bytes: result.buffer.length,
+        path: written.path,
+        bytes: written.bytes,
         contentType: result.contentType,
         finalUrl: current.toString(),
       };

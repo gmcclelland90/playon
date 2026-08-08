@@ -45,6 +45,11 @@ import type { EventHub } from "./event-hub.js";
 import { PlacementService } from "./placement.js";
 import { pushServerDirToNode } from "./node-sync.js";
 import {
+  openServerFileStore,
+  type FileStoreLocalityMode,
+  type ServerFileStore,
+} from "./server-file-store.js";
+import {
   generateRconPassword,
   parseSourceRconText,
   patchSourceRconCfgText,
@@ -205,6 +210,23 @@ export class ServerService {
     );
   }
 
+  private openFiles(
+    server: ServerRecord,
+    opts?: { locality?: FileStoreLocalityMode },
+  ): ServerFileStore {
+    return openServerFileStore(server, {}, opts);
+  }
+
+  /** Only production choke point for server data-dir I/O. */
+  async files(
+    serverId: string,
+    opts?: { locality?: FileStoreLocalityMode },
+  ): Promise<ServerFileStore> {
+    const server = await this.getRaw(serverId);
+    if (!server) throw new Error(`unknown_server: ${serverId}`);
+    return this.openFiles(server, opts);
+  }
+
   private async syncRconJsonToNode(server: ServerRecord, endpoint: RconEndpoint): Promise<void> {
     if (!server.nodeId || isLocalNodeId(server.nodeId)) return;
     const body = JSON.stringify(
@@ -212,104 +234,50 @@ export class ServerService {
       null,
       2,
     );
-    const rel = nodeServerRelPath(server.id, "rcon.json");
-    await dispatchNodeJob({
-      nodeId: server.nodeId,
-      kind: "fs_write_text",
-      args: { path: rel, content: body },
-      timeoutMs: 15_000,
-      localHandler: async () => {
-        writeRconConfig(server.dataPath, endpoint);
-        return { path: rel, bytes: Buffer.byteLength(body, "utf8") };
-      },
-    });
+    writeRconConfig(server.dataPath, endpoint);
+    await this.openFiles(server, { locality: "remote" }).writeText("rcon.json", body);
   }
 
-  private nodeJailRel(serverId: string, relPath: string): string {
-    const parts = relPath
-      .replace(/\\/g, "/")
-      .replace(/^\.\//, "")
-      .split("/")
-      .filter((p) => p && p !== ".");
-    return parts.length ? nodeServerRelPath(serverId, ...parts) : nodeServerRelPath(serverId);
-  }
-
-  private async readNodeText(server: ServerRecord, relPath: string): Promise<string | null> {
-    if (!server.nodeId || isLocalNodeId(server.nodeId)) return null;
+  private async readServerText(server: ServerRecord, relPath: string): Promise<string | null> {
     try {
-      const result = await dispatchNodeJob({
-        nodeId: server.nodeId,
-        kind: "fs_read_text",
-        args: {
-          path: this.nodeJailRel(server.id, relPath),
-          maxBytes: 256_000,
-        },
-        timeoutMs: 30_000,
-        localHandler: async () => {
-          throw new Error("remote_only");
-        },
-      });
+      const result = await this.openFiles(server).readText(relPath, { maxBytes: 256_000 });
       return result.content;
     } catch {
       return null;
     }
   }
 
-  private async writeNodeText(
+  private async writeServerText(
     server: ServerRecord,
     relPath: string,
     content: string,
   ): Promise<boolean> {
-    if (!server.nodeId || isLocalNodeId(server.nodeId)) return false;
     try {
-      await dispatchNodeJob({
-        nodeId: server.nodeId,
-        kind: "fs_write_text",
-        args: {
-          path: this.nodeJailRel(server.id, relPath),
-          content,
-        },
-        timeoutMs: 30_000,
-        localHandler: async () => {
-          throw new Error("remote_only");
-        },
-      });
+      await this.openFiles(server).writeText(relPath, content);
       return true;
     } catch {
       return false;
     }
   }
 
-  private async listNodeDir(
+  private async listServerDir(
     server: ServerRecord,
     relPath: string,
   ): Promise<Array<{ name: string; type: "file" | "dir" }>> {
-    if (!server.nodeId || isLocalNodeId(server.nodeId)) return [];
     try {
-      const result = await dispatchNodeJob({
-        nodeId: server.nodeId,
-        kind: "fs_list",
-        args: {
-          path: this.nodeJailRel(server.id, relPath),
-        },
-        timeoutMs: 30_000,
-        localHandler: async () => {
-          throw new Error("remote_only");
-        },
-      });
-      return result.entries;
+      return await this.openFiles(server).list(relPath);
     } catch {
       return [];
     }
   }
 
-  /** Walk node jail for *.ini / *.cfg candidates (bounded). */
+  /** Walk server jail for *.ini / *.cfg candidates (bounded). */
   private async collectNodeConfigCandidates(server: ServerRecord): Promise<string[]> {
     const files: string[] = [];
     const skip = new Set(["node_modules", ".git", "steamapps", "logs", "Workshop"]);
     const visit = async (rel: string, depth: number): Promise<void> => {
       if (files.length >= 40 || depth > 4) return;
-      const entries = await this.listNodeDir(server, rel);
+      const entries = await this.listServerDir(server, rel);
       for (const ent of entries) {
         if (files.length >= 40) return;
         const child = rel === "." ? ent.name : `${rel}/${ent.name}`;
@@ -327,7 +295,7 @@ export class ServerService {
 
   private async discoverSourceRconOnNode(server: ServerRecord): Promise<RconEndpoint | null> {
     for (const rel of await this.collectNodeConfigCandidates(server)) {
-      const text = await this.readNodeText(server, rel);
+      const text = await this.readServerText(server, rel);
       if (!text) continue;
       const parsed = parseSourceRconText(text);
       if (parsed) return { host: "127.0.0.1", ...parsed };
@@ -336,7 +304,7 @@ export class ServerService {
   }
 
   private async discoverMcRconOnNode(server: ServerRecord): Promise<RconEndpoint | null> {
-    const text = await this.readNodeText(server, "game/server.properties");
+    const text = await this.readServerText(server, "game/server.properties");
     if (!text) return null;
     const password = text.match(/^rcon\.password=(.*)$/m)?.[1]?.trim();
     const portRaw = text.match(/^rcon\.port=(.*)$/m)?.[1]?.trim();
@@ -353,7 +321,7 @@ export class ServerService {
   ): Promise<boolean> {
     let patched = false;
     for (const rel of await this.collectNodeConfigCandidates(server)) {
-      const text = await this.readNodeText(server, rel);
+      const text = await this.readServerText(server, rel);
       if (!text) continue;
       const next = /\.ini$/i.test(rel)
         ? patchSourceRconIniText(text, endpoint)
@@ -361,7 +329,7 @@ export class ServerService {
           ? patchSourceRconCfgText(text, endpoint)
           : null;
       if (next == null) continue;
-      if (await this.writeNodeText(server, rel, next)) patched = true;
+      if (await this.writeServerText(server, rel, next)) patched = true;
     }
     return patched;
   }
@@ -387,7 +355,7 @@ export class ServerService {
     }
 
     if (this.isNodeAuthoritative(server)) {
-      const nodeJson = await this.readNodeText(server, "rcon.json");
+      const nodeJson = await this.readServerText(server, "rcon.json");
       if (nodeJson) {
         try {
           const parsed = JSON.parse(nodeJson) as Partial<RconEndpoint>;
@@ -1194,13 +1162,7 @@ export class ServerService {
   /** Ensure server dirs exist on a remote node (idempotent). */
   private async provisionRemoteDirs(server: ServerRecord): Promise<void> {
     if (!this.isRemoteNode(server) || !server.nodeId) return;
-    const rel = nodeServerRelPath(server.id, "game");
-    await dispatchNodeJob({
-      nodeId: server.nodeId,
-      kind: "fs_ensure_dir",
-      args: { path: rel },
-      localHandler: async () => ({ path: rel, ok: true }),
-    });
+    await this.openFiles(server).ensureDir("game");
   }
 
   /** Get the node's copy of the server tree (and any cloud forwards) ready to run. */
