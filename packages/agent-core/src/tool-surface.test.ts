@@ -13,7 +13,6 @@ describe("tool surface", () => {
     expect(surfaceConfirmAction("steamcmd_app_update")).toBe(
       "download or update game files via Steam",
     );
-    expect(surfaceSkill("nodes_add")).toBe("installer");
     expect(surfaceSkill("rcon_exec")).toBe("configurer");
     expect(surfaceSkill("unknown_tool_xyz")).toBe("orchestrator");
     expect(getToolSurfaceEntry("archive_extract")?.activityVerb).toBe("write");
@@ -23,6 +22,9 @@ describe("tool surface", () => {
     for (const name of [
       "fs_write",
       "node_ping",
+      "nodes_add",
+      "nodes_remove",
+      "placement_suggest",
       "servers_start",
       "servers_delete",
       "skill_promote",
@@ -41,6 +43,7 @@ describe("tool surface", () => {
     // The process global can only offer generic fallbacks for a migrated tool:
     // real confirm copy and XP have to come from the composed entry.
     expect(surfaceConfirmAction("snapshot_restore")).toBe('run "snapshot restore"');
+    expect(surfaceConfirmAction("nodes_add")).toBe('run "nodes add"');
     expect(surfaceXp("snapshot_restore")).toEqual({ xp: 5, reason: "tool_success" });
     expect(surfaceSkill("snapshot_restore")).toBe("orchestrator");
   });
@@ -58,7 +61,9 @@ describe("tool surface", () => {
       "fs_",
       "net_",
       "node_",
+      "nodes_",
       "panel_",
+      "placement_",
       "servers_",
       "skill_",
       "snapshot_",
