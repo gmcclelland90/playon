@@ -5,8 +5,9 @@ import { NodeJailPathSchema } from "./fs.js";
 /**
  * Process job kinds — the native half of the node seam. A process is addressed by
  * the supervisor id minted by `process_start`; that id lives only in the agent's
- * memory, so the control plane also passes `name` + `cwd` on stop and lets the
- * agent reclaim OS orphans when the id was lost to a restart on either shore.
+ * memory, so stop and status also accept the `name` + `cwd` identity and let the
+ * agent re-resolve (or reclaim) from the OS when the id was lost to a restart on
+ * either shore.
  *
  * Args are strict (a typo must fail loudly); results are lenient about extra
  * fields so a newer agent can add them without breaking an older control plane.
@@ -71,11 +72,22 @@ export const ProcessStopResultSchema = z.object({
   ok: z.boolean(),
 });
 
+/**
+ * A status ask is addressed by supervisor id when the caller still holds one, or
+ * by the same `name` + `cwd` identity a stop uses when it does not — which is the
+ * normal case, since no id survives a restart on either shore.
+ */
 export const ProcessStatusArgsSchema = z
   .object({
-    id: ProcessIdSchema,
+    id: ProcessIdSchema.optional(),
+    name: ProcessNameSchema.optional(),
+    /** Jail-relative dir the process runs in; required when there is no `id`. */
+    cwd: NodeJailPathSchema.optional(),
   })
-  .strict();
+  .strict()
+  .refine((args) => !!args.id || !!(args.name && args.cwd), {
+    message: "process_status needs an id, or a name and cwd to re-resolve",
+  });
 
 export const ProcessStatusResultSchema = ProcessInfoSchema;
 
