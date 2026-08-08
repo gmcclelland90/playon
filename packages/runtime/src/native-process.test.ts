@@ -75,6 +75,55 @@ describe("NativeProcessSupervisor", () => {
     await supervisor.stop(second.id);
   });
 
+  it("finds a running process from name and cwd alone", async () => {
+    if (process.platform === "win32") return;
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-find-"));
+    temps.push(jail);
+    const gameDir = path.join(jail, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+
+    const supervisor = new NativeProcessSupervisor(jail);
+    await expect(supervisor.find("server-x", "game")).resolves.toBeNull();
+
+    const started = await supervisor.start({
+      name: "server-x",
+      command: "sleep",
+      args: ["30"],
+      cwd: "game",
+    });
+
+    const found = await supervisor.find("server-x", "game");
+    expect(found?.status).toBe("running");
+    expect(found?.pid).toBe(started.pid);
+
+    await supervisor.stop(started.id);
+    await expect(supervisor.find("server-x", "game")).resolves.toBeNull();
+  });
+
+  it("finds an untracked survivor by its cwd, so a lost id is not a lost process", async () => {
+    if (process.platform === "win32") return;
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-orphan-"));
+    temps.push(jail);
+    const gameDir = path.join(jail, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+
+    const first = new NativeProcessSupervisor(jail);
+    const started = await first.start({
+      name: "server-x",
+      command: "sleep",
+      args: ["30"],
+      cwd: "game",
+    });
+
+    // A fresh supervisor stands in for a restarted host: no tracked map, same process.
+    const restarted = new NativeProcessSupervisor(jail);
+    const found = await restarted.find("server-x", "game");
+    expect(found?.status).toBe("running");
+    expect(found?.name).toBe("server-x");
+
+    await first.stop(started.id);
+  });
+
   it("redirects stdout to logFile when provided", async () => {
     if (process.platform === "win32") return;
     const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-log-"));

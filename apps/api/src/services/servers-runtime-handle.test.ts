@@ -4,7 +4,13 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
 import { eq } from "drizzle-orm";
-import type { ContainerSpec, DockerAdapter, ProcessSupervisor } from "@playon/runtime";
+import type {
+  ContainerSpec,
+  DockerAdapter,
+  ProcessInfo,
+  ProcessSpec,
+  ProcessSupervisor,
+} from "@playon/runtime";
 import type { NodeJobKind } from "@playon/shared";
 import type { AppConfig } from "../config.js";
 import { createDb, type Db } from "../db/client.js";
@@ -132,22 +138,64 @@ vi.mock("./node-sync.js", async (importOriginal) => {
   return { ...actual, pushServerDirToNode: async () => undefined };
 });
 
-vi.mock("@playon/runtime", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@playon/runtime")>();
+/**
+ * Stands in for the host's process supervisor. It only answers by identity
+ * (name + cwd), so nothing in the control plane can lean on a stored process id.
+ */
+const host = vi.hoisted(() => {
+  const calls: string[] = [];
+  const specs: ProcessSpec[] = [];
+  let running: ProcessInfo | null = null;
+  let seq = 0;
   const supervisor: ProcessSupervisor = {
-    async start() {
-      throw new Error("native_supervisor_should_not_run");
+    async start(spec) {
+      calls.push(`start:${spec.name}:${spec.cwd}`);
+      specs.push(spec);
+      running = { id: `native-${spec.name}-${++seq}`, name: spec.name, pid: 4200 + seq, status: "running" };
+      return running;
     },
-    async stop() {},
-    async status(id: string) {
-      return { id, name: id, status: "unknown" as const };
+    async stop(id) {
+      calls.push(`stop:${id}`);
+      running = null;
+    },
+    async status(id) {
+      return running?.id === id ? running : { id, name: id, status: "stopped" as const };
+    },
+    async find(name, cwd) {
+      calls.push(`find:${name}:${cwd}`);
+      return running;
+    },
+    async reclaim(name, cwd) {
+      calls.push(`reclaim:${name}:${cwd}`);
+      running = null;
     },
   };
+  return {
+    calls,
+    specs,
+    supervisor,
+    get running(): ProcessInfo | null {
+      return running;
+    },
+    exited() {
+      running = null;
+    },
+    reset() {
+      calls.length = 0;
+      specs.length = 0;
+      running = null;
+      seq = 0;
+    },
+  };
+});
+
+vi.mock("@playon/runtime", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@playon/runtime")>();
   return {
     ...actual,
     createRuntime: async () => ({
       docker: fake.docker as unknown as DockerAdapter,
-      process: supervisor,
+      process: host.supervisor,
       mode: "docker" as const,
     }),
   };
@@ -205,6 +253,7 @@ async function placeOnRemoteNode(db: Db, serverId: string): Promise<void> {
 beforeEach(() => {
   fake.reset();
   node.reset();
+  host.reset();
 });
 
 afterEach(() => {
@@ -306,6 +355,143 @@ describe("local docker lifecycle through ServerRuntimeHandle", () => {
     fake.containers.clear();
 
     expect((await servers.get(server.id))!.status).toBe("stopped");
+  });
+});
+
+describe("local native lifecycle through ServerRuntimeHandle", () => {
+  /** A native server on this host with a startable game dir. */
+  async function nativeServer(opts?: { startable?: boolean }): Promise<{
+    db: Db;
+    config: AppConfig;
+    servers: ServerService;
+    id: string;
+    gameDir: string;
+    dataPath: string;
+  }> {
+    const { db, config, servers } = tempEnv();
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
+    await db
+      .update(serversTable)
+      .set({ runtimeMode: "native" })
+      .where(eq(serversTable.id, server.id));
+    const gameDir = path.join(server.dataPath, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+    if (opts?.startable !== false) {
+      // resolveNativeLaunch only launches what exists on disk, on either platform.
+      fs.writeFileSync(path.join(gameDir, "start.sh"), "#!/bin/bash\nsleep 30\n");
+      fs.writeFileSync(path.join(gameDir, "start.bat"), "@echo off\n");
+    }
+    fake.reset();
+    host.reset();
+    return { db, config, servers, id: server.id, gameDir, dataPath: server.dataPath };
+  }
+
+  const startScript = process.platform === "win32" ? "start.bat" : "start.sh";
+
+  it("exposes a native/local handle from the runtime choke point", async () => {
+    const { servers, id } = await nativeServer();
+
+    const handle = await servers.runtime(id);
+
+    expect(handle.mode).toBe("native");
+    expect(handle.locality).toBe("local");
+  });
+
+  it("start launches the resolved process under the handle-owned identity", async () => {
+    const { servers, id, gameDir, dataPath } = await nativeServer();
+
+    const started = await servers.start(id);
+
+    expect(started.status).toBe("running");
+    expect(host.calls).toEqual([`find:server-${id}:${gameDir}`, `start:server-${id}:${gameDir}`]);
+    const spec = host.specs[0]!;
+    expect(spec.args?.join(" ")).toContain(startScript);
+    expect(spec.env?.PLAYON_SERVER_ID).toBe(id);
+    expect(spec.logFile).toBe(path.join(dataPath, "logs", "console.log"));
+    // A native server never touches the container path.
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("start refuses a game dir with nothing to launch, and reports the error", async () => {
+    const { servers, id } = await nativeServer({ startable: false });
+
+    await expect(servers.start(id)).rejects.toThrow(/native_binaries_missing/);
+    expect(host.specs).toEqual([]);
+    // Nothing was launched, so the next re-resolve answers stopped over the error flag.
+    expect((await servers.get(id))!.status).toBe("stopped");
+  });
+
+  it("start stops a process it re-resolved instead of stacking a second one", async () => {
+    const { servers, id, gameDir } = await nativeServer();
+    await servers.start(id);
+    host.calls.length = 0;
+
+    await servers.start(id);
+
+    expect(host.calls).toEqual([
+      `find:server-${id}:${gameDir}`,
+      `reclaim:server-${id}:${gameDir}`,
+      `start:server-${id}:${gameDir}`,
+    ]);
+    expect(host.specs).toHaveLength(2);
+  });
+
+  it("stop reclaims by identity, never by a stored process id", async () => {
+    const { servers, id, gameDir } = await nativeServer();
+    await servers.start(id);
+    host.calls.length = 0;
+
+    const stopped = await servers.stop(id);
+
+    expect(stopped.status).toBe("stopped");
+    expect(host.calls).toEqual([`find:server-${id}:${gameDir}`, `reclaim:server-${id}:${gameDir}`]);
+    expect(host.calls.some((c) => c.startsWith("stop:"))).toBe(false);
+    expect(host.running).toBeNull();
+  });
+
+  it("stop still fires the container path, so a mode flip cannot orphan a container", async () => {
+    const { servers, id } = await nativeServer();
+    await servers.start(id);
+    fake.calls.length = 0;
+
+    await servers.stop(id);
+
+    expect(fake.calls).toEqual([`stop:playon-${id}`]);
+  });
+
+  it("restart cycles the same identity", async () => {
+    const { servers, id, gameDir } = await nativeServer();
+    await servers.start(id);
+    host.calls.length = 0;
+
+    const restarted = await servers.restart(id);
+
+    expect(restarted.status).toBe("running");
+    expect(host.calls).toEqual([
+      `find:server-${id}:${gameDir}`,
+      `reclaim:server-${id}:${gameDir}`,
+      `find:server-${id}:${gameDir}`,
+      `start:server-${id}:${gameDir}`,
+    ]);
+  });
+
+  it("status reconciliation follows the process, not a remembered id", async () => {
+    const { servers, id } = await nativeServer();
+    await servers.start(id);
+
+    expect((await servers.get(id))!.status).toBe("running");
+
+    host.exited();
+    expect((await servers.get(id))!.status).toBe("stopped");
+  });
+
+  it("a fresh control plane re-resolves the running process from identity", async () => {
+    const { db, config, servers, id } = await nativeServer();
+    await servers.start(id);
+
+    // No durable process map: a new service must still see the running server.
+    const reborn = new ServerService(db, config);
+    expect((await reborn.get(id))!.status).toBe("running");
   });
 });
 
