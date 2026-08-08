@@ -17,7 +17,7 @@ describe("tool surface", () => {
       celebrate: true,
     });
     expect(surfaceSkill("nodes_add")).toBe("installer");
-    expect(surfaceSkill("watchers_create")).toBe("monitor");
+    expect(surfaceSkill("rcon_exec")).toBe("configurer");
     expect(surfaceSkill("snapshot_restore")).toBe("backup");
     expect(surfaceSkill("unknown_tool_xyz")).toBe("orchestrator");
     expect(getToolSurfaceEntry("snapshot_enforce_retention")?.activityVerb).toBe("snapshot");
@@ -32,6 +32,8 @@ describe("tool surface", () => {
       "skill_promote",
       "skill_install_url",
       "panel_publish",
+      "watchers_create",
+      "watchers_runs_list",
     ]) {
       expect(getToolSurfaceEntry(name), `${name} still in the overlay`).toBeUndefined();
     }
@@ -45,7 +47,15 @@ describe("tool surface", () => {
 
   it("overlay covers every key used by projections", () => {
     const names = Object.keys(TOOL_SURFACE_OVERLAY);
-    const migratedPrefixes = ["fs_", "net_", "node_", "panel_", "servers_", "skill_"];
+    const migratedPrefixes = [
+      "fs_",
+      "net_",
+      "node_",
+      "panel_",
+      "servers_",
+      "skill_",
+      "watchers_",
+    ];
     expect(names.length).toBeGreaterThan(0);
     expect(
       names.filter((name) => migratedPrefixes.some((prefix) => name.startsWith(prefix))),

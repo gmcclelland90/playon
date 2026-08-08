@@ -16,11 +16,7 @@ import {
   TOOL_SURFACE_OVERLAY,
   type LlmClient,
 } from "@playon/agent-core";
-import {
-  getLlmPreset,
-  type CreateWatcherInput,
-  type UpdateWatcherInput,
-} from "@playon/shared";
+import { getLlmPreset } from "@playon/shared";
 import type { AppConfig } from "../config.js";
 import type { ControlPlane } from "../control-plane.js";
 import type { Db } from "../db/client.js";
@@ -145,17 +141,7 @@ export function createPlayOnToolRegistry(
     config.dataRoot,
     workspace.serverId,
   );
-  const {
-    servers,
-    snapshots,
-    archives,
-    net,
-    placement,
-    offNode,
-    addNode,
-    watchers,
-    watcherEngine,
-  } = plane;
+  const { servers, snapshots, archives, net, placement, offNode, addNode } = plane;
 
   const tools = new Map<string, ToolEntry>();
   for (const entry of composeToolEntries({ plane, workspace, skillRoots })) {
@@ -378,108 +364,7 @@ export function createPlayOnToolRegistry(
         required: ["serverId", "appId"],
       },
     },
-    {
-      name: "watchers_list",
-      description: "List watchers (scheduled/event automations), optionally filtered by serverId.",
-      parameters: {
-        type: "object",
-        properties: { serverId: { type: "string" } },
-        additionalProperties: false,
-      },
-    },
-    {
-      name: "watchers_get",
-      description: "Get a watcher by id.",
-      parameters: {
-        type: "object",
-        properties: { watcherId: { type: "string" } },
-        required: ["watcherId"],
-      },
-    },
-    {
-      name: "watchers_create",
-      description:
-        "Create a watcher. Trigger kinds: schedule, server_status, log_pattern, health, query, panel_input. Actions: tools (allowlisted) or agent (prompt).",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: {
-          serverId: { type: "string" },
-          name: { type: "string" },
-          enabled: { type: "boolean" },
-          trigger: { type: "object" },
-          action: { type: "object" },
-          cooldownMs: { type: "number" },
-          debounceMs: { type: "number" },
-        },
-        required: ["serverId", "name", "trigger", "action"],
-      },
-    },
-    {
-      name: "watchers_update",
-      description: "Update a watcher by id.",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: {
-          watcherId: { type: "string" },
-          name: { type: "string" },
-          enabled: { type: "boolean" },
-          trigger: { type: "object" },
-          action: { type: "object" },
-          cooldownMs: { type: "number" },
-          debounceMs: { type: "number" },
-        },
-        required: ["watcherId"],
-      },
-    },
-    {
-      name: "watchers_delete",
-      description: "Delete a watcher by id.",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: { watcherId: { type: "string" } },
-        required: ["watcherId"],
-      },
-    },
-    {
-      name: "watchers_enable",
-      description: "Enable or disable a watcher.",
-      parameters: {
-        type: "object",
-        properties: {
-          watcherId: { type: "string" },
-          enabled: { type: "boolean" },
-        },
-        required: ["watcherId", "enabled"],
-      },
-    },
-    {
-      name: "watchers_run_now",
-      description: "Manually fire a watcher once (bypasses enabled check; still records a run).",
-      parameters: {
-        type: "object",
-        properties: { watcherId: { type: "string" } },
-        required: ["watcherId"],
-      },
-    },
-    {
-      name: "watchers_runs_list",
-      description: "List recent runs for a watcher.",
-      parameters: {
-        type: "object",
-        properties: {
-          watcherId: { type: "string" },
-          limit: { type: "number" },
-        },
-        required: ["watcherId"],
-      },
-    },
   ];
-
-
-
 
   const legacyDefByName = new Map(toolDefs.map((d) => [d.name, d]));
   const tool = (name: string): ToolDefinition => {
@@ -688,103 +573,6 @@ export function createPlayOnToolRegistry(
       }
       return { error: err instanceof Error ? err.message : "steamcmd_failed" };
     }
-  });
-
-  registerTool(tool("watchers_list"), async (args) => {
-    const resolved = resolveOptionalWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    const list = await watchers.list(resolved.serverId);
-    return { watchers: list };
-  });
-
-  registerTool(tool("watchers_get"), async (args) => {
-    const w = await watchers.get(String(args.watcherId));
-    if (!w) return { error: "not_found" };
-    if (workspace.serverId && w.serverId !== workspace.serverId) {
-      return { error: "workspace_server_mismatch", workspaceServerId: workspace.serverId };
-    }
-    return { watcher: w };
-  });
-
-  registerTool(tool("watchers_create"), async (args) => {
-    const resolved = resolveWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    try {
-      const watcher = await watchers.create({
-        serverId: resolved.serverId,
-        name: String(args.name),
-        enabled: args.enabled !== undefined ? Boolean(args.enabled) : true,
-        trigger: args.trigger as CreateWatcherInput["trigger"],
-        action: args.action as CreateWatcherInput["action"],
-        cooldownMs: args.cooldownMs !== undefined ? Number(args.cooldownMs) : 60_000,
-        debounceMs: args.debounceMs !== undefined ? Number(args.debounceMs) : 0,
-      });
-      return { watcher };
-    } catch (err) {
-      return { error: err instanceof Error ? err.message : "create_failed" };
-    }
-  });
-
-  registerTool(tool("watchers_update"), async (args) => {
-    const existing = await watchers.get(String(args.watcherId));
-    if (!existing) return { error: "not_found" };
-    if (workspace.serverId && existing.serverId !== workspace.serverId) {
-      return { error: "workspace_server_mismatch", workspaceServerId: workspace.serverId };
-    }
-    try {
-      const watcher = await watchers.update(existing.id, {
-        name: args.name !== undefined ? String(args.name) : undefined,
-        enabled: args.enabled !== undefined ? Boolean(args.enabled) : undefined,
-        trigger: args.trigger as UpdateWatcherInput["trigger"] | undefined,
-        action: args.action as UpdateWatcherInput["action"] | undefined,
-        cooldownMs: args.cooldownMs !== undefined ? Number(args.cooldownMs) : undefined,
-        debounceMs: args.debounceMs !== undefined ? Number(args.debounceMs) : undefined,
-      });
-      return { watcher };
-    } catch (err) {
-      return { error: err instanceof Error ? err.message : "update_failed" };
-    }
-  });
-
-  registerTool(tool("watchers_delete"), async (args) => {
-    const existing = await watchers.get(String(args.watcherId));
-    if (!existing) return { error: "not_found" };
-    if (workspace.serverId && existing.serverId !== workspace.serverId) {
-      return { error: "workspace_server_mismatch", workspaceServerId: workspace.serverId };
-    }
-    await watchers.delete(existing.id);
-    return { ok: true, deleted: existing.id };
-  });
-
-  registerTool(tool("watchers_enable"), async (args) => {
-    const existing = await watchers.get(String(args.watcherId));
-    if (!existing) return { error: "not_found" };
-    if (workspace.serverId && existing.serverId !== workspace.serverId) {
-      return { error: "workspace_server_mismatch", workspaceServerId: workspace.serverId };
-    }
-    const watcher = await watchers.setEnabled(existing.id, Boolean(args.enabled));
-    return { watcher };
-  });
-
-  registerTool(tool("watchers_run_now"), async (args) => {
-    const existing = await watchers.get(String(args.watcherId));
-    if (!existing) return { error: "not_found" };
-    if (workspace.serverId && existing.serverId !== workspace.serverId) {
-      return { error: "workspace_server_mismatch", workspaceServerId: workspace.serverId };
-    }
-    await watcherEngine.enqueue(existing, { kind: "manual" }, { force: true });
-    return { ok: true, watcherId: existing.id, queued: true };
-  });
-
-  registerTool(tool("watchers_runs_list"), async (args) => {
-    const existing = await watchers.get(String(args.watcherId));
-    if (!existing) return { error: "not_found" };
-    if (workspace.serverId && existing.serverId !== workspace.serverId) {
-      return { error: "workspace_server_mismatch", workspaceServerId: workspace.serverId };
-    }
-    const limit = args.limit !== undefined ? Number(args.limit) : 50;
-    const runs = await watchers.listRuns(existing.id, limit);
-    return { runs };
   });
 
   const registry: PlayOnToolRegistry = {
