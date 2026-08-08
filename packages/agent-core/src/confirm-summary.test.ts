@@ -6,8 +6,8 @@ describe("confirmSummary", () => {
     expect(confirmSummary("snapshot_restore", { snapshotId: "s1" })).toBe(
       "An agent wants to restore this server from a snapshot.",
     );
-    expect(confirmSummary("skill_import", { zipPath: "data/imports/paper.skill.zip" })).toBe(
-      "An agent wants to import a skill package: data/imports/paper.skill.zip",
+    expect(confirmSummary("steamcmd_app_update", { serverId: "s1", appId: 258550 })).toBe(
+      "An agent wants to download or update game files via Steam: app 258550",
     );
   });
 
@@ -45,12 +45,20 @@ describe("confirmSummary", () => {
     expect(confirmSummary("fetch_url", { url: "https://example.com/m.jar", destPath: "game/m.jar" })).toBe(
       "An agent wants to download a file into the server folder: https://example.com/m.jar",
     );
-    expect(confirmSummary("skill_promote", { slug: "minecraft-paper" })).toBe(
-      "An agent wants to promote a draft skill so it can be installed: minecraft-paper",
-    );
-    expect(confirmSummary("skill_install_url", { name: "games.minecraft-paper" })).toBe(
-      "An agent wants to install a skill from the public catalog: games.minecraft-paper",
-    );
+    expect(
+      confirmSummary(
+        "skill_promote",
+        { slug: "minecraft-paper" },
+        { action: "promote a draft skill so it can be installed" },
+      ),
+    ).toBe("An agent wants to promote a draft skill so it can be installed: minecraft-paper");
+    expect(
+      confirmSummary(
+        "skill_install_url",
+        { name: "games.minecraft-paper" },
+        { action: "install a skill from the public catalog" },
+      ),
+    ).toBe("An agent wants to install a skill from the public catalog: games.minecraft-paper");
   });
 
   it("falls back for unknown tools", () => {

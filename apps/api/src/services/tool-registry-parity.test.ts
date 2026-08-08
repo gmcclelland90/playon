@@ -38,6 +38,19 @@ const MIGRATED_TOOLS = [
   "servers_logs_tail",
   "servers_query",
   "servers_query_test",
+  "skill_list",
+  "skill_read",
+  "skill_draft_save",
+  "skill_draft_list",
+  "skill_draft_set_query_connector",
+  "skill_promote",
+  "skill_promote_server",
+  "skill_export",
+  "skill_import",
+  "skill_search",
+  "skill_install_url",
+  "panel_publish",
+  "panel_list",
 ];
 
 /** Server-scoped entries the invoke path must resolve before the handler sees them. */
@@ -50,6 +63,7 @@ const SERVER_SCOPED_TOOLS = [
   "servers_delete",
   "servers_logs_tail",
   "servers_query",
+  "skill_promote_server",
 ];
 
 function testConfig(dataRoot: string): AppConfig {
@@ -149,6 +163,12 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     });
     expect(surface.skill("servers_logs_tail")).toBe("troubleshooter");
     expect(surface.activityVerb("servers_logs_tail")).toBe("read");
+    expect(surface.skill("panel_publish")).toBe("player_panel");
+    expect(surface.xp("panel_publish")).toEqual({ xp: 10, reason: "player_panel" });
+    expect(surface.activityVerb("skill_search")).toBe("skill");
+    expect(surface.confirmAction("skill_install_url")).toBe(
+      "install a skill from the public catalog",
+    );
   });
 
   it("declares server scope for lifecycle tools that act on one server", () => {
@@ -162,6 +182,10 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     }
     expect(byName.get("servers_list")?.workspacePolicy).toBe("none");
     expect(byName.get("servers_query_test")?.workspacePolicy).toBe("none");
+    expect(byName.get("skill_list")?.workspacePolicy).toBe("none");
+    // Panel tools narrow to the bound server but still answer in an unbound chat.
+    expect(byName.get("panel_publish")?.workspacePolicy).toBe("server_optional");
+    expect(byName.get("panel_list")?.workspacePolicy).toBe("server_optional");
   });
 
   it("enforces workspace policy before the handler runs", async () => {
