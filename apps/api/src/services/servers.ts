@@ -21,6 +21,8 @@ import {
   servers,
   snapshots,
   toolInvocations,
+  watcherRuns,
+  watchers,
 } from "../db/schema.js";
 import type { LanGateway } from "./cloud/gateway.js";
 import type { EventHub } from "./event-hub.js";
@@ -1477,6 +1479,15 @@ export class ServerService {
 
     await this.db.delete(snapshots).where(eq(snapshots.serverId, id));
     await this.db.delete(panelBlocks).where(eq(panelBlocks.serverId, id));
+    const watcherRows = await this.db
+      .select({ id: watchers.id })
+      .from(watchers)
+      .where(eq(watchers.serverId, id));
+    if (watcherRows.length) {
+      const watcherIds = watcherRows.map((r) => r.id);
+      await this.db.delete(watcherRuns).where(inArray(watcherRuns.watcherId, watcherIds));
+      await this.db.delete(watchers).where(eq(watchers.serverId, id));
+    }
     await this.db.delete(servers).where(eq(servers.id, id));
 
     try {

@@ -14,7 +14,7 @@ Workflow flavor (for prompts and progression, not separate actors):
 - **Install** – create and start servers from game skills
 - **Mod** – add, update, remove, and validate mods
 - **Config** – settings, ports, passwords, player limits, live rules
-- **Monitor** – health, query, remediations
+- **Monitor** – health, query, remediations (also woken by [Watchers](18-watchers.md) on schedules/hooks, not only chat)
 - **Panel** – publish join info and player-facing blocks
 - **Fix** – diagnose and repair failures
 - **Backup** – snapshots and restores

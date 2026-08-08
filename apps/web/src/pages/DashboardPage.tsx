@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { can, type PublicUser } from "@playon/shared";
 import { api } from "../api";
+import { WatchersPanel } from "../components/WatchersPanel";
 import { nodePresenceHint, nodePresenceLabel, statusLabel } from "../status";
 
 function formatBytes(bytes: number | null | undefined): string {
@@ -271,6 +272,13 @@ export function DashboardPage({ user }: { user: PublicUser }) {
             ) : null}
             {offnodeBackup.isError ? (
               <p className="error">{(offnodeBackup.error as Error).message}</p>
+            ) : null}
+
+            {can(user.role, "watchers.read") ? (
+              <WatchersPanel
+                user={user}
+                serverOptions={serverList.map((s) => ({ id: s.id, name: s.name }))}
+              />
             ) : null}
           </section>
 

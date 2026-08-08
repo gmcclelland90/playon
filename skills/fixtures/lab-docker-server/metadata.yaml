@@ -43,3 +43,31 @@ healthChecks:
     portName: game
     port: 25565
     onFail: restart
+watchers:
+  - name: Health restart
+    defaultEnabled: false
+    cooldownMs: 120000
+    trigger:
+      kind: health
+      onFail:
+        - restart
+    action:
+      kind: tools
+      steps:
+        - tool: servers_health_check
+          args:
+            remediate: true
+  - name: Escalate to monitor agent
+    defaultEnabled: false
+    cooldownMs: 300000
+    trigger:
+      kind: health
+      onFail:
+        - escalate
+    action:
+      kind: agent
+      includeContext: true
+      prompt: >
+        A health check escalated on this lab server. Diagnose using servers_health_check,
+        servers_logs_tail, and servers_query. Remediate if safe (restart or fix config),
+        otherwise summarize the failure for the host.

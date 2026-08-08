@@ -11,12 +11,14 @@ import type { ConfirmGate, LlmMessage } from "@playon/agent-core";
 import { ChatAbortedError, surfaceSkill } from "@playon/agent-core";
 import {
   BootstrapOwnerSchema,
+  CreateWatcherSchema,
   LLM_PRESET_IDS,
   LOCAL_NODE_ID,
   LoginSchema,
   NodeHeartbeatSchema,
   NodeJobKindSchema,
   RoleSchema,
+  UpdateWatcherSchema,
   can,
   deriveNodePresence,
   placementBadge,
@@ -183,6 +185,7 @@ const CreateServerSchema = z
 
 const PanelInputSchema = z.object({
   blockId: z.string().optional(),
+  serverId: z.string().optional(),
   type: z.enum(["readiness", "vote"]),
   payload: z.record(z.unknown()).default({}),
 });
@@ -220,6 +223,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     addNode,
     installDocker,
     updates: updateService,
+    watchers: watcherService,
+    watcherEngine,
   } = plane;
   const skillFs = new SkillFsService(config);
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
@@ -1234,6 +1239,96 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       const message = err instanceof Error ? err.message : "health_failed";
       return c.json({ error: message }, 400);
     }
+  });
+
+  app.get("/api/watchers", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "watchers.read")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const serverId = c.req.query("serverId") || undefined;
+    return c.json({ watchers: await watcherService.list(serverId) });
+  });
+
+  app.get("/api/servers/:id/watchers", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "watchers.read")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    return c.json({ watchers: await watcherService.list(c.req.param("id")) });
+  });
+
+  app.get("/api/watchers/:id", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "watchers.read")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const watcher = await watcherService.get(c.req.param("id"));
+    if (!watcher) return c.json({ error: "not_found" }, 404);
+    return c.json({ watcher });
+  });
+
+  app.post("/api/watchers", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "watchers.manage")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    try {
+      const body = CreateWatcherSchema.parse(await c.req.json());
+      const watcher = await watcherService.create(body);
+      return c.json({ watcher }, 201);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "create_failed";
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  app.patch("/api/watchers/:id", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "watchers.manage")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    try {
+      const body = UpdateWatcherSchema.parse(await c.req.json());
+      const watcher = await watcherService.update(c.req.param("id"), body);
+      if (!watcher) return c.json({ error: "not_found" }, 404);
+      return c.json({ watcher });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "update_failed";
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  app.delete("/api/watchers/:id", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "watchers.manage")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const ok = await watcherService.delete(c.req.param("id"));
+    if (!ok) return c.json({ error: "not_found" }, 404);
+    return c.json({ ok: true });
+  });
+
+  app.post("/api/watchers/:id/run", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "watchers.manage")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const watcher = await watcherService.get(c.req.param("id"));
+    if (!watcher) return c.json({ error: "not_found" }, 404);
+    await watcherEngine.enqueue(watcher, { kind: "manual" }, { force: true });
+    return c.json({ ok: true, watcherId: watcher.id, queued: true });
+  });
+
+  app.get("/api/watchers/:id/runs", async (c) => {
+    const user = c.get("user");
+    if (!user || !can(user.role, "watchers.read")) {
+      return c.json({ error: "forbidden" }, 403);
+    }
+    const watcher = await watcherService.get(c.req.param("id"));
+    if (!watcher) return c.json({ error: "not_found" }, 404);
+    const limit = Number(c.req.query("limit") ?? 50);
+    return c.json({ runs: await watcherService.listRuns(watcher.id, limit) });
   });
 
   app.post("/api/servers/:id/console", async (c) => {

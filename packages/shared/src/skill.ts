@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SkillWatcherTemplateSchema } from "./watcher.js";
 
 export const ContainerSupportSchema = z.enum(["full", "partial", "none"]);
 export type ContainerSupport = z.infer<typeof ContainerSupportSchema>;
@@ -117,6 +118,8 @@ export const SkillMetadataSchema = z.object({
   /** Other skill names this skill expects (usually platform.*). */
   dependencies: z.array(z.string()).default([]),
   healthChecks: z.array(HealthCheckSchema).default([]),
+  /** Optional watcher templates seeded (usually disabled) when a server is created from this skill. */
+  watchers: z.array(SkillWatcherTemplateSchema).default([]),
 });
 
 export type SkillMetadata = z.infer<typeof SkillMetadataSchema>;

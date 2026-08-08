@@ -25,6 +25,8 @@ import { SkillDraftService } from "./services/skill-drafts.js";
 import { SkillPackageService } from "./services/skill-packages.js";
 import { SnapshotService } from "./services/snapshots.js";
 import { UpdateService } from "./services/updates.js";
+import { WatcherEngine } from "./services/watcher-engine.js";
+import { WatcherService } from "./services/watchers.js";
 
 /** Shared in-process service graph for HTTP, agents, and schedulers. */
 export type ControlPlane = {
@@ -55,6 +57,8 @@ export type ControlPlane = {
   addNode: AddNodeService;
   installDocker: InstallDockerService;
   updates: UpdateService;
+  watchers: WatcherService;
+  watcherEngine: WatcherEngine;
 };
 
 export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
@@ -83,8 +87,9 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
   const drafts = new SkillDraftService(config);
   const skillPackages = new SkillPackageService(config);
   const updates = new UpdateService(db, config, eventHub);
+  const watchers = new WatcherService(db);
 
-  return {
+  const plane: ControlPlane = {
     db,
     config,
     eventHub,
@@ -112,5 +117,9 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
     addNode,
     installDocker,
     updates,
+    watchers,
+    watcherEngine: null as unknown as WatcherEngine,
   };
+  plane.watcherEngine = new WatcherEngine(plane);
+  return plane;
 }

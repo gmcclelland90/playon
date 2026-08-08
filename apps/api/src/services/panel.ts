@@ -154,11 +154,31 @@ export class PanelService {
     await this.notifyUpdated();
   }
 
-  async recordInput(_args: {
+  async recordInput(args: {
     blockId?: string;
     type: "readiness" | "vote";
     payload: Record<string, unknown>;
+    serverId?: string;
   }): Promise<{ ok: true; recordedAt: string }> {
-    return { ok: true, recordedAt: new Date().toISOString() };
+    const recordedAt = new Date().toISOString();
+    let serverId = args.serverId;
+    if (!serverId && args.blockId) {
+      const rows = await this.db
+        .select()
+        .from(panelBlocks)
+        .where(eq(panelBlocks.id, args.blockId))
+        .limit(1);
+      serverId = rows[0]?.serverId ?? undefined;
+    }
+    if (serverId && this.events) {
+      this.events.publish({
+        type: "panel.input",
+        serverId,
+        inputType: args.type,
+        blockId: args.blockId,
+        payload: args.payload,
+      });
+    }
+    return { ok: true, recordedAt };
   }
 }

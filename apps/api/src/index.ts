@@ -5,6 +5,7 @@ import { applyBootstrap } from "./db/migrate.js";
 import { createApp } from "./app.js";
 import { LiveQueryScheduler } from "./services/live-query-scheduler.js";
 import { SnapshotScheduler } from "./services/snapshot-scheduler.js";
+import { WatcherScheduler } from "./services/watcher-scheduler.js";
 import { webDistReady } from "./static-web.js";
 
 const config = loadConfig();
@@ -48,3 +49,6 @@ snapshotScheduler.start();
 
 const liveQueryScheduler = new LiveQueryScheduler(servers, playerPanel, queries);
 liveQueryScheduler.start();
+
+const watcherScheduler = new WatcherScheduler(app.controlPlane.watcherEngine);
+watcherScheduler.start();

@@ -115,6 +115,28 @@ export const WsEventSchema = z.discriminatedUnion("type", [
     message: z.string(),
     percent: z.number().min(0).max(100).optional(),
   }),
+  z.object({
+    type: z.literal("panel.input"),
+    serverId: z.string(),
+    inputType: z.enum(["vote", "readiness"]),
+    blockId: z.string().optional(),
+    payload: z.record(z.unknown()).default({}),
+  }),
+  z.object({
+    type: z.literal("watcher.fired"),
+    watcherId: z.string(),
+    serverId: z.string(),
+    runId: z.string(),
+    triggerKind: z.string(),
+  }),
+  z.object({
+    type: z.literal("watcher.run"),
+    watcherId: z.string(),
+    serverId: z.string(),
+    runId: z.string(),
+    status: z.enum(["queued", "running", "ok", "error", "skipped"]),
+    error: z.string().optional(),
+  }),
 ]);
 
 export type WsEvent = z.infer<typeof WsEventSchema>;

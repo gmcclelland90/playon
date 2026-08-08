@@ -95,6 +95,41 @@ function ensureAccessTokensTable(raw: Database.Database) {
   `);
 }
 
+function ensureWatchersTables(raw: Database.Database) {
+  raw.exec(`
+    CREATE TABLE IF NOT EXISTS watchers (
+      id TEXT PRIMARY KEY,
+      server_id TEXT NOT NULL REFERENCES servers(id),
+      name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      trigger_json TEXT NOT NULL,
+      action_json TEXT NOT NULL,
+      cooldown_ms INTEGER NOT NULL DEFAULT 60000,
+      debounce_ms INTEGER NOT NULL DEFAULT 0,
+      confirm_mode TEXT NOT NULL DEFAULT 'auto',
+      source TEXT NOT NULL DEFAULT 'user',
+      skill_slug TEXT,
+      last_fired_at INTEGER,
+      next_due_at INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+  raw.exec(`
+    CREATE TABLE IF NOT EXISTS watcher_runs (
+      id TEXT PRIMARY KEY,
+      watcher_id TEXT NOT NULL REFERENCES watchers(id),
+      server_id TEXT NOT NULL REFERENCES servers(id),
+      status TEXT NOT NULL,
+      trigger_payload_json TEXT NOT NULL DEFAULT '{}',
+      result_json TEXT,
+      error TEXT,
+      started_at INTEGER NOT NULL,
+      finished_at INTEGER
+    )
+  `);
+}
+
 export function applyBootstrap(dbPath: string) {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const sql = fs.readFileSync(resolveBootstrapSql(), "utf8");
@@ -104,6 +139,7 @@ export function applyBootstrap(dbPath: string) {
   ensureNodeCapabilityColumns(raw);
   ensureAgentProgressSkillTable(raw);
   ensureAccessTokensTable(raw);
+  ensureWatchersTables(raw);
   raw.close();
 }
 

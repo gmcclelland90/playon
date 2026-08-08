@@ -1,5 +1,5 @@
 import { AGENT_SYSTEM_PROMPT } from "./agent-prompt.js";
-import { runToolInvocation } from "./invoke-tool.js";
+import { runToolInvocation, type ConfirmPolicy } from "./invoke-tool.js";
 import type { LlmClient, LlmMessage } from "./llm.js";
 import { toLlmToolDefinition, type ToolDefinition, type ToolHandler } from "./tools.js";
 
@@ -49,6 +49,10 @@ export interface OrchestratorOptions {
   workspaceServerId?: string;
   /** When aborted, stop between LLM/tool steps (in-flight tool may finish). */
   abortSignal?: AbortSignal;
+  /** Default gate (chat). Watchers / trusted automation may use auto. */
+  confirmPolicy?: ConfirmPolicy;
+  /** Actor label when confirmPolicy is auto (e.g. watcher:id). */
+  autoApproveActor?: string;
 }
 
 /** Thrown when the host stops an in-flight chat turn. */
@@ -276,7 +280,8 @@ export class Orchestrator {
         try {
           result = await runToolInvocation(entry, call.arguments, {
             confirmGate: this.options.confirmGate,
-            confirmPolicy: "gate",
+            confirmPolicy: this.options.confirmPolicy ?? "gate",
+            autoApproveActor: this.options.autoApproveActor,
           });
           if (
             result &&

@@ -66,6 +66,36 @@ export type ServerConsoleResult = {
   hint?: string;
 };
 
+export type WatcherRow = {
+  id: string;
+  serverId: string;
+  name: string;
+  enabled: boolean;
+  trigger: { kind: string; [key: string]: unknown };
+  action: { kind: string; [key: string]: unknown };
+  cooldownMs: number;
+  debounceMs: number;
+  confirmMode: string;
+  source: string;
+  skillSlug?: string;
+  lastFiredAt?: number | null;
+  nextDueAt?: number | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type WatcherRunRow = {
+  id: string;
+  watcherId: string;
+  serverId: string;
+  status: string;
+  triggerPayload: Record<string, unknown>;
+  result?: Record<string, unknown> | null;
+  error?: string | null;
+  startedAt: number;
+  finishedAt?: number | null;
+};
+
 export type ServerDetail = {
   server: ServerRow;
   runtime: {
@@ -608,6 +638,51 @@ export const api = {
       checks: Array<{ name: string; ok: boolean; detail?: string; onFail?: string }>;
       escalations: string[];
     }>(`/api/servers/${encodeURIComponent(id)}/health${remediate ? "?remediate=1" : ""}`),
+  watchers: (serverId?: string) =>
+    request<{ watchers: WatcherRow[] }>(
+      serverId
+        ? `/api/watchers?serverId=${encodeURIComponent(serverId)}`
+        : "/api/watchers",
+    ),
+  createWatcher: (body: {
+    serverId: string;
+    name: string;
+    enabled?: boolean;
+    trigger: Record<string, unknown>;
+    action: Record<string, unknown>;
+    cooldownMs?: number;
+    debounceMs?: number;
+  }) =>
+    request<{ watcher: WatcherRow }>("/api/watchers", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateWatcher: (
+    id: string,
+    body: {
+      name?: string;
+      enabled?: boolean;
+      trigger?: Record<string, unknown>;
+      action?: Record<string, unknown>;
+      cooldownMs?: number;
+      debounceMs?: number;
+    },
+  ) =>
+    request<{ watcher: WatcherRow }>(`/api/watchers/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteWatcher: (id: string) =>
+    request<{ ok: true }>(`/api/watchers/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  runWatcher: (id: string) =>
+    request<{ ok: true; watcherId: string; queued: boolean }>(
+      `/api/watchers/${encodeURIComponent(id)}/run`,
+      { method: "POST" },
+    ),
+  watcherRuns: (id: string, limit = 20) =>
+    request<{ runs: WatcherRunRow[] }>(
+      `/api/watchers/${encodeURIComponent(id)}/runs?limit=${limit}`,
+    ),
   exportSkill: async (name: string) => {
     const res = await fetch(`/api/skills/${encodeURIComponent(name)}/export`, {
       credentials: "include",

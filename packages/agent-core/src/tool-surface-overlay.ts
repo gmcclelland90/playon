@@ -156,6 +156,26 @@ export const TOOL_SURFACE_OVERLAY = {
     confirmAction: "download or update game files via Steam",
     activityVerb: "run",
   },
+  watchers_list: { skill: "monitor", activityVerb: "run" },
+  watchers_get: { skill: "monitor", activityVerb: "run" },
+  watchers_create: {
+    skill: "monitor",
+    confirmAction: "create a watcher automation",
+    activityVerb: "run",
+  },
+  watchers_update: {
+    skill: "monitor",
+    confirmAction: "update a watcher automation",
+    activityVerb: "run",
+  },
+  watchers_delete: {
+    skill: "monitor",
+    confirmAction: "delete a watcher automation",
+    activityVerb: "run",
+  },
+  watchers_enable: { skill: "monitor", activityVerb: "run" },
+  watchers_run_now: { skill: "monitor", activityVerb: "run" },
+  watchers_runs_list: { skill: "monitor", activityVerb: "run" },
 } as const satisfies Record<string, ToolSurfaceOverlay>;
 
 /** Install meta-only entries so confirm/activity/XP/skill projections work at import time. */

@@ -9,6 +9,7 @@ import {
   type PublicUser,
 } from "@playon/shared";
 import { api } from "../api";
+import { WatchersPanel } from "../components/WatchersPanel";
 import {
   isPendingNodeSetup,
   nodePresenceHint,
@@ -74,6 +75,12 @@ export function SettingsPage({ user }: { user: PublicUser }) {
     queryKey: ["nodes"],
     queryFn: api.nodes,
     refetchInterval: 10_000,
+  });
+
+  const serversList = useQuery({
+    queryKey: ["servers"],
+    queryFn: api.servers,
+    enabled: can(user.role, "watchers.read"),
   });
 
   const updates = useQuery({
@@ -386,6 +393,16 @@ export function SettingsPage({ user }: { user: PublicUser }) {
           connect change.
         </p>
       </header>
+
+      {can(user.role, "watchers.read") ? (
+        <WatchersPanel
+          user={user}
+          serverOptions={(serversList.data?.servers ?? []).map((s) => ({
+            id: s.id,
+            name: s.name,
+          }))}
+        />
+      ) : null}
 
       <section className="panel stack tight">
         <h3>About / Updates</h3>

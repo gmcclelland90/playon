@@ -12,10 +12,12 @@
 ## Medium-Term Ideas
 
 - Shared “LAN Party Mode” across multiple physical locations or more advanced node federation
-- Richer AI Director / narrative systems for games that expose sufficient hooks
+- Richer AI Director / narrative systems for games that expose sufficient hooks (builds on [Watchers](18-watchers.md))
 - Deeper integration with game-specific admin protocols beyond basic RCON
 - Automated client-side helper tools or lightweight launchers coordinated via the player panel
 - More sophisticated voting, matchmaking hints, and session orchestration
+
+**Shipping:** [Watchers](18-watchers.md) — schedule + event/hook automations that run tool scripts or Monitor agent turns.
 
 ## Longer-Term / Exploratory
 

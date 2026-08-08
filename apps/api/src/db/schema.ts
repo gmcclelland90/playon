@@ -128,6 +128,42 @@ export const agentProgress = sqliteTable("agent_progress", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
 
+export const watchers = sqliteTable("watchers", {
+  id: text("id").primaryKey(),
+  serverId: text("server_id")
+    .notNull()
+    .references(() => servers.id),
+  name: text("name").notNull(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  triggerJson: text("trigger_json").notNull(),
+  actionJson: text("action_json").notNull(),
+  cooldownMs: integer("cooldown_ms").notNull().default(60_000),
+  debounceMs: integer("debounce_ms").notNull().default(0),
+  confirmMode: text("confirm_mode").notNull().default("auto"),
+  source: text("source").notNull().default("user"),
+  skillSlug: text("skill_slug"),
+  lastFiredAt: integer("last_fired_at", { mode: "timestamp_ms" }),
+  nextDueAt: integer("next_due_at", { mode: "timestamp_ms" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const watcherRuns = sqliteTable("watcher_runs", {
+  id: text("id").primaryKey(),
+  watcherId: text("watcher_id")
+    .notNull()
+    .references(() => watchers.id),
+  serverId: text("server_id")
+    .notNull()
+    .references(() => servers.id),
+  status: text("status").notNull(),
+  triggerPayloadJson: text("trigger_payload_json").notNull().default("{}"),
+  resultJson: text("result_json"),
+  error: text("error"),
+  startedAt: integer("started_at", { mode: "timestamp_ms" }).notNull(),
+  finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
+});
+
 /** Machine credentials for MCP / external agents (hashed at rest). */
 export const accessTokens = sqliteTable("access_tokens", {
   id: text("id").primaryKey(),

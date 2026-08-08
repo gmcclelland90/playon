@@ -10,7 +10,9 @@ export type Capability =
   | "confirm.host"
   | "users.manage"
   | "snapshots.restore"
-  | "skills.package";
+  | "skills.package"
+  | "watchers.read"
+  | "watchers.manage";
 
 const CAPABILITY_MIN_ROLE: Record<Capability, Role> = {
   "servers.manage": "operator",
@@ -21,6 +23,8 @@ const CAPABILITY_MIN_ROLE: Record<Capability, Role> = {
   "users.manage": "owner",
   "snapshots.restore": "admin",
   "skills.package": "admin",
+  "watchers.read": "operator",
+  "watchers.manage": "admin",
 };
 
 export function can(role: Role, capability: Capability): boolean {
