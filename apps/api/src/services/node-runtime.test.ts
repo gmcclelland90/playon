@@ -90,10 +90,10 @@ describe("dispatchNodeJob", () => {
   });
 
   it("keeps the untyped shim for unmigrated kinds", async () => {
-    const pending = dispatchNodeJob<{ running: boolean }>({
+    const pending = dispatchNodeJob<{ candidates: unknown[] }>({
       nodeId: "spare-4",
-      kind: "process_status",
-      args: { id: "abc" },
+      kind: "manage_probe",
+      args: { roots: ["/srv/games"] },
       timeoutMs: 2_000,
       localHandler: () => {
         throw new Error("remote_only");
@@ -101,9 +101,9 @@ describe("dispatchNodeJob", () => {
     });
     await new Promise((r) => setTimeout(r, 50));
     const job = nodeJobService.claimNext("spare-4");
-    expect(job?.args).toEqual({ id: "abc" });
-    nodeJobService.complete(job!.id, { running: true });
-    await expect(pending).resolves.toEqual({ running: true });
+    expect(job?.args).toEqual({ roots: ["/srv/games"] });
+    nodeJobService.complete(job!.id, { candidates: [] });
+    await expect(pending).resolves.toEqual({ candidates: [] });
   });
 
   it("refuses kinds the node does not advertise", async () => {
@@ -283,6 +283,176 @@ describe("dispatchNodeJob — container family", () => {
         localHandler: () => ({ wrote: true }) as never,
       }),
     ).rejects.toMatchObject({ code: "validation_failed", kind: "container_stdin" });
+  });
+});
+
+describe("dispatchNodeJob — process family", () => {
+  it("fills start defaults before enqueue and infers the process info result", async () => {
+    const pending = dispatchNodeJob({
+      nodeId: "proc-1",
+      kind: "process_start",
+      args: {
+        name: "server-abc",
+        command: "/bin/bash",
+        args: ["start.sh"],
+        cwd: "servers/abc/game",
+        serverId: "abc",
+        logRel: "servers/abc/logs/console.log",
+      },
+      timeoutMs: 2_000,
+      localHandler: () => {
+        throw new Error("remote_only");
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const job = nodeJobService.claimNext("proc-1");
+    expect(job?.args).toEqual({
+      name: "server-abc",
+      command: "/bin/bash",
+      args: ["start.sh"],
+      cwd: "servers/abc/game",
+      env: {},
+      serverId: "abc",
+      logRel: "servers/abc/logs/console.log",
+    });
+    nodeJobService.complete(job!.id, {
+      id: "native-server-abc-1",
+      name: "server-abc",
+      pid: 4242,
+      status: "running",
+    });
+    const result = await pending;
+    expect(result.id).toBe("native-server-abc-1");
+    expect(result.status).toBe("running");
+  });
+
+  it("accepts a status result whose process has already exited", async () => {
+    const pending = dispatchNodeJob({
+      nodeId: "proc-2",
+      kind: "process_status",
+      args: { id: "native-server-abc-1" },
+      timeoutMs: 2_000,
+      localHandler: () => {
+        throw new Error("remote_only");
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const job = nodeJobService.claimNext("proc-2");
+    // No pid once the child is gone; the control plane reads this as "stopped".
+    nodeJobService.complete(job!.id, {
+      id: "native-server-abc-1",
+      name: "server-abc",
+      status: "stopped",
+    });
+    expect((await pending).status).toBe("stopped");
+  });
+
+  it("rejects a process result that breaks the contract", async () => {
+    const pending = dispatchNodeJob({
+      nodeId: "proc-3",
+      kind: "process_status",
+      args: { id: "native-server-abc-1" },
+      timeoutMs: 2_000,
+      localHandler: () => {
+        throw new Error("remote_only");
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const job = nodeJobService.claimNext("proc-3");
+    nodeJobService.complete(job!.id, { id: "native-server-abc-1", name: "server-abc" });
+    await expect(pending).rejects.toMatchObject({
+      code: "validation_failed",
+      kind: "process_status",
+    });
+  });
+
+  it("queues a stop whose tracked id was lost, but refuses a cwd escape", async () => {
+    const pending = dispatchNodeJob({
+      nodeId: "proc-4",
+      kind: "process_stop",
+      args: { id: "", name: "server-abc", cwd: "servers/abc/game", serverId: "abc" },
+      timeoutMs: 2_000,
+      localHandler: async () => ({ ok: true }),
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const job = nodeJobService.claimNext("proc-4");
+    expect(job?.args).toEqual({
+      id: "",
+      name: "server-abc",
+      cwd: "servers/abc/game",
+      serverId: "abc",
+    });
+    nodeJobService.complete(job!.id, { ok: true });
+    await expect(pending).resolves.toEqual({ ok: true });
+
+    await expect(
+      dispatchNodeJob({
+        nodeId: "proc-5",
+        kind: "process_stop",
+        args: { name: "server-abc", cwd: "servers/../../etc" },
+        localHandler: async () => ({ ok: true }),
+      }),
+    ).rejects.toMatchObject({ code: "validation_failed", kind: "process_stop" });
+    expect(nodeJobService.claimNext("proc-5")).toBeNull();
+  });
+});
+
+describe("dispatchNodeJob — steamcmd family", () => {
+  it("defaults the install dir and validate flag before enqueue", async () => {
+    const pending = dispatchNodeJob({
+      nodeId: "steam-1",
+      kind: "steamcmd_app_update",
+      args: { serverRel: "servers/abc", appId: 258_550 },
+      timeoutMs: 2_000,
+      localHandler: () => {
+        throw new Error("remote_only");
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const job = nodeJobService.claimNext("steam-1");
+    expect(job?.args).toEqual({
+      serverRel: "servers/abc",
+      appId: 258_550,
+      installDirRel: "game",
+      validate: true,
+    });
+    nodeJobService.complete(job!.id, {
+      ok: true,
+      binary: "/root/steamcmd/steamcmd.sh",
+      exitCode: 0,
+      stdout: "Success! App '258550' fully installed.",
+      stderr: "",
+      installDir: "/var/lib/playon-node/servers/abc/game",
+      appId: 258_550,
+      provisioned: false,
+    });
+    const result = await pending;
+    expect(result.appId).toBe(258_550);
+    expect(result.installDir).toBe("/var/lib/playon-node/servers/abc/game");
+  });
+
+  it("refuses an appId or install dir the node could not act on", async () => {
+    await expect(
+      dispatchNodeJob({
+        nodeId: "steam-2",
+        kind: "steamcmd_app_update",
+        args: { serverRel: "servers/abc", appId: 1.5 },
+        localHandler: () => {
+          throw new Error("remote_only");
+        },
+      }),
+    ).rejects.toMatchObject({ code: "validation_failed", kind: "steamcmd_app_update" });
+    await expect(
+      dispatchNodeJob({
+        nodeId: "steam-2",
+        kind: "steamcmd_app_update",
+        args: { serverRel: "servers/abc", appId: 258_550, installDirRel: "../../opt" },
+        localHandler: () => {
+          throw new Error("remote_only");
+        },
+      }),
+    ).rejects.toMatchObject({ code: "validation_failed", kind: "steamcmd_app_update" });
+    expect(nodeJobService.claimNext("steam-2")).toBeNull();
   });
 });
 

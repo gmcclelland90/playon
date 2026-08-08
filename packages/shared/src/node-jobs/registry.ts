@@ -5,6 +5,8 @@ import type { NodeJobContract } from "./contract.js";
 import { NodeJobError } from "./errors.js";
 import { FS_NODE_JOB_CONTRACTS } from "./fs.js";
 import { META_NODE_JOB_CONTRACTS } from "./meta.js";
+import { PROCESS_NODE_JOB_CONTRACTS } from "./process.js";
+import { STEAMCMD_NODE_JOB_CONTRACTS } from "./steamcmd.js";
 
 /**
  * Contract map for every migrated job kind. Families are folded in one slice at
@@ -14,6 +16,8 @@ export const NODE_JOB_CONTRACTS = {
   ...META_NODE_JOB_CONTRACTS,
   ...FS_NODE_JOB_CONTRACTS,
   ...CONTAINER_NODE_JOB_CONTRACTS,
+  ...PROCESS_NODE_JOB_CONTRACTS,
+  ...STEAMCMD_NODE_JOB_CONTRACTS,
 } as const;
 
 export type NodeJobContracts = typeof NODE_JOB_CONTRACTS;

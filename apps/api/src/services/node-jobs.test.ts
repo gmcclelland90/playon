@@ -9,7 +9,7 @@ const SELF_UPDATE_ARGS = {
 };
 
 /** Kinds still waiting for their slice; used as the shim's stand-in. */
-const SHIMMED_KIND = "process_status";
+const SHIMMED_KIND = "manage_probe";
 
 describe("NodeJobService", () => {
   it("enqueues, claims, and completes jobs in order", async () => {
@@ -54,10 +54,45 @@ describe("NodeJobService", () => {
     ).toThrow(/validation_failed/);
   });
 
+  it("normalizes process and steamcmd args before queueing", () => {
+    const svc = new NodeJobService();
+    const start = svc.enqueue("node-a", "process_start", {
+      name: "server-a",
+      command: "/bin/bash",
+      args: ["start.sh"],
+      cwd: "servers/a/game",
+      serverId: "a",
+      logRel: "servers/a/console.log",
+    });
+    expect(start.args).toEqual({
+      name: "server-a",
+      command: "/bin/bash",
+      args: ["start.sh"],
+      cwd: "servers/a/game",
+      env: {},
+      serverId: "a",
+      logRel: "servers/a/console.log",
+    });
+    // A lost process id is normal after a restart; a missing one on status is not.
+    expect(svc.enqueue("node-a", "process_stop", { cwd: "servers/a/game" }).args).toEqual({
+      id: "",
+      name: "",
+      cwd: "servers/a/game",
+    });
+    expect(() => svc.enqueue("node-a", "process_status", {})).toThrow(/validation_failed/);
+
+    expect(
+      svc.enqueue("node-a", "steamcmd_app_update", { serverRel: "servers/a", appId: 258_550 }).args,
+    ).toEqual({ serverRel: "servers/a", appId: 258_550, installDirRel: "game", validate: true });
+    expect(() =>
+      svc.enqueue("node-a", "steamcmd_app_update", { serverRel: "servers/a", appId: 0 }),
+    ).toThrow(/validation_failed/);
+  });
+
   it("leaves unmigrated kinds on the untyped shim", () => {
     const svc = new NodeJobService();
-    const job = svc.enqueue("node-a", SHIMMED_KIND, { id: "abc", extra: 1 });
-    expect(job.args).toEqual({ id: "abc", extra: 1 });
+    const job = svc.enqueue("node-a", SHIMMED_KIND, { roots: ["/srv"], extra: 1 });
+    expect(job.args).toEqual({ roots: ["/srv"], extra: 1 });
   });
 
   it("refuses kinds a node does not advertise", () => {

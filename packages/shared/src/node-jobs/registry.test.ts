@@ -12,10 +12,10 @@ import {
 } from "./registry.js";
 
 /** Kinds still waiting for their slice; used as the shim's stand-in. */
-const SHIMMED_KIND = "process_status";
+const SHIMMED_KIND = "manage_probe";
 
 describe("node job registry", () => {
-  it("registers exactly the meta, fs, and container families in this slice", () => {
+  it("registers every family except the manage fold-in", () => {
     expect([...REGISTERED_NODE_JOB_KINDS].sort()).toEqual(
       [
         "node_self_update",
@@ -37,17 +37,31 @@ describe("node job registry", () => {
         "container_inspect",
         "container_logs",
         "container_stdin",
+        "process_start",
+        "process_stop",
+        "process_status",
+        "steamcmd_app_update",
       ].sort(),
     );
   });
 
-  it("covers every fs and container kind the node agent can run", () => {
+  it("covers every fs, container, process, and steamcmd kind the node agent can run", () => {
     const migrated = ALL_NODE_JOB_KINDS.filter(
-      (k) => k.startsWith("fs_") || k.startsWith("container_"),
+      (k) =>
+        k.startsWith("fs_") ||
+        k.startsWith("container_") ||
+        k.startsWith("process_") ||
+        k.startsWith("steamcmd_"),
     );
     for (const kind of migrated) {
       expect(nodeJobContract(kind)?.kind).toBe(kind);
     }
+  });
+
+  it("leaves only the manage family on the shim", () => {
+    const unregistered = ALL_NODE_JOB_KINDS.filter((k) => !isRegisteredNodeJobKind(k));
+    expect(unregistered.every((k) => k.startsWith("manage_"))).toBe(true);
+    expect(unregistered.length).toBeGreaterThan(0);
   });
 
   it("gives every registered kind a keyed, complete contract", () => {
@@ -218,8 +232,104 @@ describe("parseNodeJobArgs", () => {
     ).toThrow(/validation_failed/);
   });
 
+  it("applies process defaults so both shores see the same args", () => {
+    expect(parseNodeJobArgs("process_start", { name: "server-a", command: "/bin/bash" })).toEqual({
+      name: "server-a",
+      command: "/bin/bash",
+      args: [],
+      cwd: ".",
+      env: {},
+    });
+    // A lost id is the normal post-restart case, so stop tolerates it.
+    expect(parseNodeJobArgs("process_stop", { cwd: "servers/a/game" })).toEqual({
+      id: "",
+      name: "",
+      cwd: "servers/a/game",
+    });
+  });
+
+  it("accepts the process args the control plane already sends", () => {
+    expect(
+      parseNodeJobArgs("process_start", {
+        name: "server-a",
+        command: "/bin/bash",
+        args: ["start.sh"],
+        cwd: "servers/a/game",
+        env: { PLAYON_SERVER_ID: "a" },
+        serverId: "a",
+        logRel: "servers/a/logs/console.log",
+      }),
+    ).toEqual({
+      name: "server-a",
+      command: "/bin/bash",
+      args: ["start.sh"],
+      cwd: "servers/a/game",
+      env: { PLAYON_SERVER_ID: "a" },
+      serverId: "a",
+      logRel: "servers/a/logs/console.log",
+    });
+    expect(
+      parseNodeJobArgs("process_stop", {
+        id: "native-server-a-1",
+        name: "server-a",
+        cwd: "servers/a/game",
+        serverId: "a",
+      }).id,
+    ).toBe("native-server-a-1");
+    expect(parseNodeJobArgs("process_status", { id: "native-server-a-1" })).toEqual({
+      id: "native-server-a-1",
+    });
+  });
+
+  it("rejects process args that could only be a mistake", () => {
+    expect(() => parseNodeJobArgs("process_start", { name: "server-a" })).toThrow(
+      /validation_failed/,
+    );
+    expect(() => parseNodeJobArgs("process_status", { id: "" })).toThrow(/validation_failed/);
+    expect(() =>
+      parseNodeJobArgs("process_start", {
+        name: "server-a",
+        command: "/bin/bash",
+        cwd: "../../etc",
+      }),
+    ).toThrow(/validation_failed/);
+    expect(() =>
+      parseNodeJobArgs("process_start", {
+        name: "server-a",
+        command: "/bin/bash",
+        logRel: "/var/log/syslog",
+      }),
+    ).toThrow(/validation_failed/);
+    expect(() => parseNodeJobArgs("process_stop", { cwd: "servers/a/game", force: true })).toThrow(
+      /validation_failed/,
+    );
+  });
+
+  it("applies steamcmd defaults and refuses an install dir outside the server", () => {
+    expect(
+      parseNodeJobArgs("steamcmd_app_update", { serverRel: "servers/a", appId: 258_550 }),
+    ).toEqual({ serverRel: "servers/a", appId: 258_550, installDirRel: "game", validate: true });
+    expect(
+      parseNodeJobArgs("steamcmd_app_update", {
+        serverRel: "servers/a",
+        appId: 258_550,
+        installDirRel: "game/serverfiles",
+        validate: false,
+      }).validate,
+    ).toBe(false);
+    for (const bad of [{ appId: 0 }, { appId: 1.5 }, { installDirRel: "../../opt" }]) {
+      expect(() =>
+        parseNodeJobArgs("steamcmd_app_update", {
+          serverRel: "servers/a",
+          appId: 258_550,
+          ...bad,
+        }),
+      ).toThrow(/validation_failed/);
+    }
+  });
+
   it("passes unmigrated kinds through untouched (W1 shim)", () => {
-    const args = { id: "abc", weird: 1 };
+    const args = { roots: ["/srv/games"], weird: 1 };
     expect(parseNodeJobArgs(SHIMMED_KIND, args)).toEqual(args);
   });
 });
@@ -328,8 +438,54 @@ describe("parseNodeJobResult", () => {
     }
   });
 
+  it("accepts the process payloads shipped agents already send", () => {
+    const started = parseNodeJobResult("process_start", {
+      id: "native-server-a-1",
+      name: "server-a",
+      pid: 4242,
+      status: "running",
+    });
+    expect(started.pid).toBe(4242);
+    // The supervisor drops the pid once the child exits.
+    expect(
+      parseNodeJobResult("process_status", {
+        id: "native-server-a-1",
+        name: "server-a",
+        status: "stopped",
+      }).pid,
+    ).toBeUndefined();
+    expect(parseNodeJobResult("process_stop", { ok: true }).ok).toBe(true);
+  });
+
+  it("rejects a process result the control plane could not act on", () => {
+    expect(() => parseNodeJobResult("process_status", { id: "a", name: "server-a" })).toThrow(
+      NodeJobError,
+    );
+    expect(() =>
+      parseNodeJobResult("process_status", { id: "a", name: "server-a", status: "zombie" }),
+    ).toThrow(NodeJobError);
+  });
+
+  it("accepts the steamcmd payload a shipped agent sends", () => {
+    const run = parseNodeJobResult("steamcmd_app_update", {
+      ok: true,
+      binary: "/root/steamcmd/steamcmd.sh",
+      exitCode: 0,
+      stdout: "Success! App '258550' fully installed.",
+      stderr: "",
+      installDir: "/var/lib/playon-node/servers/a/game",
+      appId: 258_550,
+      provisioned: true,
+    });
+    expect(run.appId).toBe(258_550);
+    expect(run.provisioned).toBe(true);
+    expect(() =>
+      parseNodeJobResult("steamcmd_app_update", { ok: true, appId: 258_550, exitCode: 0 }),
+    ).toThrow(NodeJobError);
+  });
+
   it("passes unmigrated kinds through untouched (W1 shim)", () => {
-    const result = { id: "abc", running: true };
+    const result = { candidates: [{ path: "/srv/games/pz" }] };
     expect(parseNodeJobResult(SHIMMED_KIND, result)).toEqual(result);
   });
 });

@@ -216,6 +216,119 @@ describe("executeJob", () => {
     }
   });
 
+  /**
+   * A real spawn needs a game tree, so assert the contract gate rather than the
+   * outcome: bad args fail before the supervisor is consulted, and a well-formed
+   * stop of an already-gone process is still an `ok` acknowledgement.
+   */
+  it("validates process args before touching the supervisor", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-proc-"));
+    const run = (kind: NodeJobKind, args: Record<string, unknown>) =>
+      executeJob({ id: `proc-${kind}`, nodeId: "n1", kind, args }, root);
+    try {
+      await expect(run("process_start", { name: "server-a" })).rejects.toMatchObject({
+        code: "validation_failed",
+        kind: "process_start",
+      });
+      await expect(
+        run("process_start", { name: "server-a", command: "/bin/true", cwd: "../../etc" }),
+      ).rejects.toMatchObject({ code: "validation_failed", kind: "process_start" });
+      await expect(run("process_status", {})).rejects.toMatchObject({
+        code: "validation_failed",
+        kind: "process_status",
+      });
+      await expect(run("process_stop", { id: "x", signal: "SIGKILL" })).rejects.toMatchObject({
+        code: "validation_failed",
+        kind: "process_stop",
+      });
+
+      // Nothing is tracked, so this only exercises reclaim — it must still ack.
+      fs.mkdirSync(path.join(root, "servers", "s1", "game"), { recursive: true });
+      expect(await run("process_stop", { name: "server-s1", cwd: "servers/s1/game" })).toEqual({
+        ok: true,
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+    // Orphan reclaim deliberately waits between SIGTERM and SIGKILL.
+  }, 30_000);
+
+  it("starts a native process and reports it back through the contract", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-proc-run-"));
+    const gameRel = "servers/s1/game";
+    fs.mkdirSync(path.join(root, "servers", "s1", "game"), { recursive: true });
+    try {
+      const started = (await executeJob(
+        {
+          id: "proc-start",
+          nodeId: "n1",
+          kind: "process_start",
+          args: {
+            name: "server-s1",
+            command: process.execPath,
+            args: ["-e", "setTimeout(() => {}, 60_000)"],
+            cwd: gameRel,
+            logRel: "servers/s1/logs/console.log",
+          },
+        },
+        root,
+      )) as { id: string; name: string; pid?: number; status: string };
+      expect(started.name).toBe("server-s1");
+      expect(started.status).toBe("running");
+      expect(started.pid).toBeGreaterThan(0);
+
+      expect(
+        await executeJob(
+          { id: "proc-status", nodeId: "n1", kind: "process_status", args: { id: started.id } },
+          root,
+        ),
+      ).toMatchObject({ id: started.id, status: "running" });
+
+      expect(
+        await executeJob(
+          {
+            id: "proc-stop",
+            nodeId: "n1",
+            kind: "process_stop",
+            args: { id: started.id, name: "server-s1", cwd: gameRel },
+          },
+          root,
+        ),
+      ).toEqual({ ok: true });
+
+      expect(
+        await executeJob(
+          { id: "proc-status-2", nodeId: "n1", kind: "process_status", args: { id: started.id } },
+          root,
+        ),
+      ).toMatchObject({ id: started.id, status: "stopped" });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  /** SteamCMD may be absent here, so only the contract gate is asserted. */
+  it("validates steamcmd args before shelling out", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-steam-"));
+    const run = (args: Record<string, unknown>) =>
+      executeJob({ id: "steam-1", nodeId: "n1", kind: "steamcmd_app_update", args }, root);
+    try {
+      await expect(run({ serverRel: "servers/s1" })).rejects.toMatchObject({
+        code: "validation_failed",
+        kind: "steamcmd_app_update",
+      });
+      await expect(run({ serverRel: "servers/s1", appId: "258550" })).rejects.toMatchObject({
+        code: "validation_failed",
+        kind: "steamcmd_app_update",
+      });
+      await expect(
+        run({ serverRel: "servers/s1", appId: 258_550, installDirRel: "../../opt" }),
+      ).rejects.toMatchObject({ code: "validation_failed", kind: "steamcmd_app_update" });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("reports runtime caps", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-"));
     const caps = (await executeJob(
