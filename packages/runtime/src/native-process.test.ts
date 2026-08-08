@@ -124,6 +124,41 @@ describe("NativeProcessSupervisor", () => {
     await first.stop(started.id);
   });
 
+  it("writes a console line to a process resolved from identity alone", async () => {
+    if (process.platform === "win32") return;
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-stdin-"));
+    temps.push(jail);
+    const gameDir = path.join(jail, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+
+    const supervisor = new NativeProcessSupervisor(jail);
+    const info = await supervisor.start({
+      name: "server-x",
+      // Stands in for a game that reads its console commands off stdin.
+      command: "sh",
+      args: ["-c", "while read line; do echo \"ran:$line\"; done"],
+      cwd: "game",
+      logFile: "logs/console.log",
+    });
+
+    await supervisor.writeStdin("server-x", "game", "say hi");
+    await new Promise((r) => setTimeout(r, 400));
+
+    expect(fs.readFileSync(path.join(jail, "logs", "console.log"), "utf8")).toContain("ran:say hi");
+    await supervisor.stop(info.id);
+  });
+
+  it("refuses a console write for an identity it does not supervise", async () => {
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-no-stdin-"));
+    temps.push(jail);
+    const supervisor = new NativeProcessSupervisor(jail);
+
+    // A restarted host can re-resolve an orphan, but it never inherits its pipes.
+    await expect(supervisor.writeStdin("server-x", ".", "say hi")).rejects.toThrow(
+      /stdin_unavailable/,
+    );
+  });
+
   it("redirects stdout to logFile when provided", async () => {
     if (process.platform === "win32") return;
     const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-log-"));

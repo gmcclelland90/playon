@@ -65,6 +65,9 @@ const fake = vi.hoisted(() => {
         calls.push(`logs:${id}:${tail ?? "all"}`);
         return ["fake-log"];
       },
+      async writeStdin(id: string, data: string) {
+        calls.push(`stdin:${id}:${data}`);
+      },
     },
   };
 });
@@ -144,6 +147,8 @@ const node = vi.hoisted(() => {
             return { ok: true };
           case "container_logs":
             return { lines: ["node-log-1", "node-log-2"] };
+          case "container_stdin":
+            return { ok: true };
           case "process_status": {
             const name = String(args.name ?? "");
             // The node answers for an identity it cannot find too — just not "running".
@@ -216,6 +221,9 @@ const host = vi.hoisted(() => {
     async reclaim(name, cwd) {
       calls.push(`reclaim:${name}:${cwd}`);
       running = null;
+    },
+    async writeStdin(name, cwd, data) {
+      calls.push(`stdin:${name}:${cwd}:${data}`);
     },
   };
   return {
@@ -921,5 +929,130 @@ describe("logs through ServerRuntimeHandle", () => {
 
     expect(detail!.runtime.kind).toBe("native");
     expect(detail!.runtime.logs).toEqual(["boot", "ready"]);
+  });
+});
+
+describe("console stdin through ServerRuntimeHandle", () => {
+  const STDIN_SKILL = "fixtures.stdin-console-server";
+
+  /** A skill whose admin console is the game's own stdin, in the per-test skills root. */
+  function writeStdinSkill(config: AppConfig): void {
+    const dir = path.join(config.dataRoot, "skills", "stdin-console-server");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "metadata.yaml"),
+      [
+        `name: ${STDIN_SKILL}`,
+        "version: 0.1.0",
+        "game: Stdin Console Server",
+        "containerSupport: full",
+        "dockerImage: playon/fixture-stdin:latest",
+        "dockerDataMount: /data",
+        "adminDialect: stdin",
+        "ports:",
+        "  - name: game",
+        "    protocol: tcp",
+        "    default: 27015",
+        "",
+      ].join("\n"),
+    );
+  }
+
+  /** A stdin-dialect server in one of the four quadrants. */
+  async function stdinServer(opts?: { remote?: boolean; native?: boolean }): Promise<{
+    servers: ServerService;
+    id: string;
+    name: string;
+    gameDir: string;
+  }> {
+    const { db, config, servers } = tempEnv();
+    writeStdinSkill(config);
+    const server = await servers.createFromSkill({ skillName: STDIN_SKILL });
+    const gameDir = path.join(server.dataPath, "game");
+    if (opts?.native) {
+      await db
+        .update(serversTable)
+        .set({ runtimeMode: "native" })
+        .where(eq(serversTable.id, server.id));
+      fs.mkdirSync(gameDir, { recursive: true });
+      fs.writeFileSync(path.join(gameDir, "start.sh"), "#!/bin/bash\nsleep 30\n");
+      fs.writeFileSync(path.join(gameDir, "start.bat"), "@echo off\n");
+    }
+    if (opts?.remote) await placeOnRemoteNode(db, server.id);
+    fake.reset();
+    host.reset();
+    node.jobs.length = 0;
+    return { servers, id: server.id, name: `playon-${server.id}`, gameDir };
+  }
+
+  it("local docker: writes to the container Home runs, by resolved id", async () => {
+    const { servers, id } = await stdinServer();
+    await servers.start(id);
+    fake.calls.length = 0;
+
+    await expect(servers.consoleCapability(id)).resolves.toEqual({
+      input: "ready",
+      dialect: "stdin",
+    });
+    await servers.writeStdin(id, "say hi");
+
+    expect(fake.calls).toContain(`stdin:cid-playon-${id}:say hi`);
+  });
+
+  it("reports the console unavailable while the server is down", async () => {
+    const { servers, id } = await stdinServer();
+
+    await expect(servers.consoleCapability(id)).resolves.toEqual({
+      input: "unavailable",
+      dialect: "stdin",
+    });
+  });
+
+  it("remote docker: writes through the node's container job, never Home's docker", async () => {
+    const { servers, id, name } = await stdinServer({ remote: true });
+    await servers.start(id);
+    node.jobs.length = 0;
+    fake.calls.length = 0;
+
+    await servers.writeStdin(id, "say hi");
+
+    expect(node.jobs.at(-1)).toEqual({
+      kind: "container_stdin",
+      args: { id: `cid-${name}`, line: "say hi" },
+    });
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("local native: writes to the supervised process, by identity", async () => {
+    const { servers, id, gameDir } = await stdinServer({ native: true });
+    await servers.start(id);
+    host.calls.length = 0;
+    fake.calls.length = 0;
+
+    await expect(servers.consoleCapability(id)).resolves.toEqual({
+      input: "ready",
+      dialect: "stdin",
+    });
+    await servers.writeStdin(id, "say hi");
+
+    expect(host.calls).toContain(`stdin:server-${id}:${gameDir}:say hi`);
+    // A native console never goes near the container path.
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("remote native: reports no console instead of pretending to write", async () => {
+    const { servers, id } = await stdinServer({ remote: true, native: true });
+    await servers.start(id);
+    node.jobs.length = 0;
+
+    await expect(servers.consoleCapability(id)).resolves.toEqual({
+      input: "unsupported",
+      dialect: "stdin",
+    });
+    await expect(servers.writeStdin(id, "say hi")).rejects.toThrow(
+      /runtime_unsupported: native stdin over remote transport/,
+    );
+    expect(node.kinds()).not.toContain("container_stdin");
+    expect(host.calls).toEqual([]);
   });
 });

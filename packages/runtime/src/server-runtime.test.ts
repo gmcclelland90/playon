@@ -196,6 +196,7 @@ describe("docker ServerRuntimeHandle", () => {
     const transport = fakeDockerTransport({
       existing: { id: "abc123", name: "playon-srv1", status: "running" },
     });
+    expect(openDocker(transport).canWriteStdin).toBe(true);
     await openDocker(transport).writeStdin("say hi");
     expect(transport.calls).toContain("stdin:abc123:say hi");
 
@@ -203,6 +204,9 @@ describe("docker ServerRuntimeHandle", () => {
       existing: { id: "abc123", name: "playon-srv1", status: "running" },
       stdin: false,
     });
+    // The capability is answerable without writing, so a console can be greyed
+    // out instead of failing the first command a player types.
+    expect(openDocker(noStdin).canWriteStdin).toBe(false);
     await expect(openDocker(noStdin).writeStdin("say hi")).rejects.toThrow(
       /runtime_unsupported: docker stdin/,
     );
@@ -372,6 +376,7 @@ describe("remote docker ServerRuntimeHandle", () => {
       args: { id: "abc123", tail: 20 },
     });
 
+    expect(handle.canWriteStdin).toBe(true);
     await handle.writeStdin("say hi");
     expect(node.jobs.at(-1)).toMatchObject({
       kind: "container_stdin",
@@ -599,7 +604,11 @@ describe("native ServerRuntimeHandle", () => {
 });
 
 /** Records what the mode half asks of a supervisor, without spawning anything. */
-function fakeSupervisor(opts?: { found?: ProcessInfo | null; reclaim?: boolean }) {
+function fakeSupervisor(opts?: {
+  found?: ProcessInfo | null;
+  reclaim?: boolean;
+  stdin?: boolean;
+}) {
   const calls: string[] = [];
   const supervisor: ProcessSupervisor = {
     async start(spec) {
@@ -622,6 +631,11 @@ function fakeSupervisor(opts?: { found?: ProcessInfo | null; reclaim?: boolean }
         : async (name, cwd) => {
             calls.push(`reclaim:${name}:${cwd}`);
           },
+    writeStdin: opts?.stdin
+      ? async (name, cwd, data) => {
+          calls.push(`stdin:${name}:${cwd}:${data}`);
+        }
+      : undefined,
   };
   return { calls, supervisor };
 }
@@ -693,6 +707,26 @@ describe("localNativeTransport", () => {
     await expect(
       openNativeAs(transport, { ...IDENTITY, logFile: unwritten }).logs(20),
     ).resolves.toEqual([]);
+  });
+
+  it("writes a console line by identity, never by a stored process id", async () => {
+    const { calls, supervisor } = fakeSupervisor({ stdin: true });
+    const handle = openNative(localNativeTransport(supervisor));
+
+    expect(handle.canWriteStdin).toBe(true);
+    await handle.writeStdin("say hi");
+
+    expect(calls).toEqual(["stdin:server-srv1:/srv/srv1/game:say hi"]);
+  });
+
+  it("reports stdin unsupported for a supervisor that holds no console", async () => {
+    const { supervisor } = fakeSupervisor();
+    const handle = openNative(localNativeTransport(supervisor));
+
+    expect(handle.canWriteStdin).toBe(false);
+    await expect(handle.writeStdin("say hi")).rejects.toThrow(
+      /runtime_unsupported: native stdin over local transport/,
+    );
   });
 });
 
@@ -835,6 +869,18 @@ describe("remote native ServerRuntimeHandle", () => {
     const node = fakeProcessNode({ unreachable: true });
 
     await expect(openRemoteNative(node).status()).rejects.toThrow(/job_timeout/);
+  });
+
+  it("has no console: only the node's own supervisor holds that pipe", async () => {
+    const node = fakeProcessNode();
+    const handle = openRemoteNative(node);
+
+    expect(handle.canWriteStdin).toBe(false);
+    await expect(handle.writeStdin("say hi")).rejects.toThrow(
+      /runtime_unsupported: native stdin over remote transport/,
+    );
+    // Nothing was sent: an unsupported capability must not burn a job on the node.
+    expect(node.jobs).toEqual([]);
   });
 });
 
