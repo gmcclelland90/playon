@@ -120,8 +120,38 @@ Frozen in W2 deep-grill (after W1 on `main`):
 - **Parallel:** grill J4∥J6 (W4b/W4c) after this lock; implement them only after W2’s first prove slice is on `main`. Stay off Handle / File Store / node-agent job-body zones.
 - **Zone:** `servers.ts`, `health.ts`, `server-console.ts`, `native-launch*`, runtime factory touchpoints — not Tool Surface or new node-job contracts.
 
+## W4b design lock (HTTP Transport)
+
+Frozen in W4b deep-grill (implement after W2 local-docker prove is on `main`):
+
+- **Owns:** shared error envelope + `onError` middleware + route policy helpers (`requireSession`, `requireCan` / equivalent); web `api.ts` `request()` parses the envelope
+- **Envelope:** `{ error: string, code?: string, details?: unknown }` — stable `code` for machine clients; human text in `error`
+- **Contracts home:** new `packages/shared/src/http/` — do not grow mega-`api.ts`
+- **Slices:** `http/errors` + `onError` → helpers on session + servers list/detail + one mutating server route → migrate remaining routes → web `request()`
+- **Zone:** `app.ts` route wiring, new `http-policy.ts` (name flexible), `packages/shared/src/http/*`, `apps/web/src/api.ts` choke point — not `servers.ts` lifecycle / fs jail / node-agent job bodies
+- **Git:** worktree `arch/w4-transport` → PRs into shared `arch/w4-integration`
+
+## W4c design lock (Control Plane lifecycle)
+
+Frozen in W4c deep-grill (implement after W2 local-docker prove is on `main`):
+
+- **Interface:** `startControlPlane` / `stopControlPlane` — listen, scheduler start/stop, graceful SIGTERM
+- **Stop must cover:** HTTP server close + Snapshot/LiveQuery/Watcher schedulers + in-flight `waitFor` job waiters (best-effort) + node WebSocket drain with a short grace period
+- **Home:** new `apps/api/src/control-plane-lifecycle.ts` (or similar); thin `index.ts` calls it. `ControlPlane` stays the service graph.
+- **Clash rule:** may construct/wire `ServerService` via `control-plane.ts`; must not edit lifecycle methods inside `servers.ts` (Handle zone)
+- **Tests:** unit start/stop ordering with fake listen + fake schedulers; lab `loop:verify` green
+- **Zone:** `index.ts` + lifecycle module only for process shell — no route edits in `app.ts`
+- **Git:** worktree `arch/w4-cp-lifecycle` → PRs into shared `arch/w4-integration`
+
+## W4 shared process
+
+- Shared integration branch `arch/w4-integration`; facilitator serializes merges
+- Freeze briefs / open worktrees after lock confirm; **first code PR only after W2 local-docker prove is on `main`**
+- File split: W4b ↔ routes/policy/http; W4c ↔ process shell — no shared `app.ts` edits from W4c
+
 ## Process after this doc
 
-1. Confirm W2 lock with facilitator → spawn W2 prove slice on `arch/w2-integration`
-2. Deep-grill W4b (Transport) and W4c (Control Plane lifecycle); hold implementation until Handle prove is on `main`
-3. Re-open portfolio ranking only if a wave invalidates a later candidate
+1. Confirm W4b/W4c locks → keep W2 prove landing on `arch/w2-integration` → `main`
+2. After W2 prove on `main`: spawn W4b∥W4c implementation on `arch/w4-integration`
+3. Continue W2 remaining Handle slices (remote docker → natives → logs → console)
+4. Re-open portfolio ranking only if a wave invalidates a later candidate
