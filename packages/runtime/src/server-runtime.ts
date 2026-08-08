@@ -1,3 +1,4 @@
+import type { NodeJobArgsInput, NodeJobKind, NodeJobResult } from "@playon/shared";
 import type { ContainerInfo, ContainerSpec, DockerAdapter, RuntimeMode } from "./types.js";
 
 /** Where the runtime work executes: in this process, or on a node over the job transport. */
@@ -63,6 +64,72 @@ export function localDockerTransport(adapter: DockerAdapter): DockerRuntimeTrans
     stop: (id) => adapter.stop(id),
     logs: (id, tail) => adapter.logs(id, tail),
     writeStdin,
+  };
+}
+
+/** The container half of the node job contract — the only kinds a remote docker runtime sends. */
+export type ContainerJobKind = Extract<NodeJobKind, `container_${string}`>;
+
+/**
+ * The wire the control plane lends the runtime: run one container job on the node
+ * that hosts this server. Which job each container verb maps to stays here, with
+ * the docker mode adapter.
+ */
+export type ContainerJobDispatch = <K extends ContainerJobKind>(
+  kind: K,
+  args: NodeJobArgsInput<K>,
+  opts?: { timeoutMs?: number },
+) => Promise<NodeJobResult<K>>;
+
+export interface RemoteDockerTransportOptions {
+  /** Passed with start/stop so the agent knows whose console to follow. */
+  serverId?: string;
+  /** Create pulls the image on the node, so it gets a much longer leash. */
+  createTimeoutMs?: number;
+  /** Identity re-resolution must not park status calls behind an unreachable node. */
+  inspectTimeoutMs?: number;
+}
+
+const REMOTE_CREATE_TIMEOUT_MS = 180_000;
+const REMOTE_INSPECT_TIMEOUT_MS = 15_000;
+
+export function remoteDockerTransport(
+  dispatch: ContainerJobDispatch,
+  opts: RemoteDockerTransportOptions = {},
+): DockerRuntimeTransport {
+  const serverId = opts.serverId;
+  const inspectTimeoutMs = opts.inspectTimeoutMs ?? REMOTE_INSPECT_TIMEOUT_MS;
+  return {
+    locality: "remote",
+    async inspect(id) {
+      return dispatch("container_inspect", { id }, { timeoutMs: inspectTimeoutMs });
+    },
+    async create(spec) {
+      return dispatch(
+        "container_create",
+        {
+          name: spec.name,
+          image: spec.image,
+          env: spec.env ?? {},
+          ports: spec.ports ?? [],
+          binds: spec.binds ?? [],
+        },
+        { timeoutMs: opts.createTimeoutMs ?? REMOTE_CREATE_TIMEOUT_MS },
+      );
+    },
+    async start(id) {
+      await dispatch("container_start", { id, serverId });
+    },
+    async stop(id) {
+      await dispatch("container_stop", { id, serverId });
+    },
+    async logs(id, tail) {
+      const result = await dispatch("container_logs", tail == null ? { id } : { id, tail });
+      return result.lines;
+    },
+    async writeStdin(id, line) {
+      await dispatch("container_stdin", { id, line });
+    },
   };
 }
 
