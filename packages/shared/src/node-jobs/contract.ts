@@ -12,11 +12,14 @@ export interface NodeJobContract<
   resultSchema: R;
 }
 
-/**
- * Partial by design: kinds land family by family, and unregistered kinds keep
- * using the legacy untyped bag until their slice migrates them.
- */
+/** What one family module contributes: its own kinds, keyed by kind. */
 export type NodeJobContractMap = { [K in NodeJobKind]?: NodeJobContract<K> };
+
+/**
+ * Every kind in the protocol, contracted. The registry is checked against this,
+ * so adding a kind to `NodeJobKindSchema` without a contract fails to compile.
+ */
+export type CompleteNodeJobContractMap = { [K in NodeJobKind]: NodeJobContract<K> };
 
 export function defineNodeJob<
   K extends NodeJobKind,

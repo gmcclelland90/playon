@@ -14,11 +14,7 @@ import {
 } from "@playon/runtime";
 import {
   FS_READ_MAX_BYTES,
-  ImportPackArgsSchema,
-  ImportProbeArgsSchema,
-  ManageCutoverArgsSchema,
-  ManagePackReadArgsSchema,
-  ManageSeedArgsSchema,
+  MANAGE_PACK_STAGING_REL,
   NodeJobError,
   parseNodeJobArgs,
   parseNodeJobResult,
@@ -35,7 +31,7 @@ import {
 import { performNodeSelfUpdate } from "./self-update.js";
 
 function managePackStagingDir(dataRoot: string): string {
-  const dir = path.join(dataRoot, "tmp", "manage-packs");
+  const dir = path.join(dataRoot, ...MANAGE_PACK_STAGING_REL.split("/"));
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -207,8 +203,8 @@ export async function reportJobResult(
 /**
  * Execute a claimed job locally with path jail under dataRoot.
  *
- * Contracted kinds are validated on receive and again before the result is
- * reported; unmigrated kinds still read straight from the untyped `job.args` bag.
+ * Every kind is validated on receive and again before the result is reported, so
+ * a control plane on another version fails loudly instead of half-executing.
  */
 export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unknown> {
   if (!SUPPORTED_JOB_KIND_SET.has(job.kind)) {
@@ -521,12 +517,12 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
   }
 
   if (job.kind === "manage_probe") {
-    const args = ImportProbeArgsSchema.parse(job.args);
-    return runImportProbe(args);
+    const args = parseNodeJobArgs("manage_probe", job.args);
+    return parseNodeJobResult("manage_probe", runImportProbe(args));
   }
 
   if (job.kind === "manage_pack") {
-    const args = ImportPackArgsSchema.parse(job.args);
+    const args = parseNodeJobArgs("manage_pack", job.args);
     const target = assertPackPathAllowed(args.path, args.allowRoots);
     // Stage on the data disk — never /tmp (often a small tmpfs).
     const packsDir = managePackStagingDir(dataRoot);
@@ -546,11 +542,11 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
         fs.rmSync(archive, { force: true });
         throw new Error(`archive_too_large: ${st.size} bytes (max ${args.maxBytes})`);
       }
-      return {
+      return parseNodeJobResult("manage_pack", {
         packRel: path.relative(dataRoot, archive).split(path.sep).join("/"),
         bytes: st.size,
         path: target,
-      };
+      });
     } catch (err) {
       fs.rmSync(archive, { force: true });
       throw err;
@@ -558,14 +554,8 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
   }
 
   if (job.kind === "manage_seed") {
-    const args = ManageSeedArgsSchema.parse(job.args);
+    const args = parseNodeJobArgs("manage_seed", job.args);
     const source = assertPackPathAllowed(args.sourcePath, args.allowRoots);
-    if (args.destRel.includes("..") || path.isAbsolute(args.destRel)) {
-      throw new Error("invalid_destRel");
-    }
-    if (!args.destRel.startsWith("servers/") || !args.destRel.endsWith("/game")) {
-      throw new Error("destRel_must_be_servers_id_game");
-    }
     const dest = resolveInJail(dataRoot, args.destRel);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.rmSync(dest, { recursive: true, force: true });
@@ -581,23 +571,17 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
       });
     }
     const bytesCopied = approxDirBytes(dest);
-    return {
+    return parseNodeJobResult("manage_seed", {
       destRel: args.destRel,
       sourcePath: source,
       bytesCopied,
-    };
+    });
   }
 
   if (job.kind === "manage_pack_read") {
-    const args = ManagePackReadArgsSchema.parse(job.args);
-    if (args.packRel.includes("..") || path.isAbsolute(args.packRel)) {
-      throw new Error("invalid_packRel");
-    }
+    // The contract already pins packRel under the staging dir; the jail is the backstop.
+    const args = parseNodeJobArgs("manage_pack_read", job.args);
     const abs = resolveInJail(dataRoot, args.packRel);
-    const packs = path.resolve(managePackStagingDir(dataRoot));
-    if (!path.resolve(abs).startsWith(packs + path.sep)) {
-      throw new Error("packRel_not_in_manage_packs");
-    }
     if (!fs.existsSync(abs)) throw new Error(`pack_not_found: ${args.packRel}`);
     const fd = fs.openSync(abs, "r");
     try {
@@ -606,20 +590,20 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
       const slice = buf.subarray(0, read);
       const st = fs.fstatSync(fd);
       const next = args.offset + read;
-      return {
+      return parseNodeJobResult("manage_pack_read", {
         dataBase64: slice.toString("base64"),
         bytes: read,
         offset: args.offset,
         done: next >= st.size,
-      };
+      });
     } finally {
       fs.closeSync(fd);
     }
   }
 
   if (job.kind === "manage_cutover") {
-    const args = ManageCutoverArgsSchema.parse(job.args);
-    return runManageCutover(args, dataRoot);
+    const args = parseNodeJobArgs("manage_cutover", job.args);
+    return parseNodeJobResult("manage_cutover", await runManageCutover(args, dataRoot));
   }
 
   throw new NodeJobError("unsupported_job_kind", {

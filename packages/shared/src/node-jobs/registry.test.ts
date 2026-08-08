@@ -4,64 +4,24 @@ import { NodeJobError } from "./errors.js";
 import {
   ALL_NODE_JOB_KINDS,
   NODE_JOB_CONTRACTS,
-  REGISTERED_NODE_JOB_KINDS,
-  isRegisteredNodeJobKind,
+  isNodeJobKind,
   nodeJobContract,
   parseNodeJobArgs,
   parseNodeJobResult,
 } from "./registry.js";
 
-/** Kinds still waiting for their slice; used as the shim's stand-in. */
-const SHIMMED_KIND = "manage_probe";
+/** A kind only a future build knows — what protocol skew looks like on the wire. */
+const UNKNOWN_KIND = "future_kind" as never;
 
 describe("node job registry", () => {
-  it("registers every family except the manage fold-in", () => {
-    expect([...REGISTERED_NODE_JOB_KINDS].sort()).toEqual(
-      [
-        "node_self_update",
-        "ping",
-        "runtime_caps",
-        "fs_list",
-        "fs_read_text",
-        "fs_write_text",
-        "fs_ensure_dir",
-        "fs_remove",
-        "fs_rename",
-        "fs_copy",
-        "fs_put_archive",
-        "fs_get_archive",
-        "container_create",
-        "container_start",
-        "container_stop",
-        "container_remove",
-        "container_inspect",
-        "container_logs",
-        "container_stdin",
-        "process_start",
-        "process_stop",
-        "process_status",
-        "steamcmd_app_update",
-      ].sort(),
-    );
+  it("contracts every kind in the protocol, and nothing else", () => {
+    expect(Object.keys(NODE_JOB_CONTRACTS).sort()).toEqual([...ALL_NODE_JOB_KINDS].sort());
   });
 
-  it("covers every fs, container, process, and steamcmd kind the node agent can run", () => {
-    const migrated = ALL_NODE_JOB_KINDS.filter(
-      (k) =>
-        k.startsWith("fs_") ||
-        k.startsWith("container_") ||
-        k.startsWith("process_") ||
-        k.startsWith("steamcmd_"),
-    );
-    for (const kind of migrated) {
+  it("covers every kind the node agent can run", () => {
+    for (const kind of ALL_NODE_JOB_KINDS) {
       expect(nodeJobContract(kind)?.kind).toBe(kind);
     }
-  });
-
-  it("leaves only the manage family on the shim", () => {
-    const unregistered = ALL_NODE_JOB_KINDS.filter((k) => !isRegisteredNodeJobKind(k));
-    expect(unregistered.every((k) => k.startsWith("manage_"))).toBe(true);
-    expect(unregistered.length).toBeGreaterThan(0);
   });
 
   it("gives every registered kind a keyed, complete contract", () => {
@@ -73,17 +33,24 @@ describe("node job registry", () => {
   });
 
   it("only registers kinds the protocol enum knows", () => {
-    for (const kind of REGISTERED_NODE_JOB_KINDS) {
+    for (const kind of Object.keys(NODE_JOB_CONTRACTS)) {
       expect(NodeJobKindSchema.options).toContain(kind);
     }
     expect(ALL_NODE_JOB_KINDS).toEqual(NodeJobKindSchema.options);
   });
 
-  it("classifies registered vs shimmed kinds", () => {
-    expect(isRegisteredNodeJobKind("ping")).toBe(true);
-    expect(isRegisteredNodeJobKind(SHIMMED_KIND)).toBe(false);
-    expect(nodeJobContract("ping")?.kind).toBe("ping");
-    expect(nodeJobContract(SHIMMED_KIND)).toBeUndefined();
+  it("treats a kind from another build as unsupported, not as free passage", () => {
+    expect(isNodeJobKind("ping")).toBe(true);
+    expect(isNodeJobKind(UNKNOWN_KIND)).toBe(false);
+    expect(nodeJobContract(UNKNOWN_KIND)).toBeUndefined();
+    for (const parse of [parseNodeJobArgs, parseNodeJobResult]) {
+      try {
+        parse(UNKNOWN_KIND, { anything: true });
+        expect.unreachable("expected an unknown kind to be refused");
+      } catch (err) {
+        expect((err as NodeJobError).code).toBe("unsupported_job_kind");
+      }
+    }
   });
 });
 
@@ -328,9 +295,111 @@ describe("parseNodeJobArgs", () => {
     }
   });
 
-  it("passes unmigrated kinds through untouched (W1 shim)", () => {
-    const args = { roots: ["/srv/games"], weird: 1 };
-    expect(parseNodeJobArgs(SHIMMED_KIND, args)).toEqual(args);
+  it("applies manage defaults so both shores see the same args", () => {
+    expect(parseNodeJobArgs("manage_probe", { roots: ["/srv/games"] })).toEqual({
+      roots: ["/srv/games"],
+      hints: [],
+      maxDepth: 2,
+      maxCandidates: 40,
+    });
+    expect(
+      parseNodeJobArgs("manage_pack", { path: "/srv/games/pz", allowRoots: ["/srv/games"] })
+        .maxBytes,
+    ).toBe(32 * 1024 * 1024 * 1024);
+    expect(
+      parseNodeJobArgs("manage_pack_read", {
+        packRel: "tmp/manage-packs/pack-j7.tar",
+        offset: 0,
+      }).length,
+    ).toBe(4 * 1024 * 1024);
+  });
+
+  it("accepts the manage args the control plane already sends", () => {
+    expect(
+      parseNodeJobArgs("manage_probe", {
+        // Roots stay patterns here; only the node that owns the disk can expand them.
+        roots: ["~/games", "/srv/*/servers"],
+        hints: [{ id: "project_zomboid_layout", anyFiles: ["StartServer64.sh"] }],
+        maxDepth: 2,
+        maxCandidates: 40,
+      }).hints,
+    ).toEqual([
+      {
+        id: "project_zomboid_layout",
+        anyFiles: ["StartServer64.sh"],
+      },
+    ]);
+    expect(
+      parseNodeJobArgs("manage_seed", {
+        sourcePath: "/opt/pzserver",
+        allowRoots: ["/opt"],
+        destRel: "servers/abc/game",
+      }).destRel,
+    ).toBe("servers/abc/game");
+    expect(
+      parseNodeJobArgs("manage_cutover", {
+        sourcePath: "/opt/pzserver",
+        allowRoots: ["/opt"],
+        homeRel: "servers/abc/home",
+        manage: { userdataHomeDirs: ["Zomboid"], serverNameArg: "servername" },
+      }).manage,
+    ).toEqual({
+      userdataHomeDirs: ["Zomboid"],
+      serverNameArg: "servername",
+      adminPasswordArg: false,
+      worldSubdirs: ["Server", "db", "Saves/Multiplayer"],
+    });
+  });
+
+  it("refuses manage destinations outside the adopted server's own dirs", () => {
+    for (const destRel of ["servers/abc", "servers/abc/home", "game", "../etc", "/srv/abc/game"]) {
+      expect(() =>
+        parseNodeJobArgs("manage_seed", {
+          sourcePath: "/opt/pzserver",
+          allowRoots: ["/opt"],
+          destRel,
+        }),
+      ).toThrow(/validation_failed/);
+    }
+    expect(() =>
+      parseNodeJobArgs("manage_cutover", {
+        sourcePath: "/opt/pzserver",
+        allowRoots: ["/opt"],
+        homeRel: "servers/abc/game",
+        manage: {},
+      }),
+    ).toThrow(/validation_failed/);
+    // A pack chunk may only be read back out of the staging dir.
+    for (const packRel of ["servers/abc/game/secrets.tar", "../tmp/manage-packs/p.tar"]) {
+      expect(() => parseNodeJobArgs("manage_pack_read", { packRel, offset: 0 })).toThrow(
+        /validation_failed/,
+      );
+    }
+  });
+
+  it("rejects manage args that could only be a mistake", () => {
+    expect(() => parseNodeJobArgs("manage_probe", { roots: [] })).toThrow(/validation_failed/);
+    expect(() => parseNodeJobArgs("manage_probe", { roots: ["/srv"], maxDepth: 9 })).toThrow(
+      /validation_failed/,
+    );
+    expect(() => parseNodeJobArgs("manage_pack", { path: "/srv/games/pz" })).toThrow(
+      /validation_failed/,
+    );
+    expect(() =>
+      parseNodeJobArgs("manage_pack_read", {
+        packRel: "tmp/manage-packs/p.tar",
+        offset: 0,
+        length: 64 * 1024 * 1024,
+      }),
+    ).toThrow(/validation_failed/);
+    expect(() =>
+      parseNodeJobArgs("manage_seed", {
+        sourcePath: "/opt/pzserver",
+        allowRoots: ["/opt"],
+        destRel: "servers/abc/game",
+        overwrite: true,
+      }),
+    ).toThrow(/validation_failed/);
   });
 });
 
@@ -484,8 +553,67 @@ describe("parseNodeJobResult", () => {
     ).toThrow(NodeJobError);
   });
 
-  it("passes unmigrated kinds through untouched (W1 shim)", () => {
-    const result = { candidates: [{ path: "/srv/games/pz" }] };
-    expect(parseNodeJobResult(SHIMMED_KIND, result)).toEqual(result);
+  it("accepts the manage payloads shipped agents already send", () => {
+    expect(
+      parseNodeJobResult("manage_probe", {
+        candidates: [
+          {
+            path: "/srv/games/pz",
+            hintIds: ["project_zomboid_layout"],
+            suggestedGame: "Project Zomboid",
+          },
+        ],
+        scannedRoots: ["/srv/games"],
+      }).candidates[0]?.suggestedGame,
+    ).toBe("Project Zomboid");
+    expect(
+      parseNodeJobResult("manage_pack", {
+        packRel: "tmp/manage-packs/pack-j7.tar",
+        bytes: 2048,
+        path: "/srv/games/pz",
+      }).bytes,
+    ).toBe(2048);
+    expect(
+      parseNodeJobResult("manage_pack_read", {
+        dataBase64: "AAAA",
+        bytes: 3,
+        offset: 0,
+        done: true,
+      }).done,
+    ).toBe(true);
+    expect(
+      parseNodeJobResult("manage_seed", {
+        destRel: "servers/abc/game",
+        sourcePath: "/opt/pzserver",
+        bytesCopied: 10,
+      }).bytesCopied,
+    ).toBe(10);
+    // A cutover with nothing to warn about still reports an (empty) warning list.
+    expect(
+      parseNodeJobResult("manage_cutover", {
+        playonHome: "/var/lib/playon-node/servers/abc/home",
+        playonHomeRel: "servers/abc/home",
+        userdataBytes: 0,
+      }).warnings,
+    ).toEqual([]);
+  });
+
+  it("rejects a manage result the control plane could not act on", () => {
+    expect(() =>
+      parseNodeJobResult("manage_probe", { candidates: [{ path: "/srv/games/pz" }] }),
+    ).toThrow(NodeJobError);
+    expect(() =>
+      parseNodeJobResult("manage_cutover", {
+        playonHomeRel: "servers/abc/home",
+        userdataBytes: 0,
+      }),
+    ).toThrow(NodeJobError);
+    expect(() =>
+      parseNodeJobResult("manage_seed", {
+        destRel: "servers/abc/game",
+        sourcePath: "/opt/pzserver",
+        bytesCopied: -1,
+      }),
+    ).toThrow(NodeJobError);
   });
 });

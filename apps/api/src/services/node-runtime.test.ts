@@ -89,23 +89,6 @@ describe("dispatchNodeJob", () => {
     });
   });
 
-  it("keeps the untyped shim for unmigrated kinds", async () => {
-    const pending = dispatchNodeJob<{ candidates: unknown[] }>({
-      nodeId: "spare-4",
-      kind: "manage_probe",
-      args: { roots: ["/srv/games"] },
-      timeoutMs: 2_000,
-      localHandler: () => {
-        throw new Error("remote_only");
-      },
-    });
-    await new Promise((r) => setTimeout(r, 50));
-    const job = nodeJobService.claimNext("spare-4");
-    expect(job?.args).toEqual({ roots: ["/srv/games"] });
-    nodeJobService.complete(job!.id, { candidates: [] });
-    await expect(pending).resolves.toEqual({ candidates: [] });
-  });
-
   it("refuses kinds the node does not advertise", async () => {
     nodeJobService.advertiseJobKinds("spare-5", ["ping"]);
     try {
@@ -453,6 +436,113 @@ describe("dispatchNodeJob — steamcmd family", () => {
       }),
     ).rejects.toMatchObject({ code: "validation_failed", kind: "steamcmd_app_update" });
     expect(nodeJobService.claimNext("steam-2")).toBeNull();
+  });
+});
+
+describe("dispatchNodeJob — manage family", () => {
+  it("infers the probe result and fills the scan defaults before enqueue", async () => {
+    const pending = dispatchNodeJob({
+      nodeId: "manage-1",
+      kind: "manage_probe",
+      args: { roots: ["/srv/games"], hints: [{ id: "pz", anyFiles: ["StartServer64.sh"] }] },
+      timeoutMs: 2_000,
+      localHandler: () => {
+        throw new Error("remote_only");
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const job = nodeJobService.claimNext("manage-1");
+    expect(job?.args).toEqual({
+      roots: ["/srv/games"],
+      hints: [{ id: "pz", anyFiles: ["StartServer64.sh"] }],
+      maxDepth: 2,
+      maxCandidates: 40,
+    });
+    nodeJobService.complete(job!.id, {
+      candidates: [{ path: "/srv/games/pz", hintIds: ["pz"], suggestedGame: "Project Zomboid" }],
+      scannedRoots: ["/srv/games"],
+    });
+    const probe = await pending;
+    expect(probe.candidates[0]?.path).toBe("/srv/games/pz");
+    expect(probe.scannedRoots).toEqual(["/srv/games"]);
+  });
+
+  it("carries seed and cutover through the queue with their contracts", async () => {
+    const seeding = dispatchNodeJob({
+      nodeId: "manage-2",
+      kind: "manage_seed",
+      args: { sourcePath: "/opt/pzserver", allowRoots: ["/opt"], destRel: "servers/abc/game" },
+      timeoutMs: 2_000,
+      localHandler: async () => {
+        throw new Error("manage_seed_local_unreachable");
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const seedJob = nodeJobService.claimNext("manage-2");
+    nodeJobService.complete(seedJob!.id, {
+      destRel: "servers/abc/game",
+      sourcePath: "/opt/pzserver",
+      bytesCopied: 4096,
+    });
+    expect((await seeding).bytesCopied).toBe(4096);
+
+    const cutting = dispatchNodeJob({
+      nodeId: "manage-2",
+      kind: "manage_cutover",
+      args: {
+        sourcePath: "/opt/pzserver",
+        allowRoots: ["/opt"],
+        homeRel: "servers/abc/home",
+        manage: { userdataHomeDirs: ["Zomboid"], serverNameArg: "servername" },
+      },
+      timeoutMs: 2_000,
+      localHandler: async () => {
+        throw new Error("manage_cutover_local_unreachable");
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const cutJob = nodeJobService.claimNext("manage-2");
+    // Hint defaults are applied on this shore, so the node never has to guess.
+    expect(cutJob?.args.manage).toEqual({
+      userdataHomeDirs: ["Zomboid"],
+      serverNameArg: "servername",
+      adminPasswordArg: false,
+      worldSubdirs: ["Server", "db", "Saves/Multiplayer"],
+    });
+    nodeJobService.complete(cutJob!.id, {
+      serverName: "WorldA",
+      unitName: "zomboid.service",
+      playonHome: "/var/lib/playon-node/servers/abc/home",
+      playonHomeRel: "servers/abc/home",
+      userdataBytes: 512,
+    });
+    const cutover = await cutting;
+    expect(cutover.serverName).toBe("WorldA");
+    expect(cutover.warnings).toEqual([]);
+  });
+
+  it("refuses a manage job that would write outside the adopted server", async () => {
+    await expect(
+      dispatchNodeJob({
+        nodeId: "manage-3",
+        kind: "manage_seed",
+        args: { sourcePath: "/opt/pzserver", allowRoots: ["/opt"], destRel: "../../opt/pzserver" },
+        localHandler: async () => {
+          throw new Error("manage_seed_local_unreachable");
+        },
+      }),
+    ).rejects.toMatchObject({ code: "validation_failed", kind: "manage_seed" });
+    await expect(
+      dispatchNodeJob({
+        nodeId: "manage-3",
+        kind: "manage_pack_read",
+        args: { packRel: "servers/abc/game/secrets.tar", offset: 0 },
+        localHandler: async () => {
+          throw new Error("manage_pack_read_local_unreachable");
+        },
+      }),
+    ).rejects.toMatchObject({ code: "validation_failed", kind: "manage_pack_read" });
+    expect(nodeJobService.claimNext("manage-3")).toBeNull();
   });
 });
 

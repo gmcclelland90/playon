@@ -432,4 +432,41 @@ describe("executeJob", () => {
       fs.rmSync(scan, { recursive: true, force: true });
     }
   });
+
+  it("rejects malformed manage args before touching the host filesystem", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-manage-bad-"));
+    const run = (kind: NodeJobKind, args: Record<string, unknown>) =>
+      executeJob({ id: `manage-${kind}`, nodeId: "n1", kind, args }, root);
+    try {
+      await expect(run("manage_probe", { roots: [] })).rejects.toMatchObject({
+        code: "validation_failed",
+        kind: "manage_probe",
+      });
+      await expect(run("manage_pack", { path: "/srv/games/pz" })).rejects.toMatchObject({
+        code: "validation_failed",
+        kind: "manage_pack",
+      });
+      // The seed destination is pinned to the adopted server's own game dir.
+      await expect(
+        run("manage_seed", {
+          sourcePath: "/opt/pzserver",
+          allowRoots: ["/opt"],
+          destRel: "servers/abc/home",
+        }),
+      ).rejects.toMatchObject({ code: "validation_failed", kind: "manage_seed" });
+      await expect(
+        run("manage_pack_read", { packRel: "servers/abc/game/secrets.tar", offset: 0 }),
+      ).rejects.toMatchObject({ code: "validation_failed", kind: "manage_pack_read" });
+      await expect(
+        run("manage_cutover", {
+          sourcePath: "/opt/pzserver",
+          allowRoots: ["/opt"],
+          homeRel: "/etc",
+          manage: {},
+        }),
+      ).rejects.toMatchObject({ code: "validation_failed", kind: "manage_cutover" });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

@@ -326,12 +326,7 @@ export function createPlayOnToolRegistry(
     if (!server) return { error: `unknown_server: ${resolved.serverId}` };
     try {
       const { dispatchNodeJob, nodeServerRelPath } = await import("./node-runtime.js");
-      const result = await dispatchNodeJob<{
-        appId: number;
-        installDir: string;
-        exitCode: number;
-        stdout: string;
-      }>({
+      const result = await dispatchNodeJob({
         nodeId: server.nodeId,
         kind: "steamcmd_app_update",
         args: {

@@ -12,6 +12,12 @@ export type NodeTunnelStatus = "none" | "unconfigured" | "pending" | "up" | "dow
 /** Durable id for the control-plane host’s local node. */
 export const LOCAL_NODE_ID = "local";
 
+/**
+ * Home-side marker in a server's data dir: the game files live on the node, so
+ * Home must not push its own (empty) tree over them.
+ */
+export const NODE_AUTHORITATIVE_MARKER = ".playon-node-authoritative";
+
 /** Default WireGuard overlay for cloud nodes (Home = .1). */
 export const CLOUD_OVERLAY_CIDR = "10.77.0.0/24";
 export const CLOUD_OVERLAY_HOME_IP = "10.77.0.1";
