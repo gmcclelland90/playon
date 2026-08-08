@@ -150,6 +150,7 @@ Frozen in W4b deep-grill (implement after W2 local-docker prove is on `main`):
 - **Slices:** `http/errors` + `onError` → helpers on session + servers list/detail + one mutating server route → migrate remaining routes → web `request()`
 - **Zone:** `app.ts` route wiring, new `http-policy.ts` (name flexible), `packages/shared/src/http/*`, `apps/web/src/api.ts` choke point — not `servers.ts` lifecycle / fs jail / node-agent job bodies
 - **Git:** worktree `arch/w4-transport` → PRs into shared `arch/w4-integration`
+- **Leftovers (landed):** `/mcp` + node-token protocol routes (heartbeat, logs, metrics, jobs/next, job result) and session-gated node job enqueue/status use the shared envelope + `requireNodeToken` / `requireCan` / `jsonBody`
 
 ## W4c design lock (Control Plane lifecycle)
 

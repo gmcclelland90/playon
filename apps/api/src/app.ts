@@ -66,6 +66,7 @@ import {
   jsonBody,
   optionalJsonBody,
   requireCan,
+  requireNodeToken,
   requireRole,
   requireSession,
   serviceHttpError,
@@ -74,7 +75,6 @@ import {
 import { redactJson, redactString } from "./services/redaction.js";
 import { mountStaticWeb } from "./static-web.js";
 
-import { nodeTokenAuthorized } from "./auth/node-token.js";
 import { hashPassword, verifyPassword } from "./auth/password.js";
 import {
   SESSION_COOKIE,
@@ -1848,11 +1848,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/nodes/heartbeat", async (c) => {
-    if (!nodeTokenAuthorized(c, config.nodeToken)) {
-      return c.json({ error: "unauthorized" }, 401);
-    }
-
-    const body = NodeHeartbeatSchema.parse(await c.req.json());
+    requireNodeToken(c, config.nodeToken);
+    const body = await jsonBody(c, NodeHeartbeatSchema);
     // Protocol skew guard: remember what this agent says it can execute.
     nodeJobService.advertiseJobKinds(body.nodeId, body.jobKinds);
     const now = new Date();
@@ -1925,16 +1922,15 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/nodes/:nodeId/logs", async (c) => {
-    if (!nodeTokenAuthorized(c, config.nodeToken)) {
-      return c.json({ error: "unauthorized" }, 401);
-    }
+    requireNodeToken(c, config.nodeToken);
     const nodeId = c.req.param("nodeId");
-    const body = z
-      .object({
+    const body = await jsonBody(
+      c,
+      z.object({
         serverId: z.string().min(1),
         lines: z.array(z.string()).min(1).max(200),
-      })
-      .parse(await c.req.json());
+      }),
+    );
 
     for (const line of body.lines) {
       eventHub.publish({
@@ -1948,18 +1944,17 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/nodes/:nodeId/metrics", async (c) => {
-    if (!nodeTokenAuthorized(c, config.nodeToken)) {
-      return c.json({ error: "unauthorized" }, 401);
-    }
+    requireNodeToken(c, config.nodeToken);
     const nodeId = c.req.param("nodeId");
-    const body = z
-      .object({
+    const body = await jsonBody(
+      c,
+      z.object({
         freeDiskBytes: z.number().nonnegative().optional(),
         cpuPercent: z.number().min(0).max(100).optional(),
         memUsedBytes: z.number().nonnegative().optional(),
         memTotalBytes: z.number().nonnegative().optional(),
-      })
-      .parse(await c.req.json());
+      }),
+    );
 
     eventHub.publish({
       type: "node.metrics",
@@ -1970,9 +1965,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.get("/api/nodes/:nodeId/jobs/next", async (c) => {
-    if (!nodeTokenAuthorized(c, config.nodeToken)) {
-      return c.json({ error: "unauthorized" }, 401);
-    }
+    requireNodeToken(c, config.nodeToken);
     const nodeId = c.req.param("nodeId");
     const job = nodeJobService.claimNext(nodeId);
     if (!job) return c.body(null, 204);
@@ -1985,21 +1978,20 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/nodes/:nodeId/jobs/:jobId/result", async (c) => {
-    if (!nodeTokenAuthorized(c, config.nodeToken)) {
-      return c.json({ error: "unauthorized" }, 401);
-    }
+    requireNodeToken(c, config.nodeToken);
     const nodeId = c.req.param("nodeId");
     const jobId = c.req.param("jobId");
     const existing = nodeJobService.get(jobId);
     if (!existing || existing.nodeId !== nodeId) {
-      return c.json({ error: "job_not_found" }, 404);
+      throw HttpError.notFound("job_not_found", { code: "job_not_found" });
     }
-    const body = z
-      .union([
+    const body = await jsonBody(
+      c,
+      z.union([
         z.object({ ok: z.literal(true), result: z.unknown() }),
         z.object({ ok: z.literal(false), error: z.string().min(1) }),
-      ])
-      .parse(await c.req.json());
+      ]),
+    );
     const updated =
       body.ok === true
         ? nodeJobService.complete(jobId, body.result)
@@ -2012,30 +2004,27 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/nodes/:nodeId/jobs", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
     const nodeId = c.req.param("nodeId");
-    const body = z
-      .object({
+    const body = await jsonBody(
+      c,
+      z.object({
         kind: NodeJobKindSchema,
         args: z.record(z.unknown()).optional(),
-      })
-      .parse(await c.req.json());
+      }),
+    );
     const job = nodeJobService.enqueue(nodeId, body.kind, body.args ?? {});
     return c.json({ job }, 201);
   });
 
   app.get("/api/nodes/:nodeId/jobs/:jobId", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
     const nodeId = c.req.param("nodeId");
     const jobId = c.req.param("jobId");
     const job = nodeJobService.get(jobId);
-    if (!job || job.nodeId !== nodeId) return c.json({ error: "job_not_found" }, 404);
+    if (!job || job.nodeId !== nodeId) {
+      throw HttpError.notFound("job_not_found", { code: "job_not_found" });
+    }
     return c.json({ job });
   });
 
@@ -2194,7 +2183,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     const rawToken = bearerFromAuthorization(c.req.header("authorization"));
     const principal = await authenticateAccessToken(db, rawToken);
     if (!principal || !rawToken) {
-      return c.json({ error: "unauthorized" }, 401);
+      throw HttpError.unauthorized("unauthorized");
     }
     return mcpHandler.fetch(c.req.raw, {
       authInfo: authInfoFromAccessToken(rawToken, principal),
