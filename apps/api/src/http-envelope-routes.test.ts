@@ -9,15 +9,16 @@ import { createDb, type Db } from "./db/client.js";
 import { applyBootstrap } from "./db/migrate.js";
 import { hashPassword } from "./auth/password.js";
 import { createSession, SESSION_COOKIE } from "./auth/session.js";
-import { servers, users } from "./db/schema.js";
+import { nodes, servers, users } from "./db/schema.js";
 
 type Envelope = { error: string; code?: string; details?: unknown };
 
 /**
  * Routes migrated to the shared envelope: session, servers list/detail, every
  * mutating server route (create, import, start, stop, restart, delete, relocate,
- * console), plus the skill library, watchers and the player panel. Status codes
- * and `error` text must match pre-envelope behaviour; `code` is the addition.
+ * console), the skill library, watchers, the player panel, and the nodes,
+ * snapshots, backups, settings and users groups. Status codes and `error` text
+ * must match pre-envelope behaviour; `code` is the addition.
  */
 describe("transport error envelope on migrated routes", () => {
   let db: Db;
@@ -644,5 +645,382 @@ describe("transport error envelope on migrated routes", () => {
     const limited = await send();
     expect(limited.status).toBe(429);
     expect(await limited.json()).toEqual({ error: "rate_limited", code: "rate_limited" });
+  });
+
+  /** Anonymous and under-privileged callers must be indistinguishable. */
+  async function expectForbidden(
+    app: ReturnType<typeof createApp>,
+    attempts: Array<[string, RequestInit]>,
+  ): Promise<void> {
+    const forbidden = { error: "forbidden", code: "forbidden" };
+    for (const [path_, init] of attempts) {
+      const anon = await app.request(path_, init);
+      expect([path_, anon.status]).toEqual([path_, 403]);
+      expect(await anon.json()).toEqual(forbidden);
+
+      const asPlayer = await app.request(path_, { ...init, headers: { cookie: playerCookie } });
+      expect([path_, asPlayer.status]).toEqual([path_, 403]);
+      expect(await asPlayer.json()).toEqual(forbidden);
+    }
+  }
+
+  /** A registered node the heartbeat has not touched for long enough to be offline. */
+  async function insertStaleNode(id: string): Promise<void> {
+    await db.insert(nodes).values({
+      id,
+      name: id,
+      os: "linux",
+      docker: true,
+      lastSeenAt: new Date(Date.now() - 10 * 60_000),
+      kind: "lan",
+    });
+  }
+
+  it("gates every node route on the same 403 forbidden envelope", async () => {
+    const app = createApp(db, config);
+    await expectForbidden(app, [
+      ["/api/nodes", {}],
+      ["/api/placement?skillName=demo.skill", {}],
+      ["/api/nodes/add", { method: "POST" }],
+      ["/api/nodes/bootstrap-token", { method: "POST" }],
+      ["/api/nodes/node-a", { method: "DELETE" }],
+      ["/api/nodes/node-a/update", { method: "POST" }],
+      ["/api/nodes/node-a/manage", { method: "POST" }],
+      ["/api/nodes/node-a/manage/suggest", { method: "POST" }],
+      ["/api/nodes/node-a/install-docker", { method: "POST" }],
+      ["/api/nodes/node-a/install-docker/token", { method: "POST" }],
+    ]);
+  });
+
+  it("keeps node routes promoting an unknown node id to 404", async () => {
+    const app = createApp(db, config);
+    const cases: Array<[string, RequestInit, string]> = [
+      ["/api/nodes/ghost", { method: "DELETE" }, "remove_node_failed"],
+      ["/api/nodes/ghost/manage/suggest", { method: "POST" }, "manage_suggest_failed"],
+      [
+        "/api/nodes/ghost/install-docker/token",
+        { method: "POST" },
+        "install_docker_token_failed",
+      ],
+    ];
+
+    for (const [path_, init, code] of cases) {
+      const res = await app.request(path_, { ...init, headers: { cookie } });
+      expect([path_, res.status]).toEqual([path_, 404]);
+      const body = (await res.json()) as Envelope;
+      expect([path_, body.code]).toEqual([path_, code]);
+      expect(body.error).toMatch(/unknown_node/);
+    }
+  });
+
+  it("answers 409 when a registered node is not online", async () => {
+    const app = createApp(db, config);
+    await insertStaleNode("stale-node");
+
+    const res = await app.request("/api/nodes/stale-node/manage/suggest", {
+      method: "POST",
+      headers: { cookie },
+    });
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as Envelope;
+    expect(body.code).toBe("manage_suggest_failed");
+    expect(body.error).toMatch(/node_not_online/);
+  });
+
+  it("renders node contract failures as 400 invalid_request with issues", async () => {
+    const app = createApp(db, config);
+    const cases: Array<[string, unknown, string]> = [
+      ["/api/nodes/add", { kind: "lan" }, "host"],
+      ["/api/nodes/bootstrap-token", {}, "kind"],
+      ["/api/nodes/node-a/manage", {}, "sourcePath"],
+      ["/api/nodes/node-a/install-docker", { host: "10.0.0.4" }, "username"],
+    ];
+
+    for (const [path_, body, expected] of cases) {
+      const res = await app.request(path_, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      expect([path_, res.status]).toEqual([path_, 400]);
+      const envelope = (await res.json()) as Envelope & {
+        details?: { issues?: Array<{ path: string }> };
+      };
+      expect(envelope).toMatchObject({ error: "invalid_request", code: "invalid_request" });
+      expect(envelope.details?.issues?.map((issue) => issue.path)).toContain(expected);
+    }
+  });
+
+  it("keeps the placement route's own 400 and 404 vocabulary", async () => {
+    const app = createApp(db, config);
+
+    const missing = await app.request("/api/placement", { headers: { cookie } });
+    expect(missing.status).toBe(400);
+    expect(await missing.json()).toEqual({
+      error: "skillName_required",
+      code: "skillName_required",
+    });
+
+    const unknown = await app.request("/api/placement?skillName=games.ghost", {
+      headers: { cookie },
+    });
+    expect(unknown.status).toBe(404);
+    const body = (await unknown.json()) as Envelope;
+    expect(body.code).toBe("placement_failed");
+    expect(body.error).toMatch(/unknown_skill/);
+  });
+
+  it("gates snapshot and backup routes on the same 403 forbidden envelope", async () => {
+    const app = createApp(db, config);
+    await expectForbidden(app, [
+      ["/api/snapshots", {}],
+      ["/api/snapshots", { method: "POST" }],
+      ["/api/snapshots/snap-1/restore", { method: "POST" }],
+      ["/api/backups/target", {}],
+      ["/api/backups/target", { method: "PUT" }],
+      ["/api/backups/offnode", {}],
+      ["/api/backups/offnode", { method: "POST" }],
+      ["/api/backups/offnode/bk-1/restore", { method: "POST" }],
+    ]);
+  });
+
+  it("keeps snapshot failures on their pre-envelope statuses", async () => {
+    const app = createApp(db, config);
+
+    const noServer = await app.request("/api/snapshots", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(noServer.status).toBe(400);
+    const noServerBody = (await noServer.json()) as Envelope & {
+      details?: { issues?: Array<{ path: string }> };
+    };
+    expect(noServerBody).toMatchObject({ error: "invalid_request", code: "invalid_request" });
+    expect(noServerBody.details?.issues?.map((issue) => issue.path)).toContain("serverId");
+
+    const unknownServer = await app.request("/api/snapshots", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ serverId: "ghost" }),
+    });
+    expect(unknownServer.status).toBe(404);
+    const unknownServerBody = (await unknownServer.json()) as Envelope;
+    expect(unknownServerBody.code).toBe("snapshot_create_failed");
+    expect(unknownServerBody.error).toMatch(/unknown_server/);
+
+    const restore = await app.request("/api/snapshots/ghost/restore", {
+      method: "POST",
+      headers: { cookie },
+    });
+    expect(restore.status).toBe(404);
+    const restoreBody = (await restore.json()) as Envelope;
+    expect(restoreBody.code).toBe("snapshot_restore_failed");
+    expect(restoreBody.error).toMatch(/unknown_snapshot/);
+  });
+
+  it("keeps off-node backup failures on their pre-envelope statuses", async () => {
+    const app = createApp(db, config);
+
+    const neither = await app.request("/api/backups/offnode", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(neither.status).toBe(400);
+    expect(await neither.json()).toEqual({
+      error: "serverId_or_snapshotId_required",
+      code: "serverId_or_snapshotId_required",
+    });
+
+    const noTarget = await app.request("/api/backups/offnode", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ snapshotId: "snap-ghost" }),
+    });
+    expect(noTarget.status).toBe(400);
+    const noTargetBody = (await noTarget.json()) as Envelope;
+    expect(noTargetBody.code).toBe("offnode_backup_failed");
+    expect(noTargetBody.error).toMatch(/backup_target_not_configured/);
+
+    // No body at all: every field is optional, so the backup id in the path is
+    // what the route reports on.
+    const restore = await app.request("/api/backups/offnode/ghost/restore", {
+      method: "POST",
+      headers: { cookie },
+    });
+    expect(restore.status).toBe(404);
+    const restoreBody = (await restore.json()) as Envelope;
+    expect(restoreBody.code).toBe("offnode_restore_failed");
+    expect(restoreBody.error).toMatch(/unknown_offnode_backup/);
+  });
+
+  it("validates the backup target before writing it", async () => {
+    const app = createApp(db, config);
+
+    const empty = await app.request("/api/backups/target", {
+      method: "PUT",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ rootPath: "" }),
+    });
+    expect(empty.status).toBe(400);
+    const emptyBody = (await empty.json()) as Envelope & {
+      details?: { issues?: Array<{ path: string }> };
+    };
+    expect(emptyBody).toMatchObject({ error: "invalid_request", code: "invalid_request" });
+    expect(emptyBody.details?.issues?.map((issue) => issue.path)).toContain("rootPath");
+
+    const rootPath = path.join(root, "offnode");
+    const set = await app.request("/api/backups/target", {
+      method: "PUT",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ rootPath }),
+    });
+    expect(set.status).toBe(200);
+
+    const read = await app.request("/api/backups/target", { headers: { cookie } });
+    expect(read.status).toBe(200);
+    expect((await read.json()) as { target: { rootPath: string } }).toEqual({
+      target: { rootPath },
+    });
+  });
+
+  it("gates every settings route on the same 403 forbidden envelope", async () => {
+    const app = createApp(db, config);
+    await expectForbidden(app, [
+      ["/api/settings/llm", {}],
+      ["/api/settings/llm", { method: "PUT" }],
+      ["/api/settings/llm/ollama/status", {}],
+      ["/api/settings/llm/ollama/job", {}],
+      ["/api/settings/llm/ollama/install", { method: "POST" }],
+      ["/api/settings/llm/ollama/pull", { method: "POST" }],
+      ["/api/settings/nodes", {}],
+      ["/api/settings/nodes", { method: "PUT" }],
+      ["/api/settings/cloud", {}],
+      ["/api/settings/cloud/vultr/connect", { method: "POST" }],
+      ["/api/settings/cloud/vultr", { method: "DELETE" }],
+      ["/api/access-tokens", {}],
+      ["/api/access-tokens", { method: "POST" }],
+      ["/api/access-tokens/tok-1", { method: "DELETE" }],
+      ["/api/updates/status", {}],
+      ["/api/updates/home/apply", { method: "POST" }],
+    ]);
+  });
+
+  it("renders settings contract failures as 400 invalid_request with issues", async () => {
+    const app = createApp(db, config);
+    const cases: Array<[string, string, unknown, string]> = [
+      ["/api/settings/llm", "PUT", {}, "preset_or_provider_required"],
+      ["/api/settings/nodes", "PUT", {}, "localComputeEnabled"],
+      ["/api/settings/llm/ollama/pull", "POST", {}, "model"],
+    ];
+
+    for (const [path_, method, body, expected] of cases) {
+      const res = await app.request(path_, {
+        method,
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      expect([path_, res.status]).toEqual([path_, 400]);
+      const envelope = (await res.json()) as Envelope & {
+        details?: { issues?: Array<{ path: string; message: string }> };
+      };
+      expect(envelope).toMatchObject({ error: "invalid_request", code: "invalid_request" });
+      const issues = envelope.details?.issues ?? [];
+      expect(
+        issues.some((issue) => issue.path.includes(expected) || issue.message.includes(expected)),
+      ).toBe(true);
+    }
+  });
+
+  it("issues an access token with no request body and 404s an unknown revoke", async () => {
+    const app = createApp(db, config);
+
+    const created = await app.request("/api/access-tokens", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+    });
+    expect(created.status).toBe(200);
+    const createdBody = (await created.json()) as { token: { id: string; name: string } };
+    expect(createdBody.token.name).toBe("MCP token");
+
+    const revoked = await app.request(`/api/access-tokens/${createdBody.token.id}`, {
+      method: "DELETE",
+      headers: { cookie },
+    });
+    expect(revoked.status).toBe(200);
+
+    const again = await app.request(`/api/access-tokens/${createdBody.token.id}`, {
+      method: "DELETE",
+      headers: { cookie },
+    });
+    expect(again.status).toBe(404);
+    expect(await again.json()).toEqual({
+      error: "not_found",
+      code: "access_token_not_found",
+    });
+  });
+
+  it("answers 503 when the Vultr OAuth app is not configured", async () => {
+    vi.stubEnv("PLAYON_VULTR_CLIENT_ID", "");
+    const app = createApp(db, config);
+
+    const res = await app.request("/api/settings/cloud/vultr/connect", {
+      method: "POST",
+      headers: { cookie },
+    });
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as Envelope & { details?: { hint?: string } };
+    expect(body).toMatchObject({
+      error: "vultr_oauth_not_configured",
+      code: "vultr_oauth_not_configured",
+    });
+    expect(body.details?.hint).toMatch(/PLAYON_VULTR_CLIENT_ID/);
+  });
+
+  it("answers 400 invalid_state on an unmatched Vultr callback", async () => {
+    const app = createApp(db, config);
+    const res = await app.request("/api/settings/cloud/vultr/callback", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ state: "nope", code: "abc" }),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_state", code: "invalid_state" });
+  });
+
+  it("keeps user creation on 403 / 400 / 409 with codes", async () => {
+    const app = createApp(db, config);
+    await expectForbidden(app, [["/api/users", { method: "POST" }]]);
+
+    const invalid = await app.request("/api/users", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ username: "ab", password: "short", role: "owner" }),
+    });
+    expect(invalid.status).toBe(400);
+    const invalidBody = (await invalid.json()) as Envelope & {
+      details?: { issues?: Array<{ path: string }> };
+    };
+    expect(invalidBody).toMatchObject({ error: "invalid_request", code: "invalid_request" });
+    expect(invalidBody.details?.issues?.map((issue) => issue.path)).toEqual(
+      expect.arrayContaining(["username", "password", "role"]),
+    );
+
+    const taken = await app.request("/api/users", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ username: "owner", password: "password123", role: "operator" }),
+    });
+    expect(taken.status).toBe(409);
+    expect(await taken.json()).toEqual({ error: "username_taken", code: "username_taken" });
+
+    const ok = await app.request("/api/users", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ username: "second", password: "password123", role: "operator" }),
+    });
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as { user: { role: string } }).user.role).toBe("operator");
   });
 });
