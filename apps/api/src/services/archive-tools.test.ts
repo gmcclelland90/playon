@@ -4,12 +4,12 @@ import os from "node:os";
 import path from "node:path";
 import type Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
-import { PathJailError } from "@playon/runtime";
 import type { AppConfig } from "../config.js";
 import { createDb, type Db } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
 import { LAB_DOCKER_SKILL, resolveFixturesRoot } from "../lab-games-root.js";
 import { buildTestZip, ServerArchiveService } from "./archive-tools.js";
+import { ServerFileStoreError } from "./server-file-store.js";
 import { ServerService } from "./servers.js";
 
 const temps: Array<{ root: string; sqlite: Database.Database }> = [];
@@ -131,7 +131,7 @@ describe("ServerArchiveService", () => {
         archivePath: "../outside.zip",
         destDir: "game",
       }),
-    ).rejects.toBeInstanceOf(PathJailError);
+    ).rejects.toBeInstanceOf(ServerFileStoreError);
   });
 
   it.runIf(tarAvailable())(

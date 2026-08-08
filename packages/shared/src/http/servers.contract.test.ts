@@ -3,6 +3,7 @@ import {
   ImportLocalServerRequestSchema,
   ImportSftpServerRequestSchema,
   RelocateServerRequestSchema,
+  WriteServerFsContentRequestSchema,
 } from "./servers.js";
 
 describe("mutating server route request contracts", () => {
@@ -41,5 +42,12 @@ describe("mutating server route request contracts", () => {
     expect(RelocateServerRequestSchema.parse({ targetNodeId: "node-a" })).toEqual({
       targetNodeId: "node-a",
     });
+  });
+
+  it("accepts a server fs write with empty content", () => {
+    expect(
+      WriteServerFsContentRequestSchema.parse({ path: "game/server.properties", content: "" }),
+    ).toEqual({ path: "game/server.properties", content: "" });
+    expect(WriteServerFsContentRequestSchema.safeParse({ content: "x" }).success).toBe(false);
   });
 });
