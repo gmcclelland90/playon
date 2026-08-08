@@ -68,6 +68,19 @@ export async function jsonBody<T>(c: JsonBodyCarrier, schema: BodySchema<T>): Pr
   return schema.parse(raw);
 }
 
+/**
+ * Same as `jsonBody` for routes whose fields are all optional: a missing or
+ * unreadable body is treated as `{}` so callers can `POST` with no payload at
+ * all, which several clients already do. Schema failures still surface.
+ */
+export async function optionalJsonBody<T>(
+  c: JsonBodyCarrier,
+  schema: BodySchema<T>,
+): Promise<T> {
+  const raw = await c.req.json().catch(() => ({}));
+  return schema.parse(raw);
+}
+
 export type ServiceFailure = {
   /** Envelope text when the thrown value is not an `Error`. */
   fallback: string;
