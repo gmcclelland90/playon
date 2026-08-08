@@ -53,7 +53,6 @@ describe("agent live Venice tool loop", () => {
     );
 
     const result = await orch.handle(
-      "installer",
       "List skills then create a Paper Minecraft server named LAN Paper using servers_create_from_skill.",
     );
 
