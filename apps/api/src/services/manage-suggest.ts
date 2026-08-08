@@ -4,9 +4,7 @@
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { nanoid } from "nanoid";
 import {
-  NODE_AUTHORITATIVE_MARKER,
   deriveNodePresence,
   isLocalNodeId,
   type ImportHintManage,
@@ -21,12 +19,10 @@ import { eq } from "drizzle-orm";
 import { nodes, servers } from "../db/schema.js";
 import { loadImportHintRules, loadImportScanRoots } from "./import-hints-data.js";
 import type { ImportLocalReport, ImportLocalService } from "./import-local.js";
-import { PlacementService } from "./placement.js";
+import type { ServerAdoptionService } from "./server-adoption.js";
 import { SkillDraftService } from "./skill-drafts.js";
-import { writeSkillMarkerFromSkill } from "./skill-marker.js";
 import { listSkills, loadSkillMetadata } from "./skills.js";
 import type { ServerService } from "./servers.js";
-import type { SnapshotService } from "./snapshots.js";
 import { dispatchNodeJob, nodeServerRelPath } from "./node-runtime.js";
 
 const SUGGEST_CACHE_TTL_MS = 30_000;
@@ -123,7 +119,7 @@ export class ManageSuggestService {
     private readonly config: AppConfig,
     private readonly importLocal: ImportLocalService,
     private readonly serversSvc: ServerService,
-    private readonly snapshots: SnapshotService,
+    private readonly adoption: ServerAdoptionService,
   ) {}
 
   private rootsAndHints() {
@@ -266,44 +262,24 @@ export class ManageSuggestService {
       followUp.push("review_and_promote_draft_skill");
     }
 
-    const skill = loadSkillMetadata(this.config.skillsRoots, skillName!);
-    if (!skill) throw new Error(`unknown_skill: ${skillName}`);
-
-    const placement = new PlacementService(this.db, this.config);
-    const resolvedNodeId = await placement.resolveNodeId(skill.metadata.name, args.nodeId);
-
-    const id = nanoid();
-    const dataPath = path.join(this.config.dataRoot, "servers", id);
-    fs.mkdirSync(path.join(dataPath, "game"), { recursive: true });
-
+    const target = await this.adoption.resolveTarget(skillName!, args.nodeId);
+    if (!target.nodeId) throw new Error("node_required: manage");
+    const skill = target.skill;
     const metaName = skill.metadata.name;
     const gameLabel =
       args.game?.trim() || hint?.suggestedGame || skill.metadata.game || path.basename(sourcePath);
     const nameOverride = args.serverName?.trim();
     let serverName = nameOverride || gameLabel;
-    const runtimeMode =
-      this.config.runtimeMode === "native" || skill.metadata.containerSupport === "none"
-        ? "native"
-        : "docker";
 
-    writeSkillMarkerFromSkill(dataPath, skill, runtimeMode, resolvedNodeId, {
+    const home = await this.adoption.beginManagedAdopt({
+      skill,
+      nodeId: target.nodeId,
+      runtimeMode: target.runtimeMode,
+      serverName,
+      gameLabel,
       managedFrom: sourcePath,
-      managedAt: new Date().toISOString(),
-      nodeAuthoritative: true,
     });
-    fs.writeFileSync(path.join(dataPath, NODE_AUTHORITATIVE_MARKER), `${args.nodeId}\n`);
-
-    const now = new Date();
-    await this.db.insert(servers).values({
-      id,
-      name: serverName,
-      game: gameLabel,
-      nodeId: resolvedNodeId,
-      runtimeMode,
-      status: "stopped",
-      dataPath,
-      createdAt: now,
-    });
+    const { id, dataPath } = home;
 
     const destRel = nodeServerRelPath(id, "game");
     const seed = await dispatchNodeJob({
@@ -387,7 +363,7 @@ export class ManageSuggestService {
       buildManagedStartWrapper(manageMeta?.serverNameArg ?? "servername"),
     );
 
-    const baseline = await this.snapshots.create(id, "baseline-manage");
+    const baseline = await this.adoption.createBaseline(id, "baseline-manage");
     followUp.push("stop_old_host_service_before_start");
     if (cutover.unitName) followUp.push(`stop_host_unit:${cutover.unitName}`);
     for (const w of cutover.warnings) {

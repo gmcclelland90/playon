@@ -1,16 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import { nanoid } from "nanoid";
 import type { AppConfig } from "../config.js";
-import type { Db } from "../db/client.js";
-import { servers } from "../db/schema.js";
 import { loadImportHintRules } from "./import-hints-data.js";
-import { PlacementService } from "./placement.js";
+import type { ServerAdoptionService } from "./server-adoption.js";
 import { SkillDraftService } from "./skill-drafts.js";
-import { writeSkillMarkerFromSkill } from "./skill-marker.js";
 import { loadSkillMetadata, listSkills } from "./skills.js";
-import type { ServerRecord, ServerService } from "./servers.js";
-import type { SnapshotService } from "./snapshots.js";
+import type { ServerRecord } from "./servers.js";
 
 function sourceHasAnyFile(sourcePath: string, relPaths: string[]): boolean {
   for (const rel of relPaths) {
@@ -54,20 +49,6 @@ function assertImportableSource(sourcePath: string, dataRoot: string): string {
   return resolved;
 }
 
-function dirSizeBytes(root: string): number {
-  let total = 0;
-  const walk = (dir: string) => {
-    for (const name of fs.readdirSync(dir)) {
-      const abs = path.join(dir, name);
-      const st = fs.statSync(abs);
-      if (st.isDirectory()) walk(abs);
-      else total += st.size;
-    }
-  };
-  walk(root);
-  return total;
-}
-
 /**
  * Lightweight layout sniffers driven by skills/import-hints.yaml.
  * Generic tree markers stay here; game → skill mapping lives in the data file.
@@ -105,10 +86,8 @@ export function detectImportHints(
 
 export class ImportLocalService {
   constructor(
-    private readonly db: Db,
     private readonly config: AppConfig,
-    private readonly servers: ServerService,
-    private readonly snapshots: SnapshotService,
+    private readonly adoption: ServerAdoptionService,
   ) {}
 
   async importFromPath(args: ImportLocalArgs): Promise<ImportLocalReport> {
@@ -157,52 +136,29 @@ export class ImportLocalService {
       followUp.push("review_and_promote_draft_skill");
     }
 
-    const skill = loadSkillMetadata(this.config.skillsRoots, skillName!);
-    if (!skill) throw new Error(`unknown_skill: ${skillName}`);
-
-    const placement = new PlacementService(this.db, this.config);
-    const resolvedNodeId = await placement.resolveNodeId(skill.metadata.name, args.nodeId);
-
-    const id = nanoid();
-    const dataPath = path.join(this.config.dataRoot, "servers", id);
-    const gamePath = path.join(dataPath, "game");
-    fs.mkdirSync(gamePath, { recursive: true });
-
-    // If source already looks like a PlayOn jail (has game/), copy that subtree; else copy whole tree into game/
-    const nestedGame = path.join(source, "game");
-    const copyFrom =
-      fs.existsSync(nestedGame) && fs.statSync(nestedGame).isDirectory() ? nestedGame : source;
-    fs.cpSync(copyFrom, gamePath, { recursive: true });
-    const copiedBytes = dirSizeBytes(gamePath);
-
-    const metaName = skill.metadata.name;
+    const target = await this.adoption.resolveTarget(skillName!, args.nodeId);
+    const metaName = target.skill.metadata.name;
     const gameLabel =
-      args.game?.trim() || skill.metadata.game || detection.suggestedGame || path.basename(source);
+      args.game?.trim() ||
+      target.skill.metadata.game ||
+      detection.suggestedGame ||
+      path.basename(source);
     const serverName = args.serverName?.trim() || gameLabel;
 
-    const runtimeMode =
-      this.config.runtimeMode === "native" || skill.metadata.containerSupport === "none"
-        ? "native"
-        : "docker";
-
-    writeSkillMarkerFromSkill(dataPath, skill, runtimeMode, resolvedNodeId, {
-      importedFrom: source,
-      importedAt: new Date().toISOString(),
+    const adopted = await this.adoption.adoptLocalTree({
+      sourcePath: source,
+      skill: target.skill,
+      nodeId: target.nodeId,
+      runtimeMode: target.runtimeMode,
+      serverName,
+      gameLabel,
+      markerExtras: {
+        importedFrom: source,
+        importedAt: new Date().toISOString(),
+      },
+      baselineLabel: "baseline-import",
     });
 
-    const now = new Date();
-    await this.db.insert(servers).values({
-      id,
-      name: serverName,
-      game: gameLabel,
-      nodeId: resolvedNodeId,
-      runtimeMode,
-      status: "stopped",
-      dataPath,
-      createdAt: now,
-    });
-
-    const baseline = await this.snapshots.create(id, "baseline-import");
     followUp.push("verify_start_and_join");
     if (!detection.hints.length) followUp.push("confirm_game_type_with_host");
 
@@ -211,14 +167,13 @@ export class ImportLocalService {
       followUp.push("attach_or_install_matching_skill");
     }
 
-    const server = (await this.servers.get(id))!;
     return {
-      server,
+      server: adopted.server,
       skillName: metaName,
       skillSource,
       draftSlug,
-      baselineSnapshotId: baseline.id,
-      copiedBytes,
+      baselineSnapshotId: adopted.baselineSnapshotId,
+      copiedBytes: adopted.copiedBytes,
       detectedHints: detection.hints,
       followUp,
     };

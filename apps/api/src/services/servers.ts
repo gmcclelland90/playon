@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { eq, inArray } from "drizzle-orm";
-import { nanoid } from "nanoid";
 import {
   createRuntime,
   followLogFile,
@@ -42,7 +41,6 @@ import {
 } from "../db/schema.js";
 import type { LanGateway } from "./cloud/gateway.js";
 import type { EventHub } from "./event-hub.js";
-import { PlacementService } from "./placement.js";
 import { pushServerDirToNode } from "./node-sync.js";
 import {
   openServerFileStore,
@@ -60,9 +58,9 @@ import {
   type RconEndpoint,
 } from "./rcon.js";
 import { nativeGamePort, nativeRconPort, resolveNativeLaunch } from "./native-launch.js";
+import { ServerAdoptionService } from "./server-adoption.js";
 import {
   readSkillMarker,
-  writeSkillMarkerFromSkill,
 } from "./skill-marker.js";
 import { loadSkillMetadata, type SkillEntry } from "./skills.js";
 import {
@@ -127,6 +125,7 @@ export class ServerService {
   private readonly logFollows = new Map<string, LogFollowHandle>();
   private sharedDocker: DockerAdapter | null = null;
   private sharedProcess: ProcessSupervisor | null = null;
+  private adoption: ServerAdoptionService | null = null;
 
   /** Skill roots for panel/join resolution (same as create/start). */
   get skillsRoots(): string[] {
@@ -139,6 +138,15 @@ export class ServerService {
     private readonly events?: EventHub,
     private readonly gateway?: LanGateway,
   ) {}
+
+  /** Wired by ControlPlane; tests may omit and get a lazy fallback. */
+  bindAdoption(adoption: ServerAdoptionService): void {
+    this.adoption = adoption;
+  }
+
+  private adoptionService(): ServerAdoptionService {
+    return this.adoption ?? new ServerAdoptionService(this.db, this.config, this);
+  }
 
   private emitStatus(
     serverId: string,
@@ -1049,52 +1057,18 @@ export class ServerService {
     };
   }
 
-  private runtimeModeForSkill(_skillName: string, containerSupport: string): "native" | "docker" {
-    // Colocate skill containerSupport with host capability.
-    if (this.config.runtimeMode === "native") return "native";
-    if (containerSupport === "none") return "native";
-    // full | partial on a docker host → docker
-    return "docker";
-  }
-
   async createFromSkill(args: {
     skillName: string;
     serverName?: string;
     nodeId?: string;
   }): Promise<ServerRecord> {
-    const skill = loadSkillMetadata(this.config.skillsRoots, args.skillName);
-    if (!skill) throw new Error(`unknown_skill: ${args.skillName}`);
-
-    const placement = new PlacementService(this.db, this.config);
-    const resolvedNodeId = await placement.resolveNodeId(args.skillName, args.nodeId);
-
-    const id = nanoid();
-    const dataPath = path.join(this.config.dataRoot, "servers", id);
-    const runtimeMode = this.runtimeModeForSkill(
-      skill.metadata.name,
-      skill.metadata.containerSupport,
-    );
-    writeSkillMarkerFromSkill(dataPath, skill, runtimeMode, resolvedNodeId);
-
-    const name = args.serverName ?? skill.metadata.game ?? skill.metadata.name;
-    const now = new Date();
-    await this.db.insert(servers).values({
-      id,
-      name,
-      game: skill.metadata.game ?? skill.metadata.name,
-      nodeId: resolvedNodeId,
-      runtimeMode,
-      status: "stopped",
-      dataPath,
-      createdAt: now,
-    });
-
-    return (await this.getRaw(id))!;
+    return this.adoptionService().createFromSkill(args);
   }
 
   /**
    * Start-over in place: stop/remove runtime, wipe server files, re-bind skill.
    * Keeps the same server id (and conversation binding). Clears snapshots + panel.
+   * Dir + marker materialization goes through ServerAdoptionService.
    */
   async reinstallFromSkill(
     id: string,
@@ -1102,9 +1076,6 @@ export class ServerService {
   ): Promise<ServerRecord> {
     const existing = await this.getRaw(id);
     if (!existing) throw new Error(`unknown_server: ${id}`);
-
-    const skill = loadSkillMetadata(this.config.skillsRoots, args.skillName);
-    if (!skill) throw new Error(`unknown_skill: ${args.skillName}`);
 
     try {
       await this.stop(id);
@@ -1128,25 +1099,22 @@ export class ServerService {
       // best-effort
     }
 
-    const placement = new PlacementService(this.db, this.config);
-    const resolvedNodeId = await placement.resolveNodeId(args.skillName, args.nodeId);
-    const runtimeMode = this.runtimeModeForSkill(
-      skill.metadata.name,
-      skill.metadata.containerSupport,
-    );
-    writeSkillMarkerFromSkill(existing.dataPath, skill, runtimeMode, resolvedNodeId);
+    const target = await this.adoptionService().rematerializeForReinstall(existing, {
+      skillName: args.skillName,
+      nodeId: args.nodeId,
+    });
 
     await this.db.delete(snapshots).where(eq(snapshots.serverId, id));
     await this.db.delete(panelBlocks).where(eq(panelBlocks.serverId, id));
 
-    const name = args.serverName ?? skill.metadata.game ?? skill.metadata.name;
+    const name = args.serverName ?? target.skill.metadata.game ?? target.skill.metadata.name;
     await this.db
       .update(servers)
       .set({
         name,
-        game: skill.metadata.game ?? skill.metadata.name,
-        nodeId: resolvedNodeId,
-        runtimeMode,
+        game: target.skill.metadata.game ?? target.skill.metadata.name,
+        nodeId: target.nodeId,
+        runtimeMode: target.runtimeMode,
         status: "stopped",
       })
       .where(eq(servers.id, id));

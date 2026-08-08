@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AppConfig } from "../config.js";
 import { ManageSuggestService } from "./manage-suggest.js";
+import { ServerAdoptionService } from "./server-adoption.js";
 
 vi.mock("./node-runtime.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("./node-runtime.js")>();
@@ -120,7 +121,7 @@ describe("ManageSuggestService.suggest (local)", () => {
       config,
       importLocal as never,
       { get: vi.fn() } as never,
-      { create: vi.fn() } as never,
+      {} as never,
     );
     const result = await svc.suggest("local");
     expect(result.candidates).toHaveLength(1);
@@ -153,7 +154,7 @@ describe("ManageSuggestService.suggest (local)", () => {
       { dataRoot, skillsRoots: [skillsRoot] } as AppConfig,
       importLocal as never,
       { get: vi.fn() } as never,
-      { create: vi.fn() } as never,
+      {} as never,
     );
     await svc.manageFromNode({ nodeId: "local", sourcePath: source, serverName: "Demo" });
     expect(importLocal.importFromPath).toHaveBeenCalledWith(
@@ -267,18 +268,30 @@ describe("ManageSuggestService.suggest (local)", () => {
             }
           : null;
       }),
+      files: vi.fn(async () => {
+        throw new Error("files_should_use_provisional_store_before_insert");
+      }),
     };
+
+    const config = {
+      dataRoot,
+      skillsRoots: [skillsRoot],
+      runtimeMode: "docker",
+    } as AppConfig;
+
+    const adoption = new ServerAdoptionService(
+      db as never,
+      config,
+      serversSvc as never,
+      { create: vi.fn(async () => ({ id: "snap-1" })) } as never,
+    );
 
     const svc = new ManageSuggestService(
       db as never,
-      {
-        dataRoot,
-        skillsRoots: [skillsRoot],
-        runtimeMode: "docker",
-      } as AppConfig,
+      config,
       { importFromPath: vi.fn() } as never,
       serversSvc as never,
-      { create: vi.fn(async () => ({ id: "snap-1" })) } as never,
+      adoption,
     );
 
     const report = await svc.manageFromNode({
