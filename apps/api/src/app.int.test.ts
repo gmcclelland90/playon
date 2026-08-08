@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -44,6 +44,20 @@ function requireVeniceKey(): string {
   return VENICE_KEY_AT_LOAD;
 }
 
+/** Chat/agent paths may start Docker without stopping; free host ports before rm temp roots. */
+function removeDockerContainersForTempRoot(root: string): void {
+  const serversDir = path.join(root, "servers");
+  if (!fs.existsSync(serversDir)) return;
+  for (const id of fs.readdirSync(serversDir)) {
+    if (!id || id.includes("/") || id.includes("\\") || id.includes("..")) continue;
+    try {
+      execFileSync("docker", ["rm", "-f", `playon-${id}`], { stdio: "ignore" });
+    } catch {
+      // container may not exist
+    }
+  }
+}
+
 function tempConfig(): { db: Db; config: AppConfig; root: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-"));
   const dbPath = path.join(root, "playon.db");
@@ -67,6 +81,7 @@ function tempConfig(): { db: Db; config: AppConfig; root: string } {
 
 afterEach(() => {
   for (const entry of temps.splice(0)) {
+    removeDockerContainersForTempRoot(entry.root);
     entry.sqlite.close();
     fs.rmSync(entry.root, { recursive: true, force: true });
   }
