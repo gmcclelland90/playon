@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { eq, inArray } from "drizzle-orm";
@@ -7,6 +6,7 @@ import {
   createRuntime,
   followLogFile,
   localDockerTransport,
+  localNativeTransport,
   openServerRuntime,
   readLogFileTail,
   remoteDockerTransport,
@@ -14,11 +14,15 @@ import {
   type DockerAdapter,
   type DockerRuntimeTransport,
   type LogFollowHandle,
+  type NativeProcessIdentity,
+  type NativeRuntimeTransport,
   type ProcessSupervisor,
   type RuntimeLocality,
   type RuntimeMode,
   type ServerContainerSpec,
+  type ServerProcessSpec,
   type ServerRuntimeHandle,
+  type ServerRuntimeState,
 } from "@playon/runtime";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db/client.js";
@@ -112,6 +116,7 @@ function toRecord(row: typeof servers.$inferSelect): ServerRecord {
 
 export class ServerService {
   private readonly adapters = new Map<string, DockerAdapter>();
+  /** Remote-native process ids only; handled quadrants re-resolve identity instead. */
   private readonly processes = new Map<string, string>();
   private readonly logFollows = new Map<string, LogFollowHandle>();
   private sharedDocker: DockerAdapter | null = null;
@@ -740,7 +745,10 @@ export class ServerService {
 
   /** Quadrants already migrated to {@link ServerRuntimeHandle}; the rest stay on the old paths. */
   private usesRuntimeHandle(server: ServerRecord): boolean {
-    return this.runtimeTarget(server).mode === "docker";
+    const { mode, locality } = this.runtimeTarget(server);
+    if (mode === "docker") return true;
+    // Remote native still runs on the process_* job path until that slice lands.
+    return locality === "local";
   }
 
   private async containerSpec(
@@ -806,15 +814,60 @@ export class ServerService {
 
   private async openRuntime(server: ServerRecord): Promise<ServerRuntimeHandle> {
     const { mode, locality, skillName, skillMeta } = this.runtimeTarget(server);
+    const native = mode === "native";
     return openServerRuntime(
       { serverId: server.id, mode, locality },
       {
         containerName: this.containerName(server.id),
-        docker: mode === "docker" ? await this.dockerTransport(server, locality) : undefined,
+        docker: native ? undefined : await this.dockerTransport(server, locality),
         resolveContainerSpec: () =>
           this.containerSpec(server, skillName, skillMeta, locality),
+        // Remote native has no transport yet, so that quadrant fails loudly here.
+        native: native && locality === "local" ? await this.localNativeTransport() : undefined,
+        processIdentity: this.processIdentity(server),
+        resolveProcessSpec: () => this.processSpec(server, skillName),
       },
     );
+  }
+
+  private async localNativeTransport(): Promise<NativeRuntimeTransport> {
+    await this.ensureRuntime();
+    if (!this.sharedProcess) throw new Error("runtime_not_ready");
+    return localNativeTransport(this.sharedProcess);
+  }
+
+  /** Name/cwd the native runtime re-resolves from; the control plane stores no process id. */
+  private processIdentity(server: ServerRecord): NativeProcessIdentity {
+    return { name: `server-${server.id}`, cwd: path.join(server.dataPath, "game") };
+  }
+
+  private async processSpec(
+    server: ServerRecord,
+    skillName: string,
+  ): Promise<ServerProcessSpec> {
+    const gameDir = this.processIdentity(server).cwd;
+    const skillEntry = this.resolveSkill(skillName);
+    const launch = resolveNativeLaunch({
+      skillName,
+      game: server.game,
+      gameDir,
+      metadata: skillEntry?.metadata,
+    });
+    if (!launch) {
+      const hint = skillEntry?.metadata.steamAppId
+        ? ` Run steamcmd_app_update with appId ${skillEntry.metadata.steamAppId}, then ensure start.sh or native.binary exists.`
+        : " Add start.sh / start.bat or set skill metadata native.binary.";
+      throw new Error(
+        `native_binaries_missing: skill "${skillName}" has no startable process in game/.${hint}`,
+      );
+    }
+    this.ensureRconConfig(server, skillName);
+    return {
+      command: launch.command,
+      args: launch.args,
+      env: { PLAYON_SERVER_ID: server.id, ...launch.env },
+      logFile: this.consoleLogAbs(server.dataPath),
+    };
   }
 
   private async dockerTransport(
@@ -837,17 +890,6 @@ export class ServerService {
         },
       });
     return remoteDockerTransport(dispatch, { serverId: server.id });
-  }
-
-  /** Best-effort kill of native game processes for this server (covers orphans after API restart). */
-  private killNativeGameProcesses(serverDataPath: string): void {
-    if (process.platform === "win32") return;
-    const gameDir = path.join(serverDataPath, "game");
-    try {
-      execFileSync("pkill", ["-f", gameDir], { stdio: "ignore" });
-    } catch {
-      // pkill exits 1 when nothing matched
-    }
   }
 
   /**
@@ -941,40 +983,12 @@ export class ServerService {
     return rows[0] ? toRecord(rows[0]) : null;
   }
 
-  private nativeProcessAlive(server: ServerRecord): boolean {
-    if (this.processes.has(server.id)) return true;
-    if (process.platform === "win32") return false;
-    const gameDir = path.join(server.dataPath, "game");
-    const skillName = this.readSkillName(server.dataPath);
-    const native = this.resolveSkill(skillName)?.metadata.native;
-    const binaryBits = [native?.binary, native?.binaryWindows]
-      .filter(Boolean)
-      .map((b) => path.basename(String(b)).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-    const pattern = ["start\\.sh", "start\\.bat", "run\\.sh", "runds\\.sh", ...binaryBits].join(
-      "|",
-    );
-    // Match start scripts / skill-declared binaries; confirm cwd is this server's game dir.
+  /** Runtime state for a handled quadrant; an unreachable handle reads as missing. */
+  private async runtimeState(server: ServerRecord): Promise<ServerRuntimeState> {
     try {
-      const pids = execFileSync("pgrep", ["-f", pattern], { encoding: "utf8" })
-        .trim()
-        .split("\n")
-        .filter(Boolean);
-      for (const pid of pids) {
-        try {
-          const cwd = fs.readlinkSync(`/proc/${pid}/cwd`);
-          if (cwd === gameDir || cwd.startsWith(`${gameDir}${path.sep}`)) return true;
-        } catch {
-          /* process exited */
-        }
-      }
+      return (await (await this.openRuntime(server)).status()).state;
     } catch {
-      /* no matching processes */
-    }
-    try {
-      execFileSync("pgrep", ["-f", server.id], { stdio: "ignore" });
-      return true;
-    } catch {
-      return false;
+      return "missing";
     }
   }
 
@@ -1011,11 +1025,13 @@ export class ServerService {
           }
           return;
         }
-        // No tracked remote process — local pgrep can't see the node. Leave status alone.
+        // No tracked remote process, and Home cannot see the node's processes. Leave status alone.
         return;
       }
 
-      const next = this.nativeProcessAlive(server) ? "running" : "stopped";
+      // Local native: the handle re-resolves the process, and anything it cannot
+      // resolve (including an unreachable runtime) reads as stopped.
+      const next = (await this.runtimeState(server)) === "running" ? "running" : "stopped";
       if (next !== server.status) {
         await this.db.update(servers).set({ status: next }).where(eq(servers.id, server.id));
         this.emitStatus(server.id, next);
@@ -1035,12 +1051,7 @@ export class ServerService {
     };
 
     if (this.usesRuntimeHandle(server)) {
-      let state: string;
-      try {
-        state = (await (await this.openRuntime(server)).status()).state;
-      } catch {
-        state = "missing";
-      }
+      const state = await this.runtimeState(server);
       if (state === "missing") {
         await missing();
         return;
@@ -1364,54 +1375,18 @@ export class ServerService {
         if (native) {
           return await this.startRemoteNative(server, skillName);
         }
-      } else if (native) {
-        await this.ensureRuntime();
-        if (!this.sharedProcess) throw new Error("runtime_not_ready");
-        const processSupervisor = this.sharedProcess;
-        const existing = this.processes.get(id);
-        if (existing) {
-          await processSupervisor.stop(existing).catch(() => undefined);
-        }
-        const gameDir = path.join(server.dataPath, "game");
-        const skillEntry = this.resolveSkill(skillName);
-        const launch = resolveNativeLaunch({
-          skillName,
-          game: server.game,
-          gameDir,
-          metadata: skillEntry?.metadata,
-        });
-        if (!launch) {
-          const hint = skillEntry?.metadata.steamAppId
-            ? ` Run steamcmd_app_update with appId ${skillEntry.metadata.steamAppId}, then ensure start.sh or native.binary exists.`
-            : " Add start.sh / start.bat or set skill metadata native.binary.";
-          throw new Error(
-            `native_binaries_missing: skill "${skillName}" has no startable process in game/.${hint}`,
-          );
-        }
-        this.ensureRconConfig(server, skillName);
-        const logFile = this.consoleLogAbs(server.dataPath);
-        const info = await processSupervisor.start({
-          name: `server-${id}`,
-          command: launch.command,
-          args: launch.args,
-          cwd: gameDir,
-          env: { PLAYON_SERVER_ID: id, ...launch.env },
-          logFile,
-        });
-        this.processes.set(id, info.id);
-        this.beginFileLogFollow(id, logFile);
-        await this.db.update(servers).set({ status: "running" }).where(eq(servers.id, id));
-        this.emitStatus(id, "running");
-        return (await this.getRaw(id))!;
       }
 
       const handle = await this.openRuntime(server);
-      const { id: containerId } = await handle.start();
+      const { id: runtimeId } = await handle.start();
 
       await this.db.update(servers).set({ status: "running" }).where(eq(servers.id, id));
       this.emitStatus(id, "running");
-      // Remote containers are followed by the node-agent, which streams lines back itself.
-      if (!remote) await this.beginLogFollow(id, containerId);
+      // Remote runtimes are followed by the node-agent, which streams lines back itself.
+      if (!remote) {
+        if (native) this.beginFileLogFollow(id, this.consoleLogAbs(server.dataPath));
+        else await this.beginLogFollow(id, runtimeId);
+      }
       return (await this.getRaw(id))!;
     } catch (err) {
       await this.db.update(servers).set({ status: "error" }).where(eq(servers.id, id));
@@ -1465,21 +1440,13 @@ export class ServerService {
         }).catch(() => undefined);
       }
     } else {
-      await this.ensureRuntime();
-      const processId = this.processes.get(id);
-      if (processId && this.sharedProcess) {
-        await this.sharedProcess.stop(processId).catch(() => undefined);
-        this.processes.delete(id);
-      }
-      if (server.runtimeMode === "native") {
-        this.killNativeGameProcesses(server.dataPath);
-      }
-
-      if (this.usesRuntimeHandle(server)) {
-        await this.openRuntime(server)
-          .then((handle) => handle.stop())
-          .catch(() => undefined);
-      } else {
+      await this.openRuntime(server)
+        .then((handle) => handle.stop())
+        .catch(() => undefined);
+      if (this.runtimeTarget(server).mode === "native") {
+        // Dual-fire while modes can flip under a server: one that last ran as a
+        // container must still stop.
+        await this.ensureRuntime().catch(() => undefined);
         const adapter = this.adapters.get(id) ?? this.sharedDocker;
         if (adapter) {
           await adapter.stop(this.containerName(id)).catch(() => undefined);

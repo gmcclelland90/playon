@@ -1,5 +1,13 @@
 import type { NodeJobArgsInput, NodeJobKind, NodeJobResult } from "@playon/shared";
-import type { ContainerInfo, ContainerSpec, DockerAdapter, RuntimeMode } from "./types.js";
+import type {
+  ContainerInfo,
+  ContainerSpec,
+  DockerAdapter,
+  ProcessInfo,
+  ProcessSpec,
+  ProcessSupervisor,
+  RuntimeMode,
+} from "./types.js";
 
 /** Where the runtime work executes: in this process, or on a node over the job transport. */
 export type RuntimeLocality = "local" | "remote";
@@ -209,6 +217,122 @@ class DockerRuntimeHandle implements ServerRuntimeHandle {
   }
 }
 
+/**
+ * What a native runtime target is called on its host. The handle re-resolves the
+ * OS process from this on every call, so no process id is ever stored.
+ */
+export interface NativeProcessIdentity {
+  /** Supervisor-visible process name, e.g. `server-<id>`. */
+  name: string;
+  /** Game process working directory: absolute locally, jail-relative on a node. */
+  cwd: string;
+}
+
+/** Process spec minus identity — the handle owns naming so identity stays re-resolvable. */
+export type ServerProcessSpec = Omit<ProcessSpec, "name" | "cwd">;
+
+/**
+ * Locality half of the native mode: the same process verbs executed either
+ * in-process (local) or on a node over the job transport.
+ */
+export interface NativeRuntimeTransport {
+  readonly locality: RuntimeLocality;
+  /** Re-resolve the process behind an identity; null when nothing is running. */
+  resolve(identity: NativeProcessIdentity): Promise<ProcessInfo | null>;
+  start(spec: ProcessSpec): Promise<ProcessInfo>;
+  /** Stop by identity; `id` is a hint only, and a dead target is not an error. */
+  stop(identity: NativeProcessIdentity, id?: string): Promise<void>;
+  logs?(identity: NativeProcessIdentity, tail?: number): Promise<string[]>;
+  writeStdin?(identity: NativeProcessIdentity, line: string): Promise<void>;
+}
+
+export function localNativeTransport(supervisor: ProcessSupervisor): NativeRuntimeTransport {
+  const reclaim = supervisor.reclaim?.bind(supervisor);
+  return {
+    locality: "local",
+    resolve: (identity) => supervisor.find(identity.name, identity.cwd),
+    start: (spec) => supervisor.start(spec),
+    async stop(identity, id) {
+      // Reclaim is the identity-shaped stop: it also sweeps orphans a lost id would leave.
+      if (reclaim) {
+        await reclaim(identity.name, identity.cwd);
+        return;
+      }
+      if (id) await supervisor.stop(id);
+    },
+  };
+}
+
+function mapProcessState(status: ProcessInfo["status"]): ServerRuntimeState {
+  if (status === "running") return "running";
+  if (status === "unknown") return "unknown";
+  return "stopped";
+}
+
+class NativeRuntimeHandle implements ServerRuntimeHandle {
+  readonly mode = "native" as const;
+
+  constructor(
+    private readonly transport: NativeRuntimeTransport,
+    private readonly identity: NativeProcessIdentity,
+    private readonly resolveSpec: () => Promise<ServerProcessSpec>,
+  ) {}
+
+  get locality(): RuntimeLocality {
+    return this.transport.locality;
+  }
+
+  async start(): Promise<{ id: string }> {
+    // Never stack duplicates: a live process for this identity goes first.
+    const running = await this.transport.resolve(this.identity);
+    if (running?.status === "running") {
+      await this.transport.stop(this.identity, running.id);
+    }
+    const spec = await this.resolveSpec();
+    const info = await this.transport.start({
+      ...spec,
+      name: this.identity.name,
+      cwd: this.identity.cwd,
+    });
+    return { id: info.id };
+  }
+
+  async stop(): Promise<void> {
+    const running = await this.transport.resolve(this.identity);
+    // Fire even when nothing resolved: an identity stop doubles as the orphan sweep.
+    await this.transport.stop(this.identity, running?.id);
+  }
+
+  async restart(): Promise<{ id: string }> {
+    await this.stop();
+    return this.start();
+  }
+
+  async status(): Promise<ServerRuntimeStatus> {
+    const info = await this.transport.resolve(this.identity);
+    // A native target leaves nothing behind when it exits, so absence is "stopped",
+    // never docker's "missing".
+    if (!info) return { state: "stopped" };
+    return { state: mapProcessState(info.status), id: info.id, detail: info.status };
+  }
+
+  async logs(tail?: number): Promise<string[]> {
+    const read = this.transport.logs;
+    if (!read) {
+      throw new RuntimeUnsupportedError(`native logs over ${this.locality} transport`);
+    }
+    return read(this.identity, tail);
+  }
+
+  async writeStdin(line: string): Promise<void> {
+    const write = this.transport.writeStdin;
+    if (!write) {
+      throw new RuntimeUnsupportedError(`native stdin over ${this.locality} transport`);
+    }
+    await write(this.identity, line);
+  }
+}
+
 export interface ServerRuntimeTarget {
   serverId: string;
   mode: RuntimeMode;
@@ -220,6 +344,17 @@ export interface ServerRuntimeDeps {
   containerName: string;
   docker?: DockerRuntimeTransport;
   resolveContainerSpec?: () => Promise<ServerContainerSpec>;
+  /** Stable runtime identity for the native mode; re-resolved on every call. */
+  processIdentity?: NativeProcessIdentity;
+  native?: NativeRuntimeTransport;
+  resolveProcessSpec?: () => Promise<ServerProcessSpec>;
+}
+
+function assertLocality(target: ServerRuntimeTarget, transportLocality: RuntimeLocality): void {
+  if (transportLocality === target.locality) return;
+  throw new Error(
+    `runtime_locality_mismatch: target ${target.locality} but transport ${transportLocality}`,
+  );
 }
 
 /**
@@ -231,9 +366,22 @@ export function openServerRuntime(
   deps: ServerRuntimeDeps,
 ): ServerRuntimeHandle {
   if (target.mode === "native") {
-    throw new RuntimeUnsupportedError(
-      `native ${target.locality} runtime for server ${target.serverId}`,
-    );
+    const transport = deps.native;
+    if (!transport) {
+      throw new RuntimeUnsupportedError(
+        `native ${target.locality} runtime for server ${target.serverId}: no transport wired`,
+      );
+    }
+    assertLocality(target, transport.locality);
+    const identity = deps.processIdentity;
+    if (!identity) {
+      throw new Error(`runtime_identity_missing: native runtime for server ${target.serverId}`);
+    }
+    const resolveProcess = deps.resolveProcessSpec;
+    if (!resolveProcess) {
+      throw new Error(`runtime_spec_missing: native runtime for server ${target.serverId}`);
+    }
+    return new NativeRuntimeHandle(transport, identity, resolveProcess);
   }
 
   const transport = deps.docker;
@@ -242,11 +390,7 @@ export function openServerRuntime(
       `docker ${target.locality} runtime for server ${target.serverId}: no transport wired`,
     );
   }
-  if (transport.locality !== target.locality) {
-    throw new Error(
-      `runtime_locality_mismatch: target ${target.locality} but transport ${transport.locality}`,
-    );
-  }
+  assertLocality(target, transport.locality);
   const resolveSpec = deps.resolveContainerSpec;
   if (!resolveSpec) {
     throw new Error(`runtime_spec_missing: docker runtime for server ${target.serverId}`);
