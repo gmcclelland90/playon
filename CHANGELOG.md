@@ -2,6 +2,30 @@
 
 All notable changes to PlayOn Home (root `package.json` version) are listed here.
 
+## [0.1.11] — 2026-08-09
+
+### Added
+
+- **Server Runtime Handle** — start/stop/restart/status/logs/stdin through one mode×locality surface (local/remote × docker/native).
+- **Server File Store** — path-jailed server data I/O with Home vs node locality (`servers.files`).
+- **Server Adoption** — unified create/import/manage provision spine.
+- **AgentTurn** — shared chat + watcher agent runner (`plane.agentTurn.run`).
+- Shared HTTP error envelope across session, MCP, and node-token routes.
+
+### Changed
+
+- Home native stop is **mode-correct** (no docker dual-fire after Handle stop).
+- Live Home log follow goes through `ServerRuntimeHandle.followLogs` (remote still node-agent fan-in).
+- Snapshots pull node-authoritative trees before create and push remote trees after restore.
+
+### Fixed
+
+- Int tests remove leftover `playon-*` Docker containers between cases so `:25565` is not stolen mid-suite.
+
+### Notes
+
+- Architecture portfolio spine (W1–W5) and W2 leftovers are on `main`. Update remote node-agents from **Settings → Nodes** when you want builds stamped **0.1.11**.
+
 ## [0.1.10] — 2026-08-08
 
 ### Added
