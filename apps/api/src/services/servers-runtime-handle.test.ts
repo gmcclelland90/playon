@@ -80,11 +80,14 @@ const node = vi.hoisted(() => {
   const containers = new Map<string, Container>();
   /** Keyed by supervisor name, because identity is all the node is ever given. */
   const processes = new Map<string, Process>();
+  /** The node's own disk, keyed by jail-relative path. */
+  const files = new Map<string, string>();
   let seq = 0;
   return {
     jobs,
     containers,
     processes,
+    files,
     kinds(): string[] {
       return jobs.map((j) => j.kind);
     },
@@ -92,6 +95,7 @@ const node = vi.hoisted(() => {
       jobs.length = 0;
       containers.clear();
       processes.clear();
+      files.clear();
       seq = 0;
     },
     async dispatch(opts: { kind: string; args?: Record<string, unknown> }): Promise<unknown> {
@@ -107,6 +111,22 @@ const node = vi.hoisted(() => {
             return { path: args.path, ok: true };
           case "fs_write_text":
             return { path: args.path, bytes: String(args.content ?? "").length };
+          case "fs_read_text": {
+            const rel = String(args.path);
+            const bytes = Buffer.from(files.get(rel) ?? "", "utf8");
+            const offset = Number(args.offset ?? 0);
+            const slice = bytes.subarray(
+              offset,
+              args.maxBytes == null ? undefined : offset + Number(args.maxBytes),
+            );
+            return {
+              path: rel,
+              content: slice.toString("utf8"),
+              bytesRead: slice.length,
+              truncated: offset + slice.length < bytes.length,
+              size: bytes.length,
+            };
+          }
           case "container_inspect":
             if (!found) throw new Error("job_failed: container_inspect: no such container");
             return found;
@@ -122,6 +142,8 @@ const node = vi.hoisted(() => {
           case "container_stop":
             if (found) found.status = "exited";
             return { ok: true };
+          case "container_logs":
+            return { lines: ["node-log-1", "node-log-2"] };
           case "process_status": {
             const name = String(args.name ?? "");
             // The node answers for an identity it cannot find too — just not "running".
@@ -276,6 +298,76 @@ async function placeOnRemoteNode(db: Db, serverId: string): Promise<void> {
     .where(eq(serversTable.id, serverId));
 }
 
+/** A native server on this host with a startable game dir. */
+async function nativeServer(opts?: { startable?: boolean }): Promise<{
+  db: Db;
+  config: AppConfig;
+  servers: ServerService;
+  id: string;
+  gameDir: string;
+  dataPath: string;
+}> {
+  const { db, config, servers } = tempEnv();
+  const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
+  await db
+    .update(serversTable)
+    .set({ runtimeMode: "native" })
+    .where(eq(serversTable.id, server.id));
+  const gameDir = path.join(server.dataPath, "game");
+  fs.mkdirSync(gameDir, { recursive: true });
+  if (opts?.startable !== false) {
+    // resolveNativeLaunch only launches what exists on disk, on either platform.
+    fs.writeFileSync(path.join(gameDir, "start.sh"), "#!/bin/bash\nsleep 30\n");
+    fs.writeFileSync(path.join(gameDir, "start.bat"), "@echo off\n");
+  }
+  fake.reset();
+  host.reset();
+  return { db, config, servers, id: server.id, gameDir, dataPath: server.dataPath };
+}
+
+/** A docker server whose container only exists on a node. */
+async function remoteServer(): Promise<{
+  db: Db;
+  servers: ServerService;
+  id: string;
+  name: string;
+}> {
+  const { db, servers } = tempEnv();
+  const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
+  await placeOnRemoteNode(db, server.id);
+  node.jobs.length = 0;
+  return { db, servers, id: server.id, name: `playon-${server.id}` };
+}
+
+/** A native server whose game dir only exists on the node. */
+async function remoteNativeServer(): Promise<{
+  db: Db;
+  config: AppConfig;
+  servers: ServerService;
+  id: string;
+  procName: string;
+  cwd: string;
+}> {
+  const { db, config, servers } = tempEnv();
+  const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
+  await db
+    .update(serversTable)
+    .set({ runtimeMode: "native" })
+    .where(eq(serversTable.id, server.id));
+  await placeOnRemoteNode(db, server.id);
+  node.jobs.length = 0;
+  host.reset();
+  fake.reset();
+  return {
+    db,
+    config,
+    servers,
+    id: server.id,
+    procName: `server-${server.id}`,
+    cwd: `servers/${server.id}/game`,
+  };
+}
+
 beforeEach(() => {
   fake.reset();
   node.reset();
@@ -385,33 +477,6 @@ describe("local docker lifecycle through ServerRuntimeHandle", () => {
 });
 
 describe("local native lifecycle through ServerRuntimeHandle", () => {
-  /** A native server on this host with a startable game dir. */
-  async function nativeServer(opts?: { startable?: boolean }): Promise<{
-    db: Db;
-    config: AppConfig;
-    servers: ServerService;
-    id: string;
-    gameDir: string;
-    dataPath: string;
-  }> {
-    const { db, config, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
-    await db
-      .update(serversTable)
-      .set({ runtimeMode: "native" })
-      .where(eq(serversTable.id, server.id));
-    const gameDir = path.join(server.dataPath, "game");
-    fs.mkdirSync(gameDir, { recursive: true });
-    if (opts?.startable !== false) {
-      // resolveNativeLaunch only launches what exists on disk, on either platform.
-      fs.writeFileSync(path.join(gameDir, "start.sh"), "#!/bin/bash\nsleep 30\n");
-      fs.writeFileSync(path.join(gameDir, "start.bat"), "@echo off\n");
-    }
-    fake.reset();
-    host.reset();
-    return { db, config, servers, id: server.id, gameDir, dataPath: server.dataPath };
-  }
-
   const startScript = process.platform === "win32" ? "start.bat" : "start.sh";
 
   it("exposes a native/local handle from the runtime choke point", async () => {
@@ -522,19 +587,6 @@ describe("local native lifecycle through ServerRuntimeHandle", () => {
 });
 
 describe("remote docker lifecycle through ServerRuntimeHandle", () => {
-  async function remoteServer(): Promise<{
-    db: Db;
-    servers: ServerService;
-    id: string;
-    name: string;
-  }> {
-    const { db, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
-    await placeOnRemoteNode(db, server.id);
-    node.jobs.length = 0;
-    return { db, servers, id: server.id, name: `playon-${server.id}` };
-  }
-
   it("exposes a docker/remote handle from the runtime choke point", async () => {
     const { servers, id } = await remoteServer();
 
@@ -640,35 +692,6 @@ describe("remote docker lifecycle through ServerRuntimeHandle", () => {
 });
 
 describe("remote native lifecycle through ServerRuntimeHandle", () => {
-  /** A native server whose game dir only exists on the node. */
-  async function remoteNativeServer(): Promise<{
-    db: Db;
-    config: AppConfig;
-    servers: ServerService;
-    id: string;
-    procName: string;
-    cwd: string;
-  }> {
-    const { db, config, servers } = tempEnv();
-    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
-    await db
-      .update(serversTable)
-      .set({ runtimeMode: "native" })
-      .where(eq(serversTable.id, server.id));
-    await placeOnRemoteNode(db, server.id);
-    node.jobs.length = 0;
-    host.reset();
-    fake.reset();
-    return {
-      db,
-      config,
-      servers,
-      id: server.id,
-      procName: `server-${server.id}`,
-      cwd: `servers/${server.id}/game`,
-    };
-  }
-
   const processKinds = (): string[] => node.kinds().filter((k) => k.startsWith("process_"));
 
   it("exposes a native/remote handle from the runtime choke point", async () => {
@@ -786,5 +809,117 @@ describe("remote native lifecycle through ServerRuntimeHandle", () => {
 
     expect((await servers.get(id))!.status).toBe("running");
     expect(node.jobs).toEqual([]);
+  });
+});
+
+describe("logs through ServerRuntimeHandle", () => {
+  /** Write the console file a native server's runtime tails on this host. */
+  function writeLocalConsole(dataPath: string, text: string): void {
+    const file = path.join(dataPath, "logs", "console.log");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, text);
+  }
+
+  it("local docker: tails the container Home runs", async () => {
+    const { servers } = tempEnv();
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
+    await servers.start(server.id);
+    fake.calls.length = 0;
+
+    const tail = await servers.tailLogs(server.id, 25);
+
+    expect(tail).toEqual({ status: "running", runtime: "docker", lines: ["fake-log"] });
+    expect(fake.calls).toContain(`logs:cid-playon-${server.id}:25`);
+  });
+
+  it("remote docker: tails the node's container, never Home's docker", async () => {
+    const { servers, id, name } = await remoteServer();
+    await servers.start(id);
+    node.jobs.length = 0;
+    fake.calls.length = 0;
+
+    const tail = await servers.tailLogs(id, 25);
+
+    expect(tail).toEqual({
+      status: "running",
+      runtime: "docker",
+      lines: ["node-log-1", "node-log-2"],
+    });
+    expect(node.jobs.at(-1)).toEqual({
+      kind: "container_logs",
+      args: { id: `cid-${name}`, tail: 25 },
+    });
+    // The old Home-docker-only path would have tailed the wrong host entirely.
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("local native: tails the console file the process writes", async () => {
+    const { servers, id, dataPath } = await nativeServer();
+    writeLocalConsole(dataPath, "boot\nready\nplayer joined\n");
+
+    const tail = await servers.tailLogs(id, 2);
+
+    expect(tail).toEqual({
+      status: "stopped",
+      runtime: "native",
+      lines: ["ready", "player joined"],
+    });
+  });
+
+  it("remote native: tails the node's console file over the fs job contract", async () => {
+    const { servers, id } = await remoteNativeServer();
+    node.files.set(`servers/${id}/logs/console.log`, "boot\nready\nplayer joined\n");
+    node.jobs.length = 0;
+
+    const tail = await servers.tailLogs(id, 2);
+
+    expect(tail).toEqual({
+      status: "stopped",
+      runtime: "native",
+      lines: ["ready", "player joined"],
+    });
+    expect(node.kinds().filter((k) => k === "fs_read_text")).toHaveLength(2);
+    // Home neither runs nor reads for a server it does not host.
+    expect(host.calls).toEqual([]);
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("a runtime that cannot answer tails nothing rather than failing the read", async () => {
+    const { db, servers, id } = await remoteServer();
+    await db
+      .update(nodesTable)
+      .set({ lastSeenAt: new Date(Date.now() - 3_600_000) })
+      .where(eq(nodesTable.id, REMOTE_NODE_ID));
+    node.containers.clear();
+
+    const tail = await servers.tailLogs(id, 25);
+
+    expect(tail).toMatchObject({ runtime: "docker", lines: [] });
+  });
+
+  it("detail carries the node's container status and logs, not Home's", async () => {
+    const { servers, id, name } = await remoteServer();
+    await servers.start(id);
+    fake.calls.length = 0;
+
+    const detail = await servers.detail(id);
+
+    expect(detail!.runtime).toMatchObject({
+      kind: "docker",
+      containerName: name,
+      containerStatus: "running",
+      logs: ["node-log-1", "node-log-2"],
+    });
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("detail carries a native server's console tail", async () => {
+    const { servers, id, dataPath } = await nativeServer();
+    writeLocalConsole(dataPath, "boot\nready\n");
+
+    const detail = await servers.detail(id);
+
+    expect(detail!.runtime.kind).toBe("native");
+    expect(detail!.runtime.logs).toEqual(["boot", "ready"]);
   });
 });

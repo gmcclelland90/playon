@@ -8,7 +8,6 @@ import {
   localDockerTransport,
   localNativeTransport,
   openServerRuntime,
-  readLogFileTail,
   remoteDockerTransport,
   remoteNativeTransport,
   type ContainerJobDispatch,
@@ -17,6 +16,7 @@ import {
   type LogFollowHandle,
   type NativeProcessIdentity,
   type NativeRuntimeTransport,
+  type NodeTextReadDispatch,
   type ProcessJobDispatch,
   type ProcessSupervisor,
   type RuntimeLocality,
@@ -25,6 +25,7 @@ import {
   type ServerProcessSpec,
   type ServerRuntimeHandle,
   type ServerRuntimeState,
+  type ServerRuntimeStatus,
 } from "@playon/runtime";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db/client.js";
@@ -184,37 +185,14 @@ export class ServerService {
     }
   }
 
-  private async readNativeLogTail(server: ServerRecord, lines: number): Promise<string[]> {
-    if (!this.isRemoteNode(server)) {
-      return readLogFileTail(this.consoleLogAbs(server.dataPath), lines);
-    }
+  /**
+   * Log tail from the server's own runtime, whichever quadrant it lives in.
+   * A runtime that cannot answer has no lines to give — never an error page.
+   */
+  private async logTail(server: ServerRecord, lines: number): Promise<string[]> {
     try {
-      const rel = this.consoleLogRel(server.id);
-      // Probe size first — reading from offset 0 only returns the head of large logs.
-      const probe = await dispatchNodeJob({
-        nodeId: server.nodeId,
-        kind: "fs_read_text",
-        args: { path: rel, offset: 0, maxBytes: 1 },
-        timeoutMs: 15_000,
-        localHandler: async () => {
-          throw new Error("remote_only");
-        },
-      });
-      const maxBytes = 128_000;
-      const offset = Math.max(0, probe.size - maxBytes);
-      const result = await dispatchNodeJob({
-        nodeId: server.nodeId,
-        kind: "fs_read_text",
-        args: { path: rel, offset, maxBytes },
-        timeoutMs: 15_000,
-        localHandler: async () => {
-          throw new Error("remote_only");
-        },
-      });
-      return result.content
-        .split(/\r?\n/)
-        .filter((l) => l.length > 0)
-        .slice(-lines);
+      const handle = await this.openRuntime(server);
+      return await handle.logs(lines);
     } catch {
       return [];
     }
@@ -841,7 +819,18 @@ export class ServerService {
           throw new Error("remote_only");
         },
       });
-    return remoteNativeTransport(dispatch, { serverId: server.id });
+    // The node's console is a file, so tailing it is an fs job rather than a process one.
+    const readText: NodeTextReadDispatch = (args, opts) =>
+      dispatchNodeJob({
+        nodeId,
+        kind: "fs_read_text",
+        args,
+        timeoutMs: opts?.timeoutMs,
+        localHandler: () => {
+          throw new Error("remote_only");
+        },
+      });
+    return remoteNativeTransport(dispatch, { serverId: server.id, readText });
   }
 
   /** Name/cwd the native runtime re-resolves from; the control plane stores no process id. */
@@ -849,13 +838,14 @@ export class ServerService {
     server: ServerRecord,
     locality: RuntimeLocality,
   ): NativeProcessIdentity {
+    const remote = locality === "remote";
     return {
       name: `server-${server.id}`,
       // A node resolves paths under its own data root, so remote identity is jail-relative.
-      cwd:
-        locality === "remote"
-          ? nodeServerRelPath(server.id, "game")
-          : path.join(server.dataPath, "game"),
+      cwd: remote
+        ? nodeServerRelPath(server.id, "game")
+        : path.join(server.dataPath, "game"),
+      logFile: remote ? this.consoleLogRel(server.id) : this.consoleLogAbs(server.dataPath),
     };
   }
 
@@ -1028,15 +1018,19 @@ export class ServerService {
     return rows[0] ? toRecord(rows[0]) : null;
   }
 
-  /** Runtime state from the handle, or null when the runtime could not answer at all. */
-  private async runtimeState(server: ServerRecord): Promise<ServerRuntimeState | null> {
+  /** Runtime status from the handle, or null when the runtime could not answer at all. */
+  private async runtimeStatus(server: ServerRecord): Promise<ServerRuntimeStatus | null> {
     try {
-      return (await (await this.openRuntime(server)).status()).state;
+      return await (await this.openRuntime(server)).status();
     } catch {
       // Home owns its own runtime, so a local one that cannot even open is running
       // nothing. A node's silence is only silence — never read it as stopped.
-      return this.isRemoteNode(server) ? null : "missing";
+      return this.isRemoteNode(server) ? null : { state: "missing" };
     }
+  }
+
+  private async runtimeState(server: ServerRecord): Promise<ServerRuntimeState | null> {
+    return (await this.runtimeStatus(server))?.state ?? null;
   }
 
   private async reconcileStatus(server: ServerRecord): Promise<void> {
@@ -1068,13 +1062,12 @@ export class ServerService {
     const server = await this.get(id);
     if (!server) return null;
 
-    const skillName = this.readSkillName(server.dataPath);
+    const { mode, skillName, skillMeta } = this.runtimeTarget(server);
     const join = await this.joinInfoFor(server);
-    const cached = this.readSkillMeta(server.dataPath);
     const consoleCap = await this.consoleCapability(id);
+    const logs = await this.logTail(server, 40);
 
-    if (server.runtimeMode === "native") {
-      const logs = await this.readNativeLogTail(server, 40);
+    if (mode === "native") {
       return {
         server,
         runtime: {
@@ -1086,27 +1079,17 @@ export class ServerService {
       };
     }
 
-    await this.ensureRuntime();
-    const adapter = this.adapterFor(id);
-    const name = this.containerName(id);
-    let containerStatus = "missing";
-    let logs: string[] = [];
-    try {
-      const info = await adapter.inspect(name);
-      containerStatus = info.status;
-      logs = await adapter.logs(info.id, 40).catch(() => []);
-    } catch {
-      containerStatus = "missing";
-    }
-
+    // The container status behind the runtime state: docker's own word for it,
+    // and "missing" when the node has no container under this name at all.
+    const status = await this.runtimeStatus(server);
     return {
       server,
       runtime: {
         kind: "docker",
-        containerName: name,
-        containerStatus,
+        containerName: this.containerName(id),
+        containerStatus: status?.detail ?? status?.state ?? "missing",
         imageHint:
-          this.resolveSkill(skillName)?.metadata.dockerImage ?? cached.dockerImage,
+          this.resolveSkill(skillName)?.metadata.dockerImage ?? skillMeta.dockerImage,
         join,
         logs,
         console: consoleCap ?? undefined,
@@ -1114,7 +1097,7 @@ export class ServerService {
     };
   }
 
-  /** Tail runtime logs for a server (Docker adapter or native console.log). */
+  /** Tail runtime logs for a server, in whichever quadrant its runtime lives. */
   async tailLogs(
     id: string,
     lines = 80,
@@ -1122,23 +1105,11 @@ export class ServerService {
     const server = await this.get(id);
     if (!server) return null;
     const capped = Math.min(200, Math.max(1, Math.floor(lines)));
-    if (server.runtimeMode === "native") {
-      return {
-        status: server.status,
-        runtime: "native",
-        lines: await this.readNativeLogTail(server, capped),
-      };
-    }
-    await this.ensureRuntime();
-    const adapter = this.adapterFor(id);
-    const name = this.containerName(id);
-    try {
-      const info = await adapter.inspect(name);
-      const logs = await adapter.logs(info.id, capped).catch(() => []);
-      return { status: server.status, runtime: "docker", lines: logs };
-    } catch {
-      return { status: server.status, runtime: "docker", lines: [] };
-    }
+    return {
+      status: server.status,
+      runtime: this.runtimeTarget(server).mode,
+      lines: await this.logTail(server, capped),
+    };
   }
 
   private runtimeModeForSkill(_skillName: string, containerSupport: string): "native" | "docker" {

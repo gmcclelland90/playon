@@ -1,4 +1,5 @@
 import type { NodeJobArgsInput, NodeJobKind, NodeJobResult } from "@playon/shared";
+import { readLogFileTail } from "./file-log-tail.js";
 import type {
   ContainerInfo,
   ContainerSpec,
@@ -226,6 +227,12 @@ export interface NativeProcessIdentity {
   name: string;
   /** Game process working directory: absolute locally, jail-relative on a node. */
   cwd: string;
+  /**
+   * Console file the process appends to: absolute locally, jail-relative on a
+   * node. A native target leaves no log stream behind it, so this file is the
+   * only thing the runtime can tail — and it must be re-derivable, never stored.
+   */
+  logFile?: string;
 }
 
 /** Process spec minus identity — the handle owns naming so identity stays re-resolvable. */
@@ -264,6 +271,10 @@ export function localNativeTransport(supervisor: ProcessSupervisor): NativeRunti
       }
       if (id) await supervisor.stop(id);
     },
+    async logs(identity, tail) {
+      if (!identity.logFile) return [];
+      return readLogFileTail(identity.logFile, tail);
+    },
   };
 }
 
@@ -281,6 +292,16 @@ export type ProcessJobDispatch = <K extends ProcessJobKind>(
   opts?: { timeoutMs?: number },
 ) => Promise<NodeJobResult<K>>;
 
+/**
+ * Reading a node's console file is an fs job, not a process one, so the native
+ * mode needs a second wire to tail logs. Without it the runtime reports logs as
+ * an unsupported capability rather than pretending the console is empty.
+ */
+export type NodeTextReadDispatch = (
+  args: NodeJobArgsInput<"fs_read_text">,
+  opts?: { timeoutMs?: number },
+) => Promise<NodeJobResult<"fs_read_text">>;
+
 export interface RemoteNativeTransportOptions {
   /** Passed with start/stop so the agent knows whose console to follow. */
   serverId?: string;
@@ -289,11 +310,22 @@ export interface RemoteNativeTransportOptions {
   stopTimeoutMs?: number;
   /** Identity re-resolution must not park status calls behind an unreachable node. */
   resolveTimeoutMs?: number;
+  /** Wire for tailing the node-side console file; omit to leave logs unsupported. */
+  readText?: NodeTextReadDispatch;
+  logsTimeoutMs?: number;
 }
 
 const REMOTE_PROCESS_START_TIMEOUT_MS = 60_000;
 const REMOTE_PROCESS_STOP_TIMEOUT_MS = 60_000;
 const REMOTE_PROCESS_RESOLVE_TIMEOUT_MS = 15_000;
+const REMOTE_LOGS_TIMEOUT_MS = 15_000;
+/** Tail window pulled off a node console; long enough for 200 lines of any game. */
+const REMOTE_LOGS_MAX_BYTES = 128_000;
+
+function tailLines(text: string, tail?: number): string[] {
+  const lines = text.split(/\r?\n/).filter((line) => line.length > 0);
+  return tail == null ? lines : lines.slice(-Math.max(1, tail));
+}
 
 /**
  * Locality half of the native mode over the node seam. Identity travels on every
@@ -306,6 +338,8 @@ export function remoteNativeTransport(
   opts: RemoteNativeTransportOptions = {},
 ): NativeRuntimeTransport {
   const serverId = opts.serverId;
+  const readText = opts.readText;
+  const logsTimeoutMs = opts.logsTimeoutMs ?? REMOTE_LOGS_TIMEOUT_MS;
   return {
     locality: "remote",
     async resolve(identity) {
@@ -341,6 +375,27 @@ export function remoteNativeTransport(
         { timeoutMs: opts.stopTimeoutMs ?? REMOTE_PROCESS_STOP_TIMEOUT_MS },
       );
     },
+    logs: readText
+      ? async (identity, tail) => {
+          if (!identity.logFile) return [];
+          // Probe the size first: a read from offset 0 returns the head of a long
+          // console, and the tail is the only part worth shipping back.
+          const probe = await readText(
+            { path: identity.logFile, offset: 0, maxBytes: 1 },
+            { timeoutMs: logsTimeoutMs },
+          );
+          if (probe.size === 0) return [];
+          const slice = await readText(
+            {
+              path: identity.logFile,
+              offset: Math.max(0, probe.size - REMOTE_LOGS_MAX_BYTES),
+              maxBytes: REMOTE_LOGS_MAX_BYTES,
+            },
+            { timeoutMs: logsTimeoutMs },
+          );
+          return tailLines(slice.content, tail);
+        }
+      : undefined,
   };
 }
 

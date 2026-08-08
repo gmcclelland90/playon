@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   localDockerTransport,
   localNativeTransport,
@@ -11,6 +14,7 @@ import {
   type DockerRuntimeTransport,
   type NativeProcessIdentity,
   type NativeRuntimeTransport,
+  type NodeTextReadDispatch,
   type ProcessJobDispatch,
   type ProcessJobKind,
   type ServerContainerSpec,
@@ -24,6 +28,18 @@ import type {
   ProcessSpec,
   ProcessSupervisor,
 } from "./types.js";
+
+const tempDirs: string[] = [];
+
+function tempDir(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "playon-server-runtime-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const dir of tempDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
+});
 
 const SPEC: ServerContainerSpec = {
   image: "playon/fixture:latest",
@@ -423,16 +439,20 @@ function fakeNativeTransport(opts?: { running?: ProcessInfo; stdio?: boolean }):
   return transport;
 }
 
-function openNative(transport: NativeRuntimeTransport) {
+function openNativeAs(transport: NativeRuntimeTransport, identity: NativeProcessIdentity) {
   return openServerRuntime(
     { serverId: "srv1", mode: "native", locality: transport.locality },
     {
       containerName: "playon-srv1",
-      processIdentity: IDENTITY,
+      processIdentity: identity,
       native: transport,
       resolveProcessSpec: async () => PROCESS_SPEC,
     },
   );
+}
+
+function openNative(transport: NativeRuntimeTransport) {
+  return openNativeAs(transport, IDENTITY);
 }
 
 describe("native ServerRuntimeHandle", () => {
@@ -561,7 +581,7 @@ describe("native ServerRuntimeHandle", () => {
     await expect(openNative(transport).status()).rejects.toThrow(/node_unreachable/);
   });
 
-  it("reports logs and stdin as unsupported until those slices land", async () => {
+  it("reports logs and stdin as unsupported when the transport cannot do them", async () => {
     const handle = openNative(fakeNativeTransport());
 
     await expect(handle.logs(20)).rejects.toThrow(/runtime_unsupported: native logs/);
@@ -652,6 +672,27 @@ describe("localNativeTransport", () => {
       "find:server-srv1:/srv/srv1/game",
       "start:server-srv1:/srv/srv1/game",
     ]);
+  });
+
+  it("tails the console file named by the identity", async () => {
+    const logFile = path.join(tempDir(), "console.log");
+    fs.writeFileSync(logFile, "one\ntwo\nthree\n");
+    const { supervisor } = fakeSupervisor();
+
+    const handle = openNativeAs(localNativeTransport(supervisor), { ...IDENTITY, logFile });
+
+    await expect(handle.logs(2)).resolves.toEqual(["two", "three"]);
+  });
+
+  it("tails nothing for an identity with no console file, and for one not written yet", async () => {
+    const { supervisor } = fakeSupervisor();
+    const transport = localNativeTransport(supervisor);
+    const unwritten = path.join(tempDir(), "console.log");
+
+    await expect(openNative(transport).logs(20)).resolves.toEqual([]);
+    await expect(
+      openNativeAs(transport, { ...IDENTITY, logFile: unwritten }).logs(20),
+    ).resolves.toEqual([]);
   });
 });
 
@@ -794,6 +835,108 @@ describe("remote native ServerRuntimeHandle", () => {
     const node = fakeProcessNode({ unreachable: true });
 
     await expect(openRemoteNative(node).status()).rejects.toThrow(/job_timeout/);
+  });
+});
+
+/** A console file living on the node, readable only through the fs job contract. */
+function fakeNodeConsole(text: string) {
+  const reads: Array<{ path: string; offset: number; maxBytes?: number }> = [];
+  const bytes = Buffer.from(text, "utf8");
+  const readText: NodeTextReadDispatch = async (args) => {
+    const offset = args.offset ?? 0;
+    reads.push({ path: args.path, offset, maxBytes: args.maxBytes });
+    const slice = bytes.subarray(
+      offset,
+      args.maxBytes == null ? undefined : offset + args.maxBytes,
+    );
+    return {
+      path: args.path,
+      content: slice.toString("utf8"),
+      bytesRead: slice.length,
+      truncated: offset + slice.length < bytes.length,
+      size: bytes.length,
+    };
+  };
+  return { reads, readText };
+}
+
+const REMOTE_LOG_IDENTITY: NativeProcessIdentity = {
+  ...REMOTE_IDENTITY,
+  logFile: "servers/srv1/logs/console.log",
+};
+
+function openRemoteNativeConsole(
+  node: ReturnType<typeof fakeProcessNode>,
+  readText?: NodeTextReadDispatch,
+  identity: NativeProcessIdentity = REMOTE_LOG_IDENTITY,
+) {
+  return openServerRuntime(
+    { serverId: "srv1", mode: "native", locality: "remote" },
+    {
+      containerName: "playon-srv1",
+      processIdentity: identity,
+      native: remoteNativeTransport(node.dispatch, { serverId: "srv1", readText }),
+      resolveProcessSpec: async () => REMOTE_PROCESS_SPEC,
+    },
+  );
+}
+
+describe("remote native logs", () => {
+  it("tails the node's console file over the fs job contract", async () => {
+    const nodeConsole = fakeNodeConsole("one\ntwo\nthree\n");
+
+    const lines = await openRemoteNativeConsole(fakeProcessNode(), nodeConsole.readText).logs(2);
+
+    expect(lines).toEqual(["two", "three"]);
+    expect(nodeConsole.reads[0]).toEqual({
+      path: "servers/srv1/logs/console.log",
+      offset: 0,
+      maxBytes: 1,
+    });
+  });
+
+  it("reads from the end of a long console, never its head", async () => {
+    const head = `${"x".repeat(150_000)}\n`;
+    const nodeConsole = fakeNodeConsole(`${head}last\n`);
+
+    const lines = await openRemoteNativeConsole(fakeProcessNode(), nodeConsole.readText).logs(1);
+
+    expect(lines).toEqual(["last"]);
+    // The probe reports the size; the real read only pulls the trailing window.
+    const size = Buffer.byteLength(`${head}last\n`, "utf8");
+    expect(nodeConsole.reads[1]).toEqual({
+      path: "servers/srv1/logs/console.log",
+      offset: size - 128_000,
+      maxBytes: 128_000,
+    });
+  });
+
+  it("stops after the probe when the node's console is still empty", async () => {
+    const nodeConsole = fakeNodeConsole("");
+
+    await expect(
+      openRemoteNativeConsole(fakeProcessNode(), nodeConsole.readText).logs(20),
+    ).resolves.toEqual([]);
+    expect(nodeConsole.reads).toHaveLength(1);
+  });
+
+  it("has nothing to tail for an identity with no console file", async () => {
+    const nodeConsole = fakeNodeConsole("one\n");
+
+    await expect(
+      openRemoteNativeConsole(
+        fakeProcessNode(),
+        nodeConsole.readText,
+        REMOTE_IDENTITY,
+      ).logs(20),
+    ).resolves.toEqual([]);
+    expect(nodeConsole.reads).toEqual([]);
+  });
+
+  it("reports logs unsupported when no console wire was lent", async () => {
+    await expect(openRemoteNativeConsole(fakeProcessNode()).logs(20)).rejects.toThrow(
+      /runtime_unsupported: native logs over remote transport/,
+    );
   });
 });
 
