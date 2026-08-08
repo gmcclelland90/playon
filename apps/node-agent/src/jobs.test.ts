@@ -2,7 +2,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { executeJob } from "./jobs.js";
+import { NodeJobKindSchema, type NodeJobKind } from "@playon/shared";
+import { executeJob, SUPPORTED_JOB_KINDS } from "./jobs.js";
+
+describe("SUPPORTED_JOB_KINDS", () => {
+  it("advertises every protocol kind exactly once", () => {
+    expect([...SUPPORTED_JOB_KINDS].sort()).toEqual([...NodeJobKindSchema.options].sort());
+    expect(new Set(SUPPORTED_JOB_KINDS).size).toBe(SUPPORTED_JOB_KINDS.length);
+  });
+});
 
 describe("executeJob", () => {
   it("pings with node metadata", async () => {
@@ -10,10 +18,48 @@ describe("executeJob", () => {
     const result = (await executeJob(
       { id: "j1", nodeId: "n1", kind: "ping", args: {} },
       root,
-    )) as { pong: boolean; nodeId: string };
+    )) as { pong: boolean; nodeId: string; dataRoot: string; at: string };
     expect(result.pong).toBe(true);
     expect(result.nodeId).toBe("n1");
+    expect(result.dataRoot).toBe(root);
+    expect(Number.isNaN(Date.parse(result.at))).toBe(false);
     fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("rejects malformed meta args with a typed validation error", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-"));
+    try {
+      await expect(
+        executeJob({ id: "j1a", nodeId: "n1", kind: "ping", args: { path: "/etc" } }, root),
+      ).rejects.toMatchObject({ code: "validation_failed", kind: "ping" });
+      await expect(
+        executeJob(
+          {
+            id: "j1b",
+            nodeId: "n1",
+            kind: "node_self_update",
+            args: { downloadUrl: "not-a-url", sha256: "short", version: "" },
+          },
+          root,
+        ),
+      ).rejects.toMatchObject({ code: "validation_failed", kind: "node_self_update" });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("returns a typed unsupported error for kinds it cannot run", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-"));
+    try {
+      await expect(
+        executeJob(
+          { id: "j1c", nodeId: "n1", kind: "future_kind" as NodeJobKind, args: {} },
+          root,
+        ),
+      ).rejects.toMatchObject({ code: "unsupported_job_kind", kind: "future_kind" });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("lists jailed directories and rejects escape", async () => {
@@ -39,10 +85,11 @@ describe("executeJob", () => {
     const caps = (await executeJob(
       { id: "j4", nodeId: "n1", kind: "runtime_caps", args: {} },
       root,
-    )) as { native: boolean; docker: boolean; steamcmd: boolean };
+    )) as { native: boolean; docker: boolean; steamcmd: boolean; jobKinds: NodeJobKind[] };
     expect(caps.native).toBe(true);
     expect(typeof caps.docker).toBe("boolean");
     expect(typeof caps.steamcmd).toBe("boolean");
+    expect(caps.jobKinds).toEqual([...SUPPORTED_JOB_KINDS]);
     fs.rmSync(root, { recursive: true, force: true });
   });
 

@@ -28,33 +28,6 @@ export const SessionResponseSchema = z.object({
   user: PublicUserSchema,
 });
 
-/** Runtime capabilities advertised by a node (Local / Remote / Cloud). */
-export const NodeCapabilitiesSchema = z.object({
-  os: z.enum(["linux", "windows"]),
-  /** Can start Docker game containers. */
-  docker: z.boolean(),
-  /** Can supervise native OS processes (always true for host agents). */
-  native: z.boolean().default(true),
-  /** SteamCMD binary present or auto-provisionable on this node. */
-  steamcmd: z.boolean().default(false),
-  freeDiskBytes: z.number().nonnegative().optional(),
-});
-
-export const NodeKindSchema = z.enum(["local", "lan", "cloud"]);
-
-export const NodeHeartbeatSchema = z.object({
-  nodeId: z.string().min(1),
-  name: z.string().min(1),
-  os: z.enum(["linux", "windows"]),
-  docker: z.boolean(),
-  native: z.boolean().default(true),
-  steamcmd: z.boolean().default(false),
-  freeDiskBytes: z.number().nonnegative().optional(),
-  agentVersion: z.string().default("0.1.0"),
-  /** Optional; control plane preserves kind set at Add-node time when omitted. */
-  kind: NodeKindSchema.optional(),
-});
-
 /** Job kinds the control plane may enqueue onto a node-agent. */
 export const NodeJobKindSchema = z.enum([
   "ping",
@@ -86,6 +59,40 @@ export const NodeJobKindSchema = z.enum([
   "manage_seed",
   "manage_cutover",
 ]);
+
+/** Runtime capabilities advertised by a node (Local / Remote / Cloud). */
+export const NodeCapabilitiesSchema = z.object({
+  os: z.enum(["linux", "windows"]),
+  /** Can start Docker game containers. */
+  docker: z.boolean(),
+  /** Can supervise native OS processes (always true for host agents). */
+  native: z.boolean().default(true),
+  /** SteamCMD binary present or auto-provisionable on this node. */
+  steamcmd: z.boolean().default(false),
+  freeDiskBytes: z.number().nonnegative().optional(),
+  /**
+   * Job kinds this agent can execute. Absent on agents older than the typed
+   * protocol; the control plane then falls back to optimistic dispatch.
+   */
+  jobKinds: z.array(NodeJobKindSchema).optional(),
+});
+
+export const NodeKindSchema = z.enum(["local", "lan", "cloud"]);
+
+export const NodeHeartbeatSchema = z.object({
+  nodeId: z.string().min(1),
+  name: z.string().min(1),
+  os: z.enum(["linux", "windows"]),
+  docker: z.boolean(),
+  native: z.boolean().default(true),
+  steamcmd: z.boolean().default(false),
+  freeDiskBytes: z.number().nonnegative().optional(),
+  agentVersion: z.string().default("0.1.0"),
+  /** Optional; control plane preserves kind set at Add-node time when omitted. */
+  kind: NodeKindSchema.optional(),
+  /** Protocol support advertisement; see `NodeCapabilitiesSchema.jobKinds`. */
+  jobKinds: z.array(NodeJobKindSchema).optional(),
+});
 
 export type SetupStatus = z.infer<typeof SetupStatusSchema>;
 export type BootstrapOwner = z.infer<typeof BootstrapOwnerSchema>;

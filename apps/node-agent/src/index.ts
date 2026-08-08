@@ -37,6 +37,10 @@ async function tickJobs() {
       const result = await executeJob(job, dataRoot);
       await reportJobResult(apiBase, nodeId, job.id, { ok: true, result }, nodeToken);
       console.log(`[node-agent] job done id=${job.id}`);
+      if (job.kind === "node_self_update") {
+        // Re-advertise jobKinds/version before the control plane sends anything else.
+        await tickHeartbeat();
+      }
       if (
         result &&
         typeof result === "object" &&

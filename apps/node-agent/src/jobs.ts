@@ -18,6 +18,9 @@ import {
   ManageCutoverArgsSchema,
   ManagePackReadArgsSchema,
   ManageSeedArgsSchema,
+  NodeJobError,
+  parseNodeJobArgs,
+  parseNodeJobResult,
   type NodeJobKind,
 } from "@playon/shared";
 import { assertPackPathAllowed, runImportProbe } from "./import-probe.js";
@@ -87,6 +90,48 @@ function approxDirBytes(dir: string): number {
 }
 
 export type RemoteJobKind = NodeJobKind;
+
+/**
+ * Job kinds this agent can execute, advertised on every heartbeat so the control
+ * plane can refuse kinds a skewed agent would not understand. Support here means
+ * "there is a handler"; a handler may still fail at runtime when the host lacks a
+ * dependency (e.g. `container_*` without Docker).
+ *
+ * Kept as an explicit list, not derived from the shared enum: adding a kind to the
+ * protocol must be a deliberate decision on this shore too (see `jobs.test.ts`).
+ */
+export const SUPPORTED_JOB_KINDS: readonly NodeJobKind[] = [
+  "ping",
+  "runtime_caps",
+  "node_self_update",
+  "fs_list",
+  "fs_ensure_dir",
+  "fs_write_text",
+  "fs_read_text",
+  "fs_put_archive",
+  "fs_get_archive",
+  "fs_remove",
+  "fs_rename",
+  "fs_copy",
+  "container_create",
+  "container_start",
+  "container_stop",
+  "container_remove",
+  "container_inspect",
+  "container_logs",
+  "container_stdin",
+  "process_start",
+  "process_stop",
+  "process_status",
+  "steamcmd_app_update",
+  "manage_probe",
+  "manage_pack",
+  "manage_pack_read",
+  "manage_seed",
+  "manage_cutover",
+];
+
+const SUPPORTED_JOB_KIND_SET: ReadonlySet<string> = new Set(SUPPORTED_JOB_KINDS);
 
 export interface RemoteJob {
   id: string;
@@ -164,19 +209,40 @@ function strArg(args: Record<string, unknown>, key: string): string {
   return v;
 }
 
-/** Execute a claimed job locally with path jail under dataRoot. */
+/**
+ * Execute a claimed job locally with path jail under dataRoot.
+ *
+ * Contracted kinds are validated on receive and again before the result is
+ * reported; unmigrated kinds still read straight from the untyped `job.args` bag.
+ */
 export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unknown> {
+  if (!SUPPORTED_JOB_KIND_SET.has(job.kind)) {
+    throw new NodeJobError("unsupported_job_kind", {
+      kind: String((job as { kind: string }).kind),
+    });
+  }
+
   if (job.kind === "ping") {
-    return {
+    parseNodeJobArgs("ping", job.args);
+    return parseNodeJobResult("ping", {
       pong: true,
       nodeId: job.nodeId,
       dataRoot,
       at: new Date().toISOString(),
-    };
+    });
   }
 
   if (job.kind === "runtime_caps") {
-    return probeCapabilities(dataRoot);
+    parseNodeJobArgs("runtime_caps", job.args);
+    return parseNodeJobResult("runtime_caps", {
+      ...probeCapabilities(dataRoot),
+      jobKinds: [...SUPPORTED_JOB_KINDS],
+    });
+  }
+
+  if (job.kind === "node_self_update") {
+    const args = parseNodeJobArgs("node_self_update", job.args);
+    return parseNodeJobResult("node_self_update", await performNodeSelfUpdate(args));
   }
 
   if (job.kind === "fs_list") {
@@ -460,22 +526,6 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
     });
   }
 
-  if (job.kind === "node_self_update") {
-    const downloadUrl = strArg(job.args, "downloadUrl");
-    const sha256 = strArg(job.args, "sha256");
-    const version = strArg(job.args, "version");
-    const preserve = Array.isArray(job.args.preserve)
-      ? (job.args.preserve as string[])
-      : undefined;
-    return performNodeSelfUpdate({
-      downloadUrl,
-      sha256,
-      version,
-      preserve,
-      skipExit: job.args.skipExit === true,
-    });
-  }
-
   if (job.kind === "manage_probe") {
     const args = ImportProbeArgsSchema.parse(job.args);
     return runImportProbe(args);
@@ -578,5 +628,7 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
     return runManageCutover(args, dataRoot);
   }
 
-  throw new Error(`unsupported_job_kind: ${String((job as { kind: string }).kind)}`);
+  throw new NodeJobError("unsupported_job_kind", {
+    kind: String((job as { kind: string }).kind),
+  });
 }
