@@ -15,21 +15,27 @@ import {
   HttpError,
   ImportLocalServerRequestSchema,
   ImportSftpServerRequestSchema,
+  ImportSkillZipRequestSchema,
+  InstallSkillFromCatalogRequestSchema,
   LLM_PRESET_IDS,
   LOCAL_NODE_ID,
   LoginSchema,
   NodeHeartbeatSchema,
   NodeJobKindSchema,
+  PanelInputRequestSchema,
+  PromoteServerSkillRequestSchema,
   RelocateServerRequestSchema,
   RoleSchema,
   UpdateWatcherSchema,
   can,
   deriveNodePresence,
+  messageFromError,
   placementBadge,
   placementFromNodeKind,
   roleAtLeast,
   type NodeKind,
   type Role,
+  type SkillInUseDetails,
   type WsEvent,
 } from "@playon/shared";
 import {
@@ -199,12 +205,17 @@ const CreateServerSchema = z
   .refine((body) => !!body.skillName, { message: "skillName_required" });
 
 
-const PanelInputSchema = z.object({
-  blockId: z.string().optional(),
-  serverId: z.string().optional(),
-  type: z.enum(["readiness", "vote"]),
-  payload: z.record(z.unknown()).default({}),
-});
+/**
+ * Skill FS failures already carry their own status vocabulary — unknown skill,
+ * jail escape, read-only source — so keep that mapping and only add the
+ * envelope's per-route code.
+ */
+function skillFsError(err: unknown, fallback: string, code: string): HttpError {
+  return new HttpError(skillFsHttpStatus(err), messageFromError(err, fallback), {
+    code,
+    cause: err,
+  });
+}
 
 const CreateUserSchema = z.object({
   username: z.string().min(3),
@@ -758,10 +769,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.get("/api/skills/catalog", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     const stored = await getSetting<SkillsCatalogSettings>(db, SKILLS_CATALOG_KEY);
     const catalogUrl = resolveSkillsCatalogUrl(
       process.env.PLAYON_SKILLS_CATALOG_URL,
@@ -781,34 +789,25 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         updatedAt: fetched.updatedAt,
       });
     } catch (err) {
-      return c.json(
-        {
-          catalogUrl,
-          skills: [],
-          warnings: [],
-          error: err instanceof Error ? err.message : "catalog_unavailable",
-        },
-        502,
-      );
+      // The catalog is an upstream we proxy, so its outage is a 502 rather than
+      // a caller mistake; `details` keeps the URL that failed for support.
+      throw HttpError.badGateway(messageFromError(err, "catalog_unavailable"), {
+        code: "skills_catalog_unavailable",
+        details: { catalogUrl },
+        cause: err,
+      });
     }
   });
 
   app.post("/api/skills/install-from-catalog", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "skills.package")) {
-      return c.json({ error: "forbidden" }, 403);
+    requireCan(c, "skills.package");
+    const body = await jsonBody(c, InstallSkillFromCatalogRequestSchema);
+    if (!body.name && !body.downloadUrl) {
+      throw HttpError.badRequest("name_or_downloadUrl_required", {
+        code: "name_or_downloadUrl_required",
+      });
     }
     try {
-      const body = z
-        .object({
-          name: z.string().min(1).optional(),
-          downloadUrl: z.string().url().optional(),
-          overwrite: z.boolean().optional(),
-        })
-        .parse(await c.req.json());
-      if (!body.name && !body.downloadUrl) {
-        return c.json({ error: "name_or_downloadUrl_required" }, 400);
-      }
       const stored = await getSetting<SkillsCatalogSettings>(db, SKILLS_CATALOG_KEY);
       const catalogUrl = resolveSkillsCatalogUrl(
         process.env.PLAYON_SKILLS_CATALOG_URL,
@@ -835,29 +834,24 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         skippedDeps: result.skippedDeps,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "catalog_install_failed";
-      const status = message.startsWith("skill_exists")
-        ? 409
-        : message.startsWith("catalog_skill_not_found")
-          ? 404
-          : message.startsWith("catalog_sha256")
-            ? 400
-            : message.startsWith("skills_catalog_fetch")
-              ? 502
-              : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "catalog_install_failed",
+        code: "skill_catalog_install_failed",
+        statusPrefixes: {
+          404: ["catalog_skill_not_found"],
+          409: ["skill_exists"],
+          502: ["skills_catalog_fetch"],
+        },
+      });
     }
   });
 
   app.get("/api/skills", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     const serverId = c.req.query("serverId") || undefined;
     if (serverId) {
       const server = await serverService.get(serverId);
-      if (!server) return c.json({ error: "server_not_found" }, 404);
+      if (!server) throw HttpError.notFound("server_not_found", { code: "server_not_found" });
     }
     const roots = skillsRootsForWorkspace(config.skillsRoots, config.dataRoot, serverId);
     const skills = listSkills(roots).map((s) => {
@@ -881,10 +875,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.get("/api/skills/drafts", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     const drafts = draftService.list().map((d) => {
       const entry = loadSkillMetadata(config.skillsRoots, d.skillName);
       return {
@@ -902,29 +893,22 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/skills/drafts/:slug/promote", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "skills.package")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "skills.package");
     try {
       const promoted = draftService.promote(decodeURIComponent(c.req.param("slug")));
       return c.json({ skill: promoted });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "promote_failed";
-      const status = message.startsWith("unknown_draft")
-        ? 404
-        : message.startsWith("skill_exists")
-          ? 409
-          : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "promote_failed",
+        code: "skill_draft_promote_failed",
+        notFoundPrefixes: ["unknown_draft"],
+        statusPrefixes: { 409: ["skill_exists"] },
+      });
     }
   });
 
   app.get("/api/skills/:name/fs", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    const user = requireRole(c, "operator");
     const name = decodeURIComponent(c.req.param("name"));
     const relPath = c.req.query("path")?.trim() || ".";
     try {
@@ -937,21 +921,15 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         source: skillFs.source(name),
       });
     } catch (err) {
-      return c.json(
-        { error: err instanceof Error ? err.message : "fs_list_failed" },
-        skillFsHttpStatus(err),
-      );
+      throw skillFsError(err, "fs_list_failed", "skill_fs_list_failed");
     }
   });
 
   app.get("/api/skills/:name/fs/content", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    const user = requireRole(c, "operator");
     const name = decodeURIComponent(c.req.param("name"));
     const relPath = c.req.query("path")?.trim();
-    if (!relPath) return c.json({ error: "path_required" }, 400);
+    if (!relPath) throw HttpError.badRequest("path_required", { code: "path_required" });
     try {
       const file = skillFs.read(name, relPath);
       return c.json({
@@ -964,42 +942,34 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         source: file.source,
       });
     } catch (err) {
-      return c.json(
-        { error: err instanceof Error ? err.message : "fs_read_failed" },
-        skillFsHttpStatus(err),
-      );
+      throw skillFsError(err, "fs_read_failed", "skill_fs_read_failed");
     }
   });
 
   app.put("/api/skills/:name/fs/content", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "skills.package")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "skills.package");
     const name = decodeURIComponent(c.req.param("name"));
+    // Deliberately lenient about the body: a missing path or content is
+    // reported by field rather than as a generic schema failure.
     const body = (await c.req.json().catch(() => null)) as {
       path?: unknown;
       content?: unknown;
     } | null;
     const relPath = typeof body?.path === "string" ? body.path.trim() : "";
-    if (!relPath) return c.json({ error: "path_required" }, 400);
-    if (typeof body?.content !== "string") return c.json({ error: "content_required" }, 400);
+    if (!relPath) throw HttpError.badRequest("path_required", { code: "path_required" });
+    if (typeof body?.content !== "string") {
+      throw HttpError.badRequest("content_required", { code: "content_required" });
+    }
     try {
       const written = skillFs.write(name, relPath, body.content);
       return c.json(written);
     } catch (err) {
-      return c.json(
-        { error: err instanceof Error ? err.message : "fs_write_failed" },
-        skillFsHttpStatus(err),
-      );
+      throw skillFsError(err, "fs_write_failed", "skill_fs_write_failed");
     }
   });
 
   app.get("/api/skills/:name/export", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "skills.package")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "skills.package");
     try {
       const exported = skillPackages.exportZip(decodeURIComponent(c.req.param("name")));
       return new Response(Buffer.from(exported.bytes), {
@@ -1009,20 +979,19 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         },
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "export_failed";
-      const status = message.startsWith("unknown_skill") ? 404 : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "export_failed",
+        code: "skill_export_failed",
+        notFoundPrefixes: ["unknown_skill"],
+      });
     }
   });
 
   app.get("/api/skills/:name", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     const name = decodeURIComponent(c.req.param("name"));
     const entry = loadSkillMetadata(config.skillsRoots, name);
-    if (!entry) return c.json({ error: "unknown_skill" }, 404);
+    if (!entry) throw HttpError.notFound("unknown_skill", { code: "unknown_skill" });
     const source = classifySkillSource(entry, config.dataRoot);
     const localNames = new Set(listSkills(config.skillsRoots).map((s) => s.metadata.name));
     const dependencies = (entry.metadata.dependencies ?? []).map((dep) => ({
@@ -1041,10 +1010,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.delete("/api/skills/:name", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "skills.package")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "skills.package");
     const name = decodeURIComponent(c.req.param("name"));
     const force =
       c.req.query("force") === "1" ||
@@ -1055,29 +1021,26 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         .filter((s) => readSkillMarker(s.dataPath)?.skillName === name)
         .map((s) => ({ id: s.id, name: s.name }));
       if (inUse.length && !force) {
-        return c.json(
-          { error: "skill_in_use", servers: inUse },
-          409,
-        );
+        // The blocking servers ride in `details` so the confirm dialog can list
+        // them without a second round trip.
+        throw HttpError.conflict("skill_in_use", {
+          code: "skill_in_use",
+          details: { servers: inUse } satisfies SkillInUseDetails,
+        });
       }
       const removed = skillPackages.uninstall(name);
       return c.json({ ok: true, skill: removed, servers: inUse });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "uninstall_failed";
-      const status = message.startsWith("unknown_skill")
-        ? 404
-        : message.startsWith("skill_not_uninstallable")
-          ? 400
-          : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "uninstall_failed",
+        code: "skill_uninstall_failed",
+        notFoundPrefixes: ["unknown_skill"],
+      });
     }
   });
 
   app.post("/api/skills/import", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "skills.package")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "skills.package");
     try {
       const contentType = c.req.header("content-type") ?? "";
       let bytes: Uint8Array;
@@ -1085,53 +1048,42 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       if (contentType.includes("multipart/form-data")) {
         const body = await c.req.parseBody();
         const file = body.file;
-        if (!(file instanceof File)) return c.json({ error: "file_required" }, 400);
+        if (!(file instanceof File)) {
+          throw HttpError.badRequest("file_required", { code: "file_required" });
+        }
         bytes = new Uint8Array(await file.arrayBuffer());
         overwrite = body.overwrite === "true" || body.overwrite === "1";
       } else {
-        const body = z
-          .object({
-            zipBase64: z.string().min(1),
-            overwrite: z.boolean().optional(),
-          })
-          .parse(await c.req.json());
+        const body = await jsonBody(c, ImportSkillZipRequestSchema);
         bytes = Uint8Array.from(Buffer.from(body.zipBase64, "base64"));
         overwrite = body.overwrite ?? false;
       }
       const imported = skillPackages.importZip(bytes, { overwrite });
       return c.json({ skill: imported });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "import_failed";
-      const status = message.startsWith("skill_exists") ? 409 : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "import_failed",
+        code: "skill_import_failed",
+        statusPrefixes: { 409: ["skill_exists"] },
+      });
     }
   });
 
   app.post("/api/skills/promote-server", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "skills.package")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "skills.package");
+    const body = await jsonBody(c, PromoteServerSkillRequestSchema);
     try {
-      const body = z
-        .object({
-          serverId: z.string().min(1),
-          skillSlug: z.string().min(1),
-          overwrite: z.boolean().optional(),
-        })
-        .parse(await c.req.json());
       const promoted = skillPackages.promoteServerSkill(body.serverId, body.skillSlug, {
         overwrite: body.overwrite,
       });
       return c.json({ skill: promoted });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "promote_failed";
-      const status = message.startsWith("unknown_server_skill")
-        ? 404
-        : message.startsWith("skill_exists")
-          ? 409
-          : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "promote_failed",
+        code: "skill_promote_server_failed",
+        notFoundPrefixes: ["unknown_server_skill"],
+        statusPrefixes: { 409: ["skill_exists"] },
+      });
     }
   });
 
@@ -1250,92 +1202,69 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     }
   });
 
+  /** Every watcher route answers the same 404 for an id that isn't ours. */
+  const requireWatcher = async (id: string) => {
+    const watcher = await watcherService.get(id);
+    if (!watcher) throw HttpError.notFound("not_found", { code: "watcher_not_found" });
+    return watcher;
+  };
+
   app.get("/api/watchers", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "watchers.read")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "watchers.read");
     const serverId = c.req.query("serverId") || undefined;
     return c.json({ watchers: await watcherService.list(serverId) });
   });
 
   app.get("/api/servers/:id/watchers", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "watchers.read")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "watchers.read");
     return c.json({ watchers: await watcherService.list(c.req.param("id")) });
   });
 
   app.get("/api/watchers/:id", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "watchers.read")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const watcher = await watcherService.get(c.req.param("id"));
-    if (!watcher) return c.json({ error: "not_found" }, 404);
-    return c.json({ watcher });
+    requireCan(c, "watchers.read");
+    return c.json({ watcher: await requireWatcher(c.req.param("id")) });
   });
 
   app.post("/api/watchers", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "watchers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "watchers.manage");
+    const body = await jsonBody(c, CreateWatcherSchema);
     try {
-      const body = CreateWatcherSchema.parse(await c.req.json());
       const watcher = await watcherService.create(body);
       return c.json({ watcher }, 201);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "create_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, { fallback: "create_failed", code: "watcher_create_failed" });
     }
   });
 
   app.patch("/api/watchers/:id", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "watchers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "watchers.manage");
+    const body = await jsonBody(c, UpdateWatcherSchema);
     try {
-      const body = UpdateWatcherSchema.parse(await c.req.json());
       const watcher = await watcherService.update(c.req.param("id"), body);
-      if (!watcher) return c.json({ error: "not_found" }, 404);
+      if (!watcher) throw HttpError.notFound("not_found", { code: "watcher_not_found" });
       return c.json({ watcher });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "update_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, { fallback: "update_failed", code: "watcher_update_failed" });
     }
   });
 
   app.delete("/api/watchers/:id", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "watchers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "watchers.manage");
     const ok = await watcherService.delete(c.req.param("id"));
-    if (!ok) return c.json({ error: "not_found" }, 404);
+    if (!ok) throw HttpError.notFound("not_found", { code: "watcher_not_found" });
     return c.json({ ok: true });
   });
 
   app.post("/api/watchers/:id/run", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "watchers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const watcher = await watcherService.get(c.req.param("id"));
-    if (!watcher) return c.json({ error: "not_found" }, 404);
+    requireCan(c, "watchers.manage");
+    const watcher = await requireWatcher(c.req.param("id"));
     await watcherEngine.enqueue(watcher, { kind: "manual" }, { force: true });
     return c.json({ ok: true, watcherId: watcher.id, queued: true });
   });
 
   app.get("/api/watchers/:id/runs", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "watchers.read")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const watcher = await watcherService.get(c.req.param("id"));
-    if (!watcher) return c.json({ error: "not_found" }, 404);
+    requireCan(c, "watchers.read");
+    const watcher = await requireWatcher(c.req.param("id"));
     const limit = Number(c.req.query("limit") ?? 50);
     return c.json({ runs: await watcherService.listRuns(watcher.id, limit) });
   });
@@ -1608,12 +1537,11 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
       c.req.header("x-real-ip") ||
       "local";
-    if (!allowPanelInput(key)) {
-      return c.json({ error: "rate_limited" }, 429);
-    }
-    const body = PanelInputSchema.parse(await c.req.json());
-    const result = await panelService.recordInput(body);
-    return c.json(result);
+    if (!allowPanelInput(key)) throw HttpError.rateLimited("rate_limited");
+    // Panel input is unauthenticated, so anything the service throws stays
+    // opaque behind the shared 500 rather than echoing internals to players.
+    const body = await jsonBody(c, PanelInputRequestSchema);
+    return c.json(await panelService.recordInput(body));
   });
 
   app.get("/api/nodes", async (c) => {

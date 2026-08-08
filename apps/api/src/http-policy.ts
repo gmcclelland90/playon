@@ -6,6 +6,7 @@ import {
   validationIssuesFrom,
   type Capability,
   type HttpErrorCode,
+  type HttpErrorStatus,
   type Role,
 } from "@playon/shared";
 import type { AuthUser } from "./auth/session.js";
@@ -72,8 +73,24 @@ export type ServiceFailure = {
   fallback: string;
   code: HttpErrorCode;
   /** Message prefixes that mean "the thing isn't there" rather than "bad request". */
-  notFoundPrefixes?: string[];
+  notFoundPrefixes?: readonly string[];
+  /**
+   * Message prefixes for services with a richer failure vocabulary — "already
+   * exists" is a 409, an unreachable catalog is a 502. Anything unmatched still
+   * falls back to 400.
+   */
+  statusPrefixes?: Partial<Record<HttpErrorStatus, readonly string[]>>;
 };
+
+function statusForServiceMessage(message: string, failure: ServiceFailure): HttpErrorStatus {
+  for (const [status, prefixes] of Object.entries(failure.statusPrefixes ?? {})) {
+    if (prefixes?.some((prefix) => message.startsWith(prefix))) {
+      return Number(status) as HttpErrorStatus;
+    }
+  }
+  if ((failure.notFoundPrefixes ?? []).some((prefix) => message.startsWith(prefix))) return 404;
+  return 400;
+}
 
 /**
  * Wraps a service rejection into an `HttpError` while keeping the service's
@@ -91,7 +108,8 @@ export function serviceHttpError(err: unknown, failure: ServiceFailure): HttpErr
     });
   }
   const message = err instanceof Error && err.message.trim() ? err.message : failure.fallback;
-  const notFound = (failure.notFoundPrefixes ?? []).some((prefix) => message.startsWith(prefix));
-  const init = { code: failure.code, cause: err };
-  return notFound ? HttpError.notFound(message, init) : HttpError.badRequest(message, init);
+  return new HttpError(statusForServiceMessage(message, failure), message, {
+    code: failure.code,
+    cause: err,
+  });
 }
