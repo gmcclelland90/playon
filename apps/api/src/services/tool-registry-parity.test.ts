@@ -51,6 +51,13 @@ const MIGRATED_TOOLS = [
   "skill_install_url",
   "panel_publish",
   "panel_list",
+  "snapshot_create",
+  "snapshot_restore",
+  "snapshot_list",
+  "snapshot_enforce_retention",
+  "backup_offnode",
+  "backup_offnode_list",
+  "backup_offnode_restore",
   "watchers_list",
   "watchers_get",
   "watchers_create",
@@ -73,6 +80,8 @@ const SERVER_SCOPED_TOOLS = [
   "servers_query",
   "skill_promote_server",
   "watchers_create",
+  "snapshot_create",
+  "backup_offnode",
 ];
 
 function testConfig(dataRoot: string): AppConfig {
@@ -180,6 +189,20 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     );
     expect(surface.skill("watchers_run_now")).toBe("monitor");
     expect(surface.confirmAction("watchers_delete")).toBe("delete a watcher automation");
+    expect(surface.confirmAction("snapshot_restore")).toBe(
+      "restore this server from a snapshot",
+    );
+    expect(surface.xp("snapshot_restore")).toEqual({
+      xp: 40,
+      reason: "recovery",
+      celebrate: true,
+    });
+    expect(surface.confirmAction("backup_offnode_restore")).toBe(
+      "restore this server from an off-site backup",
+    );
+    expect(surface.xp("backup_offnode")).toEqual({ xp: 20, reason: "durable_backup" });
+    expect(surface.skill("snapshot_list")).toBe("backup");
+    expect(surface.activityVerb("backup_offnode_list")).toBe("snapshot");
   });
 
   it("declares server scope for lifecycle tools that act on one server", () => {
@@ -198,7 +221,18 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(byName.get("panel_publish")?.workspacePolicy).toBe("server_optional");
     expect(byName.get("panel_list")?.workspacePolicy).toBe("server_optional");
     expect(byName.get("watchers_list")?.workspacePolicy).toBe("server_optional");
-    // Watcher-id tools enforce the binding against the watcher's own server instead.
+    // Snapshot/backup reads narrow to the bound server but still answer in an unbound chat.
+    for (const name of [
+      "snapshot_list",
+      "snapshot_enforce_retention",
+      "backup_offnode_list",
+      "backup_offnode_restore",
+    ]) {
+      expect(byName.get(name)?.workspacePolicy, `${name} should narrow, not require`).toBe(
+        "server_optional",
+      );
+    }
+    // Watcher-id and snapshot-id tools enforce the binding against the record's own server.
     for (const name of [
       "watchers_get",
       "watchers_update",
@@ -206,6 +240,7 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
       "watchers_enable",
       "watchers_run_now",
       "watchers_runs_list",
+      "snapshot_restore",
     ]) {
       expect(byName.get(name)?.workspacePolicy, `${name} should not resolve args.serverId`).toBe(
         "none",
@@ -228,6 +263,14 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
 
     await expect(
       registry.invoke("servers_logs_tail", { serverId: "other-server" }),
+    ).resolves.toMatchObject({
+      error: "workspace_server_mismatch",
+      workspaceServerId: "bound-server",
+      requestedServerId: "other-server",
+    });
+
+    await expect(
+      registry.invoke("snapshot_list", { serverId: "other-server" }),
     ).resolves.toMatchObject({
       error: "workspace_server_mismatch",
       workspaceServerId: "bound-server",
