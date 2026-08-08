@@ -13,7 +13,10 @@ import {
   AddNodeRequestSchema,
   BackupTargetRequestSchema,
   BootstrapOwnerSchema,
+  ChatRequestSchema,
+  ConfirmRequestSchema,
   CreateAccessTokenRequestSchema,
+  CreateConversationRequestSchema,
   CreateOffNodeBackupRequestSchema,
   CreateSnapshotRequestSchema,
   CreateUserRequestSchema,
@@ -68,6 +71,7 @@ import {
   requireRole,
   requireSession,
   serviceHttpError,
+  sessionHasRole,
 } from "./http-policy.js";
 import { redactJson, redactString } from "./services/redaction.js";
 import { mountStaticWeb } from "./static-web.js";
@@ -302,11 +306,11 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   app.get(
     "/api/ws",
     upgradeWebSocket((c) => {
-      const user = c.get("user");
+      const allowed = sessionHasRole(c, "operator");
       let unsubscribe: (() => void) | undefined;
       return {
         onOpen(_event, ws) {
-          if (!user || !roleAtLeast(user.role, "operator")) {
+          if (!allowed) {
             ws.close(1008, "forbidden");
             return;
           }
@@ -1137,17 +1141,13 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.get("/api/servers/:id/health", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     const remediate = c.req.query("remediate") === "1" || c.req.query("remediate") === "true";
     try {
       const report = await healthService.checkServer(c.req.param("id"), { remediate });
       return c.json(report);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "health_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, { fallback: "health_failed", code: "server_health_failed" });
     }
   });
 
@@ -1232,14 +1232,17 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     return c.json(result);
   });
 
-  app.get("/api/servers/:id/conversations", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "chat.agent")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const serverId = c.req.param("id");
+  /** Conversations are per-server, so an id that isn't ours is the same 404 everywhere. */
+  const requireConversationServer = async (serverId: string) => {
     const server = await serverService.get(serverId);
-    if (!server) return c.json({ error: "not_found" }, 404);
+    if (!server) throw HttpError.notFound("not_found", { code: "server_not_found" });
+    return server;
+  };
+
+  app.get("/api/servers/:id/conversations", async (c) => {
+    const user = requireCan(c, "chat.agent");
+    const serverId = c.req.param("id");
+    await requireConversationServer(serverId);
 
     const rows = await db
       .select({
@@ -1265,17 +1268,11 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/servers/:id/conversations", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "chat.agent")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    const user = requireCan(c, "chat.agent");
     const serverId = c.req.param("id");
-    const server = await serverService.get(serverId);
-    if (!server) return c.json({ error: "not_found" }, 404);
+    await requireConversationServer(serverId);
 
-    const body = z
-      .object({ title: z.string().min(1).max(120).optional() })
-      .parse((await c.req.json().catch(() => ({}))) as unknown);
+    const body = await optionalJsonBody(c, CreateConversationRequestSchema);
     const now = new Date();
     const id = nanoid();
     await db.insert(conversations).values({
@@ -1839,10 +1836,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     }
   });
   app.get("/api/agents", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
     const skills = await agentProgress.listSkills();
     return c.json({
       agent: { name: "Agent" },
@@ -1857,10 +1851,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.get("/api/activity", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
     const limitRaw = Number(c.req.query("limit") ?? "40");
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 40;
     const rows = await db
@@ -2101,11 +2092,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.get("/api/conversations", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "chat.agent")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-
+    const user = requireCan(c, "chat.agent");
     const serverId = c.req.query("serverId") || undefined;
     const rows = await db
       .select({
@@ -2135,10 +2122,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.get("/api/conversations/:id/messages", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "chat.agent")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    const user = requireCan(c, "chat.agent");
 
     const conversationId = c.req.param("id");
     const rows = await db
@@ -2147,11 +2131,11 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       .where(eq(conversations.id, conversationId))
       .limit(1);
     const conversation = rows[0];
-    if (!conversation) return c.json({ error: "not_found" }, 404);
-
-    if (conversation.userId !== user.id) {
-      return c.json({ error: "forbidden" }, 403);
+    if (!conversation) {
+      throw HttpError.notFound("not_found", { code: "conversation_not_found" });
     }
+    // Someone else's transcript reads as forbidden, not as a missing id.
+    if (conversation.userId !== user.id) throw HttpError.forbidden("forbidden");
 
     const messageRows = await db
       .select({
@@ -2180,16 +2164,10 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/chat", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "chat.agent")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const body = (await c.req.json()) as {
-      message?: string;
-      conversationId?: string;
-      serverId?: string;
-    };
-    if (!body.message?.trim()) return c.json({ error: "message_required" }, 400);
+    const user = requireCan(c, "chat.agent");
+    const body = await jsonBody(c, ChatRequestSchema);
+    const prompt = body.message?.trim() ? body.message : null;
+    if (!prompt) throw HttpError.badRequest("message_required", { code: "message_required" });
 
     let conversationId = body.conversationId;
     /** Bound maintain chat when set; unbound install chat when undefined. */
@@ -2203,11 +2181,12 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         .where(eq(conversations.id, conversationId))
         .limit(1);
       const conversation = existing[0];
+      // Another user's conversation reads as missing so ids stay unguessable.
       if (!conversation || conversation.userId !== user.id) {
-        return c.json({ error: "conversation_not_found" }, 404);
+        throw HttpError.notFound("conversation_not_found", { code: "conversation_not_found" });
       }
       if (body.serverId && conversation.serverId && body.serverId !== conversation.serverId) {
-        return c.json({ error: "serverId_mismatch" }, 400);
+        throw HttpError.badRequest("serverId_mismatch", { code: "serverId_mismatch" });
       }
       workspaceServerId = conversation.serverId ?? body.serverId;
       await db
@@ -2217,7 +2196,9 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     } else {
       if (body.serverId) {
         const server = await serverService.get(body.serverId);
-        if (!server) return c.json({ error: "server_not_found" }, 404);
+        if (!server) {
+          throw HttpError.notFound("server_not_found", { code: "server_not_found" });
+        }
         workspaceServerId = body.serverId;
       } else {
         workspaceServerId = undefined;
@@ -2227,7 +2208,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         id: conversationId,
         userId: user.id,
         serverId: workspaceServerId,
-        title: body.message.slice(0, 80),
+        title: prompt.slice(0, 80),
         createdAt: now,
         updatedAt: now,
       });
@@ -2249,7 +2230,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       id: nanoid(),
       conversationId,
       role: "user",
-      content: body.message,
+      content: prompt,
       createdAt: now,
     });
 
@@ -2363,7 +2344,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         },
       });
       publishActivity("thinking");
-      const result = await orchestrator.handle(body.message, priorMessages);
+      const result = await orchestrator.handle(prompt, priorMessages);
 
       for (const trace of result.toolTrace) {
         const failed =
@@ -2471,10 +2452,14 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           aborted: true,
         });
       }
-      const messageText = err instanceof Error ? err.message : "chat_failed";
-      console.error("chat failed:", messageText);
-      const status = messageText.includes("llm_api_key_required") ? 400 : 502;
-      return c.json({ error: messageText }, status);
+      const messageText = messageFromError(err, "chat_failed");
+      console.error("chat failed:", redactString(messageText));
+      // A missing key is the operator's to fix; anything else is the LLM upstream.
+      const needsKey = messageText.includes("llm_api_key_required");
+      throw new HttpError(needsKey ? 400 : 502, messageText, {
+        code: needsKey ? "llm_api_key_required" : "chat_failed",
+        cause: err,
+      });
     } finally {
       abortSignal.removeEventListener("abort", onClientAbort);
       publishActivity("idle");
@@ -2512,18 +2497,14 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/confirm", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "confirm.host")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const body = z
-      .object({
-        requestId: z.string().min(1),
-        approved: z.boolean(),
-      })
-      .parse(await c.req.json());
+    requireCan(c, "confirm.host");
+    const body = await jsonBody(c, ConfirmRequestSchema);
     const ok = confirmService.resolve(body.requestId, body.approved);
-    if (!ok) return c.json({ error: "unknown_or_expired_request" }, 404);
+    if (!ok) {
+      throw HttpError.notFound("unknown_or_expired_request", {
+        code: "unknown_or_expired_request",
+      });
+    }
     return c.json({ ok: true, requestId: body.requestId, approved: body.approved });
   });
 

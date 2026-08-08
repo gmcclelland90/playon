@@ -10,15 +10,17 @@ import { applyBootstrap } from "./db/migrate.js";
 import { hashPassword } from "./auth/password.js";
 import { createSession, SESSION_COOKIE } from "./auth/session.js";
 import { nodes, servers, users } from "./db/schema.js";
+import { LLM_SETTINGS_KEY, setSetting, type LlmSettings } from "./services/settings.js";
 
 type Envelope = { error: string; code?: string; details?: unknown };
 
 /**
  * Routes migrated to the shared envelope: session, servers list/detail, every
  * mutating server route (create, import, start, stop, restart, delete, relocate,
- * console), the skill library, watchers, the player panel, and the nodes,
- * snapshots, backups, settings and users groups. Status codes and `error` text
- * must match pre-envelope behaviour; `code` is the addition.
+ * console), server health, the skill library, watchers, the player panel, the
+ * nodes, snapshots, backups, settings and users groups, and the agent
+ * conversation surface (chat, conversations, activity, confirm). Status codes
+ * and `error` text must match pre-envelope behaviour; `code` is the addition.
  */
 describe("transport error envelope on migrated routes", () => {
   let db: Db;
@@ -1022,5 +1024,236 @@ describe("transport error envelope on migrated routes", () => {
     });
     expect(ok.status).toBe(200);
     expect(((await ok.json()) as { user: { role: string } }).user.role).toBe("operator");
+  });
+
+  /** Opens a session on `srv-1` through the route the UI uses. */
+  async function startConversation(
+    app: ReturnType<typeof createApp>,
+    title = "Paper night",
+  ): Promise<string> {
+    const created = await app.request("/api/servers/srv-1/conversations", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    expect(created.status).toBe(200);
+    return ((await created.json()) as { conversation: { id: string } }).conversation.id;
+  }
+
+  it("gates the conversation surface on the same 403 forbidden envelope", async () => {
+    const app = createApp(db, config);
+    await expectForbidden(app, [
+      ["/api/servers/srv-1/health", {}],
+      ["/api/servers/srv-1/conversations", {}],
+      ["/api/servers/srv-1/conversations", { method: "POST" }],
+      ["/api/conversations", {}],
+      ["/api/conversations/conv-1/messages", {}],
+      ["/api/agents", {}],
+      ["/api/activity", {}],
+      ["/api/chat", { method: "POST" }],
+      ["/api/confirm", { method: "POST" }],
+    ]);
+  });
+
+  it("keeps server health on 400 with a route code", async () => {
+    const app = createApp(db, config);
+    const res = await app.request("/api/servers/ghost/health", { headers: { cookie } });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as Envelope;
+    expect(body.code).toBe("server_health_failed");
+    expect(body.error).toMatch(/unknown_server/);
+  });
+
+  it("scopes conversation routes to a known server", async () => {
+    const app = createApp(db, config);
+    const notFound = { error: "not_found", code: "server_not_found" };
+
+    const list = await app.request("/api/servers/ghost/conversations", { headers: { cookie } });
+    expect(list.status).toBe(404);
+    expect(await list.json()).toEqual(notFound);
+
+    const create = await app.request("/api/servers/ghost/conversations", {
+      method: "POST",
+      headers: { cookie },
+    });
+    expect(create.status).toBe(404);
+    expect(await create.json()).toEqual(notFound);
+
+    const conversationId = await startConversation(app);
+    const listed = await app.request("/api/servers/srv-1/conversations", { headers: { cookie } });
+    expect(listed.status).toBe(200);
+    const listedBody = (await listed.json()) as { conversations: Array<{ id: string }> };
+    expect(listedBody.conversations.map((row) => row.id)).toEqual([conversationId]);
+  });
+
+  it("validates the conversation title but still accepts no body at all", async () => {
+    const app = createApp(db, config);
+
+    const blank = await app.request("/api/servers/srv-1/conversations", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ title: "" }),
+    });
+    expect(blank.status).toBe(400);
+    const blankBody = (await blank.json()) as Envelope & {
+      details?: { issues?: Array<{ path: string }> };
+    };
+    expect(blankBody).toMatchObject({ error: "invalid_request", code: "invalid_request" });
+    expect(blankBody.details?.issues?.map((issue) => issue.path)).toContain("title");
+
+    // An unreadable body is deliberately the default session, not a 400.
+    const malformed = await app.request("/api/servers/srv-1/conversations", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: "{not json",
+    });
+    expect(malformed.status).toBe(200);
+    expect(((await malformed.json()) as { conversation: { title: string } }).conversation.title)
+      .toBe("New session");
+  });
+
+  it("answers 404 for an unknown transcript and 403 for someone else's", async () => {
+    const app = createApp(db, config);
+    await db.insert(users).values({
+      id: "admin-1",
+      username: "admin",
+      displayName: "Admin",
+      passwordHash: hashPassword("password123"),
+      role: "admin",
+      createdAt: new Date(),
+    });
+    const adminCookie = `${SESSION_COOKIE}=${await createSession(db, "admin-1")}`;
+    const conversationId = await startConversation(app);
+
+    const mine = await app.request(`/api/conversations/${conversationId}/messages`, {
+      headers: { cookie },
+    });
+    expect(mine.status).toBe(200);
+
+    const theirs = await app.request(`/api/conversations/${conversationId}/messages`, {
+      headers: { cookie: adminCookie },
+    });
+    expect(theirs.status).toBe(403);
+    expect(await theirs.json()).toEqual({ error: "forbidden", code: "forbidden" });
+
+    const ghost = await app.request("/api/conversations/ghost/messages", { headers: { cookie } });
+    expect(ghost.status).toBe(404);
+    expect(await ghost.json()).toEqual({ error: "not_found", code: "conversation_not_found" });
+  });
+
+  it("keeps the chat route's own request vocabulary under the envelope", async () => {
+    const app = createApp(db, config);
+    const post = (body: string) =>
+      app.request("/api/chat", {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body,
+      });
+
+    const blank = await post(JSON.stringify({ message: "   " }));
+    expect(blank.status).toBe(400);
+    expect(await blank.json()).toEqual({ error: "message_required", code: "message_required" });
+
+    const malformed = await post("{not json");
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toEqual({ error: "invalid_json", code: "invalid_json" });
+
+    const wrongType = await post(JSON.stringify({ message: 42 }));
+    expect(wrongType.status).toBe(400);
+    expect((await wrongType.json()) as Envelope).toMatchObject({ code: "invalid_request" });
+
+    const unknownConversation = await post(
+      JSON.stringify({ message: "hello", conversationId: "ghost" }),
+    );
+    expect(unknownConversation.status).toBe(404);
+    expect(await unknownConversation.json()).toEqual({
+      error: "conversation_not_found",
+      code: "conversation_not_found",
+    });
+
+    const unknownServer = await post(JSON.stringify({ message: "hello", serverId: "ghost" }));
+    expect(unknownServer.status).toBe(404);
+    expect(await unknownServer.json()).toEqual({
+      error: "server_not_found",
+      code: "server_not_found",
+    });
+  });
+
+  it("answers 400 serverId_mismatch when the conversation is bound elsewhere", async () => {
+    const app = createApp(db, config);
+    const conversationId = await startConversation(app);
+
+    const res = await app.request("/api/chat", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ message: "hello", conversationId, serverId: "srv-2" }),
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "serverId_mismatch",
+      code: "serverId_mismatch",
+    });
+  });
+
+  it("surfaces a chat turn with no usable LLM key as 400 llm_api_key_required", async () => {
+    await setSetting<LlmSettings>(db, LLM_SETTINGS_KEY, {
+      provider: "openai_compatible",
+      preset: "openai",
+      model: "gpt-4.1",
+    });
+    const app = createApp(db, config);
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const res = await app.request("/api/chat", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ message: "hello" }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as Envelope;
+    expect(body.code).toBe("llm_api_key_required");
+    expect(body.error).toMatch(/llm_api_key_required/);
+    spy.mockRestore();
+  });
+
+  it("keeps confirm on 404 unknown_or_expired_request and validates the body", async () => {
+    const app = createApp(db, config);
+    const post = (body: string) =>
+      app.request("/api/confirm", {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body,
+      });
+
+    const unknown = await post(JSON.stringify({ requestId: "req-ghost", approved: true }));
+    expect(unknown.status).toBe(404);
+    expect(await unknown.json()).toEqual({
+      error: "unknown_or_expired_request",
+      code: "unknown_or_expired_request",
+    });
+
+    const missingDecision = await post(JSON.stringify({ requestId: "req-1" }));
+    expect(missingDecision.status).toBe(400);
+    const missingBody = (await missingDecision.json()) as Envelope & {
+      details?: { issues?: Array<{ path: string }> };
+    };
+    expect(missingBody).toMatchObject({ error: "invalid_request", code: "invalid_request" });
+    expect(missingBody.details?.issues?.map((issue) => issue.path)).toContain("approved");
+
+    const malformed = await post("{not json");
+    expect(malformed.status).toBe(400);
+    expect(await malformed.json()).toEqual({ error: "invalid_json", code: "invalid_json" });
+  });
+
+  it("keeps the agent progress and activity feeds readable behind the guards", async () => {
+    const app = createApp(db, config);
+
+    const agents = await app.request("/api/agents", { headers: { cookie } });
+    expect(agents.status).toBe(200);
+    expect(((await agents.json()) as { agent: { name: string } }).agent.name).toBe("Agent");
+
+    const activity = await app.request("/api/activity", { headers: { cookie } });
+    expect(activity.status).toBe(200);
+    expect(((await activity.json()) as { activity: unknown[] }).activity).toEqual([]);
   });
 });
