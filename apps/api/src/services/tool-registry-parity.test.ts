@@ -2,19 +2,21 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import {
-  getToolSurfaceEntry,
-  listToolSurface,
-  OpenAICompatibleLlmClient,
-} from "@playon/agent-core";
+import * as agentCore from "@playon/agent-core";
+import { OpenAICompatibleLlmClient } from "@playon/agent-core";
 import type { AppConfig } from "../config.js";
 import { createControlPlane, type ControlPlane } from "../control-plane.js";
 import { createDb } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
 import { createOrchestrator, createPlayOnToolRegistry } from "./tools.js";
 
-/** Domains already colocated as ToolEntry modules (metadata lives on the entry). */
-const MIGRATED_TOOLS = [
+/** Every tool in the catalog. Domain modules are the only place metadata lives. */
+const ALL_TOOLS = [
+  "archive_extract",
+  "fetch_url",
+  "rcon_exec",
+  "rcon_say",
+  "steamcmd_app_update",
   "fs_list",
   "fs_read",
   "fs_write",
@@ -73,6 +75,11 @@ const MIGRATED_TOOLS = [
 
 /** Server-scoped entries the invoke path must resolve before the handler sees them. */
 const SERVER_SCOPED_TOOLS = [
+  "archive_extract",
+  "fetch_url",
+  "rcon_exec",
+  "rcon_say",
+  "steamcmd_app_update",
   "servers_start",
   "servers_stop",
   "servers_restart",
@@ -128,6 +135,7 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
 
     // Moving a domain onto ToolEntry must not add, drop, or re-gate a tool.
     expect(fromRegistry).toHaveLength(59);
+    expect(fromRegistry.map((t) => t.name)).toEqual([...ALL_TOOLS].sort());
     expect(fromOrch).toEqual(fromRegistry);
   });
 
@@ -146,11 +154,12 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(new Set(registryNames).size).toBe(registryNames.length);
   });
 
-  it("migrated entries carry complete metadata on the entry itself", () => {
+  it("every entry carries complete metadata on the entry itself", () => {
     const { registry } = createPlayOnToolRegistry(testPlane(), {});
     const byName = new Map(registry.entries().map((e) => [e.def.name, e]));
 
-    for (const name of MIGRATED_TOOLS) {
+    expect([...byName.keys()].sort()).toEqual([...ALL_TOOLS].sort());
+    for (const name of ALL_TOOLS) {
       const entry = byName.get(name);
       expect(entry, `missing migrated tool: ${name}`).toBeDefined();
       expect(entry!.def.name).toBe(name);
@@ -164,14 +173,26 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     }
   });
 
-  it("does not install the composed surface into the process global", () => {
-    const before = listToolSurface().length;
+  it("has no process-wide surface left to install into", () => {
+    for (const removed of [
+      "TOOL_SURFACE_OVERLAY",
+      "installToolSurface",
+      "getToolSurfaceEntry",
+      "listToolSurface",
+      "surfaceConfirmAction",
+      "surfaceActivityVerb",
+      "surfaceXp",
+      "surfaceSkill",
+    ]) {
+      expect(agentCore, `${removed} is still exported`).not.toHaveProperty(removed);
+    }
+  });
+
+  it("answers every projection from the composed surface", () => {
     const { surface } = createPlayOnToolRegistry(testPlane(), {});
 
-    expect(listToolSurface().length).toBe(before);
-    for (const name of MIGRATED_TOOLS) {
-      expect(getToolSurfaceEntry(name), `${name} leaked to the global surface`).toBeUndefined();
-      expect(surface.get(name)).toBeDefined();
+    for (const name of ALL_TOOLS) {
+      expect(surface.get(name), `${name} missing from the surface`).toBeDefined();
     }
     expect(surface.skill("fs_write")).toBe("configurer");
     expect(surface.confirmAction("fs_write")).toBe("change a server file");
@@ -211,6 +232,18 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(surface.confirmAction("nodes_remove")).toBe(
       "remove a compute node from this deployment",
     );
+    expect(surface.skill("rcon_exec")).toBe("configurer");
+    expect(surface.activityVerb("rcon_say")).toBe("run");
+    expect(surface.confirmAction("steamcmd_app_update")).toBe(
+      "download or update game files via Steam",
+    );
+    expect(surface.confirmAction("archive_extract")).toBe(
+      "extract an archive into the server folder",
+    );
+    expect(surface.activityVerb("archive_extract")).toBe("write");
+    expect(surface.confirmAction("fetch_url")).toBe("download a file into the server folder");
+    expect(surface.skill("fetch_url")).toBe("modder");
+    expect(surface.activityVerb("fetch_url")).toBe("fetch");
   });
 
   it("declares server scope for lifecycle tools that act on one server", () => {
@@ -290,6 +323,11 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
       workspaceServerId: "bound-server",
       requestedServerId: "other-server",
     });
+
+    // Content and RCON tools write into (or command) a jail, so they never cross the binding.
+    await expect(
+      registry.invoke("rcon_exec", { serverId: "other-server", command: "list" }),
+    ).resolves.toMatchObject({ error: "workspace_server_mismatch" });
 
     // Watcher-id tools reach their handler in a bound chat and check ownership there.
     await expect(registry.invoke("watchers_get", { watcherId: "nope" })).resolves.toEqual({

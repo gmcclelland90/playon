@@ -24,7 +24,7 @@ Agent-pushed, player-facing surface: join info, status, guides, votes. Owned by 
 
 ## Tool Surface
 
-Canonical catalog of agent tools. A **Tool Entry** colocates the LLM definition, surface metadata (skill, confirmAction, activityVerb, XP), workspace policy, and handler; domain modules under `apps/api/src/services/tools/` are composed by `createPlayOnToolRegistry`, which returns `{ registry, surface }`. Chat, MCP, and watchers share that factory and read projections (agent-skill XP, confirm copy, activity verbs) from the returned surface. Domains not yet migrated still take metadata from `TOOL_SURFACE_OVERLAY` and its process-wide install — both disappear once every tool is an entry.
+Canonical catalog of agent tools. A **Tool Entry** colocates the LLM definition, surface metadata (skill, confirmAction, activityVerb, XP), workspace policy, and handler; domain modules under `apps/api/src/services/tools/` are composed by `createPlayOnToolRegistry`, which returns `{ registry, surface }`. Chat, MCP, and watchers share that factory and read projections (agent-skill XP, confirm copy, activity verbs) from the returned surface. The factory is the only source of the catalog: there is no overlay table and no process-wide surface, so a tool that no domain module composes does not exist.
 
 ## Query Dialect
 

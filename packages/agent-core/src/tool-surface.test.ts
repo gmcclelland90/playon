@@ -1,81 +1,75 @@
 import { describe, expect, it } from "vitest";
+import * as agentCore from "./index.js";
 import {
-  getToolSurfaceEntry,
+  createToolSurface,
+  projectActivityVerb,
   skillLabel,
-  surfaceConfirmAction,
-  surfaceSkill,
-  surfaceXp,
+  type ToolSurfaceEntry,
 } from "./tool-surface.js";
-import { TOOL_SURFACE_OVERLAY } from "./tool-surface-overlay.js";
+
+function entry(name: string, meta: Partial<ToolSurfaceEntry> = {}): ToolSurfaceEntry {
+  return { name, description: `${name} tool`, parameters: {}, ...meta };
+}
 
 describe("tool surface", () => {
-  it("bootstraps overlay so confirm, skill, and XP projections work", () => {
-    expect(surfaceConfirmAction("steamcmd_app_update")).toBe(
+  it("projects confirm copy, skill, and XP from the composed catalog", () => {
+    const surface = createToolSurface([
+      entry("steamcmd_app_update", {
+        skill: "installer",
+        confirmAction: "download or update game files via Steam",
+        activityVerb: "run",
+      }),
+      entry("rcon_exec", { skill: "configurer", activityVerb: "run" }),
+      entry("archive_extract", { skill: "installer", activityVerb: "write" }),
+      entry("snapshot_restore", {
+        skill: "backup",
+        confirmAction: "restore this server from a snapshot",
+        xp: { xp: 40, reason: "recovery", celebrate: true },
+      }),
+    ]);
+
+    expect(surface.confirmAction("steamcmd_app_update")).toBe(
       "download or update game files via Steam",
     );
-    expect(surfaceSkill("rcon_exec")).toBe("configurer");
-    expect(surfaceSkill("unknown_tool_xyz")).toBe("orchestrator");
-    expect(getToolSurfaceEntry("archive_extract")?.activityVerb).toBe("write");
+    expect(surface.skill("rcon_exec")).toBe("configurer");
+    expect(surface.get("archive_extract")?.activityVerb).toBe("write");
+    expect(surface.xp("snapshot_restore")).toEqual({
+      xp: 40,
+      reason: "recovery",
+      celebrate: true,
+    });
+    expect(surface.list()).toHaveLength(4);
   });
 
-  it("drops migrated domains so their metadata can only come from the entry", () => {
-    for (const name of [
-      "fs_write",
-      "node_ping",
-      "nodes_add",
-      "nodes_remove",
-      "placement_suggest",
-      "servers_start",
-      "servers_delete",
-      "skill_promote",
-      "skill_install_url",
-      "panel_publish",
-      "watchers_create",
-      "watchers_runs_list",
-      "snapshot_create",
-      "snapshot_restore",
-      "snapshot_enforce_retention",
-      "backup_offnode",
-      "backup_offnode_restore",
+  it("falls back generically for a tool the catalog does not describe", () => {
+    const surface = createToolSurface([]);
+
+    expect(surface.confirmAction("snapshot_restore")).toBe('run "snapshot restore"');
+    expect(surface.confirmAction("nodes_add")).toBe('run "nodes add"');
+    expect(surface.xp("snapshot_restore")).toEqual({ xp: 5, reason: "tool_success" });
+    expect(surface.skill("snapshot_restore")).toBe("orchestrator");
+    expect(surface.activityVerb("weird_custom_tool")).toBe("other");
+    expect(projectActivityVerb(undefined, "fs_read")).toBe("read");
+  });
+
+  it("exposes no ambient surface: metadata cannot be installed process-wide", () => {
+    for (const removed of [
+      "TOOL_SURFACE_OVERLAY",
+      "installToolSurface",
+      "getToolSurfaceEntry",
+      "listToolSurface",
+      "surfaceConfirmAction",
+      "surfaceActivityVerb",
+      "surfaceXp",
+      "surfaceSkill",
     ]) {
-      expect(getToolSurfaceEntry(name), `${name} still in the overlay`).toBeUndefined();
+      expect(agentCore, `${removed} is still exported`).not.toHaveProperty(removed);
     }
-    // The process global can only offer generic fallbacks for a migrated tool:
-    // real confirm copy and XP have to come from the composed entry.
-    expect(surfaceConfirmAction("snapshot_restore")).toBe('run "snapshot restore"');
-    expect(surfaceConfirmAction("nodes_add")).toBe('run "nodes add"');
-    expect(surfaceXp("snapshot_restore")).toEqual({ xp: 5, reason: "tool_success" });
-    expect(surfaceSkill("snapshot_restore")).toBe("orchestrator");
   });
 
   it("labels skills for UI titles", () => {
     expect(skillLabel("installer")).toBe("Install");
     expect(skillLabel("troubleshooter")).toBe("Fix");
     expect(skillLabel("player_panel")).toBe("Panel");
-  });
-
-  it("overlay covers every key used by projections", () => {
-    const names = Object.keys(TOOL_SURFACE_OVERLAY);
-    const migratedPrefixes = [
-      "backup_offnode",
-      "fs_",
-      "net_",
-      "node_",
-      "nodes_",
-      "panel_",
-      "placement_",
-      "servers_",
-      "skill_",
-      "snapshot_",
-      "watchers_",
-    ];
-    expect(names.length).toBeGreaterThan(0);
-    expect(
-      names.filter((name) => migratedPrefixes.some((prefix) => name.startsWith(prefix))),
-    ).toEqual([]);
-    for (const [name, meta] of Object.entries(TOOL_SURFACE_OVERLAY)) {
-      expect(meta.skill, `${name} has no skill`).toBeDefined();
-      expect(meta.activityVerb, `${name} has no activityVerb`).toBeDefined();
-    }
   });
 });

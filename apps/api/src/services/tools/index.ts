@@ -1,8 +1,10 @@
 import type { ToolEntry, ToolSurfaceEntry } from "@playon/agent-core";
+import { contentToolModule } from "./content.js";
 import { fsToolModule } from "./fs.js";
 import { metaToolModule } from "./meta.js";
 import { nodesToolModule } from "./nodes.js";
 import { panelToolModule } from "./panel.js";
+import { rconToolModule } from "./rcon.js";
 import { serversToolModule } from "./servers.js";
 import { skillsToolModule } from "./skills.js";
 import { snapshotsToolModule } from "./snapshots.js";
@@ -15,17 +17,17 @@ import {
 } from "./workspace.js";
 
 /**
- * Domains already colocated as ToolEntry modules.
- *
- * Still registered the legacy way in `tools.ts` (metadata in `TOOL_SURFACE_OVERLAY`):
- * rcon + steamcmd (3), archive_extract + fetch_url (2).
- * The overlay table and its process-wide install are deleted with the last domain.
+ * Every tool domain. These modules are the only source of the tool catalog and
+ * its surface metadata — there is no separate overlay table and no process-wide
+ * install, so a tool that is not composed here does not exist.
  */
 export const TOOL_MODULES: readonly ToolModule[] = [
+  contentToolModule,
   fsToolModule,
   metaToolModule,
   nodesToolModule,
   panelToolModule,
+  rconToolModule,
   serversToolModule,
   skillsToolModule,
   snapshotsToolModule,
