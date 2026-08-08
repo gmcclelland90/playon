@@ -51,6 +51,14 @@ const MIGRATED_TOOLS = [
   "skill_install_url",
   "panel_publish",
   "panel_list",
+  "watchers_list",
+  "watchers_get",
+  "watchers_create",
+  "watchers_update",
+  "watchers_delete",
+  "watchers_enable",
+  "watchers_run_now",
+  "watchers_runs_list",
 ];
 
 /** Server-scoped entries the invoke path must resolve before the handler sees them. */
@@ -64,6 +72,7 @@ const SERVER_SCOPED_TOOLS = [
   "servers_logs_tail",
   "servers_query",
   "skill_promote_server",
+  "watchers_create",
 ];
 
 function testConfig(dataRoot: string): AppConfig {
@@ -169,6 +178,8 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(surface.confirmAction("skill_install_url")).toBe(
       "install a skill from the public catalog",
     );
+    expect(surface.skill("watchers_run_now")).toBe("monitor");
+    expect(surface.confirmAction("watchers_delete")).toBe("delete a watcher automation");
   });
 
   it("declares server scope for lifecycle tools that act on one server", () => {
@@ -186,6 +197,20 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     // Panel tools narrow to the bound server but still answer in an unbound chat.
     expect(byName.get("panel_publish")?.workspacePolicy).toBe("server_optional");
     expect(byName.get("panel_list")?.workspacePolicy).toBe("server_optional");
+    expect(byName.get("watchers_list")?.workspacePolicy).toBe("server_optional");
+    // Watcher-id tools enforce the binding against the watcher's own server instead.
+    for (const name of [
+      "watchers_get",
+      "watchers_update",
+      "watchers_delete",
+      "watchers_enable",
+      "watchers_run_now",
+      "watchers_runs_list",
+    ]) {
+      expect(byName.get(name)?.workspacePolicy, `${name} should not resolve args.serverId`).toBe(
+        "none",
+      );
+    }
   });
 
   it("enforces workspace policy before the handler runs", async () => {
@@ -207,6 +232,11 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
       error: "workspace_server_mismatch",
       workspaceServerId: "bound-server",
       requestedServerId: "other-server",
+    });
+
+    // Watcher-id tools reach their handler in a bound chat and check ownership there.
+    await expect(registry.invoke("watchers_get", { watcherId: "nope" })).resolves.toEqual({
+      error: "not_found",
     });
 
     const unbound = createPlayOnToolRegistry(testPlane(), {}).registry;

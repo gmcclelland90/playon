@@ -5,6 +5,7 @@ import { panelToolModule } from "./panel.js";
 import { serversToolModule } from "./servers.js";
 import { skillsToolModule } from "./skills.js";
 import type { PlayOnToolEntry, ToolContext, ToolModule } from "./types.js";
+import { watchersToolModule } from "./watchers.js";
 import {
   resolveOptionalWorkspaceServerId,
   resolveWorkspaceServerId,
@@ -15,7 +16,7 @@ import {
  * Domains already colocated as ToolEntry modules.
  *
  * Still registered the legacy way in `tools.ts` (metadata in `TOOL_SURFACE_OVERLAY`):
- * snapshots + off-node backup (7), watchers (8), nodes/placement (3),
+ * snapshots + off-node backup (7), nodes/placement (3),
  * rcon + steamcmd (3), archive_extract + fetch_url (2).
  * The overlay table and its process-wide install are deleted with the last domain.
  */
@@ -25,6 +26,7 @@ export const TOOL_MODULES: readonly ToolModule[] = [
   panelToolModule,
   serversToolModule,
   skillsToolModule,
+  watchersToolModule,
 ];
 
 /** Enforce the declared workspace scope, then hand the handler a resolved scope. */
