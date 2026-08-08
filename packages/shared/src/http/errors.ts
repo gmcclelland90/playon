@@ -17,7 +17,7 @@ export type HttpErrorEnvelope = {
 };
 
 /** Statuses the transport layer is allowed to produce for an envelope. */
-export const HTTP_ERROR_STATUSES = [400, 401, 403, 404, 409, 422, 429, 500, 503] as const;
+export const HTTP_ERROR_STATUSES = [400, 401, 403, 404, 409, 422, 429, 500, 502, 503] as const;
 
 export type HttpErrorStatus = (typeof HTTP_ERROR_STATUSES)[number];
 
@@ -31,6 +31,7 @@ export const WELL_KNOWN_HTTP_ERROR_CODES = [
   "unprocessable",
   "rate_limited",
   "internal_error",
+  "bad_gateway",
   "unavailable",
 ] as const;
 
@@ -47,6 +48,7 @@ const CODE_BY_STATUS: Record<HttpErrorStatus, WellKnownHttpErrorCode> = {
   422: "unprocessable",
   429: "rate_limited",
   500: "internal_error",
+  502: "bad_gateway",
   503: "unavailable",
 };
 
@@ -113,6 +115,11 @@ export class HttpError extends Error {
 
   static internal(error = "internal_error", init?: HttpErrorInit): HttpError {
     return new HttpError(500, error, init);
+  }
+
+  /** An upstream the control plane depends on (catalog, relay) failed us. */
+  static badGateway(error = "bad_gateway", init?: HttpErrorInit): HttpError {
+    return new HttpError(502, error, init);
   }
 
   static unavailable(error = "unavailable", init?: HttpErrorInit): HttpError {

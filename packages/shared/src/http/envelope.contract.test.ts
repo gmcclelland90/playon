@@ -40,6 +40,7 @@ describe("http error envelope contract", () => {
       "unprocessable",
       "rate_limited",
       "internal_error",
+      "bad_gateway",
       "unavailable",
     ]);
   });
@@ -62,6 +63,7 @@ describe("http error envelope contract", () => {
       HttpError.unprocessable(),
       HttpError.rateLimited(),
       HttpError.internal(),
+      HttpError.badGateway(),
       HttpError.unavailable(),
     ];
     for (const err of errors) {

@@ -109,6 +109,24 @@ describe("serviceHttpError", () => {
     expect(err.status).toBe(404);
   });
 
+  it("maps a service's richer failure vocabulary onto statuses", () => {
+    const failure = {
+      fallback: "catalog_install_failed",
+      code: "skill_catalog_install_failed",
+      statusPrefixes: {
+        404: ["catalog_skill_not_found"],
+        409: ["skill_exists"],
+        502: ["skills_catalog_fetch"],
+      },
+    } as const;
+    const statusFor = (message: string) => serviceHttpError(new Error(message), failure).status;
+
+    expect(statusFor("catalog_skill_not_found: games.paper")).toBe(404);
+    expect(statusFor("skill_exists: games.paper")).toBe(409);
+    expect(statusFor("skills_catalog_fetch: 500")).toBe(502);
+    expect(statusFor("catalog_sha256_mismatch")).toBe(400);
+  });
+
   it("renders a schema failure as invalid_request instead of a zod dump", () => {
     const zodErr = (() => {
       try {
