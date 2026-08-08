@@ -5,6 +5,7 @@ import {
   surfaceSkill,
   surfaceXp,
   type AgentSkill,
+  type ToolSurface,
 } from "@playon/agent-core";
 import type { Db } from "../db/client.js";
 import { agentProgress } from "../db/schema.js";
@@ -186,14 +187,16 @@ export class AgentProgressService {
     };
   }
 
+  /** Pass the turn's composed surface; the ambient fallback covers unmigrated tools only. */
   async awardForTools(
     toolTrace: Array<{ name: string; result?: unknown }>,
+    surface?: ToolSurface,
   ): Promise<XpAward[]> {
     const awards: XpAward[] = [];
     for (const trace of toolTrace) {
       if (isFailedResult(trace.result)) continue;
-      const skill = surfaceSkill(trace.name);
-      const spec = surfaceXp(trace.name);
+      const skill = surface ? surface.skill(trace.name) : surfaceSkill(trace.name);
+      const spec = surface ? surface.xp(trace.name) : surfaceXp(trace.name);
       const award = await this.award(skill, spec.xp, spec.reason);
       award.celebrate = Boolean(spec.celebrate) || award.leveledUp;
       awards.push(award);

@@ -8,7 +8,7 @@ import { and, asc, count, desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import type { ConfirmGate, LlmMessage } from "@playon/agent-core";
-import { ChatAbortedError, surfaceSkill } from "@playon/agent-core";
+import { ChatAbortedError } from "@playon/agent-core";
 import {
   BootstrapOwnerSchema,
   CreateWatcherSchema,
@@ -105,7 +105,11 @@ import {
   revokeAccessToken,
 } from "./services/access-tokens.js";
 import { authInfoFromAccessToken, createPlayOnMcpHandler } from "./services/mcp.js";
-import { createLlmClient, createOrchestrator } from "./services/tools.js";
+import {
+  createLlmClient,
+  createOrchestrator,
+  createPlayOnToolSurface,
+} from "./services/tools.js";
 import {
   DEFAULT_OLLAMA_OPENAI_BASE,
   getOllamaJob,
@@ -2501,6 +2505,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       createdAt: now,
     });
 
+    const toolSurface = createPlayOnToolSurface(plane, { workspaceServerId });
+
     /** Mutable: unbound create binds activity to the new server mid-turn. */
     let activityServerId = workspaceServerId;
     let activitySkill = "orchestrator";
@@ -2516,7 +2522,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       if (!activityServerId) return;
       const verb = opts?.verb ?? "other";
       if (opts?.skill) activitySkill = opts.skill;
-      else if (opts?.toolName) activitySkill = surfaceSkill(opts.toolName);
+      else if (opts?.toolName) activitySkill = toolSurface.skill(opts.toolName);
       eventHub.publish({
         type: "agent.activity",
         serverId: activityServerId,
@@ -2551,7 +2557,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         async requestConfirmation(request) {
           publishActivity("confirm_wait", {
             toolName: request.toolName,
-            verb: verbForTool(request.toolName),
+            verb: verbForTool(request.toolName, toolSurface),
             label: "Waiting for confirm…",
           });
           try {
@@ -2589,7 +2595,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
             ) {
               activityServerId = detail.serverId;
             }
-            const verb = verbForTool(toolName);
+            const verb = verbForTool(toolName, toolSurface);
             const phase =
               status === "started"
                 ? "tool_start"
@@ -2641,7 +2647,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       }
 
       const awards = boundServerId
-        ? await agentProgress.awardForTools(result.toolTrace)
+        ? await agentProgress.awardForTools(result.toolTrace, toolSurface)
         : [];
       const celebrations = awards.filter((a) => a.celebrate);
       for (const award of celebrations) {

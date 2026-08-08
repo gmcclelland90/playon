@@ -5,16 +5,17 @@ import type {
   ConfirmGate,
   ConfirmPolicy,
   ToolDefinition,
+  ToolEntry,
   ToolHandler,
+  ToolSurface,
+  ToolSurfaceMeta,
 } from "@playon/agent-core";
 import {
-  installToolSurface,
-  mergeToolSurface,
+  createToolSurface,
   Orchestrator,
   OpenAICompatibleLlmClient,
   runToolInvocation,
   TOOL_SURFACE_OVERLAY,
-  toToolDefinition,
   type LlmClient,
 } from "@playon/agent-core";
 import { queryDialectToolEnum } from "@playon/server-query";
@@ -46,102 +47,30 @@ import {
   searchCatalog,
 } from "./skills-catalog.js";
 import { listSkills, loadSkillMetadata, skillsRootsForWorkspace } from "./skills.js";
-import { nodeJobService } from "./node-jobs.js";
 import { rconExec, rconExecWithSelfHeal } from "./rcon.js";
 import { isPlayerPanelLiveStatus, safeQueryLive } from "./server-panel.js";
-import type { ServerService } from "./servers.js";
 import { SnapshotService, withSnapshot } from "./snapshots.js";
 import { SteamcmdNotFoundError, steamcmdAppUpdate } from "./steamcmd.js";
+import { composeToolEntries, toSurfaceEntry } from "./tools/index.js";
+import {
+  createOrReinstallFromSkill,
+  resolveOptionalWorkspaceServerId,
+  resolveWorkspaceServerId,
+  workspaceCreateForbidden,
+  type WorkspaceBinding,
+} from "./tools/workspace.js";
 
 const QUERY_DIALECT_TOOL_ENUM = queryDialectToolEnum();
 
-/** Resolve serverId for tools inside a server workspace (default + cross-server jail). */
-/** Mutable chat↔server binding for the duration of an agent turn. */
-export type WorkspaceBinding = { serverId: string | undefined };
+/** Surface metadata for tools that still live in the overlay table (deleted per domain). */
+const LEGACY_TOOL_SURFACE: Record<string, ToolSurfaceMeta | undefined> = TOOL_SURFACE_OVERLAY;
 
-/** Bound maintain chat cannot import/provision a sibling server identity. */
-export function workspaceCreateForbidden(
-  workspaceServerId: string | undefined,
-  hint: string,
-): Record<string, unknown> | null {
-  if (!workspaceServerId) return null;
-  return {
-    error: "workspace_create_forbidden",
-    workspaceServerId,
-    hint,
-  };
-}
-
-/**
- * First create in an unbound chat binds the workspace.
- * Later creates reinstall in place (same server id) instead of forking a sibling.
- */
-export async function createOrReinstallFromSkill(
-  servers: ServerService,
-  workspace: WorkspaceBinding,
-  args: { skillName: string; serverName?: string; nodeId?: string },
-): Promise<{ server: Awaited<ReturnType<ServerService["createFromSkill"]>>; mode: "created" | "reinstalled" }> {
-  if (workspace.serverId) {
-    const server = await servers.reinstallFromSkill(workspace.serverId, args);
-    return { server, mode: "reinstalled" };
-  }
-  const server = await servers.createFromSkill(args);
-  workspace.serverId = server.id;
-  return { server, mode: "created" };
-}
-
-export function resolveWorkspaceServerId(
-  args: Record<string, unknown>,
-  workspaceServerId: string | undefined,
-): { ok: true; serverId: string } | { ok: false; error: Record<string, unknown> } {
-  const raw = args.serverId;
-  const requested =
-    raw !== undefined && raw !== null && String(raw).trim() !== ""
-      ? String(raw)
-      : undefined;
-  if (workspaceServerId) {
-    if (requested && requested !== workspaceServerId) {
-      return {
-        ok: false,
-        error: {
-          error: "workspace_server_mismatch",
-          workspaceServerId,
-          requestedServerId: requested,
-        },
-      };
-    }
-    return { ok: true, serverId: requested ?? workspaceServerId };
-  }
-  if (!requested) {
-    return { ok: false, error: { error: "serverId_required" } };
-  }
-  return { ok: true, serverId: requested };
-}
-
-function resolveOptionalWorkspaceServerId(
-  args: Record<string, unknown>,
-  workspaceServerId: string | undefined,
-): { ok: true; serverId: string | undefined } | { ok: false; error: Record<string, unknown> } {
-  const raw = args.serverId;
-  const requested =
-    raw !== undefined && raw !== null && String(raw).trim() !== ""
-      ? String(raw)
-      : undefined;
-  if (workspaceServerId) {
-    if (requested && requested !== workspaceServerId) {
-      return {
-        ok: false,
-        error: {
-          error: "workspace_server_mismatch",
-          workspaceServerId,
-          requestedServerId: requested,
-        },
-      };
-    }
-    return { ok: true, serverId: requested ?? workspaceServerId };
-  }
-  return { ok: true, serverId: requested };
-}
+export {
+  createOrReinstallFromSkill,
+  resolveWorkspaceServerId,
+  workspaceCreateForbidden,
+  type WorkspaceBinding,
+};
 
 export async function createLlmClient(
   db: Db,
@@ -200,11 +129,22 @@ export type PlayOnToolRegistry = {
   registerInto: (orchestrator: Orchestrator) => void;
   /** Sorted names + requiresConfirm — for parity tests across Venice/Ollama/MCP. */
   parityFingerprint: () => Array<{ name: string; requiresConfirm: boolean }>;
+  /** Composed entries (def + surface + policy) for structural checks. */
+  entries: () => ToolEntry[];
 };
 
 export type PlayOnToolRegistryOptions = {
   confirmGate?: ConfirmGate;
   workspaceServerId?: string;
+};
+
+/**
+ * Registry plus the catalog projection it composed.
+ * Callers read confirm copy / activity verbs / XP from `surface` — never from a process global.
+ */
+export type PlayOnTools = {
+  registry: PlayOnToolRegistry;
+  surface: ToolSurface;
 };
 
 /**
@@ -214,7 +154,7 @@ export type PlayOnToolRegistryOptions = {
 export function createPlayOnToolRegistry(
   plane: ControlPlane,
   options: PlayOnToolRegistryOptions = {},
-): PlayOnToolRegistry {
+): PlayOnTools {
   const { config } = plane;
   /** Binds on first create/import so mid-turn sibling creates cannot fork. */
   const workspace: WorkspaceBinding = { serverId: options.workspaceServerId };
@@ -227,7 +167,6 @@ export function createPlayOnToolRegistry(
     db,
     servers,
     snapshots,
-    serverFs,
     archives,
     net,
     drafts,
@@ -251,12 +190,23 @@ export function createPlayOnToolRegistry(
     return resolveSkillsCatalogUrl(process.env.PLAYON_SKILLS_CATALOG_URL, stored?.catalogUrl);
   }
 
-  const tools = new Map<string, { def: ToolDefinition; handler: ToolHandler }>();
+  const tools = new Map<string, ToolEntry>();
+  for (const entry of composeToolEntries({ plane, workspace, skillRoots })) {
+    tools.set(entry.def.name, entry);
+  }
+
+  /**
+   * Shim for domains not yet colocated as ToolEntry modules: definitions live in the
+   * array below and metadata still comes from the overlay table.
+   */
   const registerTool = (def: ToolDefinition, handler: ToolHandler) => {
-    tools.set(def.name, { def, handler });
+    tools.set(def.name, {
+      def,
+      surface: LEGACY_TOOL_SURFACE[def.name],
+      workspacePolicy: "none",
+      handler,
+    });
   };
-
-
 
   // Tool names must match ^[a-zA-Z0-9_-]+$ for Venice / many OpenAI-compatible gateways.
   const toolDefs: ToolDefinition[] = [
@@ -443,90 +393,6 @@ export function createPlayOnToolRegistry(
       },
     },
     {
-      name: "fs_list",
-      description: "List files under a server data directory (path-jailed)",
-      parameters: {
-        type: "object",
-        properties: {
-          serverId: { type: "string" },
-          path: { type: "string", description: "Relative path inside the server data dir" },
-        },
-        required: ["serverId"],
-      },
-    },
-    {
-      name: "fs_read",
-      description:
-        "Read a text file under a server data directory (path-jailed). Optional offset/maxBytes for large files (max 512KB per read).",
-      parameters: {
-        type: "object",
-        properties: {
-          serverId: { type: "string" },
-          path: { type: "string" },
-          offset: { type: "number", description: "Byte offset to start reading from" },
-          maxBytes: { type: "number", description: "Max bytes to return (capped at 512KB)" },
-        },
-        required: ["serverId", "path"],
-      },
-    },
-    {
-      name: "fs_write",
-      description: "Write a text file under a server data directory (path-jailed)",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: {
-          serverId: { type: "string" },
-          path: { type: "string" },
-          content: { type: "string" },
-        },
-        required: ["serverId", "path", "content"],
-      },
-    },
-    {
-      name: "fs_delete",
-      description: "Delete a file or directory under a server data directory (path-jailed, recursive for dirs)",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: {
-          serverId: { type: "string" },
-          path: { type: "string" },
-        },
-        required: ["serverId", "path"],
-      },
-    },
-    {
-      name: "fs_rename",
-      description: "Rename or move a path inside a server data directory (path-jailed)",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: {
-          serverId: { type: "string" },
-          from: { type: "string" },
-          to: { type: "string" },
-          overwrite: { type: "boolean" },
-        },
-        required: ["serverId", "from", "to"],
-      },
-    },
-    {
-      name: "fs_copy",
-      description: "Copy a file or directory tree inside a server data directory (path-jailed)",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: {
-          serverId: { type: "string" },
-          from: { type: "string" },
-          to: { type: "string" },
-          overwrite: { type: "boolean" },
-        },
-        required: ["serverId", "from", "to"],
-      },
-    },
-    {
       name: "archive_extract",
       description:
         "Extract a zip or tar.gz archive already in the server jail into a destination directory (path-jailed). Use after fetch_url for mod packs.",
@@ -543,29 +409,6 @@ export function createPlayOnToolRegistry(
           },
         },
         required: ["serverId", "archivePath", "destDir"],
-      },
-    },
-    {
-      name: "net_port_check",
-      description: "Check whether a TCP port appears open on a host",
-      parameters: {
-        type: "object",
-        properties: {
-          host: { type: "string" },
-          port: { type: "number" },
-        },
-        required: ["port"],
-      },
-    },
-    {
-      name: "net_suggest_bind",
-      description: "Suggest a free local bind port near a preferred value",
-      parameters: {
-        type: "object",
-        properties: {
-          preferredPort: { type: "number" },
-          host: { type: "string" },
-        },
       },
     },
     {
@@ -854,29 +697,6 @@ export function createPlayOnToolRegistry(
       },
     },
     {
-      name: "node_ping",
-      description:
-        "Enqueue a ping job on a node-agent and wait for the result (proves remote job execution).",
-      parameters: {
-        type: "object",
-        properties: { nodeId: { type: "string" } },
-        required: ["nodeId"],
-      },
-    },
-    {
-      name: "node_fs_list",
-      description:
-        "List a directory on a node-agent under its data root (path-jailed remote FS).",
-      parameters: {
-        type: "object",
-        properties: {
-          nodeId: { type: "string" },
-          path: { type: "string" },
-        },
-        required: ["nodeId"],
-      },
-    },
-    {
       name: "servers_delete",
       description:
         "Permanently delete a server: stop runtime, remove Docker container, wipe data dir, panel blocks, chats, and snapshots.",
@@ -1049,13 +869,11 @@ export function createPlayOnToolRegistry(
 
 
 
-  const surface = mergeToolSurface(toolDefs, TOOL_SURFACE_OVERLAY);
-  installToolSurface(surface);
-  const toolByName = new Map(surface.map((d) => [d.name, d]));
+  const legacyDefByName = new Map(toolDefs.map((d) => [d.name, d]));
   const tool = (name: string): ToolDefinition => {
-    const def = toolByName.get(name);
+    const def = legacyDefByName.get(name);
     if (!def) throw new Error(`missing_tool_def: ${name}`);
-    return toToolDefinition(def);
+    return def;
   };
 
   registerTool(tool("skill_list"), async () =>
@@ -1245,49 +1063,6 @@ export function createPlayOnToolRegistry(
     });
   });
 
-  registerTool(tool("fs_list"), async (args) => {
-    const resolved = resolveWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    return serverFs.list(resolved.serverId, args.path ? String(args.path) : ".");
-  });
-
-  registerTool(tool("fs_read"), async (args) => {
-    const resolved = resolveWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    return serverFs.read(resolved.serverId, String(args.path), {
-      offset: args.offset !== undefined ? Number(args.offset) : undefined,
-      maxBytes: args.maxBytes !== undefined ? Number(args.maxBytes) : undefined,
-    });
-  });
-
-  registerTool(tool("fs_write"), async (args) => {
-    const resolved = resolveWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    return serverFs.write(resolved.serverId, String(args.path), String(args.content));
-  });
-
-  registerTool(tool("fs_delete"), async (args) => {
-    const resolved = resolveWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    return serverFs.delete(resolved.serverId, String(args.path));
-  });
-
-  registerTool(tool("fs_rename"), async (args) => {
-    const resolved = resolveWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    return serverFs.rename(resolved.serverId, String(args.from), String(args.to), {
-      overwrite: Boolean(args.overwrite),
-    });
-  });
-
-  registerTool(tool("fs_copy"), async (args) => {
-    const resolved = resolveWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    return serverFs.copy(resolved.serverId, String(args.from), String(args.to), {
-      overwrite: Boolean(args.overwrite),
-    });
-  });
-
   registerTool(tool("archive_extract"), async (args) => {
     const resolved = resolveWorkspaceServerId(args, workspace.serverId);
     if (!resolved.ok) return resolved.error;
@@ -1299,20 +1074,6 @@ export function createPlayOnToolRegistry(
         args.stripComponents !== undefined ? Number(args.stripComponents) : undefined,
     });
   });
-
-  registerTool(tool("net_port_check"), async (args) =>
-    net.portCheck({
-      host: args.host ? String(args.host) : undefined,
-      port: Number(args.port),
-    }),
-  );
-
-  registerTool(tool("net_suggest_bind"), async (args) =>
-    net.suggestBind({
-      preferredPort: args.preferredPort !== undefined ? Number(args.preferredPort) : undefined,
-      host: args.host ? String(args.host) : undefined,
-    }),
-  );
 
   registerTool(tool("fetch_url"), async (args) => {
     const resolved = resolveWorkspaceServerId(args, workspace.serverId);
@@ -1637,32 +1398,6 @@ export function createPlayOnToolRegistry(
     }
   });
 
-  registerTool(tool("node_ping"), async (args) => {
-    const nodeId = String(args.nodeId);
-    const job = nodeJobService.enqueue(nodeId, "ping", {});
-    try {
-      const done = await nodeJobService.waitFor(job.id, { timeoutMs: 20_000 });
-      if (done.status === "failed") return { error: done.error ?? "node_job_failed", jobId: job.id };
-      return { jobId: job.id, nodeId, result: done.result };
-    } catch (err) {
-      return { error: err instanceof Error ? err.message : "node_job_timeout", jobId: job.id };
-    }
-  });
-
-  registerTool(tool("node_fs_list"), async (args) => {
-    const nodeId = String(args.nodeId);
-    const job = nodeJobService.enqueue(nodeId, "fs_list", {
-      path: args.path ? String(args.path) : ".",
-    });
-    try {
-      const done = await nodeJobService.waitFor(job.id, { timeoutMs: 20_000 });
-      if (done.status === "failed") return { error: done.error ?? "node_job_failed", jobId: job.id };
-      return { jobId: job.id, nodeId, result: done.result };
-    } catch (err) {
-      return { error: err instanceof Error ? err.message : "node_job_timeout", jobId: job.id };
-    }
-  });
-
   registerTool(tool("servers_delete"), async (args) => {
     const resolved = resolveWorkspaceServerId(args, workspace.serverId);
     if (!resolved.ok) return resolved.error;
@@ -1820,7 +1555,7 @@ export function createPlayOnToolRegistry(
     return { runs };
   });
 
-  return {
+  const registry: PlayOnToolRegistry = {
     getDefinitions: () => [...tools.values()].map((t) => t.def),
     parityFingerprint: () =>
       [...tools.values()]
@@ -1829,6 +1564,7 @@ export function createPlayOnToolRegistry(
           requiresConfirm: Boolean(t.def.requiresConfirm),
         }))
         .sort((a, b) => a.name.localeCompare(b.name)),
+    entries: () => [...tools.values()],
     registerInto(orchestrator: Orchestrator) {
       for (const { def, handler } of tools.values()) {
         orchestrator.registerTool(def, handler);
@@ -1848,6 +1584,22 @@ export function createPlayOnToolRegistry(
       }
     },
   };
+
+  return {
+    registry,
+    surface: createToolSurface([...tools.values()].map(toSurfaceEntry)),
+  };
+}
+
+/**
+ * Catalog projection without binding handlers to a turn.
+ * Chat and watcher activity/XP reporting read confirm copy and verbs from here.
+ */
+export function createPlayOnToolSurface(
+  plane: ControlPlane,
+  options: PlayOnToolRegistryOptions = {},
+): ToolSurface {
+  return createPlayOnToolRegistry(plane, options).surface;
 }
 
 /** Venice/Ollama chat path — same registry as MCP, LLM loop on top. */
@@ -1863,7 +1615,7 @@ export function createOrchestrator(
     autoApproveActor?: string;
   } = {},
 ): Orchestrator {
-  const registry = createPlayOnToolRegistry(plane, {
+  const { registry } = createPlayOnToolRegistry(plane, {
     confirmGate: options.confirmGate,
     workspaceServerId: options.workspaceServerId,
   });

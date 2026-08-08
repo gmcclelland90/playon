@@ -1,8 +1,9 @@
 import { installToolSurface, type ToolSurfaceOverlay } from "./tool-surface.js";
 
 /**
- * Canonical PlayOn tool surface metadata (skill / confirm / activity / XP).
- * Merged onto LLM toolDefs in the API; installed at agent-core load for projections.
+ * Surface metadata for tools that are not yet colocated as `ToolEntry` modules.
+ * Migrated domains (fs, node/net meta) carry their own metadata on the entry and
+ * are absent here; this table and its process-wide install disappear with the last domain.
  */
 export const TOOL_SURFACE_OVERLAY = {
   archive_extract: {
@@ -27,32 +28,6 @@ export const TOOL_SURFACE_OVERLAY = {
     confirmAction: "download a file into the server folder",
     activityVerb: "fetch",
   },
-  fs_copy: {
-    skill: "configurer",
-    confirmAction: "copy a server file or folder",
-    activityVerb: "write",
-  },
-  fs_delete: {
-    skill: "configurer",
-    confirmAction: "delete a server file or folder",
-    activityVerb: "write",
-  },
-  fs_list: { skill: "troubleshooter", activityVerb: "read" },
-  fs_read: { skill: "troubleshooter", activityVerb: "read" },
-  fs_rename: {
-    skill: "configurer",
-    confirmAction: "rename or move a server path",
-    activityVerb: "write",
-  },
-  fs_write: {
-    skill: "configurer",
-    confirmAction: "change a server file",
-    activityVerb: "write",
-  },
-  net_port_check: { skill: "monitor", activityVerb: "fetch" },
-  net_suggest_bind: { skill: "installer", activityVerb: "fetch" },
-  node_fs_list: { skill: "installer", activityVerb: "read" },
-  node_ping: { skill: "installer", activityVerb: "run" },
   panel_list: { skill: "player_panel", activityVerb: "panel" },
   panel_publish: {
     skill: "player_panel",
