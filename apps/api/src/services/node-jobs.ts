@@ -62,7 +62,7 @@ export class NodeJobService {
         detail: `node ${nodeId} does not advertise this kind`,
       });
     }
-    // Registered kinds are validated on this shore before anything is queued.
+    // Args are validated (and defaulted) on this shore before anything is queued.
     const validated = parseNodeJobArgs(kind, args) as Record<string, unknown>;
     if (kind === "node_self_update") {
       // The agent restarts with a different kind set; re-learn it from the next heartbeat.

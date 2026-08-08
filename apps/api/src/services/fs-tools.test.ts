@@ -33,17 +33,19 @@ describe("ServerFsService node-authoritative routing", () => {
     fs.writeFileSync(path.join(dataPath, NODE_AUTHORITATIVE_MARKER), "node-z\n");
 
     const dispatch = vi.spyOn(nodeRuntime, "dispatchNodeJob").mockImplementation(async (opts) => {
+      // The spy stands in for every kind at once, so read args as the raw bag.
+      const args = (opts.args ?? {}) as Record<string, string>;
       if (opts.kind === "fs_list") {
-        expect(opts.args?.path).toBe("servers/s1/home/Zomboid");
+        expect(args.path).toBe("servers/s1/home/Zomboid");
         return {
-          path: opts.args?.path,
+          path: args.path,
           entries: [{ name: "Server", type: "dir" as const }],
         };
       }
       if (opts.kind === "fs_read_text") {
-        expect(opts.args?.path).toBe("servers/s1/home/Zomboid/Server/x.ini");
+        expect(args.path).toBe("servers/s1/home/Zomboid/Server/x.ini");
         return {
-          path: String(opts.args?.path),
+          path: String(args.path),
           content: "WorkshopItems=1",
           bytesRead: 15,
           truncated: false,
@@ -83,11 +85,12 @@ describe("ServerFsService node-authoritative routing", () => {
 
     const seen: Array<Record<string, unknown>> = [];
     vi.spyOn(nodeRuntime, "dispatchNodeJob").mockImplementation(async (opts) => {
-      seen.push({ kind: opts.kind, ...opts.args });
+      const args = (opts.args ?? {}) as Record<string, string>;
+      seen.push({ kind: opts.kind, ...args });
       if (opts.kind === "fs_read_text") {
-        return { path: String(opts.args?.path), content: "", bytesRead: 0, truncated: false, size: 0 };
+        return { path: String(args.path), content: "", bytesRead: 0, truncated: false, size: 0 };
       }
-      return { from: String(opts.args?.from), to: String(opts.args?.to) };
+      return { from: String(args.from), to: String(args.to) };
     });
 
     const servers = {

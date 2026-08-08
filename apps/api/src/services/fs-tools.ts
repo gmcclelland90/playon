@@ -9,8 +9,8 @@ import {
   isLocalNodeId,
   NODE_AUTHORITATIVE_MARKER,
   type NodeJobArgsInput,
+  type NodeJobKind,
   type NodeJobResult,
-  type RegisteredNodeJobKind,
 } from "@playon/shared";
 import { dispatchNodeJob, nodeServerRelPath } from "./node-runtime.js";
 import type { ServerRecord, ServerService } from "./servers.js";
@@ -73,7 +73,7 @@ export class ServerFsService {
    * Node-authoritative servers have no usable copy on the control plane, so the
    * local branch of dispatch is a hard error rather than a silent fallback.
    */
-  private onNode<K extends RegisteredNodeJobKind>(
+  private onNode<K extends NodeJobKind>(
     server: ServerRecord,
     kind: K,
     args: NodeJobArgsInput<K>,

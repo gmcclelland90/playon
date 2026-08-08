@@ -8,9 +8,6 @@ const SELF_UPDATE_ARGS = {
   version: "0.1.11",
 };
 
-/** Kinds still waiting for their slice; used as the shim's stand-in. */
-const SHIMMED_KIND = "manage_probe";
-
 describe("NodeJobService", () => {
   it("enqueues, claims, and completes jobs in order", async () => {
     const svc = new NodeJobService();
@@ -89,10 +86,24 @@ describe("NodeJobService", () => {
     ).toThrow(/validation_failed/);
   });
 
-  it("leaves unmigrated kinds on the untyped shim", () => {
+  it("normalizes manage args and refuses a destination outside the server", () => {
     const svc = new NodeJobService();
-    const job = svc.enqueue("node-a", SHIMMED_KIND, { roots: ["/srv"], extra: 1 });
-    expect(job.args).toEqual({ roots: ["/srv"], extra: 1 });
+    expect(svc.enqueue("node-a", "manage_probe", { roots: ["/srv/games"] }).args).toEqual({
+      roots: ["/srv/games"],
+      hints: [],
+      maxDepth: 2,
+      maxCandidates: 40,
+    });
+    expect(() =>
+      svc.enqueue("node-a", "manage_seed", {
+        sourcePath: "/opt/pzserver",
+        allowRoots: ["/opt"],
+        destRel: "servers/abc/home",
+      }),
+    ).toThrow(/validation_failed/);
+    expect(() => svc.enqueue("node-a", "manage_probe", { roots: ["/srv"], extra: 1 })).toThrow(
+      /validation_failed/,
+    );
   });
 
   it("refuses kinds a node does not advertise", () => {

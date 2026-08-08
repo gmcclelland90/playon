@@ -1,16 +1,18 @@
 import type { z } from "zod";
 import { NodeJobKindSchema, type NodeJobKind } from "../api.js";
 import { CONTAINER_NODE_JOB_CONTRACTS } from "./container.js";
-import type { NodeJobContract } from "./contract.js";
+import type { CompleteNodeJobContractMap, NodeJobContract } from "./contract.js";
 import { NodeJobError } from "./errors.js";
 import { FS_NODE_JOB_CONTRACTS } from "./fs.js";
+import { MANAGE_NODE_JOB_CONTRACTS } from "./manage.js";
 import { META_NODE_JOB_CONTRACTS } from "./meta.js";
 import { PROCESS_NODE_JOB_CONTRACTS } from "./process.js";
 import { STEAMCMD_NODE_JOB_CONTRACTS } from "./steamcmd.js";
 
 /**
- * Contract map for every migrated job kind. Families are folded in one slice at
- * a time; anything absent here still travels as an untyped bag (see `parseNodeJobArgs`).
+ * Every job kind's wire contract, composed from the family modules. The
+ * `satisfies` is the completeness gate: a kind added to the protocol enum without
+ * a contract does not compile, so nothing can travel untyped again.
  */
 export const NODE_JOB_CONTRACTS = {
   ...META_NODE_JOB_CONTRACTS,
@@ -18,44 +20,31 @@ export const NODE_JOB_CONTRACTS = {
   ...CONTAINER_NODE_JOB_CONTRACTS,
   ...PROCESS_NODE_JOB_CONTRACTS,
   ...STEAMCMD_NODE_JOB_CONTRACTS,
-} as const;
+  ...MANAGE_NODE_JOB_CONTRACTS,
+} as const satisfies CompleteNodeJobContractMap;
 
 export type NodeJobContracts = typeof NODE_JOB_CONTRACTS;
 
-/** Kinds with a typed contract today. */
-export type RegisteredNodeJobKind = keyof NodeJobContracts & NodeJobKind;
-
-/** Kinds still on the legacy shim. */
-export type UnregisteredNodeJobKind = Exclude<NodeJobKind, RegisteredNodeJobKind>;
-
 /** What a caller may pass as `args` for a kind (pre-parse, defaults optional). */
-export type NodeJobArgsInput<K extends NodeJobKind> = K extends RegisteredNodeJobKind
-  ? z.input<NodeJobContracts[K]["argsSchema"]>
-  : Record<string, unknown>;
+export type NodeJobArgsInput<K extends NodeJobKind> = z.input<NodeJobContracts[K]["argsSchema"]>;
 
 /** Args as the executing agent sees them (post-parse). */
-export type NodeJobArgs<K extends NodeJobKind> = K extends RegisteredNodeJobKind
-  ? z.output<NodeJobContracts[K]["argsSchema"]>
-  : Record<string, unknown>;
+export type NodeJobArgs<K extends NodeJobKind> = z.output<NodeJobContracts[K]["argsSchema"]>;
 
-export type NodeJobResult<K extends NodeJobKind> = K extends RegisteredNodeJobKind
-  ? z.output<NodeJobContracts[K]["resultSchema"]>
-  : unknown;
+export type NodeJobResult<K extends NodeJobKind> = z.output<NodeJobContracts[K]["resultSchema"]>;
 
 export const ALL_NODE_JOB_KINDS: readonly NodeJobKind[] = NodeJobKindSchema.options;
 
-export const REGISTERED_NODE_JOB_KINDS = Object.keys(
-  NODE_JOB_CONTRACTS,
-) as RegisteredNodeJobKind[];
-
-export function isRegisteredNodeJobKind(kind: unknown): kind is RegisteredNodeJobKind {
+export function isNodeJobKind(kind: unknown): kind is NodeJobKind {
   return typeof kind === "string" && kind in NODE_JOB_CONTRACTS;
 }
 
+/**
+ * Undefined only for a kind this build does not know — a control plane and an
+ * agent on different versions, which both shores report as `unsupported_job_kind`.
+ */
 export function nodeJobContract(kind: NodeJobKind): NodeJobContract | undefined {
-  return isRegisteredNodeJobKind(kind)
-    ? (NODE_JOB_CONTRACTS[kind] as unknown as NodeJobContract)
-    : undefined;
+  return isNodeJobKind(kind) ? (NODE_JOB_CONTRACTS[kind] as unknown as NodeJobContract) : undefined;
 }
 
 function describeIssues(error: z.ZodError): string {
@@ -67,18 +56,20 @@ function describeIssues(error: z.ZodError): string {
     .join("; ");
 }
 
-/**
- * Validate args for a registered kind. Unregistered kinds pass through untouched
- * (the W1 compatibility shim) so migration stays incremental.
- */
+function contractOrThrow(kind: NodeJobKind): NodeJobContract {
+  const contract = nodeJobContract(kind);
+  if (!contract) {
+    throw new NodeJobError("unsupported_job_kind", { kind: String(kind) });
+  }
+  return contract;
+}
+
+/** Validate args for a kind, applying the contract's defaults. */
 export function parseNodeJobArgs<K extends NodeJobKind>(
   kind: K,
   args: unknown = {},
 ): NodeJobArgs<K> {
-  const contract = nodeJobContract(kind);
-  const raw = args ?? {};
-  if (!contract) return raw as NodeJobArgs<K>;
-  const parsed = contract.argsSchema.safeParse(raw);
+  const parsed = contractOrThrow(kind).argsSchema.safeParse(args ?? {});
   if (!parsed.success) {
     throw new NodeJobError("validation_failed", {
       kind,
@@ -88,14 +79,12 @@ export function parseNodeJobArgs<K extends NodeJobKind>(
   return parsed.data as NodeJobArgs<K>;
 }
 
-/** Validate a result for a registered kind; unregistered kinds pass through. */
+/** Validate a result for a kind, wherever it was produced. */
 export function parseNodeJobResult<K extends NodeJobKind>(
   kind: K,
   result: unknown,
 ): NodeJobResult<K> {
-  const contract = nodeJobContract(kind);
-  if (!contract) return result as NodeJobResult<K>;
-  const parsed = contract.resultSchema.safeParse(result);
+  const parsed = contractOrThrow(kind).resultSchema.safeParse(result);
   if (!parsed.success) {
     throw new NodeJobError("validation_failed", {
       kind,
