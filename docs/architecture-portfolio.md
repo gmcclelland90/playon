@@ -103,7 +103,25 @@ Frozen in W1b deep-grill:
 - **Done when:** all ~59 tools are entries; overlay + global gone; lab `loop:verify` green
 - **Zone:** must not own `apps/node-agent/src/jobs.ts` or node-job contract files (may call `dispatchNodeJob`)
 
+## W2 design lock (Server Runtime Handle)
+
+Frozen in W2 deep-grill (after W1 on `main`):
+
+- **Surface:** `ServerRuntimeHandle` — start / stop / restart / status / logs / stdin (console). Health may keep trusting DB `status` for this wave.
+- **Factoring:** two mode adapters (docker | native) each taking a locality transport (local in-process | remote `dispatchNodeJob`) — four concrete combinations, not four unrelated classes.
+- **Home:** `packages/runtime` next to `DockerAdapter` / `ProcessSupervisor`; those stay as internals of the mode half (node-agent job bodies keep using them).
+- **Identity:** always re-resolve on the node (name/cwd or container name); drop durable CP in-memory process maps as call sites migrate.
+- **Obtain:** pure `openServerRuntime(server, deps)` factory + `servers.runtime(serverId)` as the only production choke point.
+- **Stop:** dual-fire process+container during migration; end state is mode-correct stop only.
+- **Slices:** local docker start/stop/status → remote docker → local native → remote native → logs → stdin/console → delete duplicated `startRemote` / local branches.
+- **Done when:** all four quadrants + logs + stdin through Handle; `startRemote` duplication gone; lab `loop:verify` green. Health.ts DB status OK to leave.
+- **Tests:** unit with fake locality + mode stubs; int Paper docker path uses Handle; mocked remote-native unit — no full 4× int matrix.
+- **Git:** `arch/w2-integration` + worktree `playon-arch-w2-runtime-handle`; PRs into integration; promote to `main` after lab green.
+- **Parallel:** grill J4∥J6 (W4b/W4c) after this lock; implement them only after W2’s first prove slice is on `main`. Stay off Handle / File Store / node-agent job-body zones.
+- **Zone:** `servers.ts`, `health.ts`, `server-console.ts`, `native-launch*`, runtime factory touchpoints — not Tool Surface or new node-job contracts.
+
 ## Process after this doc
 
-1. Spawn parallel W1 / W1b implementation agents on worktrees → PRs into `arch/w1-integration`
-2. Re-open portfolio ranking only if a wave invalidates a later candidate
+1. Confirm W2 lock with facilitator → spawn W2 prove slice on `arch/w2-integration`
+2. Deep-grill W4b (Transport) and W4c (Control Plane lifecycle); hold implementation until Handle prove is on `main`
+3. Re-open portfolio ranking only if a wave invalidates a later candidate
