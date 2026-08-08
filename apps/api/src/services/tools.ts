@@ -1,5 +1,3 @@
-import fs from "node:fs";
-import path from "node:path";
 import type {
   ChatStreamSink,
   ConfirmGate,
@@ -31,20 +29,9 @@ import {
   getSetting,
   LLM_SETTINGS_KEY,
   resolveLlmPreset,
-  SKILLS_CATALOG_KEY,
   type LlmSettings,
-  type SkillsCatalogSettings,
 } from "./settings.js";
-import {
-  annotateCatalogInstalled,
-  installSkillFromCatalog,
-} from "./catalog-install.js";
-import {
-  fetchSkillsCatalog,
-  resolveSkillsCatalogUrl,
-  searchCatalog,
-} from "./skills-catalog.js";
-import { listSkills, skillsRootsForWorkspace } from "./skills.js";
+import { skillsRootsForWorkspace } from "./skills.js";
 import { rconExec, rconExecWithSelfHeal } from "./rcon.js";
 import { SnapshotService, withSnapshot } from "./snapshots.js";
 import { SteamcmdNotFoundError, steamcmdAppUpdate } from "./steamcmd.js";
@@ -159,26 +146,16 @@ export function createPlayOnToolRegistry(
     workspace.serverId,
   );
   const {
-    db,
     servers,
     snapshots,
     archives,
     net,
-    drafts,
-    skillPackages,
     placement,
     offNode,
-    panel,
-    playerPanel,
     addNode,
     watchers,
     watcherEngine,
   } = plane;
-
-  async function catalogUrl(): Promise<string> {
-    const stored = await getSetting<SkillsCatalogSettings>(db, SKILLS_CATALOG_KEY);
-    return resolveSkillsCatalogUrl(process.env.PLAYON_SKILLS_CATALOG_URL, stored?.catalogUrl);
-  }
 
   const tools = new Map<string, ToolEntry>();
   for (const entry of composeToolEntries({ plane, workspace, skillRoots })) {
@@ -200,96 +177,6 @@ export function createPlayOnToolRegistry(
 
   // Tool names must match ^[a-zA-Z0-9_-]+$ for Venice / many OpenAI-compatible gateways.
   const toolDefs: ToolDefinition[] = [
-    {
-      name: "skill_list",
-      description:
-        "List installable skills (includes containerSupport: full|partial|none). Prefer containerSupport=full on Docker hosts.",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
-    },
-    {
-      name: "skill_draft_save",
-      description:
-        "Save a draft skill for later promotion. Optional queryConnectorSource writes query/connector.mjs and sets queryDialect=skill_module.",
-      parameters: {
-        type: "object",
-        properties: {
-          name: { type: "string" },
-          game: { type: "string" },
-          description: { type: "string" },
-          installGuide: { type: "string" },
-          containerSupport: { type: "string", enum: ["full", "partial", "none"] },
-          warnings: { type: "string" },
-          queryConnectorSource: { type: "string" },
-          queryGuide: { type: "string" },
-        },
-        required: ["name", "game", "description", "installGuide"],
-      },
-    },
-    {
-      name: "skill_draft_list",
-      description: "List draft skills",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
-    },
-    {
-      name: "skill_promote",
-      description: "Promote a draft skill to an installable skill",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: { slug: { type: "string" } },
-        required: ["slug"],
-      },
-    },
-    {
-      name: "panel_publish",
-      description:
-        "Replace all player panel blocks for a server. Always include join_info + client_setup after servers_start so players can connect. Include every block you want to keep — omitted blocks are removed. Types: server_status, join_info, client_setup, guide, vote, readiness, announcement, file_drop, discovery. join_info address/port and live stats (players/map/mode) are filled from the control plane — do not invent player counts. Optional connectCommand / steamConnectUrl (steam:// only). Blocks are only visible on the public player panel while the server is starting or running — start the server first. Prefer body.notes / body.instructions / body.steps for setup.",
-      parameters: {
-        type: "object",
-        properties: {
-          serverId: { type: "string" },
-          blocks: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                type: {
-                  type: "string",
-                  enum: [
-                    "server_status",
-                    "join_info",
-                    "client_setup",
-                    "guide",
-                    "vote",
-                    "readiness",
-                    "announcement",
-                    "file_drop",
-                    "discovery",
-                  ],
-                },
-                title: { type: "string" },
-                body: {
-                  type: "object",
-                  description:
-                    "join_info: { connectCommand?: string, steamConnectUrl?: string, game?: string }. client_setup: { notes: string }. Prefer skill join metadata; steamConnectUrl must be steam:// when set.",
-                },
-                sortOrder: { type: "number" },
-              },
-              required: ["type", "title"],
-            },
-          },
-        },
-        required: ["blocks"],
-      },
-    },
-    {
-      name: "panel_list",
-      description: "List player panel blocks",
-      parameters: {
-        type: "object",
-        properties: { serverId: { type: "string" } },
-      },
-    },
     {
       name: "snapshot_create",
       description: "Create a snapshot of a server data directory",
@@ -370,86 +257,6 @@ export function createPlayOnToolRegistry(
           },
         },
         required: ["serverId", "url", "destPath"],
-      },
-    },
-    {
-      name: "skill_read",
-      description:
-        "Read guides/*.md from an installed skill (default INSTALL.md; use MODDING.md for Workshop/mod runbooks). Prefer this before drafting a new skill.",
-      parameters: {
-        type: "object",
-        properties: {
-          skillName: { type: "string" },
-          guide: {
-            type: "string",
-            description: "Guide basename without path, e.g. INSTALL.md (default INSTALL.md)",
-          },
-        },
-        required: ["skillName"],
-      },
-    },
-    {
-      name: "skill_export",
-      description: "Export an installable skill as a zip under data/exports/",
-      parameters: {
-        type: "object",
-        properties: { skillName: { type: "string" } },
-        required: ["skillName"],
-      },
-    },
-    {
-      name: "skill_import",
-      description: "Import a skill zip from a path under the host data root",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: {
-          zipPath: { type: "string" },
-          overwrite: { type: "boolean" },
-        },
-        required: ["zipPath"],
-      },
-    },
-    {
-      name: "skill_search",
-      description:
-        "Search the public PlayOn skill catalog (playon.games) for official .skill.zip packages. Use when skill_list has no local match for the requested game.",
-      parameters: {
-        type: "object",
-        properties: {
-          query: {
-            type: "string",
-            description: "Game or skill name / tags (e.g. minecraft, rust). Empty returns the full catalog.",
-          },
-        },
-      },
-    },
-    {
-      name: "skill_install_url",
-      description:
-        "Download and install a skill from the public catalog. Prefer name from skill_search; downloadUrl must match a catalog entry. Verifies sha256 when the catalog provides one.",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: {
-          name: { type: "string", description: "Catalog skill name, e.g. games.minecraft-paper" },
-          downloadUrl: { type: "string", description: "Exact downloadUrl from skill_search" },
-          overwrite: { type: "boolean" },
-        },
-      },
-    },
-    {
-      name: "skill_promote_server",
-      description: "Promote a per-server skill folder to the global skills library",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: {
-          serverId: { type: "string" },
-          skillSlug: { type: "string" },
-          overwrite: { type: "boolean" },
-        },
-        required: ["serverId", "skillSlug"],
       },
     },
     {
@@ -572,20 +379,6 @@ export function createPlayOnToolRegistry(
       },
     },
     {
-      name: "skill_draft_set_query_connector",
-      description:
-        "Write query/connector.mjs on an existing draft and set queryDialect=skill_module. Then use servers_query_test.",
-      parameters: {
-        type: "object",
-        properties: {
-          slug: { type: "string" },
-          queryConnectorSource: { type: "string" },
-          queryGuide: { type: "string" },
-        },
-        required: ["slug", "queryConnectorSource"],
-      },
-    },
-    {
       name: "watchers_list",
       description: "List watchers (scheduled/event automations), optionally filtered by serverId.",
       parameters: {
@@ -695,59 +488,6 @@ export function createPlayOnToolRegistry(
     return def;
   };
 
-  registerTool(tool("skill_list"), async () =>
-    listSkills(skillRoots).map((s) => ({
-      name: s.metadata.name,
-      version: s.metadata.version,
-      game: s.metadata.game,
-      description: s.metadata.description,
-      tags: s.metadata.tags,
-      containerSupport: s.metadata.containerSupport,
-      dockerImage: s.metadata.dockerImage,
-      steamAppId: s.metadata.steamAppId,
-      adminDialect: s.metadata.adminDialect,
-      queryDialect: s.metadata.queryDialect,
-      dependencies: s.metadata.dependencies,
-      minRamMb: s.metadata.minRamMb,
-      scope: s.path.includes(`${path.sep}servers${path.sep}`) ? "server" : "global",
-    })),
-  );
-
-  registerTool(tool("skill_draft_save"), async (args) => {
-    const saved = drafts.save({
-      name: String(args.name),
-      game: String(args.game),
-      description: String(args.description),
-      installGuide: String(args.installGuide),
-      containerSupport: args.containerSupport as "full" | "partial" | "none" | undefined,
-      warnings: args.warnings ? String(args.warnings) : undefined,
-      queryConnectorSource: args.queryConnectorSource
-        ? String(args.queryConnectorSource)
-        : undefined,
-      queryGuide: args.queryGuide ? String(args.queryGuide) : undefined,
-    });
-    return saved;
-  });
-
-  registerTool(tool("skill_draft_list"), async () => drafts.list());
-
-  registerTool(tool("skill_promote"), async (args) => {
-    return drafts.promote(String(args.slug));
-  });
-
-  registerTool(tool("panel_publish"), async (args) => {
-    const resolved = resolveOptionalWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    const blocks = Array.isArray(args.blocks) ? args.blocks : [];
-    return playerPanel.publishFromAgent(resolved.serverId, blocks);
-  });
-
-  registerTool(tool("panel_list"), async (args) => {
-    const resolved = resolveOptionalWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    return panel.list(resolved.serverId);
-  });
-
   registerTool(tool("snapshot_create"), async (args) => {
     const resolved = resolveWorkspaceServerId(args, workspace.serverId);
     if (!resolved.ok) return resolved.error;
@@ -823,116 +563,6 @@ export function createPlayOnToolRegistry(
       url: String(args.url),
       destPath: String(args.destPath),
       headers,
-    });
-  });
-
-  registerTool(tool("skill_read"), async (args) => {
-    const skillName = String(args.skillName);
-    const entry = listSkills(skillRoots).find((s) => s.metadata.name === skillName);
-    if (!entry) return { error: `unknown_skill: ${skillName}` };
-    const guideName = args.guide ? String(args.guide) : "INSTALL.md";
-    const safe = path.basename(guideName);
-    const guidePath = path.join(entry.path, "guides", safe);
-    if (!fs.existsSync(guidePath)) {
-      const guidesDir = path.join(entry.path, "guides");
-      const available = fs.existsSync(guidesDir)
-        ? fs.readdirSync(guidesDir).filter((f) => f.endsWith(".md"))
-        : [];
-      return { error: `guide_not_found: ${safe}`, skillName, availableGuides: available };
-    }
-    return {
-      skillName,
-      guide: safe,
-      path: guidePath,
-      content: fs.readFileSync(guidePath, "utf8"),
-      metadata: {
-        version: entry.metadata.version,
-        dependencies: entry.metadata.dependencies,
-        dockerImage: entry.metadata.dockerImage,
-        steamAppId: entry.metadata.steamAppId,
-        adminDialect: entry.metadata.adminDialect,
-        containerSupport: entry.metadata.containerSupport,
-      },
-    };
-  });
-
-  registerTool(tool("skill_export"), async (args) => {
-    const exported = skillPackages.exportZip(String(args.skillName));
-    const exportsDir = path.join(config.dataRoot, "exports");
-    fs.mkdirSync(exportsDir, { recursive: true });
-    const outPath = path.join(exportsDir, exported.filename);
-    fs.writeFileSync(outPath, exported.bytes);
-    return {
-      skillName: exported.metadataName,
-      filename: exported.filename,
-      path: outPath,
-      bytes: exported.bytes.byteLength,
-    };
-  });
-
-  registerTool(tool("skill_import"), async (args) => {
-    const zipPath = path.resolve(String(args.zipPath));
-    const root = path.resolve(config.dataRoot);
-    if (zipPath !== root && !zipPath.startsWith(root + path.sep)) {
-      throw new Error("zip_path_outside_data_root");
-    }
-    const bytes = new Uint8Array(fs.readFileSync(zipPath));
-    return skillPackages.importZip(bytes, { overwrite: Boolean(args.overwrite) });
-  });
-
-  registerTool(tool("skill_search"), async (args) => {
-    const url = await catalogUrl();
-    const q = args.query !== undefined ? String(args.query) : "";
-    try {
-      const skills = annotateCatalogInstalled(
-        searchCatalog(await fetchSkillsCatalog(url), q),
-        config.skillsRoots,
-      );
-      return {
-        catalogUrl: url,
-        skills: skills.map((s) => ({
-          name: s.name,
-          version: s.version,
-          game: s.game,
-          description: s.description,
-          tags: s.tags,
-          dependencies: s.dependencies,
-          containerSupport: s.containerSupport,
-          minRamMb: s.minRamMb,
-          downloadUrl: s.downloadUrl,
-          sha256: s.sha256,
-          official: s.official,
-          installed: s.installed,
-        })),
-      };
-    } catch (err) {
-      return {
-        catalogUrl: url,
-        skills: [],
-        error: err instanceof Error ? err.message : "catalog_unavailable",
-      };
-    }
-  });
-
-  registerTool(tool("skill_install_url"), async (args) => {
-    const name = args.name !== undefined ? String(args.name).trim() : "";
-    const downloadUrl = args.downloadUrl !== undefined ? String(args.downloadUrl).trim() : "";
-    const url = await catalogUrl();
-    return installSkillFromCatalog({
-      config,
-      skillPackages,
-      catalogUrl: url,
-      name: name || undefined,
-      downloadUrl: downloadUrl || undefined,
-      overwrite: Boolean(args.overwrite),
-    });
-  });
-
-  registerTool(tool("skill_promote_server"), async (args) => {
-    const resolved = resolveWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    return skillPackages.promoteServerSkill(resolved.serverId, String(args.skillSlug), {
-      overwrite: Boolean(args.overwrite),
     });
   });
 
@@ -1058,14 +688,6 @@ export function createPlayOnToolRegistry(
       }
       return { error: err instanceof Error ? err.message : "steamcmd_failed" };
     }
-  });
-
-  registerTool(tool("skill_draft_set_query_connector"), async (args) => {
-    return drafts.setQueryConnector(
-      String(args.slug),
-      String(args.queryConnectorSource),
-      args.queryGuide ? String(args.queryGuide) : undefined,
-    );
   });
 
   registerTool(tool("watchers_list"), async (args) => {

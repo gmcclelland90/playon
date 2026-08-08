@@ -16,15 +16,23 @@ describe("tool surface", () => {
       reason: "recovery",
       celebrate: true,
     });
-    expect(surfaceSkill("skill_promote")).toBe("installer");
-    expect(surfaceSkill("panel_publish")).toBe("player_panel");
+    expect(surfaceSkill("nodes_add")).toBe("installer");
+    expect(surfaceSkill("watchers_create")).toBe("monitor");
     expect(surfaceSkill("snapshot_restore")).toBe("backup");
     expect(surfaceSkill("unknown_tool_xyz")).toBe("orchestrator");
     expect(getToolSurfaceEntry("snapshot_enforce_retention")?.activityVerb).toBe("snapshot");
   });
 
   it("drops migrated domains so their metadata can only come from the entry", () => {
-    for (const name of ["fs_write", "node_ping", "servers_start", "servers_delete"]) {
+    for (const name of [
+      "fs_write",
+      "node_ping",
+      "servers_start",
+      "servers_delete",
+      "skill_promote",
+      "skill_install_url",
+      "panel_publish",
+    ]) {
       expect(getToolSurfaceEntry(name), `${name} still in the overlay`).toBeUndefined();
     }
   });
@@ -37,8 +45,11 @@ describe("tool surface", () => {
 
   it("overlay covers every key used by projections", () => {
     const names = Object.keys(TOOL_SURFACE_OVERLAY);
-    expect(names.length).toBeGreaterThan(30);
-    expect(names.filter((name) => name.startsWith("servers_"))).toEqual([]);
+    const migratedPrefixes = ["fs_", "net_", "node_", "panel_", "servers_", "skill_"];
+    expect(names.length).toBeGreaterThan(0);
+    expect(
+      names.filter((name) => migratedPrefixes.some((prefix) => name.startsWith(prefix))),
+    ).toEqual([]);
     for (const [name, meta] of Object.entries(TOOL_SURFACE_OVERLAY)) {
       expect(meta.skill, `${name} has no skill`).toBeDefined();
       expect(meta.activityVerb, `${name} has no activityVerb`).toBeDefined();
