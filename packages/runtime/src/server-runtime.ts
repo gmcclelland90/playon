@@ -1,14 +1,17 @@
 import type { NodeJobArgsInput, NodeJobKind, NodeJobResult } from "@playon/shared";
-import { readLogFileTail } from "./file-log-tail.js";
+import { followLogFile, readLogFileTail } from "./file-log-tail.js";
 import type {
   ContainerInfo,
   ContainerSpec,
   DockerAdapter,
+  LogFollowHandle,
   ProcessInfo,
   ProcessSpec,
   ProcessSupervisor,
   RuntimeMode,
 } from "./types.js";
+
+const NOOP_FOLLOW: LogFollowHandle = { abort: () => undefined };
 
 /** Where the runtime work executes: in this process, or on a node over the job transport. */
 export type RuntimeLocality = "local" | "remote";
@@ -44,6 +47,11 @@ export interface ServerRuntimeHandle {
   status(): Promise<ServerRuntimeStatus>;
   logs(tail?: number): Promise<string[]>;
   /**
+   * Stream new log lines until the returned handle is aborted.
+   * Remote locality is a no-op: the node-agent already fans lines into Home.
+   */
+  followLogs(onLine: (line: string) => void): Promise<LogFollowHandle>;
+  /**
    * Whether this quadrant has a console to write to at all. Callers need the
    * capability before the state: "this runtime never accepts input" and "the
    * server is not up yet" are different answers to give a player.
@@ -66,11 +74,13 @@ export interface DockerRuntimeTransport {
   start(id: string): Promise<void>;
   stop(id: string): Promise<void>;
   logs(id: string, tail?: number): Promise<string[]>;
+  followLogs?(id: string, onLine: (line: string) => void): Promise<LogFollowHandle>;
   writeStdin?(id: string, line: string): Promise<void>;
 }
 
 export function localDockerTransport(adapter: DockerAdapter): DockerRuntimeTransport {
   const writeStdin = adapter.writeStdin?.bind(adapter);
+  const followLogs = adapter.followLogs?.bind(adapter);
   return {
     locality: "local",
     inspect: (id) => adapter.inspect(id),
@@ -78,6 +88,7 @@ export function localDockerTransport(adapter: DockerAdapter): DockerRuntimeTrans
     start: (id) => adapter.start(id),
     stop: (id) => adapter.stop(id),
     logs: (id, tail) => adapter.logs(id, tail),
+    followLogs,
     writeStdin,
   };
 }
@@ -213,6 +224,14 @@ class DockerRuntimeHandle implements ServerRuntimeHandle {
     return this.transport.logs(id, tail);
   }
 
+  async followLogs(onLine: (line: string) => void): Promise<LogFollowHandle> {
+    const follow = this.transport.followLogs;
+    if (!follow) return NOOP_FOLLOW;
+    const id = await this.resolveContainerId();
+    if (!id) return NOOP_FOLLOW;
+    return follow(id, onLine);
+  }
+
   get canWriteStdin(): boolean {
     return typeof this.transport.writeStdin === "function";
   }
@@ -264,6 +283,7 @@ export interface NativeRuntimeTransport {
   /** Stop by identity; `id` is a hint only, and a dead target is not an error. */
   stop(identity: NativeProcessIdentity, id?: string): Promise<void>;
   logs?(identity: NativeProcessIdentity, tail?: number): Promise<string[]>;
+  followLogs?(identity: NativeProcessIdentity, onLine: (line: string) => void): LogFollowHandle;
   writeStdin?(identity: NativeProcessIdentity, line: string): Promise<void>;
 }
 
@@ -285,6 +305,10 @@ export function localNativeTransport(supervisor: ProcessSupervisor): NativeRunti
     async logs(identity, tail) {
       if (!identity.logFile) return [];
       return readLogFileTail(identity.logFile, tail);
+    },
+    followLogs(identity, onLine) {
+      if (!identity.logFile) return NOOP_FOLLOW;
+      return followLogFile(identity.logFile, onLine);
     },
     // Identity-shaped like the rest: the supervisor owns the pipe, not the caller.
     writeStdin: writeStdin
@@ -486,6 +510,12 @@ class NativeRuntimeHandle implements ServerRuntimeHandle {
       throw new RuntimeUnsupportedError(`native logs over ${this.locality} transport`);
     }
     return read(this.identity, tail);
+  }
+
+  async followLogs(onLine: (line: string) => void): Promise<LogFollowHandle> {
+    const follow = this.transport.followLogs;
+    if (!follow) return NOOP_FOLLOW;
+    return follow(this.identity, onLine);
   }
 
   get canWriteStdin(): boolean {

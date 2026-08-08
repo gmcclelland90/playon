@@ -192,6 +192,31 @@ describe("docker ServerRuntimeHandle", () => {
     await expect(openDocker(fakeDockerTransport()).logs(20)).resolves.toEqual([]);
   });
 
+  it("followLogs uses transport follow when present, else no-ops", async () => {
+    const lines: string[] = [];
+    const withFollow = fakeDockerTransport({
+      existing: { id: "abc123", name: "playon-srv1", status: "running" },
+    });
+    withFollow.followLogs = async (id, onLine) => {
+      withFollow.calls.push(`follow:${id}`);
+      onLine("live-1");
+      return { abort: () => withFollow.calls.push(`follow-abort:${id}`) };
+    };
+    const follow = await openDocker(withFollow).followLogs((line) => lines.push(line));
+    expect(lines).toEqual(["live-1"]);
+    expect(withFollow.calls).toContain("follow:abc123");
+    follow.abort();
+    expect(withFollow.calls).toContain("follow-abort:abc123");
+
+    const noFollow = fakeDockerTransport({
+      existing: { id: "abc123", name: "playon-srv1", status: "running" },
+    });
+    const noop = await openDocker(noFollow).followLogs(() => undefined);
+    expect(() => noop.abort()).not.toThrow();
+    // No transport follow (remote / snapshot-only) → no-op without touching docker.
+    expect(noFollow.calls).toEqual([]);
+  });
+
   it("writes stdin to the resolved id, and reports unsupported transports", async () => {
     const transport = fakeDockerTransport({
       existing: { id: "abc123", name: "playon-srv1", status: "running" },
@@ -696,6 +721,19 @@ describe("localNativeTransport", () => {
     const handle = openNativeAs(localNativeTransport(supervisor), { ...IDENTITY, logFile });
 
     await expect(handle.logs(2)).resolves.toEqual(["two", "three"]);
+  });
+
+  it("followLogs polls the console file named by the identity", async () => {
+    const logFile = path.join(tempDir(), "console.log");
+    fs.writeFileSync(logFile, "");
+    const { supervisor } = fakeSupervisor();
+    const handle = openNativeAs(localNativeTransport(supervisor), { ...IDENTITY, logFile });
+    const lines: string[] = [];
+    const follow = await handle.followLogs((line) => lines.push(line));
+    fs.appendFileSync(logFile, "live-native\n");
+    await new Promise((r) => setTimeout(r, 600));
+    follow.abort();
+    expect(lines).toContain("live-native");
   });
 
   it("tails nothing for an identity with no console file, and for one not written yet", async () => {

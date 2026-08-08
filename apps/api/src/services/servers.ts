@@ -3,7 +3,6 @@ import path from "node:path";
 import { eq, inArray } from "drizzle-orm";
 import {
   createRuntime,
-  followLogFile,
   localDockerTransport,
   localNativeTransport,
   openServerRuntime,
@@ -170,31 +169,20 @@ export class ServerService {
     return nodeServerRelPath(serverId, "logs", "console.log");
   }
 
-  private async beginLogFollow(serverId: string, containerId: string): Promise<void> {
+  /** Home follow via Handle; remote is a no-op (node-agent already streams). */
+  private async beginRuntimeLogFollow(
+    serverId: string,
+    handle: ServerRuntimeHandle,
+  ): Promise<void> {
     this.stopLogFollow(serverId);
-    await this.ensureRuntime();
-    const adapter = this.adapterFor(serverId);
-    if (!adapter.followLogs) return;
+    if (handle.locality === "remote") return;
     try {
-      const handle = await adapter.followLogs(containerId, (line) => {
+      const follow = await handle.followLogs((line) => {
         this.events?.publish({ type: "server.log", serverId, line });
       });
-      this.logFollows.set(serverId, handle);
+      this.logFollows.set(serverId, follow);
     } catch {
       // follow is best-effort; REST detail still has snapshots
-    }
-  }
-
-  private beginFileLogFollow(serverId: string, logPath: string): void {
-    this.stopLogFollow(serverId);
-    try {
-      fs.mkdirSync(path.dirname(logPath), { recursive: true });
-      const handle = followLogFile(logPath, (line) => {
-        this.events?.publish({ type: "server.log", serverId, line });
-      });
-      this.logFollows.set(serverId, handle);
-    } catch {
-      // best-effort
     }
   }
 
@@ -1160,7 +1148,6 @@ export class ServerService {
     this.emitStatus(id, "starting");
 
     const remote = this.isRemoteNode(server);
-    const native = this.wantsNativeRuntime(server, skillName, skillMeta.containerSupport);
 
     try {
       if (remote) {
@@ -1168,15 +1155,11 @@ export class ServerService {
       }
 
       const handle = await this.openRuntime(server);
-      const { id: runtimeId } = await handle.start();
+      await handle.start();
 
       await this.db.update(servers).set({ status: "running" }).where(eq(servers.id, id));
       this.emitStatus(id, "running");
-      // Remote runtimes are followed by the node-agent, which streams lines back itself.
-      if (!remote) {
-        if (native) this.beginFileLogFollow(id, this.consoleLogAbs(server.dataPath));
-        else await this.beginLogFollow(id, runtimeId);
-      }
+      await this.beginRuntimeLogFollow(id, handle);
       return (await this.getRaw(id))!;
     } catch (err) {
       await this.db.update(servers).set({ status: "error" }).where(eq(servers.id, id));
@@ -1202,16 +1185,6 @@ export class ServerService {
     await this.openRuntime(server)
       .then((handle) => handle.stop())
       .catch(() => undefined);
-
-    if (!this.isRemoteNode(server) && this.runtimeTarget(server).mode === "native") {
-      // Dual-fire on Home only, where modes can flip under a server between hosts
-      // with and without docker: one that last ran as a container must still stop.
-      await this.ensureRuntime().catch(() => undefined);
-      const adapter = this.adapters.get(id) ?? this.sharedDocker;
-      if (adapter) {
-        await adapter.stop(this.containerName(id)).catch(() => undefined);
-      }
-    }
 
     await this.db.update(servers).set({ status: "stopped" }).where(eq(servers.id, id));
     this.emitStatus(id, "stopped");
