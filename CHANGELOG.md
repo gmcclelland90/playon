@@ -2,6 +2,29 @@
 
 All notable changes to PlayOn Home (root `package.json` version) are listed here.
 
+## [0.1.10] — 2026-08-08
+
+### Added
+
+- **Watchers** — scheduled and event-driven Monitor automation. Triggers: schedule (interval + optional cron), `server.status`, log patterns, health/query polls, and panel vote/readiness. Actions: allowlisted tool scripts or scoped agent turns (auto-confirm audited). HTTP + MCP `watchers_*` tools, Dashboard/Settings UI, skill metadata templates (lab fixture ships examples disabled by default).
+- **Files editor (Monaco)** — browse and edit server configs and skill package files from the admin UI with syntax highlighting and path-jailed FS tools.
+- **Map Terminal console bubble** — dialect-agnostic live console on the map (open by default when a server is selected): stream Docker/native/remote logs, resize with edge/corner handles, send admin commands (including Source RCON and Minecraft RCON).
+
+### Fixed
+
+- Native/remote log tails read from the end of `console.log`; Docker multiplex headers stripped from container log lines.
+- Prevent stacked native game processes; pin Zomboid userdata into `PLAYON_HOME` for managed native starts.
+- Resolve RCON against the live node for remote servers.
+
+### Changed
+
+- Chat renders markdown and adds a **Stop** control for in-flight agent turns.
+
+### Notes
+
+- Pre-release tag `v0.1.10-console` covered early Terminal work; this **0.1.10** Home release is the full ship (console + Files + Watchers).
+- No new node-agent job kinds required for Watchers or Files (uses existing FS/console paths). Update remote nodes from **Settings → Nodes** when you want the latest agent build stamped **0.1.10**.
+
 ## [0.1.9] — 2026-08-07
 
 ### Fixed
