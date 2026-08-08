@@ -1,5 +1,6 @@
 import type { NodeHeartbeat } from "@playon/shared";
 import { probeCapabilities } from "./capabilities.js";
+import { SUPPORTED_JOB_KINDS } from "./jobs.js";
 
 export function buildHeartbeat(opts: {
   nodeId: string;
@@ -17,6 +18,8 @@ export function buildHeartbeat(opts: {
     steamcmd: caps.steamcmd,
     freeDiskBytes: caps.freeDiskBytes,
     agentVersion: opts.agentVersion ?? "0.1.0",
+    // Protocol advertisement so the control plane can refuse kinds we cannot run.
+    jobKinds: [...SUPPORTED_JOB_KINDS],
   };
 }
 
