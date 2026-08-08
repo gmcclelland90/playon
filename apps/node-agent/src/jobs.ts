@@ -402,18 +402,10 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
   const { docker, process: proc } = await ensureAdapters();
 
   if (job.kind === "container_create") {
+    const { name, image, env, ports, binds } = parseNodeJobArgs("container_create", job.args);
     if (!docker) throw new Error("docker_unavailable");
-    const name = strArg(job.args, "name");
-    const image = strArg(job.args, "image");
-    const env = (job.args.env as Record<string, string> | undefined) ?? {};
-    const ports =
-      (job.args.ports as Array<{
-        host: number;
-        container: number;
-        protocol?: "tcp" | "udp";
-      }>) ?? [];
-    const binds =
-      (job.args.binds as Array<{ hostPath: string; containerPath: string }>) ?? [];
+    // An absolute hostPath is a deliberate escape hatch for host-owned mounts;
+    // anything relative resolves inside the jail.
     const resolvedBinds = binds.map((b) => ({
       hostPath: path.isAbsolute(b.hostPath) ? b.hostPath : resolveInJail(dataRoot, b.hostPath),
       containerPath: b.containerPath,
@@ -421,14 +413,16 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
     for (const b of resolvedBinds) {
       fs.mkdirSync(b.hostPath, { recursive: true });
     }
-    return docker.create({ name, image, env, ports, binds: resolvedBinds });
+    return parseNodeJobResult(
+      "container_create",
+      await docker.create({ name, image, env, ports, binds: resolvedBinds }),
+    );
   }
 
   if (job.kind === "container_start") {
+    const { id, serverId } = parseNodeJobArgs("container_start", job.args);
     if (!docker) throw new Error("docker_unavailable");
-    const id = strArg(job.args, "id");
     await docker.start(id);
-    const serverId = typeof job.args.serverId === "string" ? job.args.serverId : "";
     if (serverId) {
       await beginContainerLogFollow(serverId, docker, id).catch((err) => {
         console.warn(
@@ -438,43 +432,44 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
         );
       });
     }
-    return { ok: true };
+    return parseNodeJobResult("container_start", { ok: true });
   }
 
   if (job.kind === "container_stop") {
+    const { id, serverId } = parseNodeJobArgs("container_stop", job.args);
     if (!docker) throw new Error("docker_unavailable");
-    const serverId = typeof job.args.serverId === "string" ? job.args.serverId : "";
     if (serverId) stopLogFollow(serverId);
-    await docker.stop(strArg(job.args, "id"));
-    return { ok: true };
+    await docker.stop(id);
+    return parseNodeJobResult("container_stop", { ok: true });
   }
 
   if (job.kind === "container_remove") {
+    const { id } = parseNodeJobArgs("container_remove", job.args);
     if (!docker) throw new Error("docker_unavailable");
-    await docker.remove(strArg(job.args, "id"));
-    return { ok: true };
+    await docker.remove(id);
+    return parseNodeJobResult("container_remove", { ok: true });
   }
 
   if (job.kind === "container_inspect") {
+    const { id } = parseNodeJobArgs("container_inspect", job.args);
     if (!docker) throw new Error("docker_unavailable");
-    return docker.inspect(strArg(job.args, "id"));
+    return parseNodeJobResult("container_inspect", await docker.inspect(id));
   }
 
   if (job.kind === "container_logs") {
+    const { id, tail } = parseNodeJobArgs("container_logs", job.args);
     if (!docker) throw new Error("docker_unavailable");
-    const tail = typeof job.args.tail === "number" ? job.args.tail : 100;
-    const lines = await docker.logs(strArg(job.args, "id"), tail);
-    return { lines };
+    return parseNodeJobResult("container_logs", { lines: await docker.logs(id, tail) });
   }
 
   if (job.kind === "container_stdin") {
+    const { id, line } = parseNodeJobArgs("container_stdin", job.args);
     if (!docker) throw new Error("docker_unavailable");
     if (typeof docker.writeStdin !== "function") {
       throw new Error("container_stdin_unsupported");
     }
-    const line = strArg(job.args, "line");
-    await docker.writeStdin(strArg(job.args, "id"), line);
-    return { ok: true };
+    await docker.writeStdin(id, line);
+    return parseNodeJobResult("container_stdin", { ok: true });
   }
 
   if (job.kind === "process_start") {

@@ -1216,7 +1216,7 @@ export class ServerService {
 
     let containerId = name;
     try {
-      const info = await dispatchNodeJob<{ id: string }>({
+      const info = await dispatchNodeJob({
         nodeId,
         kind: "container_inspect",
         args: { id: name },
@@ -1226,7 +1226,7 @@ export class ServerService {
       });
       containerId = info.id;
     } catch {
-      const created = await dispatchNodeJob<{ id: string }>({
+      const created = await dispatchNodeJob({
         nodeId,
         kind: "container_create",
         args: {

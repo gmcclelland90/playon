@@ -9,7 +9,7 @@ const SELF_UPDATE_ARGS = {
 };
 
 /** Kinds still waiting for their slice; used as the shim's stand-in. */
-const SHIMMED_KIND = "container_inspect";
+const SHIMMED_KIND = "process_status";
 
 describe("NodeJobService", () => {
   it("enqueues, claims, and completes jobs in order", async () => {
