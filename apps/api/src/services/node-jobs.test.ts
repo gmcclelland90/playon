@@ -145,4 +145,28 @@ describe("NodeJobService", () => {
       kind: "ping",
     });
   });
+
+  it("releases in-flight waiters on abort instead of holding their full timeout", async () => {
+    const svc = new NodeJobService();
+    const job = svc.enqueue("node-a", "ping");
+    const waiting = svc.waitFor(job.id, { timeoutMs: 60_000, intervalMs: 30_000 });
+    const startedAt = Date.now();
+    // Give the poll a tick to park on its interval before shutdown fires.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(svc.abortWaiters("control_plane_SIGTERM")).toBe(1);
+    await expect(waiting).rejects.toMatchObject({ code: "timeout", kind: "ping" });
+    await expect(waiting).rejects.toThrow(/control_plane_SIGTERM/);
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+    // Waiters deregister, so a second shutdown pass has nothing left to release.
+    expect(svc.abortWaiters()).toBe(0);
+  });
+
+  it("leaves queued jobs alone when waiters are aborted", async () => {
+    const svc = new NodeJobService();
+    const job = svc.enqueue("node-a", "ping");
+    expect(svc.abortWaiters()).toBe(0);
+    expect(svc.get(job.id)?.status).toBe("queued");
+    svc.complete(job.id, { pong: true });
+    expect((await svc.waitFor(job.id, { timeoutMs: 1000 })).status).toBe("done");
+  });
 });
