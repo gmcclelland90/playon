@@ -857,7 +857,7 @@ export class ServerService {
         const procId = this.processes.get(server.id);
         if (procId) {
           try {
-            const info = await dispatchNodeJob<{ status: string }>({
+            const info = await dispatchNodeJob({
               nodeId: server.nodeId,
               kind: "process_status",
               args: { id: procId },
@@ -1164,7 +1164,7 @@ export class ServerService {
       this.processes.delete(id);
       // Ensure RCON credentials (discover/patch on node when authoritative).
       await this.resolveRconConfig(server, skillName).catch(() => undefined);
-      const info = await dispatchNodeJob<{ id: string }>({
+      const info = await dispatchNodeJob({
         nodeId,
         kind: "process_start",
         args: {

@@ -204,12 +204,6 @@ export async function reportJobResult(
   }
 }
 
-function strArg(args: Record<string, unknown>, key: string): string {
-  const v = args[key];
-  if (typeof v !== "string" || !v.trim()) throw new Error(`missing_arg: ${key}`);
-  return v;
-}
-
 /**
  * Execute a claimed job locally with path jail under dataRoot.
  *
@@ -473,27 +467,26 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
   }
 
   if (job.kind === "process_start") {
-    const name = strArg(job.args, "name");
-    const command = strArg(job.args, "command");
-    const args = Array.isArray(job.args.args) ? (job.args.args as string[]) : [];
-    const cwdRel = typeof job.args.cwd === "string" ? job.args.cwd : ".";
+    const {
+      name,
+      command,
+      args,
+      cwd: cwdRel,
+      env,
+      serverId,
+      logRel,
+    } = parseNodeJobArgs("process_start", job.args);
     const cwd = resolveInJail(dataRoot, cwdRel);
-    const env = (job.args.env as Record<string, string> | undefined) ?? {};
-    const serverId = typeof job.args.serverId === "string" ? job.args.serverId : "";
-    const logRel = typeof job.args.logRel === "string" ? job.args.logRel : "";
     const logFile = logRel ? resolveInJail(dataRoot, logRel) : undefined;
     const info = await proc.start({ name, command, args, cwd, env, logFile });
     if (serverId && logFile) {
       beginFileLogFollow(serverId, logFile);
     }
-    return info;
+    return parseNodeJobResult("process_start", info);
   }
 
   if (job.kind === "process_stop") {
-    const id = typeof job.args.id === "string" ? job.args.id : "";
-    const cwdRel = typeof job.args.cwd === "string" ? job.args.cwd : "";
-    const name = typeof job.args.name === "string" ? job.args.name : "";
-    const serverId = typeof job.args.serverId === "string" ? job.args.serverId : "";
+    const { id, name, cwd: cwdRel, serverId } = parseNodeJobArgs("process_stop", job.args);
     if (serverId) stopLogFollow(serverId);
     if (id) {
       await proc.stop(id).catch(() => undefined);
@@ -503,24 +496,28 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
       const cwd = resolveInJail(dataRoot, cwdRel);
       await proc.reclaim(name || `server-unknown`, cwd);
     }
-    return { ok: true };
+    return parseNodeJobResult("process_stop", { ok: true });
   }
 
   if (job.kind === "process_status") {
-    return proc.status(strArg(job.args, "id"));
+    const { id } = parseNodeJobArgs("process_status", job.args);
+    return parseNodeJobResult("process_status", await proc.status(id));
   }
 
   if (job.kind === "steamcmd_app_update") {
-    const serverRel = strArg(job.args, "serverRel");
-    const serverDataPath = resolveInJail(dataRoot, serverRel);
-    const appId = Number(job.args.appId);
-    if (!Number.isFinite(appId)) throw new Error("invalid_appId");
-    return steamcmdAppUpdate({
-      serverDataPath,
-      appId,
-      installDirRel: typeof job.args.installDirRel === "string" ? job.args.installDirRel : undefined,
-      validate: job.args.validate === true ? true : job.args.validate === false ? false : undefined,
-    });
+    const { serverRel, appId, installDirRel, validate } = parseNodeJobArgs(
+      "steamcmd_app_update",
+      job.args,
+    );
+    return parseNodeJobResult(
+      "steamcmd_app_update",
+      await steamcmdAppUpdate({
+        serverDataPath: resolveInJail(dataRoot, serverRel),
+        appId,
+        installDirRel,
+        validate,
+      }),
+    );
   }
 
   if (job.kind === "manage_probe") {
