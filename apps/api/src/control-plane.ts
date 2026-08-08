@@ -19,6 +19,7 @@ import { OffNodeBackupService } from "./services/offnode-backup.js";
 import { PanelService } from "./services/panel.js";
 import { PlacementService } from "./services/placement.js";
 import { PlayerPanel } from "./services/player-panel.js";
+import { ServerAdoptionService } from "./services/server-adoption.js";
 import { ServerQueryService } from "./services/server-query.js";
 import { ServerService } from "./services/servers.js";
 import { SkillDraftService } from "./services/skill-drafts.js";
@@ -36,6 +37,7 @@ export type ControlPlane = {
   confirm: ConfirmService;
   servers: ServerService;
   snapshots: SnapshotService;
+  adoption: ServerAdoptionService;
   panel: PanelService;
   playerPanel: PlayerPanel;
   net: NetToolsService;
@@ -70,6 +72,8 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
   const installDocker = new InstallDockerService(db, config);
   const servers = new ServerService(db, config, eventHub, gateway);
   const snapshots = new SnapshotService(db, config, servers);
+  const adoption = new ServerAdoptionService(db, config, servers, snapshots);
+  servers.bindAdoption(adoption);
   const panel = new PanelService(db, eventHub);
   const net = new NetToolsService(servers);
   const queries = new ServerQueryService(servers, config);
@@ -78,9 +82,9 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
   const placement = new PlacementService(db, config, net);
   const migrate = new MigrateService(db, servers, snapshots, placement, eventHub);
   const offNode = new OffNodeBackupService(db, config, snapshots);
-  const importLocal = new ImportLocalService(db, config, servers, snapshots);
-  const manageSuggest = new ManageSuggestService(db, config, importLocal, servers, snapshots);
-  const importSftp = new ImportSftpService(db, config, servers, snapshots);
+  const importLocal = new ImportLocalService(config, adoption);
+  const manageSuggest = new ManageSuggestService(db, config, importLocal, servers, adoption);
+  const importSftp = new ImportSftpService(config, importLocal);
   const agentProgress = new AgentProgressService(db);
   const serverFs = new ServerFsService(servers);
   const archives = new ServerArchiveService(servers);
@@ -96,6 +100,7 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
     confirm,
     servers,
     snapshots,
+    adoption,
     panel,
     playerPanel,
     net,

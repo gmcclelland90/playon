@@ -3,14 +3,11 @@ import path from "node:path";
 import { Client, type SFTPWrapper } from "ssh2";
 import { nanoid } from "nanoid";
 import type { AppConfig } from "../config.js";
-import type { Db } from "../db/client.js";
 import {
   ImportLocalService,
   type ImportLocalArgs,
   type ImportLocalReport,
 } from "./import-local.js";
-import type { ServerService } from "./servers.js";
-import type { SnapshotService } from "./snapshots.js";
 
 export type SftpImportArgs = {
   host: string;
@@ -115,10 +112,8 @@ export const defaultSftpDownloader: SftpDownloader = (args) =>
 
 export class ImportSftpService {
   constructor(
-    private readonly db: Db,
     private readonly config: AppConfig,
-    private readonly servers: ServerService,
-    private readonly snapshots: SnapshotService,
+    private readonly importLocal: ImportLocalService,
     private readonly download: SftpDownloader = defaultSftpDownloader,
   ) {}
 
@@ -146,13 +141,7 @@ export class ImportSftpService {
         readyTimeoutMs: args.readyTimeoutMs ?? 20_000,
       });
 
-      const local = new ImportLocalService(
-        this.db,
-        this.config,
-        this.servers,
-        this.snapshots,
-      );
-      const report = await local.importFromPath({
+      const report = await this.importLocal.importFromPath({
         sourcePath: stagedPath,
         serverName: args.serverName,
         skillName: args.skillName,
