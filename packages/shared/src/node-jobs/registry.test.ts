@@ -11,11 +11,33 @@ import {
   parseNodeJobResult,
 } from "./registry.js";
 
+/** Kinds still waiting for their slice; used as the shim's stand-in. */
+const SHIMMED_KIND = "container_inspect";
+
 describe("node job registry", () => {
-  it("registers exactly the meta family in this slice", () => {
+  it("registers exactly the meta and fs families in this slice", () => {
     expect([...REGISTERED_NODE_JOB_KINDS].sort()).toEqual(
-      ["node_self_update", "ping", "runtime_caps"].sort(),
+      [
+        "node_self_update",
+        "ping",
+        "runtime_caps",
+        "fs_list",
+        "fs_read_text",
+        "fs_write_text",
+        "fs_ensure_dir",
+        "fs_remove",
+        "fs_rename",
+        "fs_copy",
+        "fs_put_archive",
+        "fs_get_archive",
+      ].sort(),
     );
+  });
+
+  it("covers every fs kind the node agent can run", () => {
+    for (const kind of ALL_NODE_JOB_KINDS.filter((k) => k.startsWith("fs_"))) {
+      expect(nodeJobContract(kind)?.kind).toBe(kind);
+    }
   });
 
   it("gives every registered kind a keyed, complete contract", () => {
@@ -35,9 +57,9 @@ describe("node job registry", () => {
 
   it("classifies registered vs shimmed kinds", () => {
     expect(isRegisteredNodeJobKind("ping")).toBe(true);
-    expect(isRegisteredNodeJobKind("fs_list")).toBe(false);
+    expect(isRegisteredNodeJobKind(SHIMMED_KIND)).toBe(false);
     expect(nodeJobContract("ping")?.kind).toBe("ping");
-    expect(nodeJobContract("fs_list")).toBeUndefined();
+    expect(nodeJobContract(SHIMMED_KIND)).toBeUndefined();
   });
 });
 
@@ -77,9 +99,39 @@ describe("parseNodeJobArgs", () => {
     expect(() => parseNodeJobArgs("ping", { path: "/etc" })).toThrow(/validation_failed/);
   });
 
+  it("applies fs defaults so both shores see the same args", () => {
+    expect(parseNodeJobArgs("fs_list", {})).toEqual({ path: "." });
+    expect(parseNodeJobArgs("fs_read_text", { path: "servers/a/log.txt" })).toEqual({
+      path: "servers/a/log.txt",
+      offset: 0,
+    });
+    expect(parseNodeJobArgs("fs_write_text", { path: "servers/a/x.ini" })).toEqual({
+      path: "servers/a/x.ini",
+      content: "",
+    });
+    expect(parseNodeJobArgs("fs_copy", { from: "servers/a", to: "servers/b" })).toEqual({
+      from: "servers/a",
+      to: "servers/b",
+      overwrite: false,
+    });
+    expect(parseNodeJobArgs("fs_get_archive", { path: "servers/a" })).toEqual({
+      path: "servers/a",
+      format: "tar",
+    });
+  });
+
+  it("refuses paths that could only be a jail escape", () => {
+    for (const bad of ["../etc", "servers/../../etc", "/etc/passwd", "C:\\Windows", ""]) {
+      expect(() => parseNodeJobArgs("fs_read_text", { path: bad })).toThrow(/validation_failed/);
+    }
+    expect(() => parseNodeJobArgs("fs_rename", { from: "servers/a", to: "../b" })).toThrow(
+      /validation_failed/,
+    );
+  });
+
   it("passes unmigrated kinds through untouched (W1 shim)", () => {
-    const args = { path: "servers/a", weird: 1 };
-    expect(parseNodeJobArgs("fs_list", args)).toEqual(args);
+    const args = { id: "abc", weird: 1 };
+    expect(parseNodeJobArgs(SHIMMED_KIND, args)).toEqual(args);
   });
 });
 
@@ -113,6 +165,40 @@ describe("parseNodeJobResult", () => {
     ).toBe(true);
   });
 
+  it("accepts the fs payloads shipped agents already send", () => {
+    expect(
+      parseNodeJobResult("fs_list", {
+        path: "servers/a",
+        entries: [{ name: "game", type: "dir" }],
+      }).entries,
+    ).toEqual([{ name: "game", type: "dir" }]);
+    expect(
+      parseNodeJobResult("fs_read_text", {
+        path: "servers/a/x.ini",
+        content: "k=v",
+        bytesRead: 3,
+        truncated: false,
+        size: 3,
+      }).content,
+    ).toBe("k=v");
+    expect(parseNodeJobResult("fs_write_text", { path: "servers/a/x.ini", bytes: 3 }).bytes).toBe(3);
+    expect(parseNodeJobResult("fs_ensure_dir", { path: "servers/a", ok: true }).ok).toBe(true);
+    expect(parseNodeJobResult("fs_remove", { path: "servers/a", ok: true }).ok).toBe(true);
+    expect(parseNodeJobResult("fs_rename", { from: "a", to: "b" }).to).toBe("b");
+    expect(parseNodeJobResult("fs_copy", { from: "a", to: "b" }).to).toBe("b");
+    expect(parseNodeJobResult("fs_put_archive", { path: "servers/a", ok: true }).ok).toBe(true);
+    expect(parseNodeJobResult("fs_get_archive", { archiveBase64: "" }).archiveBase64).toBe("");
+  });
+
+  it("rejects an fs result missing contract fields", () => {
+    expect(() => parseNodeJobResult("fs_read_text", { path: "a", content: "x" })).toThrow(
+      NodeJobError,
+    );
+    expect(() => parseNodeJobResult("fs_list", { path: "a", entries: [{ name: "x" }] })).toThrow(
+      NodeJobError,
+    );
+  });
+
   it("rejects a malformed result with a typed error", () => {
     expect(() => parseNodeJobResult("ping", { pong: "yes" })).toThrow(NodeJobError);
     try {
@@ -124,7 +210,7 @@ describe("parseNodeJobResult", () => {
   });
 
   it("passes unmigrated kinds through untouched (W1 shim)", () => {
-    const result = { entries: [{ name: "a.txt", type: "file" }] };
-    expect(parseNodeJobResult("fs_list", result)).toEqual(result);
+    const result = { id: "abc", running: true };
+    expect(parseNodeJobResult(SHIMMED_KIND, result)).toEqual(result);
   });
 });

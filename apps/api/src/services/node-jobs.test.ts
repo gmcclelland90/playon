@@ -8,6 +8,9 @@ const SELF_UPDATE_ARGS = {
   version: "0.1.11",
 };
 
+/** Kinds still waiting for their slice; used as the shim's stand-in. */
+const SHIMMED_KIND = "container_inspect";
+
 describe("NodeJobService", () => {
   it("enqueues, claims, and completes jobs in order", async () => {
     const svc = new NodeJobService();
@@ -39,10 +42,22 @@ describe("NodeJobService", () => {
     expect(svc.claimNext("node-a")).toBeNull();
   });
 
+  it("normalizes fs args and refuses a jail escape before queueing", () => {
+    const svc = new NodeJobService();
+    const job = svc.enqueue("node-a", "fs_write_text", { path: "servers/a/x.ini" });
+    expect(job.args).toEqual({ path: "servers/a/x.ini", content: "" });
+    expect(() => svc.enqueue("node-a", "fs_remove", { path: "../../etc" })).toThrow(
+      /validation_failed/,
+    );
+    expect(() =>
+      svc.enqueue("node-a", "fs_list", { path: ".", tail: 10 }),
+    ).toThrow(/validation_failed/);
+  });
+
   it("leaves unmigrated kinds on the untyped shim", () => {
     const svc = new NodeJobService();
-    const job = svc.enqueue("node-a", "fs_write_text", { path: "a.txt", content: "hi", extra: 1 });
-    expect(job.args).toEqual({ path: "a.txt", content: "hi", extra: 1 });
+    const job = svc.enqueue("node-a", SHIMMED_KIND, { id: "abc", extra: 1 });
+    expect(job.args).toEqual({ id: "abc", extra: 1 });
   });
 
   it("refuses kinds a node does not advertise", () => {

@@ -76,8 +76,104 @@ describe("executeJob", () => {
         { id: "j3", nodeId: "n1", kind: "fs_list", args: { path: "../.." } },
         root,
       ),
-    ).rejects.toThrow(/jail|escape|not_found|ENOENT|path/i);
+    ).rejects.toMatchObject({ code: "validation_failed", kind: "fs_list" });
     fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("round-trips the fs family against the contract", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-fs-"));
+    const run = (kind: NodeJobKind, args: Record<string, unknown>) =>
+      executeJob({ id: `fs-${kind}`, nodeId: "n1", kind, args }, root);
+    try {
+      expect(await run("fs_ensure_dir", { path: "servers/s1/game" })).toEqual({
+        path: "servers/s1/game",
+        ok: true,
+      });
+
+      expect(await run("fs_write_text", { path: "servers/s1/game/a.ini", content: "k=v" })).toEqual(
+        { path: "servers/s1/game/a.ini", bytes: 3 },
+      );
+      // Absent content defaults to an empty file rather than failing on a missing arg.
+      expect(await run("fs_write_text", { path: "servers/s1/game/empty.ini" })).toEqual({
+        path: "servers/s1/game/empty.ini",
+        bytes: 0,
+      });
+
+      expect(await run("fs_read_text", { path: "servers/s1/game/a.ini" })).toEqual({
+        path: "servers/s1/game/a.ini",
+        content: "k=v",
+        bytesRead: 3,
+        truncated: false,
+        size: 3,
+      });
+      expect(
+        await run("fs_read_text", { path: "servers/s1/game/a.ini", offset: 1, maxBytes: 1 }),
+      ).toMatchObject({ content: "=", bytesRead: 1, truncated: true, size: 3 });
+      // An oversized ask is clamped by the agent, not refused.
+      expect(
+        await run("fs_read_text", { path: "servers/s1/game/a.ini", maxBytes: 10_000_000 }),
+      ).toMatchObject({ content: "k=v", truncated: false });
+
+      expect(
+        await run("fs_copy", { from: "servers/s1/game/a.ini", to: "servers/s1/game/b.ini" }),
+      ).toEqual({ from: "servers/s1/game/a.ini", to: "servers/s1/game/b.ini" });
+      await expect(
+        run("fs_copy", { from: "servers/s1/game/a.ini", to: "servers/s1/game/b.ini" }),
+      ).rejects.toThrow(/already_exists/);
+
+      expect(
+        await run("fs_rename", { from: "servers/s1/game/b.ini", to: "servers/s1/game/c.ini" }),
+      ).toEqual({ from: "servers/s1/game/b.ini", to: "servers/s1/game/c.ini" });
+
+      const archived = (await run("fs_get_archive", { path: "servers/s1/game" })) as {
+        archiveBase64: string;
+      };
+      expect(archived.archiveBase64.length).toBeGreaterThan(0);
+
+      expect(await run("fs_remove", { path: "servers/s1/game/c.ini" })).toEqual({
+        path: "servers/s1/game/c.ini",
+        ok: true,
+      });
+      expect(fs.existsSync(path.join(root, "servers", "s1", "game", "c.ini"))).toBe(false);
+
+      expect(
+        await run("fs_put_archive", {
+          path: "servers/s2",
+          archiveBase64: archived.archiveBase64,
+          format: "tar",
+        }),
+      ).toEqual({ path: "servers/s2", ok: true });
+      expect(fs.readFileSync(path.join(root, "servers", "s2", "a.ini"), "utf8")).toBe("k=v");
+
+      expect(await run("fs_get_archive", { path: "servers/missing" })).toEqual({
+        archiveBase64: "",
+      });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects malformed fs args with a typed validation error", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-fs-bad-"));
+    try {
+      await expect(
+        executeJob({ id: "b1", nodeId: "n1", kind: "fs_read_text", args: {} }, root),
+      ).rejects.toMatchObject({ code: "validation_failed", kind: "fs_read_text" });
+      await expect(
+        executeJob(
+          { id: "b2", nodeId: "n1", kind: "fs_rename", args: { from: "a", to: "/etc/passwd" } },
+          root,
+        ),
+      ).rejects.toMatchObject({ code: "validation_failed", kind: "fs_rename" });
+      await expect(
+        executeJob(
+          { id: "b3", nodeId: "n1", kind: "fs_list", args: { path: ".", depth: 2 } },
+          root,
+        ),
+      ).rejects.toMatchObject({ code: "validation_failed", kind: "fs_list" });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("reports runtime caps", async () => {

@@ -2,6 +2,7 @@ import type { z } from "zod";
 import { NodeJobKindSchema, type NodeJobKind } from "../api.js";
 import type { NodeJobContract } from "./contract.js";
 import { NodeJobError } from "./errors.js";
+import { FS_NODE_JOB_CONTRACTS } from "./fs.js";
 import { META_NODE_JOB_CONTRACTS } from "./meta.js";
 
 /**
@@ -10,6 +11,7 @@ import { META_NODE_JOB_CONTRACTS } from "./meta.js";
  */
 export const NODE_JOB_CONTRACTS = {
   ...META_NODE_JOB_CONTRACTS,
+  ...FS_NODE_JOB_CONTRACTS,
 } as const;
 
 export type NodeJobContracts = typeof NODE_JOB_CONTRACTS;

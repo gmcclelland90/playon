@@ -57,16 +57,13 @@ export async function pushServerDirToNode(opts: {
 }): Promise<void> {
   if (isLocalNodeId(opts.nodeId)) return;
   const archiveBase64 = packDirToBase64(opts.localDataPath);
+  const jailPath = nodeServerRelPath(opts.serverId);
   await dispatchNodeJob({
     nodeId: opts.nodeId,
     kind: "fs_put_archive",
-    args: {
-      path: nodeServerRelPath(opts.serverId),
-      archiveBase64,
-      format: "tar",
-    },
+    args: { path: jailPath, archiveBase64, format: "tar" },
     timeoutMs: 600_000,
-    localHandler: async () => ({ ok: true }),
+    localHandler: async () => ({ path: jailPath, ok: true }),
   });
 }
 
@@ -77,16 +74,13 @@ export async function pullServerDirFromNode(opts: {
   localDataPath: string;
 }): Promise<void> {
   if (isLocalNodeId(opts.nodeId)) return;
-  const result = await dispatchNodeJob<{ archiveBase64: string }>({
+  const result = await dispatchNodeJob({
     nodeId: opts.nodeId,
     kind: "fs_get_archive",
-    args: {
-      path: nodeServerRelPath(opts.serverId),
-      format: "tar",
-    },
+    args: { path: nodeServerRelPath(opts.serverId), format: "tar" },
     timeoutMs: 600_000,
     localHandler: async () => ({ archiveBase64: "" }),
   });
   fs.rmSync(opts.localDataPath, { recursive: true, force: true });
-  unpackBase64ToDir(result.archiveBase64 ?? "", opts.localDataPath);
+  unpackBase64ToDir(result.archiveBase64, opts.localDataPath);
 }

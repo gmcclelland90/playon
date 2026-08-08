@@ -13,6 +13,7 @@ import {
   type ProcessSupervisor,
 } from "@playon/runtime";
 import {
+  FS_READ_MAX_BYTES,
   ImportPackArgsSchema,
   ImportProbeArgsSchema,
   ManageCutoverArgsSchema,
@@ -246,12 +247,12 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
   }
 
   if (job.kind === "fs_list") {
-    const rel = typeof job.args.path === "string" ? job.args.path : ".";
+    const { path: rel } = parseNodeJobArgs("fs_list", job.args);
     const target = resolveInJail(dataRoot, rel);
     if (!fs.existsSync(target)) throw new Error(`not_found: ${rel}`);
     const stat = fs.statSync(target);
     if (!stat.isDirectory()) throw new Error(`not_a_directory: ${rel}`);
-    return {
+    return parseNodeJobResult("fs_list", {
       path: rel,
       entries: fs.readdirSync(target).map((name) => {
         const child = path.join(target, name);
@@ -260,28 +261,29 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
           type: fs.statSync(child).isDirectory() ? ("dir" as const) : ("file" as const),
         };
       }),
-    };
+    });
   }
 
   if (job.kind === "fs_ensure_dir") {
-    const rel = strArg(job.args, "path");
+    const { path: rel } = parseNodeJobArgs("fs_ensure_dir", job.args);
     const target = resolveInJail(dataRoot, rel);
     fs.mkdirSync(target, { recursive: true });
-    return { path: rel, ok: true };
+    return parseNodeJobResult("fs_ensure_dir", { path: rel, ok: true });
   }
 
   if (job.kind === "fs_write_text") {
-    const rel = strArg(job.args, "path");
-    const content = typeof job.args.content === "string" ? job.args.content : "";
+    const { path: rel, content } = parseNodeJobArgs("fs_write_text", job.args);
     const target = resolveInJail(dataRoot, rel);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, content, "utf8");
-    return { path: rel, bytes: Buffer.byteLength(content, "utf8") };
+    return parseNodeJobResult("fs_write_text", {
+      path: rel,
+      bytes: Buffer.byteLength(content, "utf8"),
+    });
   }
 
   if (job.kind === "fs_put_archive") {
-    const rel = strArg(job.args, "path");
-    const archiveBase64 = typeof job.args.archiveBase64 === "string" ? job.args.archiveBase64 : "";
+    const { path: rel, archiveBase64 } = parseNodeJobArgs("fs_put_archive", job.args);
     const target = resolveInJail(dataRoot, rel);
     fs.rmSync(target, { recursive: true, force: true });
     fs.mkdirSync(target, { recursive: true });
@@ -295,88 +297,88 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
         fs.rmSync(staging, { recursive: true, force: true });
       }
     }
-    return { path: rel, ok: true };
+    return parseNodeJobResult("fs_put_archive", { path: rel, ok: true });
   }
 
   if (job.kind === "fs_get_archive") {
-    const rel = strArg(job.args, "path");
+    const { path: rel } = parseNodeJobArgs("fs_get_archive", job.args);
     const target = resolveInJail(dataRoot, rel);
     if (!fs.existsSync(target)) {
-      return { archiveBase64: "" };
+      return parseNodeJobResult("fs_get_archive", { archiveBase64: "" });
     }
     const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-get-"));
     const archive = path.join(staging, "tree.tar");
     try {
       execFileSync("tar", ["-cf", archive, "-C", target, "."], { stdio: "pipe" });
-      return { archiveBase64: fs.readFileSync(archive).toString("base64") };
+      return parseNodeJobResult("fs_get_archive", {
+        archiveBase64: fs.readFileSync(archive).toString("base64"),
+      });
     } finally {
       fs.rmSync(staging, { recursive: true, force: true });
     }
   }
 
   if (job.kind === "fs_remove") {
-    const rel = strArg(job.args, "path");
+    const { path: rel } = parseNodeJobArgs("fs_remove", job.args);
     const target = resolveInJail(dataRoot, rel);
     fs.rmSync(target, { recursive: true, force: true });
-    return { path: rel, ok: true };
+    return parseNodeJobResult("fs_remove", { path: rel, ok: true });
   }
 
   if (job.kind === "fs_read_text") {
-    const rel = strArg(job.args, "path");
+    const { path: rel, offset, maxBytes } = parseNodeJobArgs("fs_read_text", job.args);
     const target = resolveInJail(dataRoot, rel);
     if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
       throw new Error(`not_found: ${rel}`);
     }
     const size = fs.statSync(target).size;
-    const offset = Math.max(0, Math.floor(Number(job.args.offset ?? 0) || 0));
-    const maxCap = 512_000;
-    const maxBytes = Math.min(
-      maxCap,
-      Math.max(1, Math.floor(Number(job.args.maxBytes ?? maxCap) || maxCap)),
-    );
+    // The cap is ours, not the caller's: oversized asks are clamped, not refused.
+    const capped = Math.min(FS_READ_MAX_BYTES, maxBytes ?? FS_READ_MAX_BYTES);
     if (offset > size) {
-      return { path: rel, content: "", bytesRead: 0, truncated: false, size };
+      return parseNodeJobResult("fs_read_text", {
+        path: rel,
+        content: "",
+        bytesRead: 0,
+        truncated: false,
+        size,
+      });
     }
     const fd = fs.openSync(target, "r");
     try {
-      const length = Math.min(maxBytes, size - offset);
+      const length = Math.min(capped, size - offset);
       const buf = Buffer.alloc(length);
       const bytesRead = fs.readSync(fd, buf, 0, length, offset);
-      return {
+      return parseNodeJobResult("fs_read_text", {
         path: rel,
         content: buf.subarray(0, bytesRead).toString("utf8"),
         bytesRead,
         truncated: offset + bytesRead < size,
         size,
-      };
+      });
     } finally {
       fs.closeSync(fd);
     }
   }
 
   if (job.kind === "fs_rename") {
-    const fromRel = strArg(job.args, "from");
-    const toRel = strArg(job.args, "to");
+    const { from: fromRel, to: toRel, overwrite } = parseNodeJobArgs("fs_rename", job.args);
     const from = resolveInJail(dataRoot, fromRel);
     const to = resolveInJail(dataRoot, toRel);
     if (!fs.existsSync(from)) throw new Error(`not_found: ${fromRel}`);
-    const overwrite = job.args.overwrite === true;
     if (fs.existsSync(to) && !overwrite) throw new Error(`already_exists: ${toRel}`);
     fs.mkdirSync(path.dirname(to), { recursive: true });
     if (fs.existsSync(to) && overwrite) {
       fs.rmSync(to, { recursive: true, force: true });
     }
     fs.renameSync(from, to);
-    return { from: fromRel, to: toRel };
+    return parseNodeJobResult("fs_rename", { from: fromRel, to: toRel });
   }
 
   if (job.kind === "fs_copy") {
-    const fromRel = strArg(job.args, "from");
-    const toRel = strArg(job.args, "to");
+    const { from: fromRel, to: toRel, overwrite } = parseNodeJobArgs("fs_copy", job.args);
     const from = resolveInJail(dataRoot, fromRel);
     const to = resolveInJail(dataRoot, toRel);
     if (!fs.existsSync(from)) throw new Error(`not_found: ${fromRel}`);
-    const overwrite = job.args.overwrite === true;
     if (fs.existsSync(to) && !overwrite) throw new Error(`already_exists: ${toRel}`);
     if (fs.existsSync(to) && overwrite) {
       fs.rmSync(to, { recursive: true, force: true });
@@ -394,7 +396,7 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
       fs.copyFileSync(src, dest);
     };
     copyRecursive(from, to);
-    return { from: fromRel, to: toRel };
+    return parseNodeJobResult("fs_copy", { from: fromRel, to: toRel });
   }
 
   const { docker, process: proc } = await ensureAdapters();

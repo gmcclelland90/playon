@@ -3,11 +3,36 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveInJail } from "@playon/runtime";
-import { isLocalNodeId, NODE_AUTHORITATIVE_MARKER } from "@playon/shared";
+import {
+  FS_READ_MAX_BYTES,
+  hasNodeJobErrorCode,
+  isLocalNodeId,
+  NODE_AUTHORITATIVE_MARKER,
+  type NodeJobArgsInput,
+  type NodeJobResult,
+  type RegisteredNodeJobKind,
+} from "@playon/shared";
 import { dispatchNodeJob, nodeServerRelPath } from "./node-runtime.js";
 import type { ServerRecord, ServerService } from "./servers.js";
 
-const DEFAULT_READ_MAX_BYTES = 512_000;
+/**
+ * Tool callers hand us free-form numbers (an LLM may send a float, a zero, or
+ * nothing). The read contract wants sane integers, so clamp here rather than
+ * failing validation on a window we can obviously repair.
+ */
+function readWindow(opts?: { offset?: number; maxBytes?: number }): {
+  offset: number;
+  maxBytes: number;
+} {
+  const rawOffset = Number(opts?.offset ?? 0);
+  const rawMaxBytes = Number(opts?.maxBytes ?? FS_READ_MAX_BYTES);
+  return {
+    offset: Number.isFinite(rawOffset) ? Math.max(0, Math.floor(rawOffset)) : 0,
+    maxBytes: Number.isFinite(rawMaxBytes)
+      ? Math.min(FS_READ_MAX_BYTES, Math.max(1, Math.floor(rawMaxBytes)))
+      : FS_READ_MAX_BYTES,
+  };
+}
 
 function copyRecursive(src: string, dest: string): void {
   const stat = fs.statSync(src);
@@ -44,21 +69,36 @@ export class ServerFsService {
     return fs.existsSync(path.join(server.dataPath, NODE_AUTHORITATIVE_MARKER));
   }
 
+  /**
+   * Node-authoritative servers have no usable copy on the control plane, so the
+   * local branch of dispatch is a hard error rather than a silent fallback.
+   */
+  private onNode<K extends RegisteredNodeJobKind>(
+    server: ServerRecord,
+    kind: K,
+    args: NodeJobArgsInput<K>,
+    timeoutMs: number,
+  ): Promise<NodeJobResult<K>> {
+    return dispatchNodeJob({
+      nodeId: server.nodeId,
+      kind,
+      args,
+      timeoutMs,
+      localHandler: () => {
+        throw new Error("node_fs_local_unreachable");
+      },
+    });
+  }
+
   async list(serverId: string, relPath = "."): Promise<Array<{ name: string; type: "file" | "dir" }>> {
     const server = await this.resolveServer(serverId);
     if (this.routesToNode(server)) {
-      const result = await dispatchNodeJob<{
-        path: string;
-        entries: Array<{ name: string; type: "file" | "dir" }>;
-      }>({
-        nodeId: server.nodeId,
-        kind: "fs_list",
-        args: { path: nodeJailRel(serverId, relPath) },
-        timeoutMs: 60_000,
-        localHandler: async () => {
-          throw new Error("node_fs_local_unreachable");
-        },
-      });
+      const result = await this.onNode(
+        server,
+        "fs_list",
+        { path: nodeJailRel(serverId, relPath) },
+        60_000,
+      );
       return result.entries;
     }
 
@@ -94,15 +134,12 @@ export class ServerFsService {
     const base = path.posix.basename(posix);
     const parent = path.posix.dirname(posix);
     const parentRel = !parent || parent === "." ? "." : parent;
-    const archived = await dispatchNodeJob<{ archiveBase64: string }>({
-      nodeId: server.nodeId,
-      kind: "fs_get_archive",
-      args: { path: nodeJailRel(serverId, parentRel) },
-      timeoutMs: 120_000,
-      localHandler: async () => {
-        throw new Error("node_fs_local_unreachable");
-      },
-    });
+    const archived = await this.onNode(
+      server,
+      "fs_get_archive",
+      { path: nodeJailRel(serverId, parentRel) },
+      120_000,
+    );
     if (!archived.archiveBase64) throw new Error(`not_found: ${relPath}`);
     const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-fs-read-"));
     try {
@@ -116,11 +153,7 @@ export class ServerFsService {
         throw new Error(`not_found: ${relPath}`);
       }
       const size = fs.statSync(target).size;
-      const offset = Math.max(0, Math.floor(opts?.offset ?? 0));
-      const maxBytes = Math.min(
-        DEFAULT_READ_MAX_BYTES,
-        Math.max(1, Math.floor(opts?.maxBytes ?? DEFAULT_READ_MAX_BYTES)),
-      );
+      const { offset, maxBytes } = readWindow(opts);
       if (offset > size) {
         return { path: relPath, content: "", bytesRead: 0, truncated: false, size };
       }
@@ -156,24 +189,18 @@ export class ServerFsService {
     size: number;
   }> {
     const server = await this.resolveServer(serverId);
+    const bounds = readWindow(opts);
     if (this.routesToNode(server)) {
       try {
-        return await dispatchNodeJob({
-          nodeId: server.nodeId,
-          kind: "fs_read_text",
-          args: {
-            path: nodeJailRel(serverId, relPath),
-            offset: opts?.offset,
-            maxBytes: opts?.maxBytes,
-          },
-          timeoutMs: 60_000,
-          localHandler: async () => {
-            throw new Error("node_fs_local_unreachable");
-          },
-        });
+        return await this.onNode(
+          server,
+          "fs_read_text",
+          { path: nodeJailRel(serverId, relPath), ...bounds },
+          60_000,
+        );
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        if (!message.includes("unsupported_job_kind")) throw err;
+        // Agents older than the fs_read_text kind: fall back to a parent-dir archive.
+        if (!hasNodeJobErrorCode(err, "unsupported_job_kind")) throw err;
         return this.readViaNodeArchive(server, serverId, relPath, opts);
       }
     }
@@ -184,11 +211,7 @@ export class ServerFsService {
       throw new Error(`not_found: ${relPath}`);
     }
     const size = fs.statSync(target).size;
-    const offset = Math.max(0, Math.floor(opts?.offset ?? 0));
-    const maxBytes = Math.min(
-      DEFAULT_READ_MAX_BYTES,
-      Math.max(1, Math.floor(opts?.maxBytes ?? DEFAULT_READ_MAX_BYTES)),
-    );
+    const { offset, maxBytes } = bounds;
     if (offset > size) {
       return { path: relPath, content: "", bytesRead: 0, truncated: false, size };
     }
@@ -212,18 +235,12 @@ export class ServerFsService {
   ): Promise<{ path: string; bytes: number }> {
     const server = await this.resolveServer(serverId);
     if (this.routesToNode(server)) {
-      const result = await dispatchNodeJob<{ path: string; bytes: number }>({
-        nodeId: server.nodeId,
-        kind: "fs_write_text",
-        args: {
-          path: nodeJailRel(serverId, relPath),
-          content,
-        },
-        timeoutMs: 60_000,
-        localHandler: async () => {
-          throw new Error("node_fs_local_unreachable");
-        },
-      });
+      const result = await this.onNode(
+        server,
+        "fs_write_text",
+        { path: nodeJailRel(serverId, relPath), content },
+        60_000,
+      );
       return { path: relPath, bytes: result.bytes };
     }
 
@@ -237,15 +254,7 @@ export class ServerFsService {
   async delete(serverId: string, relPath: string): Promise<{ path: string; deleted: "file" | "dir" }> {
     const server = await this.resolveServer(serverId);
     if (this.routesToNode(server)) {
-      await dispatchNodeJob({
-        nodeId: server.nodeId,
-        kind: "fs_remove",
-        args: { path: nodeJailRel(serverId, relPath) },
-        timeoutMs: 120_000,
-        localHandler: async () => {
-          throw new Error("node_fs_local_unreachable");
-        },
-      });
+      await this.onNode(server, "fs_remove", { path: nodeJailRel(serverId, relPath) }, 120_000);
       // Node fs_remove is recursive; callers rarely branch on file vs dir.
       return { path: relPath, deleted: "dir" };
     }
@@ -270,19 +279,18 @@ export class ServerFsService {
   ): Promise<{ from: string; to: string }> {
     const server = await this.resolveServer(serverId);
     if (this.routesToNode(server)) {
-      return dispatchNodeJob({
-        nodeId: server.nodeId,
-        kind: "fs_rename",
-        args: {
+      await this.onNode(
+        server,
+        "fs_rename",
+        {
           from: nodeJailRel(serverId, fromPath),
           to: nodeJailRel(serverId, toPath),
           overwrite: Boolean(opts?.overwrite),
         },
-        timeoutMs: 120_000,
-        localHandler: async () => {
-          throw new Error("node_fs_local_unreachable");
-        },
-      });
+        120_000,
+      );
+      // Answer in the caller's server-relative terms, as the Home branch does.
+      return { from: fromPath, to: toPath };
     }
 
     const root = server.dataPath;
@@ -308,19 +316,17 @@ export class ServerFsService {
   ): Promise<{ from: string; to: string }> {
     const server = await this.resolveServer(serverId);
     if (this.routesToNode(server)) {
-      return dispatchNodeJob({
-        nodeId: server.nodeId,
-        kind: "fs_copy",
-        args: {
+      await this.onNode(
+        server,
+        "fs_copy",
+        {
           from: nodeJailRel(serverId, fromPath),
           to: nodeJailRel(serverId, toPath),
           overwrite: Boolean(opts?.overwrite),
         },
-        timeoutMs: 300_000,
-        localHandler: async () => {
-          throw new Error("node_fs_local_unreachable");
-        },
-      });
+        300_000,
+      );
+      return { from: fromPath, to: toPath };
     }
 
     const root = server.dataPath;
