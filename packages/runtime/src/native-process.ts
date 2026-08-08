@@ -95,6 +95,23 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     return { ...this.require(id).info };
   }
 
+  /**
+   * Answer "is a process running for this server" from identity alone: tracked
+   * entries first, then OS processes living in `cwd` (survives a supervisor restart).
+   */
+  async find(name: string, cwd: string): Promise<ProcessInfo | null> {
+    const resolved = this.jailRoot ? resolveInJail(this.jailRoot, cwd) : cwd;
+    for (const tracked of this.procs.values()) {
+      if (tracked.info.status !== "running") continue;
+      if (tracked.info.name === name || tracked.cwdJail === resolved) return { ...tracked.info };
+    }
+    if (process.platform === "win32") return null;
+    const pid = listPidsWithCwdUnder(resolved)[0] ?? firstPidWithCmdlineUnder(resolved);
+    if (pid == null) return null;
+    // Untracked survivor: the pid is the only identity we can offer.
+    return { id: `native-orphan-${pid}`, name, pid, status: "running" };
+  }
+
   async reclaim(name: string, cwd: string): Promise<void> {
     for (const tracked of this.procs.values()) {
       if (tracked.info.name !== name && tracked.cwdJail !== cwd) continue;
@@ -179,6 +196,21 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     const p = this.procs.get(id);
     if (!p) throw new Error(`unknown process: ${id}`);
     return p;
+  }
+}
+
+/** Fallback for hosts where /proc/<pid>/cwd is unreadable: match the command line. */
+function firstPidWithCmdlineUnder(target: string): number | null {
+  try {
+    const out = execFileSync("pgrep", ["-f", target], { encoding: "utf8" });
+    for (const line of out.trim().split("\n")) {
+      const pid = Number(line.trim());
+      if (Number.isInteger(pid) && pid > 0 && pid !== process.pid) return pid;
+    }
+    return null;
+  } catch {
+    // exit 1 = no match
+    return null;
   }
 }
 

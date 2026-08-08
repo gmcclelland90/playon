@@ -1,15 +1,25 @@
 import { describe, expect, it } from "vitest";
 import {
   localDockerTransport,
+  localNativeTransport,
   openServerRuntime,
   remoteDockerTransport,
   RuntimeUnsupportedError,
   type ContainerJobDispatch,
   type ContainerJobKind,
   type DockerRuntimeTransport,
+  type NativeRuntimeTransport,
   type ServerContainerSpec,
+  type ServerProcessSpec,
 } from "./server-runtime.js";
-import type { ContainerInfo, ContainerSpec, DockerAdapter } from "./types.js";
+import type {
+  ContainerInfo,
+  ContainerSpec,
+  DockerAdapter,
+  ProcessInfo,
+  ProcessSpec,
+  ProcessSupervisor,
+} from "./types.js";
 
 const SPEC: ServerContainerSpec = {
   image: "playon/fixture:latest",
@@ -350,14 +360,289 @@ describe("remote docker ServerRuntimeHandle", () => {
   });
 });
 
+const PROCESS_SPEC: ServerProcessSpec = {
+  command: "/bin/bash",
+  args: ["/srv/srv1/game/start.sh"],
+  env: { PLAYON_SERVER_ID: "srv1" },
+  logFile: "/srv/srv1/logs/console.log",
+};
+
+const IDENTITY = { name: "server-srv1", cwd: "/srv/srv1/game" };
+
+interface FakeNative extends NativeRuntimeTransport {
+  calls: string[];
+  running: ProcessInfo | null;
+  specs: ProcessSpec[];
+}
+
+/** A host that only knows how to run and re-resolve a process for an identity. */
+function fakeNativeTransport(opts?: { running?: ProcessInfo; stdio?: boolean }): FakeNative {
+  const calls: string[] = [];
+  const specs: ProcessSpec[] = [];
+  const transport: FakeNative = {
+    locality: "local",
+    calls,
+    specs,
+    running: opts?.running ?? null,
+    async resolve(identity) {
+      calls.push(`resolve:${identity.name}:${identity.cwd}`);
+      return transport.running;
+    },
+    async start(spec) {
+      calls.push(`start:${spec.name}:${spec.cwd}`);
+      specs.push(spec);
+      const info: ProcessInfo = {
+        id: `native-${spec.name}-1`,
+        name: spec.name,
+        pid: 4242,
+        status: "running",
+      };
+      transport.running = info;
+      return info;
+    },
+    async stop(identity, id) {
+      calls.push(`stop:${identity.name}:${id ?? "no-id"}`);
+      transport.running = null;
+    },
+    logs: opts?.stdio
+      ? async (identity, tail) => {
+          calls.push(`logs:${identity.name}:${tail ?? "all"}`);
+          return ["native-line-1"];
+        }
+      : undefined,
+    writeStdin: opts?.stdio
+      ? async (identity, line) => {
+          calls.push(`stdin:${identity.name}:${line}`);
+        }
+      : undefined,
+  };
+  return transport;
+}
+
+function openNative(transport: NativeRuntimeTransport) {
+  return openServerRuntime(
+    { serverId: "srv1", mode: "native", locality: transport.locality },
+    {
+      containerName: "playon-srv1",
+      processIdentity: IDENTITY,
+      native: transport,
+      resolveProcessSpec: async () => PROCESS_SPEC,
+    },
+  );
+}
+
+describe("native ServerRuntimeHandle", () => {
+  it("starts the process under the handle-owned name and cwd", async () => {
+    const transport = fakeNativeTransport();
+    const handle = openNative(transport);
+
+    const started = await handle.start();
+
+    expect(handle.mode).toBe("native");
+    expect(started.id).toBe("native-server-srv1-1");
+    expect(transport.calls).toEqual([
+      "resolve:server-srv1:/srv/srv1/game",
+      "start:server-srv1:/srv/srv1/game",
+    ]);
+    expect(transport.specs[0]).toEqual({
+      ...PROCESS_SPEC,
+      name: "server-srv1",
+      cwd: "/srv/srv1/game",
+    });
+  });
+
+  it("stops a process it re-resolved before starting a second one", async () => {
+    const transport = fakeNativeTransport({
+      running: { id: "native-orphan-99", name: "server-srv1", pid: 99, status: "running" },
+    });
+
+    await openNative(transport).start();
+
+    expect(transport.calls).toEqual([
+      "resolve:server-srv1:/srv/srv1/game",
+      "stop:server-srv1:native-orphan-99",
+      "start:server-srv1:/srv/srv1/game",
+    ]);
+  });
+
+  it("stops by identity, passing the re-resolved id as a hint", async () => {
+    const transport = fakeNativeTransport({
+      running: { id: "native-server-srv1-1", name: "server-srv1", pid: 7, status: "running" },
+    });
+
+    await openNative(transport).stop();
+
+    expect(transport.calls).toEqual([
+      "resolve:server-srv1:/srv/srv1/game",
+      "stop:server-srv1:native-server-srv1-1",
+    ]);
+  });
+
+  it("still fires stop when nothing resolved, so orphans get swept", async () => {
+    const transport = fakeNativeTransport();
+
+    await openNative(transport).stop();
+
+    expect(transport.calls).toEqual([
+      "resolve:server-srv1:/srv/srv1/game",
+      "stop:server-srv1:no-id",
+    ]);
+  });
+
+  it("restart stops before starting", async () => {
+    const transport = fakeNativeTransport({
+      running: { id: "native-server-srv1-1", name: "server-srv1", pid: 7, status: "running" },
+    });
+
+    await openNative(transport).restart();
+
+    expect(transport.calls).toEqual([
+      "resolve:server-srv1:/srv/srv1/game",
+      "stop:server-srv1:native-server-srv1-1",
+      "resolve:server-srv1:/srv/srv1/game",
+      "start:server-srv1:/srv/srv1/game",
+    ]);
+  });
+
+  it("maps process state onto runtime state, and reads absence as stopped", async () => {
+    const running = openNative(
+      fakeNativeTransport({
+        running: { id: "p1", name: "server-srv1", pid: 7, status: "running" },
+      }),
+    );
+    const exited = openNative(
+      fakeNativeTransport({ running: { id: "p2", name: "server-srv1", status: "stopped" } }),
+    );
+    const gone = openNative(fakeNativeTransport());
+
+    await expect(running.status()).resolves.toEqual({
+      state: "running",
+      id: "p1",
+      detail: "running",
+    });
+    await expect(exited.status()).resolves.toEqual({
+      state: "stopped",
+      id: "p2",
+      detail: "stopped",
+    });
+    await expect(gone.status()).resolves.toEqual({ state: "stopped" });
+  });
+
+  it("reports logs and stdin as unsupported until those slices land", async () => {
+    const handle = openNative(fakeNativeTransport());
+
+    await expect(handle.logs(20)).rejects.toThrow(/runtime_unsupported: native logs/);
+    await expect(handle.writeStdin("say hi")).rejects.toThrow(/runtime_unsupported: native stdin/);
+  });
+
+  it("uses the transport's own logs and stdin when it has them", async () => {
+    const transport = fakeNativeTransport({ stdio: true });
+    const handle = openNative(transport);
+
+    await expect(handle.logs(20)).resolves.toEqual(["native-line-1"]);
+    await handle.writeStdin("say hi");
+    expect(transport.calls).toEqual(["logs:server-srv1:20", "stdin:server-srv1:say hi"]);
+  });
+});
+
+/** Records what the mode half asks of a supervisor, without spawning anything. */
+function fakeSupervisor(opts?: { found?: ProcessInfo | null; reclaim?: boolean }) {
+  const calls: string[] = [];
+  const supervisor: ProcessSupervisor = {
+    async start(spec) {
+      calls.push(`start:${spec.name}:${spec.cwd}`);
+      return { id: `native-${spec.name}-1`, name: spec.name, pid: 11, status: "running" };
+    },
+    async stop(id) {
+      calls.push(`stop:${id}`);
+    },
+    async status(id) {
+      return { id, name: id, status: "unknown" };
+    },
+    async find(name, cwd) {
+      calls.push(`find:${name}:${cwd}`);
+      return opts?.found ?? null;
+    },
+    reclaim:
+      opts?.reclaim === false
+        ? undefined
+        : async (name, cwd) => {
+            calls.push(`reclaim:${name}:${cwd}`);
+          },
+  };
+  return { calls, supervisor };
+}
+
+describe("localNativeTransport", () => {
+  it("re-resolves identity through the supervisor and reports local locality", async () => {
+    const { calls, supervisor } = fakeSupervisor({
+      found: { id: "native-server-srv1-1", name: "server-srv1", pid: 11, status: "running" },
+    });
+    const transport = localNativeTransport(supervisor);
+
+    expect(transport.locality).toBe("local");
+    await expect(openNative(transport).status()).resolves.toMatchObject({ state: "running" });
+    expect(calls).toEqual(["find:server-srv1:/srv/srv1/game"]);
+  });
+
+  it("stops by identity so a lost process id cannot leave orphans behind", async () => {
+    const { calls, supervisor } = fakeSupervisor({
+      found: { id: "native-orphan-99", name: "server-srv1", pid: 99, status: "running" },
+    });
+
+    await openNative(localNativeTransport(supervisor)).stop();
+
+    expect(calls).toEqual([
+      "find:server-srv1:/srv/srv1/game",
+      "reclaim:server-srv1:/srv/srv1/game",
+    ]);
+  });
+
+  it("falls back to id-based stop for supervisors without reclaim", async () => {
+    const { calls, supervisor } = fakeSupervisor({
+      found: { id: "native-server-srv1-1", name: "server-srv1", pid: 11, status: "running" },
+      reclaim: false,
+    });
+
+    await openNative(localNativeTransport(supervisor)).stop();
+
+    expect(calls).toEqual(["find:server-srv1:/srv/srv1/game", "stop:native-server-srv1-1"]);
+  });
+
+  it("passes the resolved spec straight to the supervisor", async () => {
+    const { calls, supervisor } = fakeSupervisor();
+
+    const started = await openNative(localNativeTransport(supervisor)).start();
+
+    expect(started.id).toBe("native-server-srv1-1");
+    expect(calls).toEqual([
+      "find:server-srv1:/srv/srv1/game",
+      "start:server-srv1:/srv/srv1/game",
+    ]);
+  });
+});
+
 describe("openServerRuntime", () => {
-  it("refuses native quadrants until they are wired", () => {
+  it("refuses native quadrants with no transport, so remote native fails loudly", () => {
     expect(() =>
       openServerRuntime(
-        { serverId: "srv1", mode: "native", locality: "local" },
+        { serverId: "srv1", mode: "native", locality: "remote" },
         { containerName: "playon-srv1" },
       ),
     ).toThrow(RuntimeUnsupportedError);
+  });
+
+  it("refuses a native runtime with no identity to re-resolve", () => {
+    expect(() =>
+      openServerRuntime(
+        { serverId: "srv1", mode: "native", locality: "local" },
+        {
+          containerName: "playon-srv1",
+          native: fakeNativeTransport(),
+          resolveProcessSpec: async () => PROCESS_SPEC,
+        },
+      ),
+    ).toThrow(/runtime_identity_missing/);
   });
 
   it("refuses docker quadrants with no transport", () => {
