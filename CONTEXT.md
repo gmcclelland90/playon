@@ -24,7 +24,7 @@ Agent-pushed, player-facing surface: join info, status, guides, votes. Owned by 
 
 ## Tool Surface
 
-Canonical catalog of agent tools: LLM defs in the API merged with `TOOL_SURFACE_OVERLAY` (skill, confirmAction, activityVerb, XP). Handlers bind to the Control Plane; projections feed agent-skill XP, confirm copy, and activity verbs.
+Canonical catalog of agent tools. A **Tool Entry** colocates the LLM definition, surface metadata (skill, confirmAction, activityVerb, XP), workspace policy, and handler; domain modules under `apps/api/src/services/tools/` are composed by `createPlayOnToolRegistry`, which returns `{ registry, surface }`. Chat, MCP, and watchers share that factory and read projections (agent-skill XP, confirm copy, activity verbs) from the returned surface. Domains not yet migrated still take metadata from `TOOL_SURFACE_OVERLAY` and its process-wide install — both disappear once every tool is an entry.
 
 ## Query Dialect
 

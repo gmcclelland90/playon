@@ -11,13 +11,24 @@ describe("confirmSummary", () => {
     );
   });
 
+  it("prefers the action from the tool's own surface metadata", () => {
+    expect(
+      confirmSummary(
+        "fs_write",
+        { serverId: "s1", path: "server.properties" },
+        { action: "change a server file" },
+      ),
+    ).toBe("An agent wants to change a server file: server.properties");
+    expect(
+      confirmSummary(
+        "fs_delete",
+        { path: "plugins/Old" },
+        { action: "delete a server file or folder" },
+      ),
+    ).toBe("An agent wants to delete a server file or folder: plugins/Old");
+  });
+
   it("includes useful detail without dumping JSON", () => {
-    expect(confirmSummary("fs_write", { serverId: "s1", path: "server.properties" })).toBe(
-      "An agent wants to change a server file: server.properties",
-    );
-    expect(confirmSummary("fs_delete", { path: "plugins/Old" })).toBe(
-      "An agent wants to delete a server file or folder: plugins/Old",
-    );
     expect(confirmSummary("archive_extract", { archivePath: "mods.zip", destDir: "game" })).toBe(
       "An agent wants to extract an archive into the server folder: mods.zip → game",
     );

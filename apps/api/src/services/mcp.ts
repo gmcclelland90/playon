@@ -19,7 +19,7 @@ export function createPlayOnMcpHandler(plane: ControlPlane) {
   return createMcpHandler(({ authInfo }) => {
     const principal = authInfoToPrincipal(authInfo);
     const confirmPolicy = principal?.autoApproveConfirms ? "auto" : "gate";
-    const registry = createPlayOnToolRegistry(plane, {
+    const { registry } = createPlayOnToolRegistry(plane, {
       confirmGate: plane.confirm,
     });
 
