@@ -1,6 +1,7 @@
 import type { AppConfig } from "./config.js";
 import type { Db } from "./db/client.js";
 import { AgentProgressService } from "./services/agent-progress.js";
+import { AgentTurn } from "./services/agent-turn.js";
 import { ServerArchiveService } from "./services/archive-tools.js";
 import { AddNodeService } from "./services/cloud/add-node.js";
 import { LanGateway } from "./services/cloud/gateway.js";
@@ -50,6 +51,7 @@ export type ControlPlane = {
   manageSuggest: ManageSuggestService;
   importSftp: ImportSftpService;
   agentProgress: AgentProgressService;
+  agentTurn: AgentTurn;
   serverFs: ServerFsService;
   archives: ServerArchiveService;
   drafts: SkillDraftService;
@@ -113,6 +115,7 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
     manageSuggest,
     importSftp,
     agentProgress,
+    agentTurn: null as unknown as AgentTurn,
     serverFs,
     archives,
     drafts,
@@ -125,6 +128,7 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
     watchers,
     watcherEngine: null as unknown as WatcherEngine,
   };
+  plane.agentTurn = new AgentTurn(plane);
   plane.watcherEngine = new WatcherEngine(plane);
   return plane;
 }
