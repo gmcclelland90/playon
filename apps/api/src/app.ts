@@ -7,8 +7,6 @@ import { cors } from "hono/cors";
 import { and, asc, count, desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import type { ConfirmGate, LlmMessage } from "@playon/agent-core";
-import { ChatAbortedError } from "@playon/agent-core";
 import {
   AddNodeRequestSchema,
   BackupTargetRequestSchema,
@@ -136,7 +134,6 @@ import { ConfirmService } from "./services/confirm.js";
 import { EventHub } from "./services/event-hub.js";
 import { safeQueryLive } from "./services/server-panel.js";
 import { execConsoleCommand } from "./services/server-console.js";
-import { labelForTool, verbForTool } from "./services/agent-activity.js";
 import { nodeJobService } from "./services/node-jobs.js";
 import {
   authenticateAccessToken,
@@ -147,10 +144,9 @@ import {
 } from "./services/access-tokens.js";
 import { authInfoFromAccessToken, createPlayOnMcpHandler } from "./services/mcp.js";
 import {
-  createLlmClient,
-  createOrchestrator,
-  createPlayOnToolSurface,
-} from "./services/tools.js";
+  AgentTurnError,
+  agentTurnHttpError,
+} from "./services/agent-turn.js";
 import {
   DEFAULT_OLLAMA_OPENAI_BASE,
   getOllamaJob,
@@ -165,32 +161,6 @@ type Vars = {
   db: Db;
   config: AppConfig;
 };
-
-const CREATE_BIND_TOOLS = new Set([
-  "servers_create_from_skill",
-  "servers_import_local",
-  "servers_import_sftp",
-]);
-
-/** Prefer create/import tool results when binding an unbound install conversation. */
-function serverIdFromCreateTrace(
-  toolTrace: Array<{ name: string; result?: unknown }>,
-): string | undefined {
-  for (const trace of toolTrace) {
-    if (!CREATE_BIND_TOOLS.has(trace.name)) continue;
-    const result = trace.result;
-    if (!result || typeof result !== "object") continue;
-    const rec = result as Record<string, unknown>;
-    if (typeof rec.error === "string") continue;
-    if (typeof rec.serverId === "string" && rec.serverId) return rec.serverId;
-    const nested = rec.server;
-    if (nested && typeof nested === "object") {
-      const id = (nested as { id?: unknown }).id;
-      if (typeof id === "string" && id) return id;
-    }
-  }
-  return undefined;
-}
 
 export type PlayOnApp = Hono<{ Variables: Vars }> & {
   injectWebSocket: (server: NodeHttpServer) => void;
@@ -2147,300 +2117,33 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     const prompt = body.message?.trim() ? body.message : null;
     if (!prompt) throw HttpError.badRequest("message_required", { code: "message_required" });
 
-    let conversationId = body.conversationId;
-    /** Bound maintain chat when set; unbound install chat when undefined. */
-    let workspaceServerId: string | undefined = body.serverId;
-    const now = new Date();
-
-    if (conversationId) {
-      const existing = await db
-        .select()
-        .from(conversations)
-        .where(eq(conversations.id, conversationId))
-        .limit(1);
-      const conversation = existing[0];
-      // Another user's conversation reads as missing so ids stay unguessable.
-      if (!conversation || conversation.userId !== user.id) {
-        throw HttpError.notFound("conversation_not_found", { code: "conversation_not_found" });
-      }
-      if (body.serverId && conversation.serverId && body.serverId !== conversation.serverId) {
-        throw HttpError.badRequest("serverId_mismatch", { code: "serverId_mismatch" });
-      }
-      workspaceServerId = conversation.serverId ?? body.serverId;
-      await db
-        .update(conversations)
-        .set({ updatedAt: now })
-        .where(eq(conversations.id, conversationId));
-    } else {
-      if (body.serverId) {
-        const server = await serverService.get(body.serverId);
-        if (!server) {
-          throw HttpError.notFound("server_not_found", { code: "server_not_found" });
-        }
-        workspaceServerId = body.serverId;
-      } else {
-        workspaceServerId = undefined;
-      }
-      conversationId = nanoid();
-      await db.insert(conversations).values({
-        id: conversationId,
-        userId: user.id,
-        serverId: workspaceServerId,
-        title: prompt.slice(0, 80),
-        createdAt: now,
-        updatedAt: now,
-      });
-    }
-
-    const priorRows = await db
-      .select()
-      .from(messages)
-      .where(eq(messages.conversationId, conversationId))
-      .orderBy(asc(messages.createdAt));
-
-    const priorMessages: LlmMessage[] = priorRows
-      .filter((row) => row.role === "user" || row.role === "assistant")
-      .map((row) => ({
-        role: row.role as "user" | "assistant",
-        content: row.content,
-      }));
-    await db.insert(messages).values({
-      id: nanoid(),
-      conversationId,
-      role: "user",
-      content: prompt,
-      createdAt: now,
-    });
-
-    const toolSurface = createPlayOnToolSurface(plane, { workspaceServerId });
-
-    /** Mutable: unbound create binds activity to the new server mid-turn. */
-    let activityServerId = workspaceServerId;
-    let activitySkill = "orchestrator";
-    const publishActivity = (
-      phase: "thinking" | "tool_start" | "tool_done" | "tool_fail" | "confirm_wait" | "idle",
-      opts?: {
-        toolName?: string;
-        verb?: ReturnType<typeof verbForTool>;
-        label?: string;
-        skill?: string;
-      },
-    ) => {
-      if (!activityServerId) return;
-      const verb = opts?.verb ?? "other";
-      if (opts?.skill) activitySkill = opts.skill;
-      else if (opts?.toolName) activitySkill = toolSurface.skill(opts.toolName);
-      eventHub.publish({
-        type: "agent.activity",
-        serverId: activityServerId,
-        conversationId,
-        skill: activitySkill,
-        phase,
-        verb,
-        toolName: opts?.toolName,
-        label:
-          opts?.label ??
-          (phase === "thinking"
-            ? "Thinking…"
-            : phase === "idle"
-              ? "Idle"
-              : phase === "confirm_wait"
-                ? "Waiting for confirm…"
-                : undefined),
-      });
-    };
-
-    const abortSignal = c.req.raw.signal;
-    let streamedReply = "";
-    const onClientAbort = () => {
-      confirmService.cancelAll();
-    };
-    abortSignal.addEventListener("abort", onClientAbort, { once: true });
-
     try {
-      const llm = await createLlmClient(db, config);
-
-      const confirmGate: ConfirmGate = {
-        async requestConfirmation(request) {
-          publishActivity("confirm_wait", {
-            toolName: request.toolName,
-            verb: verbForTool(request.toolName, toolSurface),
-            label: "Waiting for confirm…",
-          });
-          try {
-            return await confirmService.requestConfirmation(request);
-          } finally {
-            publishActivity("thinking", { label: "Thinking…", verb: "other" });
-          }
-        },
-      };
-
-      const orchestrator = createOrchestrator(plane, llm, {
-        confirmGate,
-        workspaceServerId,
-        abortSignal,
-        stream: {
-          conversationId,
-          onToken: (token) => {
-            streamedReply += token;
-            eventHub.publish({ type: "chat.token", conversationId, token });
-          },
-          onTool: ({ toolName, status, detail }) => {
-            eventHub.publish({
-              type: "chat.tool",
-              conversationId,
-              toolName,
-              status,
-              detail,
-            });
-            if (
-              status === "completed" &&
-              detail &&
-              typeof detail.serverId === "string" &&
-              detail.serverId &&
-              !activityServerId
-            ) {
-              activityServerId = detail.serverId;
-            }
-            const verb = verbForTool(toolName, toolSurface);
-            const phase =
-              status === "started"
-                ? "tool_start"
-                : status === "failed"
-                  ? "tool_fail"
-                  : "tool_done";
-            publishActivity(phase, {
-              toolName,
-              verb,
-              label: labelForTool(toolName, verb),
-            });
-            // Don't leave the last tool label stuck while the LLM continues.
-            if (status === "completed" || status === "failed") {
-              publishActivity("thinking", { label: "Thinking…", verb: "other" });
-            }
-          },
-        },
+      const result = await plane.agentTurn.run({
+        source: "chat",
+        userId: user.id,
+        prompt,
+        conversationId: body.conversationId,
+        serverId: body.serverId,
+        abortSignal: c.req.raw.signal,
       });
-      publishActivity("thinking");
-      const result = await orchestrator.handle(prompt, priorMessages);
-
-      for (const trace of result.toolTrace) {
-        const failed =
-          trace.result &&
-          typeof trace.result === "object" &&
-          ("error" in (trace.result as object) ||
-            (trace.result as { ok?: boolean }).ok === false);
-        await db.insert(toolInvocations).values({
-          id: nanoid(),
-          conversationId,
-          userId: user.id,
-          toolName: trace.name,
-          argsJson: redactJson(trace.arguments),
-          resultJson: redactJson(trace.result),
-          status: failed ? "error" : "ok",
-          createdAt: new Date(),
-        });
-      }
-
-      const createdServerId = serverIdFromCreateTrace(result.toolTrace);
-      let boundServerId = workspaceServerId ?? createdServerId;
-      if (!workspaceServerId && createdServerId) {
-        await db
-          .update(conversations)
-          .set({ serverId: createdServerId, updatedAt: new Date() })
-          .where(eq(conversations.id, conversationId));
-        boundServerId = createdServerId;
-        activityServerId = createdServerId;
-      }
-
-      const awards = boundServerId
-        ? await agentProgress.awardForTools(result.toolTrace, toolSurface)
-        : [];
-      const celebrations = awards.filter((a) => a.celebrate);
-      for (const award of celebrations) {
-        eventHub.publish({
-          type: "agent.celebration",
-          serverId: boundServerId!,
-          skill: award.skill,
-          reason: award.reason,
-          xpGained: award.xpGained,
-          level: award.progress.level,
-          title: award.progress.title,
-          leveledUp: award.leveledUp,
-        });
-      }
-
-      const safeReply = redactString(result.content);
-      await db.insert(messages).values({
-        id: nanoid(),
-        conversationId,
-        role: "assistant",
-        content: safeReply,
-        createdAt: new Date(),
-      });
-
-      const stored = await getSetting<LlmSettings>(db, LLM_SETTINGS_KEY);
-      const lastAward = awards.length ? awards[awards.length - 1] : undefined;
-
       return c.json({
-        conversationId,
-        serverId: boundServerId,
-        reply: safeReply,
-        llmMode: stored?.provider ?? config.llmMode,
+        conversationId: result.conversationId,
+        serverId: result.serverId,
+        reply: result.reply,
+        llmMode: result.llmMode,
         toolTrace: result.toolTrace,
-        agentProgress: lastAward
-          ? {
-              skill: lastAward.progress.skill,
-              xp: lastAward.progress.xp,
-              level: lastAward.progress.level,
-              title: lastAward.progress.title,
-            }
-          : undefined,
-        celebrations: celebrations.map((a) => ({
-          serverId: boundServerId,
-          skill: a.skill,
-          reason: a.reason,
-          xpGained: a.xpGained,
-          level: a.progress.level,
-          title: a.progress.title,
-          leveledUp: a.leveledUp,
-        })),
+        aborted: result.aborted,
+        agentProgress: result.agentProgress,
+        celebrations: result.celebrations,
       });
     } catch (err) {
-      const aborted =
-        err instanceof ChatAbortedError ||
-        abortSignal.aborted ||
-        (err instanceof Error && err.name === "AbortError");
-      if (aborted) {
-        confirmService.cancelAll();
-        const safeReply = redactString(streamedReply.trim() || "Stopped.");
-        await db.insert(messages).values({
-          id: nanoid(),
-          conversationId,
-          role: "assistant",
-          content: safeReply,
-          createdAt: new Date(),
-        });
-        return c.json({
-          conversationId,
-          serverId: workspaceServerId,
-          reply: safeReply,
-          llmMode: config.llmMode,
-          toolTrace: [],
-          aborted: true,
-        });
+      if (err instanceof AgentTurnError) {
+        if (err.code === "chat_failed" || err.code === "llm_api_key_required") {
+          console.error("chat failed:", redactString(err.message));
+        }
+        throw agentTurnHttpError(err);
       }
-      const messageText = messageFromError(err, "chat_failed");
-      console.error("chat failed:", redactString(messageText));
-      // A missing key is the operator's to fix; anything else is the LLM upstream.
-      const needsKey = messageText.includes("llm_api_key_required");
-      throw new HttpError(needsKey ? 400 : 502, messageText, {
-        code: needsKey ? "llm_api_key_required" : "chat_failed",
-        cause: err,
-      });
-    } finally {
-      abortSignal.removeEventListener("abort", onClientAbort);
-      publishActivity("idle");
+      throw err;
     }
   });
 

@@ -50,6 +50,7 @@ Prefer new modules under `packages/shared` (e.g. node job contracts) over growin
 | Tool Surface (W1b) | `tools.ts`, `packages/agent-core` tool-surface*, `mcp.ts` |
 | Transport (W4b) | Route policy in `app.ts`, `apps/web/src/api.ts`, shared request/response contracts |
 | Adoption (W4) | `server-adoption*`, `import-local*`, `import-sftp*`, `manage-suggest*`, skill-marker **write** paths used by adopt/create/import |
+| AgentTurn (W5) | `agent-turn*`, thin wire-up in `app.ts` chat route, `watcher-actions.ts`, `control-plane.ts` |
 
 Two agents must not share a zone in the same wave.
 
@@ -190,10 +191,23 @@ Frozen after W3 File Store on `main`:
 - Freeze briefs / open worktrees after lock confirm; **first code PR only after W2 local-docker prove is on `main`**
 - File split: W4b ↔ routes/policy/http; W4c ↔ process shell — no shared `app.ts` edits from W4c
 
+## W5 design lock (AgentTurn)
+
+Frozen after W4 Adoption on `main`:
+
+- **Surface:** `AgentTurn.run(input) → AgentTurnResult` — conversation bind/load/persist, LLM+orchestrator run, activity stream, confirm wiring, tool audit, XP/celebrations, abort. Out: MCP single-tool invoke, tool handlers, LLM client internals, ConfirmService/EventHub implementations.
+- **Home:** `apps/api/src/services/agent-turn.ts` (+ tests). Orchestrator stays in `packages/agent-core`.
+- **Obtain:** `plane.agentTurn.run(...)` is the only production choke for Canvas chat + watcher `kind: "agent"`. `/api/chat` and watcher agent path become thin callers.
+- **Zone:** `agent-turn*`, thin wire-up in `app.ts` chat route, `watcher-actions.ts`, `control-plane.ts`. Out: tool domain modules, MCP body, Handle/File Store, node-agent, orchestrator redesign.
+- **Slices:** (1) extract chat shell from `app.ts` into `AgentTurn` + wire `plane.agentTurn` (2) fold watcher agent onto same `run` (3) delete duplicated activity/persist loops (4) unit tests prove chat+watcher share the runner.
+- **Done when:** chat + watcher agent both use one CP turn runner; `/api/chat` has no inline orch/activity/XP loop; MCP still registry-only; check/unit/contract green.
+- **Git:** `arch/w5-agent-turn` → PRs into `arch/w5-integration`
+
 ## Process after this doc
 
 1. Confirm W4b/W4c locks → keep W2 prove landing on `arch/w2-integration` → `main`
 2. After W2 prove on `main`: spawn W4b∥W4c implementation on `arch/w4-integration`
 3. Continue W2 remaining Handle slices (remote docker → natives → logs → console)
 4. After W3 File Store on `main`: implement W4 Adoption on `arch/w4-adoption-integration`
-5. Re-open portfolio ranking only if a wave invalidates a later candidate
+5. After W4 Adoption on `main`: implement W5 AgentTurn on `arch/w5-integration`
+6. Re-open portfolio ranking only if a wave invalidates a later candidate
