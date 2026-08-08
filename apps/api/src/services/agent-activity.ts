@@ -1,14 +1,10 @@
-import {
-  surfaceActivityVerb,
-  type ToolActivityVerb,
-  type ToolSurface,
-} from "@playon/agent-core";
+import type { ToolActivityVerb, ToolSurface } from "@playon/agent-core";
 
 export type AgentActivityVerb = ToolActivityVerb;
 
-/** Pass the turn's composed surface; the ambient fallback covers unmigrated tools only. */
-export function verbForTool(toolName: string, surface?: ToolSurface): AgentActivityVerb {
-  return surface ? surface.activityVerb(toolName) : surfaceActivityVerb(toolName);
+/** Verbs come from the turn's composed surface — the only place tool metadata lives. */
+export function verbForTool(toolName: string, surface: ToolSurface): AgentActivityVerb {
+  return surface.activityVerb(toolName);
 }
 
 export function labelForTool(toolName: string, verb: AgentActivityVerb): string {

@@ -2,8 +2,6 @@ import { eq } from "drizzle-orm";
 import {
   AGENT_SKILLS,
   skillLabel,
-  surfaceSkill,
-  surfaceXp,
   type AgentSkill,
   type ToolSurface,
 } from "@playon/agent-core";
@@ -187,16 +185,16 @@ export class AgentProgressService {
     };
   }
 
-  /** Pass the turn's composed surface; the ambient fallback covers unmigrated tools only. */
+  /** Skills and XP come from the turn's composed surface, never a process global. */
   async awardForTools(
     toolTrace: Array<{ name: string; result?: unknown }>,
-    surface?: ToolSurface,
+    surface: ToolSurface,
   ): Promise<XpAward[]> {
     const awards: XpAward[] = [];
     for (const trace of toolTrace) {
       if (isFailedResult(trace.result)) continue;
-      const skill = surface ? surface.skill(trace.name) : surfaceSkill(trace.name);
-      const spec = surface ? surface.xp(trace.name) : surfaceXp(trace.name);
+      const skill = surface.skill(trace.name);
+      const spec = surface.xp(trace.name);
       const award = await this.award(skill, spec.xp, spec.reason);
       award.celebrate = Boolean(spec.celebrate) || award.leveledUp;
       awards.push(award);

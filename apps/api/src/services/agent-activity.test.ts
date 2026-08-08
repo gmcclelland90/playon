@@ -10,7 +10,7 @@ import { applyBootstrap } from "../db/migrate.js";
 import { labelForTool, verbForTool } from "./agent-activity.js";
 import { createPlayOnToolSurface } from "./tools.js";
 
-/** Verbs for migrated domains only exist on the composed surface, as chat and watchers pass it. */
+/** Verbs only exist on the composed surface, which chat and watchers pass in. */
 function composedSurface(): ToolSurface {
   const dataRoot = mkdtempSync(path.join(tmpdir(), "playon-activity-"));
   const dbPath = path.join(dataRoot, "playon.sqlite");
@@ -33,10 +33,12 @@ describe("agent activity verbs", () => {
   it("maps known tools", () => {
     const surface = composedSurface();
 
-    expect(verbForTool("fetch_url")).toBe("fetch");
-    expect(verbForTool("archive_extract")).toBe("write");
-    expect(verbForTool("panel_publish")).toBe("panel");
-    expect(verbForTool("skill_list")).toBe("skill");
+    expect(verbForTool("fetch_url", surface)).toBe("fetch");
+    expect(verbForTool("archive_extract", surface)).toBe("write");
+    expect(verbForTool("panel_publish", surface)).toBe("panel");
+    expect(verbForTool("skill_list", surface)).toBe("skill");
+    expect(verbForTool("rcon_say", surface)).toBe("run");
+    expect(verbForTool("steamcmd_app_update", surface)).toBe("run");
 
     expect(verbForTool("fs_write", surface)).toBe("write");
     expect(verbForTool("fs_delete", surface)).toBe("write");
@@ -45,7 +47,7 @@ describe("agent activity verbs", () => {
   });
 
   it("falls back for unknown tools", () => {
-    expect(verbForTool("weird_custom_tool")).toBe("other");
+    expect(verbForTool("weird_custom_tool", composedSurface())).toBe("other");
   });
 
   it("provides short labels", () => {

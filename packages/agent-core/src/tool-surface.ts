@@ -65,9 +65,6 @@ export type ToolSurfaceMeta = {
   xp?: ToolXpSpec;
 };
 
-/** @deprecated Name kept while unmigrated tools still read metadata from a separate table. */
-export type ToolSurfaceOverlay = ToolSurfaceMeta;
-
 /** One catalog entry: LLM tool def + PlayOn surface metadata. */
 export type ToolSurfaceEntry = ToolDefinition & ToolSurfaceMeta;
 
@@ -97,8 +94,7 @@ export function projectActivityVerb(
   if (toolName.startsWith("fs_")) {
     return /write|delete|rename|copy/.test(toolName) ? "write" : "read";
   }
-  if (toolName === "archive_extract") return "write";
-  if (toolName.startsWith("net_") || toolName === "fetch_url") return "fetch";
+  if (toolName.startsWith("net_")) return "fetch";
   if (toolName.startsWith("servers_")) return "run";
   return "other";
 }
@@ -113,8 +109,8 @@ export function projectSkill(entry: ToolSurfaceMeta | undefined): AgentSkill {
 }
 
 /**
- * Read-only projection of one composed tool catalog.
- * Callers pass this explicitly — projections must not depend on install order.
+ * Read-only projection of one composed tool catalog. Every caller passes the
+ * surface its registry returned: there is no ambient one to fall back to.
  */
 export type ToolSurface = {
   get: (toolName: string) => ToolSurfaceEntry | undefined;
@@ -135,39 +131,4 @@ export function createToolSurface(entries: readonly ToolSurfaceEntry[]): ToolSur
     xp: (toolName) => projectXp(byName.get(toolName)),
     skill: (toolName) => projectSkill(byName.get(toolName)),
   };
-}
-
-/**
- * Legacy process-wide surface, populated by the overlay table at import time.
- * Only tools not yet migrated to `ToolEntry` read through it; new call sites take a
- * `ToolSurface` argument instead. Removed with the overlay in the final W1b slice.
- */
-let ambient: ToolSurface = createToolSurface([]);
-
-export function installToolSurface(entries: readonly ToolSurfaceEntry[]): void {
-  ambient = createToolSurface(entries);
-}
-
-export function getToolSurfaceEntry(name: string): ToolSurfaceEntry | undefined {
-  return ambient.get(name);
-}
-
-export function listToolSurface(): ToolSurfaceEntry[] {
-  return ambient.list();
-}
-
-export function surfaceConfirmAction(toolName: string): string {
-  return ambient.confirmAction(toolName);
-}
-
-export function surfaceActivityVerb(toolName: string): ToolActivityVerb {
-  return ambient.activityVerb(toolName);
-}
-
-export function surfaceXp(toolName: string): ToolXpSpec {
-  return ambient.xp(toolName);
-}
-
-export function surfaceSkill(toolName: string): AgentSkill {
-  return ambient.skill(toolName);
 }

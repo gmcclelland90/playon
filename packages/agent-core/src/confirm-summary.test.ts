@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { confirmActionLabel, confirmSummary } from "./confirm-summary.js";
 
 describe("confirmSummary", () => {
-  it("uses friendly copy for tools still in the overlay table", () => {
+  it("humanizes the tool name when the caller passes no action", () => {
+    // Confirm copy lives on the tool entry now; a caller without one gets a plain phrase.
     expect(confirmSummary("steamcmd_app_update", { serverId: "s1", appId: 258550 })).toBe(
-      "An agent wants to download or update game files via Steam: app 258550",
+      'An agent wants to run "steamcmd app update": app 258550',
     );
-    // Migrated tools are gone from the overlay, so callers must pass their action.
     expect(confirmSummary("snapshot_restore", { snapshotId: "s1" })).toBe(
       'An agent wants to run "snapshot restore".',
     );
@@ -40,10 +40,20 @@ describe("confirmSummary", () => {
   });
 
   it("includes useful detail without dumping JSON", () => {
-    expect(confirmSummary("archive_extract", { archivePath: "mods.zip", destDir: "game" })).toBe(
-      "An agent wants to extract an archive into the server folder: mods.zip → game",
-    );
-    expect(confirmSummary("fetch_url", { url: "https://example.com/m.jar", destPath: "game/m.jar" })).toBe(
+    expect(
+      confirmSummary(
+        "archive_extract",
+        { archivePath: "mods.zip", destDir: "game" },
+        { action: "extract an archive into the server folder" },
+      ),
+    ).toBe("An agent wants to extract an archive into the server folder: mods.zip → game");
+    expect(
+      confirmSummary(
+        "fetch_url",
+        { url: "https://example.com/m.jar", destPath: "game/m.jar" },
+        { action: "download a file into the server folder" },
+      ),
+    ).toBe(
       "An agent wants to download a file into the server folder: https://example.com/m.jar",
     );
     expect(
@@ -69,9 +79,10 @@ describe("confirmSummary", () => {
 
 describe("confirmActionLabel", () => {
   it("returns the action phrase", () => {
-    expect(confirmActionLabel("archive_extract")).toBe(
+    expect(confirmActionLabel("archive_extract", "extract an archive into the server folder")).toBe(
       "extract an archive into the server folder",
     );
+    expect(confirmActionLabel("archive_extract")).toBe('run "archive extract"');
     expect(confirmActionLabel("servers_restart", "restart this server")).toBe(
       "restart this server",
     );
