@@ -6,6 +6,7 @@ export * from "./live-state.js";
 export * from "./panel.js";
 export * from "./events.js";
 export * from "./api.js";
+export * from "./http/index.js";
 export * from "./node-jobs/index.js";
 export * from "./llm-presets.js";
 export * from "./updates.js";

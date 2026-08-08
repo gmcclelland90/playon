@@ -10,22 +10,49 @@ import { z } from "zod";
 import type { ConfirmGate, LlmMessage } from "@playon/agent-core";
 import { ChatAbortedError } from "@playon/agent-core";
 import {
+  AddNodeRequestSchema,
+  BackupTargetRequestSchema,
   BootstrapOwnerSchema,
+  ChatRequestSchema,
+  ConfirmRequestSchema,
+  CreateAccessTokenRequestSchema,
+  CreateConversationRequestSchema,
+  CreateOffNodeBackupRequestSchema,
+  CreateSnapshotRequestSchema,
+  CreateUserRequestSchema,
   CreateWatcherSchema,
-  LLM_PRESET_IDS,
+  HttpError,
+  ImportLocalServerRequestSchema,
+  ImportSftpServerRequestSchema,
+  ImportSkillZipRequestSchema,
+  InstallDockerRequestSchema,
+  InstallSkillFromCatalogRequestSchema,
   LOCAL_NODE_ID,
+  LlmSettingsPutRequestSchema,
   LoginSchema,
+  ManageNodeServerRequestSchema,
+  NodeBootstrapTokenRequestSchema,
   NodeHeartbeatSchema,
   NodeJobKindSchema,
+  NodeSettingsPutRequestSchema,
+  OllamaInstallRequestSchema,
+  OllamaPullRequestSchema,
+  PanelInputRequestSchema,
+  PromoteServerSkillRequestSchema,
+  RelocateServerRequestSchema,
+  RestoreOffNodeBackupRequestSchema,
   RoleSchema,
   UpdateWatcherSchema,
+  VultrOAuthCallbackRequestSchema,
   can,
   deriveNodePresence,
+  messageFromError,
   placementBadge,
   placementFromNodeKind,
   roleAtLeast,
   type NodeKind,
   type Role,
+  type SkillInUseDetails,
   type WsEvent,
 } from "@playon/shared";
 import {
@@ -36,6 +63,16 @@ import {
 } from "./config.js";
 import type { Db } from "./db/client.js";
 import { conversations, messages, nodes, toolInvocations, users } from "./db/schema.js";
+import { httpErrorHandler } from "./http-errors.js";
+import {
+  jsonBody,
+  optionalJsonBody,
+  requireCan,
+  requireRole,
+  requireSession,
+  serviceHttpError,
+  sessionHasRole,
+} from "./http-policy.js";
 import { redactJson, redactString } from "./services/redaction.js";
 import { mountStaticWeb } from "./static-web.js";
 
@@ -158,19 +195,6 @@ export type PlayOnApp = Hono<{ Variables: Vars }> & {
   controlPlane: ControlPlane;
 };
 
-const LlmSettingsPutSchema = z
-  .object({
-    preset: z.enum(LLM_PRESET_IDS).optional(),
-    /** @deprecated Prefer preset; kept for older clients. */
-    provider: z.enum(["openai_compatible", "ollama"]).optional(),
-    baseUrl: z.string().optional(),
-    model: z.string().optional(),
-    apiKey: z.string().optional(),
-  })
-  .refine((body) => Boolean(body.preset || body.provider), {
-    message: "preset_or_provider_required",
-  });
-
 const CreateServerSchema = z
   .object({
     skillName: z.string().min(1).optional(),
@@ -187,19 +211,17 @@ const CreateServerSchema = z
   .refine((body) => !!body.skillName, { message: "skillName_required" });
 
 
-const PanelInputSchema = z.object({
-  blockId: z.string().optional(),
-  serverId: z.string().optional(),
-  type: z.enum(["readiness", "vote"]),
-  payload: z.record(z.unknown()).default({}),
-});
-
-const CreateUserSchema = z.object({
-  username: z.string().min(3),
-  password: z.string().min(8),
-  displayName: z.string().min(1).optional(),
-  role: z.enum(["admin", "operator"]),
-});
+/**
+ * Skill FS failures already carry their own status vocabulary — unknown skill,
+ * jail escape, read-only source — so keep that mapping and only add the
+ * envelope's per-route code.
+ */
+function skillFsError(err: unknown, fallback: string, code: string): HttpError {
+  return new HttpError(skillFsHttpStatus(err), messageFromError(err, fallback), {
+    code,
+    cause: err,
+  });
+}
 
 export function createApp(db: Db, config: AppConfig): PlayOnApp {
   const app = new Hono<{ Variables: Vars }>();
@@ -262,6 +284,9 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       advertiseHost: config.advertiseHost,
       port: config.port,
     });
+
+  app.onError(httpErrorHandler);
+
   app.use(
     "*",
     cors({
@@ -281,11 +306,11 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   app.get(
     "/api/ws",
     upgradeWebSocket((c) => {
-      const user = c.get("user");
+      const allowed = sessionHasRole(c, "operator");
       let unsubscribe: (() => void) | undefined;
       return {
         onOpen(_event, ws) {
-          if (!user || !roleAtLeast(user.role, "operator")) {
+          if (!allowed) {
             ws.close(1008, "forbidden");
             return;
           }
@@ -380,43 +405,39 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   );
 
   app.get("/api/updates/status", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "settings.llm")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "settings.llm");
     const force = c.req.query("force") === "1" || c.req.query("force") === "true";
     try {
       return c.json(await updateService.getStatus({ force }));
     } catch (err) {
-      const message = err instanceof Error ? err.message : "update_status_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, {
+        fallback: "update_status_failed",
+        code: "update_status_failed",
+      });
     }
   });
 
   app.post("/api/updates/home/apply", async (c) => {
-    const user = c.get("user");
-    if (!user || user.role !== "owner") {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "owner");
     try {
       return c.json(await updateService.applyHomeUpdate());
     } catch (err) {
-      const message = err instanceof Error ? err.message : "update_apply_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, {
+        fallback: "update_apply_failed",
+        code: "update_apply_failed",
+      });
     }
   });
 
   app.post("/api/nodes/:nodeId/update", async (c) => {
-    const user = c.get("user");
-    if (!user || user.role !== "owner") {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const nodeId = c.req.param("nodeId");
+    requireRole(c, "owner");
     try {
-      return c.json(await updateService.enqueueNodeUpdate(nodeId));
+      return c.json(await updateService.enqueueNodeUpdate(c.req.param("nodeId")));
     } catch (err) {
-      const message = err instanceof Error ? err.message : "node_update_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, {
+        fallback: "node_update_failed",
+        code: "node_update_failed",
+      });
     }
   });
 
@@ -427,7 +448,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
 
   app.post("/api/setup/owner", async (c) => {
     const [{ value }] = await db.select({ value: count() }).from(users);
-    if (value > 0) return c.json({ error: "already_setup" }, 409);
+    if (value > 0) throw HttpError.conflict("already_setup", { code: "already_setup" });
 
     const body = BootstrapOwnerSchema.parse(await c.req.json());
     const id = nanoid();
@@ -463,7 +484,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     const rows = await db.select().from(users).where(eq(users.username, body.username)).limit(1);
     const user = rows[0];
     if (!user || !verifyPassword(body.password, user.passwordHash)) {
-      return c.json({ error: "invalid_credentials" }, 401);
+      throw HttpError.unauthorized("invalid_credentials", { code: "invalid_credentials" });
     }
     const sessionId = await createSession(db, user.id);
     setCookie(c, SESSION_COOKIE, sessionId, {
@@ -487,28 +508,18 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     return c.json({ ok: true });
   });
 
-  app.get("/api/auth/me", async (c) => {
-    const user = c.get("user");
-    if (!user) return c.json({ error: "unauthorized" }, 401);
-    return c.json({ user });
-  });
+  app.get("/api/auth/me", async (c) => c.json({ user: requireSession(c) }));
 
   app.get("/api/settings/llm", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "settings.llm")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "settings.llm");
     const stored = await getSetting<LlmSettings>(db, LLM_SETTINGS_KEY);
     const settings = stored ?? { provider: config.llmMode };
     return c.json({ llm: toPublicLlmSettings(settings) });
   });
 
   app.put("/api/settings/llm", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "settings.llm")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const body = LlmSettingsPutSchema.parse(await c.req.json());
+    requireCan(c, "settings.llm");
+    const body = await jsonBody(c, LlmSettingsPutRequestSchema);
     const existing = (await getSetting<LlmSettings>(db, LLM_SETTINGS_KEY)) ?? {
       provider: config.llmMode,
     };
@@ -522,8 +533,10 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         model: body.model ?? existing.model,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "llm_settings_invalid";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, {
+        fallback: "llm_settings_invalid",
+        code: "llm_settings_invalid",
+      });
     }
 
     const next: LlmSettings = {
@@ -541,73 +554,56 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     return c.json({ llm: toPublicLlmSettings(next) });
   });
 
-  app.get("/api/settings/llm/ollama/status", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "settings.llm")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+  /** Body base URL wins, then the stored setting, then the loopback default. */
+  const ollamaBaseUrl = async (fromBody?: string) => {
     const stored = await getSetting<LlmSettings>(db, LLM_SETTINGS_KEY);
-    const q = c.req.query("baseUrl")?.trim();
-    const baseUrl = q || stored?.baseUrl?.trim() || DEFAULT_OLLAMA_OPENAI_BASE;
-    const status = await probeOllama(baseUrl);
-    return c.json({ ollama: status });
+    return fromBody?.trim() || stored?.baseUrl?.trim() || DEFAULT_OLLAMA_OPENAI_BASE;
+  };
+
+  app.get("/api/settings/llm/ollama/status", async (c) => {
+    requireCan(c, "settings.llm");
+    const baseUrl = await ollamaBaseUrl(c.req.query("baseUrl"));
+    return c.json({ ollama: await probeOllama(baseUrl) });
   });
 
   app.post("/api/settings/llm/ollama/install", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "settings.llm")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const body = z
-      .object({ baseUrl: z.string().optional() })
-      .parse(await c.req.json().catch(() => ({})));
-    const stored = await getSetting<LlmSettings>(db, LLM_SETTINGS_KEY);
-    const baseUrl =
-      body.baseUrl?.trim() || stored?.baseUrl?.trim() || DEFAULT_OLLAMA_OPENAI_BASE;
-    const job = startOllamaInstall(baseUrl);
+    requireCan(c, "settings.llm");
+    const body = await optionalJsonBody(c, OllamaInstallRequestSchema);
+    const job = startOllamaInstall(await ollamaBaseUrl(body.baseUrl));
+    // A refused job keeps its state in `details` so the UI can show the phase
+    // that blocked it, not just the message.
     if (job.phase === "error") {
-      return c.json({ error: job.message ?? "ollama_install_failed", job }, 400);
+      throw HttpError.badRequest(job.message ?? "ollama_install_failed", {
+        code: "ollama_install_failed",
+        details: { job },
+      });
     }
     return c.json({ job });
   });
 
   app.get("/api/settings/llm/ollama/job", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "settings.llm")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "settings.llm");
     return c.json({ job: getOllamaJob() });
   });
 
   app.post("/api/settings/llm/ollama/pull", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "settings.llm")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const body = z
-      .object({
-        model: z.string().min(1),
-        baseUrl: z.string().optional(),
-      })
-      .parse(await c.req.json());
-    const stored = await getSetting<LlmSettings>(db, LLM_SETTINGS_KEY);
-    const baseUrl =
-      body.baseUrl?.trim() || stored?.baseUrl?.trim() || DEFAULT_OLLAMA_OPENAI_BASE;
-    const job = startOllamaPull(baseUrl, body.model);
+    requireCan(c, "settings.llm");
+    const body = await jsonBody(c, OllamaPullRequestSchema);
+    const job = startOllamaPull(await ollamaBaseUrl(body.baseUrl), body.model);
     if (job.phase === "error" && job.message === "ollama_model_required") {
-      return c.json({ error: job.message, job }, 400);
+      throw HttpError.badRequest(job.message, {
+        code: "ollama_model_required",
+        details: { job },
+      });
     }
     if (job.phase === "error" && job.message === "ollama_job_busy") {
-      return c.json({ error: job.message, job }, 409);
+      throw HttpError.conflict(job.message, { code: "ollama_job_busy", details: { job } });
     }
     return c.json({ job });
   });
 
   app.get("/api/access-tokens", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "settings.llm")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    const user = requireCan(c, "settings.llm");
     const tokens = await listAccessTokens(db, user.id);
     return c.json({
       tokens: tokens.map((t) => ({
@@ -621,16 +617,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/access-tokens", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "settings.llm")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const body = z
-      .object({
-        name: z.string().min(1).max(80).default("MCP token"),
-        autoApproveConfirms: z.boolean().optional(),
-      })
-      .parse(await c.req.json().catch(() => ({})));
+    const user = requireCan(c, "settings.llm");
+    const body = await optionalJsonBody(c, CreateAccessTokenRequestSchema);
     const created = await createAccessToken(db, {
       name: body.name,
       userId: user.id,
@@ -649,39 +637,30 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.delete("/api/access-tokens/:id", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "settings.llm")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const id = c.req.param("id");
-    const ok = await revokeAccessToken(db, id, user.id);
-    if (!ok) return c.json({ error: "not_found" }, 404);
+    const user = requireCan(c, "settings.llm");
+    const ok = await revokeAccessToken(db, c.req.param("id"), user.id);
+    if (!ok) throw HttpError.notFound("not_found", { code: "access_token_not_found" });
     return c.json({ ok: true });
   });
 
   app.get("/api/settings/cloud", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "settings.llm")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "settings.llm");
     const stored = await getSetting<VultrCloudSettings>(db, CLOUD_SETTINGS_KEY);
     return c.json({ cloud: toPublicCloudSettings(stored) });
   });
 
   app.post("/api/settings/cloud/vultr/connect", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "settings.llm")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "settings.llm");
     const clientId = process.env.PLAYON_VULTR_CLIENT_ID?.trim();
     if (!clientId) {
-      return c.json(
-        {
-          error: "vultr_oauth_not_configured",
+      // The operator has to set an env var before this can work at all, so the
+      // remedy rides in `details` rather than as an ad-hoc top-level field.
+      throw HttpError.unavailable("vultr_oauth_not_configured", {
+        code: "vultr_oauth_not_configured",
+        details: {
           hint: "Set PLAYON_VULTR_CLIENT_ID (PlayOn Vultr OAuth app) to enable Connect Vultr.",
         },
-        503,
-      );
+      });
     }
     const session = createVultrConnectSession();
     const existing = (await getSetting<VultrCloudSettings>(db, CLOUD_SETTINGS_KEY)) ?? {};
@@ -702,18 +681,17 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
 
   app.post("/api/settings/cloud/vultr/callback", async (c) => {
     // Relay or loopback posts { state, code } — not a browser cookie session.
-    const body = z
-      .object({
-        state: z.string().min(1),
-        code: z.string().min(1),
-      })
-      .parse(await c.req.json());
+    const body = await jsonBody(c, VultrOAuthCallbackRequestSchema);
     const stored = await getSetting<VultrCloudSettings>(db, CLOUD_SETTINGS_KEY);
     if (!stored?.connectState || stored.connectState !== body.state || !stored.codeVerifier) {
-      return c.json({ error: "invalid_state" }, 400);
+      throw HttpError.badRequest("invalid_state", { code: "invalid_state" });
     }
     const clientId = process.env.PLAYON_VULTR_CLIENT_ID?.trim();
-    if (!clientId) return c.json({ error: "vultr_oauth_not_configured" }, 503);
+    if (!clientId) {
+      throw HttpError.unavailable("vultr_oauth_not_configured", {
+        code: "vultr_oauth_not_configured",
+      });
+    }
     const redirectUri = `${(process.env.PLAYON_VULTR_RELAY?.trim() || DEFAULT_VULTR_RELAY).replace(/\/$/, "")}/callback`;
     try {
       const tokens = await exchangeVultrCode({
@@ -730,27 +708,21 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       } satisfies VultrCloudSettings);
       return c.json({ ok: true, cloud: toPublicCloudSettings(await getSetting(db, CLOUD_SETTINGS_KEY)) });
     } catch (err) {
-      return c.json(
-        { error: err instanceof Error ? err.message : "vultr_exchange_failed" },
-        400,
-      );
+      throw serviceHttpError(err, {
+        fallback: "vultr_exchange_failed",
+        code: "vultr_exchange_failed",
+      });
     }
   });
 
   app.delete("/api/settings/cloud/vultr", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "settings.llm")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "settings.llm");
     await setSetting(db, CLOUD_SETTINGS_KEY, {} satisfies VultrCloudSettings);
     return c.json({ ok: true, cloud: toPublicCloudSettings(null) });
   });
 
   app.get("/api/skills/catalog", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     const stored = await getSetting<SkillsCatalogSettings>(db, SKILLS_CATALOG_KEY);
     const catalogUrl = resolveSkillsCatalogUrl(
       process.env.PLAYON_SKILLS_CATALOG_URL,
@@ -770,34 +742,25 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         updatedAt: fetched.updatedAt,
       });
     } catch (err) {
-      return c.json(
-        {
-          catalogUrl,
-          skills: [],
-          warnings: [],
-          error: err instanceof Error ? err.message : "catalog_unavailable",
-        },
-        502,
-      );
+      // The catalog is an upstream we proxy, so its outage is a 502 rather than
+      // a caller mistake; `details` keeps the URL that failed for support.
+      throw HttpError.badGateway(messageFromError(err, "catalog_unavailable"), {
+        code: "skills_catalog_unavailable",
+        details: { catalogUrl },
+        cause: err,
+      });
     }
   });
 
   app.post("/api/skills/install-from-catalog", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "skills.package")) {
-      return c.json({ error: "forbidden" }, 403);
+    requireCan(c, "skills.package");
+    const body = await jsonBody(c, InstallSkillFromCatalogRequestSchema);
+    if (!body.name && !body.downloadUrl) {
+      throw HttpError.badRequest("name_or_downloadUrl_required", {
+        code: "name_or_downloadUrl_required",
+      });
     }
     try {
-      const body = z
-        .object({
-          name: z.string().min(1).optional(),
-          downloadUrl: z.string().url().optional(),
-          overwrite: z.boolean().optional(),
-        })
-        .parse(await c.req.json());
-      if (!body.name && !body.downloadUrl) {
-        return c.json({ error: "name_or_downloadUrl_required" }, 400);
-      }
       const stored = await getSetting<SkillsCatalogSettings>(db, SKILLS_CATALOG_KEY);
       const catalogUrl = resolveSkillsCatalogUrl(
         process.env.PLAYON_SKILLS_CATALOG_URL,
@@ -824,29 +787,24 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         skippedDeps: result.skippedDeps,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "catalog_install_failed";
-      const status = message.startsWith("skill_exists")
-        ? 409
-        : message.startsWith("catalog_skill_not_found")
-          ? 404
-          : message.startsWith("catalog_sha256")
-            ? 400
-            : message.startsWith("skills_catalog_fetch")
-              ? 502
-              : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "catalog_install_failed",
+        code: "skill_catalog_install_failed",
+        statusPrefixes: {
+          404: ["catalog_skill_not_found"],
+          409: ["skill_exists"],
+          502: ["skills_catalog_fetch"],
+        },
+      });
     }
   });
 
   app.get("/api/skills", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     const serverId = c.req.query("serverId") || undefined;
     if (serverId) {
       const server = await serverService.get(serverId);
-      if (!server) return c.json({ error: "server_not_found" }, 404);
+      if (!server) throw HttpError.notFound("server_not_found", { code: "server_not_found" });
     }
     const roots = skillsRootsForWorkspace(config.skillsRoots, config.dataRoot, serverId);
     const skills = listSkills(roots).map((s) => {
@@ -870,10 +828,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.get("/api/skills/drafts", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     const drafts = draftService.list().map((d) => {
       const entry = loadSkillMetadata(config.skillsRoots, d.skillName);
       return {
@@ -891,29 +846,22 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/skills/drafts/:slug/promote", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "skills.package")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "skills.package");
     try {
       const promoted = draftService.promote(decodeURIComponent(c.req.param("slug")));
       return c.json({ skill: promoted });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "promote_failed";
-      const status = message.startsWith("unknown_draft")
-        ? 404
-        : message.startsWith("skill_exists")
-          ? 409
-          : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "promote_failed",
+        code: "skill_draft_promote_failed",
+        notFoundPrefixes: ["unknown_draft"],
+        statusPrefixes: { 409: ["skill_exists"] },
+      });
     }
   });
 
   app.get("/api/skills/:name/fs", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    const user = requireRole(c, "operator");
     const name = decodeURIComponent(c.req.param("name"));
     const relPath = c.req.query("path")?.trim() || ".";
     try {
@@ -926,21 +874,15 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         source: skillFs.source(name),
       });
     } catch (err) {
-      return c.json(
-        { error: err instanceof Error ? err.message : "fs_list_failed" },
-        skillFsHttpStatus(err),
-      );
+      throw skillFsError(err, "fs_list_failed", "skill_fs_list_failed");
     }
   });
 
   app.get("/api/skills/:name/fs/content", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    const user = requireRole(c, "operator");
     const name = decodeURIComponent(c.req.param("name"));
     const relPath = c.req.query("path")?.trim();
-    if (!relPath) return c.json({ error: "path_required" }, 400);
+    if (!relPath) throw HttpError.badRequest("path_required", { code: "path_required" });
     try {
       const file = skillFs.read(name, relPath);
       return c.json({
@@ -953,42 +895,34 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         source: file.source,
       });
     } catch (err) {
-      return c.json(
-        { error: err instanceof Error ? err.message : "fs_read_failed" },
-        skillFsHttpStatus(err),
-      );
+      throw skillFsError(err, "fs_read_failed", "skill_fs_read_failed");
     }
   });
 
   app.put("/api/skills/:name/fs/content", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "skills.package")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "skills.package");
     const name = decodeURIComponent(c.req.param("name"));
+    // Deliberately lenient about the body: a missing path or content is
+    // reported by field rather than as a generic schema failure.
     const body = (await c.req.json().catch(() => null)) as {
       path?: unknown;
       content?: unknown;
     } | null;
     const relPath = typeof body?.path === "string" ? body.path.trim() : "";
-    if (!relPath) return c.json({ error: "path_required" }, 400);
-    if (typeof body?.content !== "string") return c.json({ error: "content_required" }, 400);
+    if (!relPath) throw HttpError.badRequest("path_required", { code: "path_required" });
+    if (typeof body?.content !== "string") {
+      throw HttpError.badRequest("content_required", { code: "content_required" });
+    }
     try {
       const written = skillFs.write(name, relPath, body.content);
       return c.json(written);
     } catch (err) {
-      return c.json(
-        { error: err instanceof Error ? err.message : "fs_write_failed" },
-        skillFsHttpStatus(err),
-      );
+      throw skillFsError(err, "fs_write_failed", "skill_fs_write_failed");
     }
   });
 
   app.get("/api/skills/:name/export", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "skills.package")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "skills.package");
     try {
       const exported = skillPackages.exportZip(decodeURIComponent(c.req.param("name")));
       return new Response(Buffer.from(exported.bytes), {
@@ -998,20 +932,19 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         },
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "export_failed";
-      const status = message.startsWith("unknown_skill") ? 404 : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "export_failed",
+        code: "skill_export_failed",
+        notFoundPrefixes: ["unknown_skill"],
+      });
     }
   });
 
   app.get("/api/skills/:name", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     const name = decodeURIComponent(c.req.param("name"));
     const entry = loadSkillMetadata(config.skillsRoots, name);
-    if (!entry) return c.json({ error: "unknown_skill" }, 404);
+    if (!entry) throw HttpError.notFound("unknown_skill", { code: "unknown_skill" });
     const source = classifySkillSource(entry, config.dataRoot);
     const localNames = new Set(listSkills(config.skillsRoots).map((s) => s.metadata.name));
     const dependencies = (entry.metadata.dependencies ?? []).map((dep) => ({
@@ -1030,10 +963,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.delete("/api/skills/:name", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "skills.package")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "skills.package");
     const name = decodeURIComponent(c.req.param("name"));
     const force =
       c.req.query("force") === "1" ||
@@ -1044,29 +974,26 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         .filter((s) => readSkillMarker(s.dataPath)?.skillName === name)
         .map((s) => ({ id: s.id, name: s.name }));
       if (inUse.length && !force) {
-        return c.json(
-          { error: "skill_in_use", servers: inUse },
-          409,
-        );
+        // The blocking servers ride in `details` so the confirm dialog can list
+        // them without a second round trip.
+        throw HttpError.conflict("skill_in_use", {
+          code: "skill_in_use",
+          details: { servers: inUse } satisfies SkillInUseDetails,
+        });
       }
       const removed = skillPackages.uninstall(name);
       return c.json({ ok: true, skill: removed, servers: inUse });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "uninstall_failed";
-      const status = message.startsWith("unknown_skill")
-        ? 404
-        : message.startsWith("skill_not_uninstallable")
-          ? 400
-          : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "uninstall_failed",
+        code: "skill_uninstall_failed",
+        notFoundPrefixes: ["unknown_skill"],
+      });
     }
   });
 
   app.post("/api/skills/import", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "skills.package")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "skills.package");
     try {
       const contentType = c.req.header("content-type") ?? "";
       let bytes: Uint8Array;
@@ -1074,61 +1001,47 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       if (contentType.includes("multipart/form-data")) {
         const body = await c.req.parseBody();
         const file = body.file;
-        if (!(file instanceof File)) return c.json({ error: "file_required" }, 400);
+        if (!(file instanceof File)) {
+          throw HttpError.badRequest("file_required", { code: "file_required" });
+        }
         bytes = new Uint8Array(await file.arrayBuffer());
         overwrite = body.overwrite === "true" || body.overwrite === "1";
       } else {
-        const body = z
-          .object({
-            zipBase64: z.string().min(1),
-            overwrite: z.boolean().optional(),
-          })
-          .parse(await c.req.json());
+        const body = await jsonBody(c, ImportSkillZipRequestSchema);
         bytes = Uint8Array.from(Buffer.from(body.zipBase64, "base64"));
         overwrite = body.overwrite ?? false;
       }
       const imported = skillPackages.importZip(bytes, { overwrite });
       return c.json({ skill: imported });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "import_failed";
-      const status = message.startsWith("skill_exists") ? 409 : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "import_failed",
+        code: "skill_import_failed",
+        statusPrefixes: { 409: ["skill_exists"] },
+      });
     }
   });
 
   app.post("/api/skills/promote-server", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "skills.package")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "skills.package");
+    const body = await jsonBody(c, PromoteServerSkillRequestSchema);
     try {
-      const body = z
-        .object({
-          serverId: z.string().min(1),
-          skillSlug: z.string().min(1),
-          overwrite: z.boolean().optional(),
-        })
-        .parse(await c.req.json());
       const promoted = skillPackages.promoteServerSkill(body.serverId, body.skillSlug, {
         overwrite: body.overwrite,
       });
       return c.json({ skill: promoted });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "promote_failed";
-      const status = message.startsWith("unknown_server_skill")
-        ? 404
-        : message.startsWith("skill_exists")
-          ? 409
-          : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "promote_failed",
+        code: "skill_promote_server_failed",
+        notFoundPrefixes: ["unknown_server_skill"],
+        statusPrefixes: { 409: ["skill_exists"] },
+      });
     }
   });
 
   app.get("/api/servers", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     const list = await serverService.list();
     return c.json({
       servers: list,
@@ -1138,12 +1051,9 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.get("/api/servers/:id", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     const detail = await serverService.detail(c.req.param("id"));
-    if (!detail) return c.json({ error: "not_found" }, 404);
+    if (!detail) throw HttpError.notFound("not_found", { code: "server_not_found" });
     return c.json(detail);
   });
 
@@ -1231,133 +1141,108 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.get("/api/servers/:id/health", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     const remediate = c.req.query("remediate") === "1" || c.req.query("remediate") === "true";
     try {
       const report = await healthService.checkServer(c.req.param("id"), { remediate });
       return c.json(report);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "health_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, { fallback: "health_failed", code: "server_health_failed" });
     }
   });
 
+  /** Every watcher route answers the same 404 for an id that isn't ours. */
+  const requireWatcher = async (id: string) => {
+    const watcher = await watcherService.get(id);
+    if (!watcher) throw HttpError.notFound("not_found", { code: "watcher_not_found" });
+    return watcher;
+  };
+
   app.get("/api/watchers", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "watchers.read")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "watchers.read");
     const serverId = c.req.query("serverId") || undefined;
     return c.json({ watchers: await watcherService.list(serverId) });
   });
 
   app.get("/api/servers/:id/watchers", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "watchers.read")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "watchers.read");
     return c.json({ watchers: await watcherService.list(c.req.param("id")) });
   });
 
   app.get("/api/watchers/:id", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "watchers.read")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const watcher = await watcherService.get(c.req.param("id"));
-    if (!watcher) return c.json({ error: "not_found" }, 404);
-    return c.json({ watcher });
+    requireCan(c, "watchers.read");
+    return c.json({ watcher: await requireWatcher(c.req.param("id")) });
   });
 
   app.post("/api/watchers", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "watchers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "watchers.manage");
+    const body = await jsonBody(c, CreateWatcherSchema);
     try {
-      const body = CreateWatcherSchema.parse(await c.req.json());
       const watcher = await watcherService.create(body);
       return c.json({ watcher }, 201);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "create_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, { fallback: "create_failed", code: "watcher_create_failed" });
     }
   });
 
   app.patch("/api/watchers/:id", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "watchers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "watchers.manage");
+    const body = await jsonBody(c, UpdateWatcherSchema);
     try {
-      const body = UpdateWatcherSchema.parse(await c.req.json());
       const watcher = await watcherService.update(c.req.param("id"), body);
-      if (!watcher) return c.json({ error: "not_found" }, 404);
+      if (!watcher) throw HttpError.notFound("not_found", { code: "watcher_not_found" });
       return c.json({ watcher });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "update_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, { fallback: "update_failed", code: "watcher_update_failed" });
     }
   });
 
   app.delete("/api/watchers/:id", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "watchers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "watchers.manage");
     const ok = await watcherService.delete(c.req.param("id"));
-    if (!ok) return c.json({ error: "not_found" }, 404);
+    if (!ok) throw HttpError.notFound("not_found", { code: "watcher_not_found" });
     return c.json({ ok: true });
   });
 
   app.post("/api/watchers/:id/run", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "watchers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const watcher = await watcherService.get(c.req.param("id"));
-    if (!watcher) return c.json({ error: "not_found" }, 404);
+    requireCan(c, "watchers.manage");
+    const watcher = await requireWatcher(c.req.param("id"));
     await watcherEngine.enqueue(watcher, { kind: "manual" }, { force: true });
     return c.json({ ok: true, watcherId: watcher.id, queued: true });
   });
 
   app.get("/api/watchers/:id/runs", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "watchers.read")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const watcher = await watcherService.get(c.req.param("id"));
-    if (!watcher) return c.json({ error: "not_found" }, 404);
+    requireCan(c, "watchers.read");
+    const watcher = await requireWatcher(c.req.param("id"));
     const limit = Number(c.req.query("limit") ?? 50);
     return c.json({ runs: await watcherService.listRuns(watcher.id, limit) });
   });
 
   app.post("/api/servers/:id/console", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
+    // Deliberately lenient: a missing/non-string command becomes the
+    // `empty_command` business result rather than a transport-level 400.
     const body = (await c.req.json().catch(() => null)) as { command?: unknown } | null;
     const command = typeof body?.command === "string" ? body.command : "";
     const result = await execConsoleCommand(serverService, c.req.param("id"), command);
     if (result.error === "unknown_server") {
-      return c.json({ error: "not_found" }, 404);
+      throw HttpError.notFound("not_found", { code: "server_not_found" });
     }
     // Business failures stay 200 so the UI can render dialect/body/hint without a throw.
     return c.json(result);
   });
 
-  app.get("/api/servers/:id/conversations", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "chat.agent")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const serverId = c.req.param("id");
+  /** Conversations are per-server, so an id that isn't ours is the same 404 everywhere. */
+  const requireConversationServer = async (serverId: string) => {
     const server = await serverService.get(serverId);
-    if (!server) return c.json({ error: "not_found" }, 404);
+    if (!server) throw HttpError.notFound("not_found", { code: "server_not_found" });
+    return server;
+  };
+
+  app.get("/api/servers/:id/conversations", async (c) => {
+    const user = requireCan(c, "chat.agent");
+    const serverId = c.req.param("id");
+    await requireConversationServer(serverId);
 
     const rows = await db
       .select({
@@ -1383,17 +1268,11 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/servers/:id/conversations", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "chat.agent")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    const user = requireCan(c, "chat.agent");
     const serverId = c.req.param("id");
-    const server = await serverService.get(serverId);
-    if (!server) return c.json({ error: "not_found" }, 404);
+    await requireConversationServer(serverId);
 
-    const body = z
-      .object({ title: z.string().min(1).max(120).optional() })
-      .parse((await c.req.json().catch(() => ({}))) as unknown);
+    const body = await optionalJsonBody(c, CreateConversationRequestSchema);
     const now = new Date();
     const id = nanoid();
     await db.insert(conversations).values({
@@ -1417,11 +1296,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/servers", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const body = CreateServerSchema.parse(await c.req.json());
+    requireRole(c, "operator");
+    const body = await jsonBody(c, CreateServerSchema);
     try {
       const server = await serverService.createFromSkill({
         skillName: body.skillName!,
@@ -1431,26 +1307,14 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       await playerPanel.publishForStatus(server.id, "stopped");
       return c.json({ server });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "create_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, { fallback: "create_failed", code: "server_create_failed" });
     }
   });
 
   app.post("/api/servers/import", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
+    const body = await jsonBody(c, ImportLocalServerRequestSchema);
     try {
-      const body = z
-        .object({
-          sourcePath: z.string().min(1),
-          serverName: z.string().min(1).optional(),
-          skillName: z.string().min(1).optional(),
-          game: z.string().min(1).optional(),
-          nodeId: z.string().min(1).optional(),
-        })
-        .parse(await c.req.json());
       const report = await importLocal.importFromPath(body);
       await playerPanel.publishForStatus(report.server.id, "stopped");
       return c.json({
@@ -1466,31 +1330,14 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         },
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "import_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, { fallback: "import_failed", code: "server_import_failed" });
     }
   });
 
   app.post("/api/servers/import/sftp", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
+    const body = await jsonBody(c, ImportSftpServerRequestSchema);
     try {
-      const body = z
-        .object({
-          host: z.string().min(1),
-          port: z.number().int().positive().optional(),
-          username: z.string().min(1),
-          password: z.string().min(1).optional(),
-          privateKey: z.string().min(1).optional(),
-          remotePath: z.string().min(1),
-          serverName: z.string().min(1).optional(),
-          skillName: z.string().min(1).optional(),
-          game: z.string().min(1).optional(),
-          nodeId: z.string().min(1).optional(),
-        })
-        .parse(await c.req.json());
       const report = await importSftp.importFromSftp(body);
       await playerPanel.publishForStatus(report.server.id, "stopped");
       return c.json({
@@ -1508,91 +1355,77 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         },
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "sftp_import_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, {
+        fallback: "sftp_import_failed",
+        code: "server_sftp_import_failed",
+      });
     }
   });
 
+  /**
+   * Shared tail of start/restart: publish the running panel with whatever the
+   * live query could reach, then answer with the server plus its runtime view.
+   */
+  const runningServerResponse = async <T extends { id: string }>(server: T) => {
+    const live = await safeQueryLive(
+      (id) => queryService.queryServerWithRetry(id, { attempts: 5, delayMs: 1200 }),
+      server.id,
+    );
+    await playerPanel.publishForStatus(server.id, "running", live);
+    const detail = await serverService.detail(server.id);
+    return { server, runtime: detail?.runtime };
+  };
+
   app.post("/api/servers/:id/start", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     try {
       const server = await serverService.start(c.req.param("id"));
-      const live = await safeQueryLive(
-        (id) => queryService.queryServerWithRetry(id, { attempts: 5, delayMs: 1200 }),
-        server.id,
-      );
-      await playerPanel.publishForStatus(server.id, "running", live);
-      const detail = await serverService.detail(server.id);
-      return c.json({ server, runtime: detail?.runtime });
+      return c.json(await runningServerResponse(server));
     } catch (err) {
-      const message = err instanceof Error ? err.message : "start_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, { fallback: "start_failed", code: "server_start_failed" });
     }
   });
 
   app.post("/api/servers/:id/stop", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     try {
       const server = await serverService.stop(c.req.param("id"));
       await playerPanel.publishForStatus(server.id, "stopped");
       return c.json({ server });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "stop_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, { fallback: "stop_failed", code: "server_stop_failed" });
     }
   });
 
   app.delete("/api/servers/:id", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
     try {
       const removed = await serverService.remove(c.req.param("id"));
       await panelService.clearForServer(removed.id);
       return c.json({ ok: true, removed });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "delete_failed";
-      const status = message.startsWith("unknown_server") ? 404 : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "delete_failed",
+        code: "server_delete_failed",
+        notFoundPrefixes: ["unknown_server"],
+      });
     }
   });
 
   app.post("/api/servers/:id/restart", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     try {
       const server = await serverService.restart(c.req.param("id"));
-      const live = await safeQueryLive(
-        (id) => queryService.queryServerWithRetry(id, { attempts: 5, delayMs: 1200 }),
-        server.id,
-      );
-      await playerPanel.publishForStatus(server.id, "running", live);
-      const detail = await serverService.detail(server.id);
-      return c.json({ server, runtime: detail?.runtime });
+      return c.json(await runningServerResponse(server));
     } catch (err) {
-      const message = err instanceof Error ? err.message : "restart_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, { fallback: "restart_failed", code: "server_restart_failed" });
     }
   });
 
   app.post("/api/servers/:id/relocate", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
+    const body = await jsonBody(c, RelocateServerRequestSchema);
     try {
-      const body = z
-        .object({ targetNodeId: z.string().min(1) })
-        .parse(await c.req.json());
       const result = await migrateService.relocate(c.req.param("id"), body.targetNodeId);
       await playerPanel.publishForStatus(
         result.server.id,
@@ -1600,12 +1433,11 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       );
       return c.json({ relocate: result });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "relocate_failed";
-      const status =
-        message.startsWith("unknown_server") || message.startsWith("unknown_node")
-          ? 404
-          : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "relocate_failed",
+        code: "server_relocate_failed",
+        notFoundPrefixes: ["unknown_server", "unknown_node"],
+      });
     }
   });
 
@@ -1651,19 +1483,15 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
       c.req.header("x-real-ip") ||
       "local";
-    if (!allowPanelInput(key)) {
-      return c.json({ error: "rate_limited" }, 429);
-    }
-    const body = PanelInputSchema.parse(await c.req.json());
-    const result = await panelService.recordInput(body);
-    return c.json(result);
+    if (!allowPanelInput(key)) throw HttpError.rateLimited("rate_limited");
+    // Panel input is unauthenticated, so anything the service throws stays
+    // opaque behind the shared 500 rather than echoing internals to players.
+    const body = await jsonBody(c, PanelInputRequestSchema);
+    return c.json(await panelService.recordInput(body));
   });
 
   app.get("/api/nodes", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     const list = await db.select().from(nodes);
     const now = Date.now();
     const nodeSettings = await getSetting<NodeSettings>(db, NODE_SETTINGS_KEY);
@@ -1702,22 +1530,14 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.get("/api/settings/nodes", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "settings.llm")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "settings.llm");
     const stored = await getSetting<NodeSettings>(db, NODE_SETTINGS_KEY);
     return c.json({ nodes: toPublicNodeSettings(stored) });
   });
 
   app.put("/api/settings/nodes", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "settings.llm")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const body = z
-      .object({ localComputeEnabled: z.boolean() })
-      .parse(await c.req.json());
+    requireCan(c, "settings.llm");
+    const body = await jsonBody(c, NodeSettingsPutRequestSchema);
     const existing =
       (await getSetting<NodeSettings>(db, NODE_SETTINGS_KEY)) ?? DEFAULT_NODE_SETTINGS;
     await setSetting(db, NODE_SETTINGS_KEY, {
@@ -1730,51 +1550,25 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/nodes/add", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
+    const body = await jsonBody(c, AddNodeRequestSchema);
     try {
-      const body = z
-        .object({
-          kind: z.enum(["lan", "cloud"]),
-          host: z.string().min(1),
-          port: z.number().int().positive().optional(),
-          username: z.string().min(1),
-          password: z.string().optional(),
-          privateKey: z.string().optional(),
-          nodeId: z.string().min(1).optional(),
-          nodeName: z.string().min(1).optional(),
-          wgListenPort: z.number().int().positive().optional(),
-        })
-        .parse(await c.req.json());
-      const result = await addNode.addViaSsh(body);
-      return c.json({ node: result });
+      return c.json({ node: await addNode.addViaSsh(body) });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "add_node_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, { fallback: "add_node_failed", code: "add_node_failed" });
     }
   });
 
   app.post("/api/nodes/bootstrap-token", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
+    const body = await jsonBody(c, NodeBootstrapTokenRequestSchema);
     try {
-      const body = z
-        .object({
-          kind: z.enum(["lan", "cloud"]),
-          nodeId: z.string().min(1).optional(),
-          nodeName: z.string().min(1).optional(),
-          endpointHost: z.string().min(1).optional(),
-        })
-        .parse(await c.req.json());
-      const result = await addNode.createBootstrapToken(body);
-      return c.json(result);
+      return c.json(await addNode.createBootstrapToken(body));
     } catch (err) {
-      const message = err instanceof Error ? err.message : "bootstrap_token_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, {
+        fallback: "bootstrap_token_failed",
+        code: "bootstrap_token_failed",
+      });
     }
   });
 
@@ -1790,53 +1584,43 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     }
   });
 
+  /** Every node route promotes an unknown id to 404 with the service's own text. */
+  const NODE_NOT_FOUND = ["unknown_node"] as const;
+  /** A node that is registered but not currently reachable is a 409, not a 400. */
+  const NODE_OFFLINE = { 409: ["node_not_online"] } as const;
+
   app.delete("/api/nodes/:nodeId", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
+    const force = c.req.query("force") === "1" || c.req.query("force") === "true";
     try {
-      const force = c.req.query("force") === "1" || c.req.query("force") === "true";
-      const result = await addNode.removeNode(c.req.param("nodeId"), { force });
-      return c.json(result);
+      return c.json(await addNode.removeNode(c.req.param("nodeId"), { force }));
     } catch (err) {
-      const message = err instanceof Error ? err.message : "remove_node_failed";
-      const status = message.startsWith("unknown_node") ? 404 : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "remove_node_failed",
+        code: "remove_node_failed",
+        notFoundPrefixes: NODE_NOT_FOUND,
+      });
     }
   });
 
   app.post("/api/nodes/:nodeId/manage/suggest", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
     try {
-      const result = await manageSuggest.suggest(c.req.param("nodeId"));
-      return c.json(result);
+      return c.json(await manageSuggest.suggest(c.req.param("nodeId")));
     } catch (err) {
-      const message = err instanceof Error ? err.message : "manage_suggest_failed";
-      const status =
-        message.startsWith("unknown_node") ? 404 : message.startsWith("node_not_online") ? 409 : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "manage_suggest_failed",
+        code: "manage_suggest_failed",
+        notFoundPrefixes: NODE_NOT_FOUND,
+        statusPrefixes: NODE_OFFLINE,
+      });
     }
   });
 
   app.post("/api/nodes/:nodeId/manage", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
+    const body = await jsonBody(c, ManageNodeServerRequestSchema);
     try {
-      const body = z
-        .object({
-          sourcePath: z.string().min(1),
-          serverName: z.string().min(1).optional(),
-          skillName: z.string().min(1).optional(),
-          game: z.string().min(1).optional(),
-          hintIds: z.array(z.string().min(1)).optional(),
-        })
-        .parse(await c.req.json());
       const report = await manageSuggest.manageFromNode({
         nodeId: c.req.param("nodeId"),
         ...body,
@@ -1855,52 +1639,41 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         },
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "manage_failed";
-      const status =
-        message.startsWith("unknown_node") ? 404 : message.startsWith("node_not_online") ? 409 : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "manage_failed",
+        code: "node_manage_failed",
+        notFoundPrefixes: NODE_NOT_FOUND,
+        statusPrefixes: NODE_OFFLINE,
+      });
     }
   });
 
   app.post("/api/nodes/:nodeId/install-docker", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
+    const body = await jsonBody(c, InstallDockerRequestSchema);
     try {
-      const body = z
-        .object({
-          host: z.string().min(1),
-          port: z.number().int().positive().optional(),
-          username: z.string().min(1),
-          password: z.string().optional(),
-          privateKey: z.string().optional(),
-        })
-        .parse(await c.req.json());
-      const result = await installDocker.installViaSsh({
-        nodeId: c.req.param("nodeId"),
-        ...body,
-      });
-      return c.json(result);
+      return c.json(
+        await installDocker.installViaSsh({ nodeId: c.req.param("nodeId"), ...body }),
+      );
     } catch (err) {
-      const message = err instanceof Error ? err.message : "install_docker_failed";
-      const status = message.startsWith("unknown_node") ? 404 : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "install_docker_failed",
+        code: "install_docker_failed",
+        notFoundPrefixes: NODE_NOT_FOUND,
+      });
     }
   });
 
   app.post("/api/nodes/:nodeId/install-docker/token", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
     try {
-      const result = await installDocker.createToken(c.req.param("nodeId"));
-      return c.json(result);
+      return c.json(await installDocker.createToken(c.req.param("nodeId")));
     } catch (err) {
-      const message = err instanceof Error ? err.message : "install_docker_token_failed";
-      const status = message.startsWith("unknown_node") ? 404 : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "install_docker_token_failed",
+        code: "install_docker_token_failed",
+        notFoundPrefixes: NODE_NOT_FOUND,
+      });
     }
   });
 
@@ -1920,29 +1693,25 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.get("/api/placement", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
     const skillName = c.req.query("skillName")?.trim();
-    if (!skillName) return c.json({ error: "skillName_required" }, 400);
+    if (!skillName) {
+      throw HttpError.badRequest("skillName_required", { code: "skillName_required" });
+    }
     try {
-      const plan = await placementService.plan(skillName);
-      return c.json({ placement: plan });
+      return c.json({ placement: await placementService.plan(skillName) });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "placement_failed";
-      const status = message.startsWith("unknown_skill") ? 404 : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "placement_failed",
+        code: "placement_failed",
+        notFoundPrefixes: ["unknown_skill"],
+      });
     }
   });
 
   app.get("/api/snapshots", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const serverId = c.req.query("serverId") || undefined;
-    const list = await snapshotService.list(serverId);
+    requireCan(c, "servers.manage");
+    const list = await snapshotService.list(c.req.query("serverId") || undefined);
     return c.json({
       snapshots: list.map((s) => ({
         id: s.id,
@@ -1954,17 +1723,9 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/snapshots", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
+    const body = await jsonBody(c, CreateSnapshotRequestSchema);
     try {
-      const body = z
-        .object({
-          serverId: z.string().min(1),
-          label: z.string().min(1).optional(),
-        })
-        .parse(await c.req.json());
       const snap = await snapshotService.create(body.serverId, body.label ?? "manual");
       return c.json({
         snapshot: {
@@ -1975,58 +1736,49 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         },
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "snapshot_failed";
-      const status = message.startsWith("unknown_server") ? 404 : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "snapshot_failed",
+        code: "snapshot_create_failed",
+        notFoundPrefixes: ["unknown_server"],
+      });
     }
   });
 
   app.post("/api/snapshots/:id/restore", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "snapshots.restore")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "snapshots.restore");
     try {
-      const server = await snapshotService.restore(c.req.param("id"));
-      return c.json({ server });
+      return c.json({ server: await snapshotService.restore(c.req.param("id")) });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "restore_failed";
-      const status = message.startsWith("unknown_snapshot") ? 404 : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "restore_failed",
+        code: "snapshot_restore_failed",
+        notFoundPrefixes: ["unknown_snapshot"],
+      });
     }
   });
 
   app.get("/api/backups/target", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
     const rootPath = await offNodeBackup.getTarget();
     return c.json({ target: rootPath ? { rootPath } : null });
   });
 
   app.put("/api/backups/target", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "settings.llm")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "settings.llm");
+    const body = await jsonBody(c, BackupTargetRequestSchema);
     try {
-      const body = z.object({ rootPath: z.string().min(1) }).parse(await c.req.json());
-      const target = await offNodeBackup.setTarget(body.rootPath);
-      return c.json({ target });
+      return c.json({ target: await offNodeBackup.setTarget(body.rootPath) });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "backup_target_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, {
+        fallback: "backup_target_failed",
+        code: "backup_target_failed",
+      });
     }
   });
 
   app.get("/api/backups/offnode", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const serverId = c.req.query("serverId") || undefined;
-    const list = await offNodeBackup.list(serverId);
+    requireCan(c, "servers.manage");
+    const list = await offNodeBackup.list(c.req.query("serverId") || undefined);
     return c.json({
       backups: list.map((b) => ({
         id: b.id,
@@ -2039,24 +1791,18 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/backups/offnode", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
+    requireCan(c, "servers.manage");
+    const body = await jsonBody(c, CreateOffNodeBackupRequestSchema);
+    if (!body.snapshotId && !body.serverId) {
+      throw HttpError.badRequest("serverId_or_snapshotId_required", {
+        code: "serverId_or_snapshotId_required",
+      });
     }
     try {
-      const body = z
-        .object({
-          serverId: z.string().min(1).optional(),
-          snapshotId: z.string().min(1).optional(),
-          label: z.string().min(1).optional(),
-        })
-        .parse(await c.req.json());
+      // An explicit snapshot wins: exporting it is cheaper than taking a new one.
       const record = body.snapshotId
         ? await offNodeBackup.exportSnapshot(body.snapshotId)
-        : body.serverId
-          ? await offNodeBackup.backupServer(body.serverId, body.label)
-          : null;
-      if (!record) return c.json({ error: "serverId_or_snapshotId_required" }, 400);
+        : await offNodeBackup.backupServer(body.serverId!, body.label);
       return c.json({
         backup: {
           id: record.id,
@@ -2067,34 +1813,30 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         },
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "offnode_backup_failed";
-      const status = message.startsWith("unknown_") ? 404 : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "offnode_backup_failed",
+        code: "offnode_backup_failed",
+        notFoundPrefixes: ["unknown_"],
+      });
     }
   });
 
   app.post("/api/backups/offnode/:id/restore", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "snapshots.restore")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "snapshots.restore");
+    const body = await optionalJsonBody(c, RestoreOffNodeBackupRequestSchema);
     try {
-      const body = z
-        .object({ serverId: z.string().min(1).optional() })
-        .parse((await c.req.json().catch(() => ({}))) as unknown);
       const result = await offNodeBackup.restore(c.req.param("id"), body.serverId);
       return c.json({ restore: result });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "offnode_restore_failed";
-      const status = message.startsWith("unknown_") ? 404 : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "offnode_restore_failed",
+        code: "offnode_restore_failed",
+        notFoundPrefixes: ["unknown_"],
+      });
     }
   });
   app.get("/api/agents", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
     const skills = await agentProgress.listSkills();
     return c.json({
       agent: { name: "Agent" },
@@ -2109,10 +1851,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.get("/api/activity", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
     const limitRaw = Number(c.req.query("limit") ?? "40");
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 100) : 40;
     const rows = await db
@@ -2353,11 +2092,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.get("/api/conversations", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "chat.agent")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-
+    const user = requireCan(c, "chat.agent");
     const serverId = c.req.query("serverId") || undefined;
     const rows = await db
       .select({
@@ -2387,10 +2122,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.get("/api/conversations/:id/messages", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "chat.agent")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    const user = requireCan(c, "chat.agent");
 
     const conversationId = c.req.param("id");
     const rows = await db
@@ -2399,11 +2131,11 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       .where(eq(conversations.id, conversationId))
       .limit(1);
     const conversation = rows[0];
-    if (!conversation) return c.json({ error: "not_found" }, 404);
-
-    if (conversation.userId !== user.id) {
-      return c.json({ error: "forbidden" }, 403);
+    if (!conversation) {
+      throw HttpError.notFound("not_found", { code: "conversation_not_found" });
     }
+    // Someone else's transcript reads as forbidden, not as a missing id.
+    if (conversation.userId !== user.id) throw HttpError.forbidden("forbidden");
 
     const messageRows = await db
       .select({
@@ -2432,16 +2164,10 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/chat", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "chat.agent")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const body = (await c.req.json()) as {
-      message?: string;
-      conversationId?: string;
-      serverId?: string;
-    };
-    if (!body.message?.trim()) return c.json({ error: "message_required" }, 400);
+    const user = requireCan(c, "chat.agent");
+    const body = await jsonBody(c, ChatRequestSchema);
+    const prompt = body.message?.trim() ? body.message : null;
+    if (!prompt) throw HttpError.badRequest("message_required", { code: "message_required" });
 
     let conversationId = body.conversationId;
     /** Bound maintain chat when set; unbound install chat when undefined. */
@@ -2455,11 +2181,12 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         .where(eq(conversations.id, conversationId))
         .limit(1);
       const conversation = existing[0];
+      // Another user's conversation reads as missing so ids stay unguessable.
       if (!conversation || conversation.userId !== user.id) {
-        return c.json({ error: "conversation_not_found" }, 404);
+        throw HttpError.notFound("conversation_not_found", { code: "conversation_not_found" });
       }
       if (body.serverId && conversation.serverId && body.serverId !== conversation.serverId) {
-        return c.json({ error: "serverId_mismatch" }, 400);
+        throw HttpError.badRequest("serverId_mismatch", { code: "serverId_mismatch" });
       }
       workspaceServerId = conversation.serverId ?? body.serverId;
       await db
@@ -2469,7 +2196,9 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     } else {
       if (body.serverId) {
         const server = await serverService.get(body.serverId);
-        if (!server) return c.json({ error: "server_not_found" }, 404);
+        if (!server) {
+          throw HttpError.notFound("server_not_found", { code: "server_not_found" });
+        }
         workspaceServerId = body.serverId;
       } else {
         workspaceServerId = undefined;
@@ -2479,7 +2208,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         id: conversationId,
         userId: user.id,
         serverId: workspaceServerId,
-        title: body.message.slice(0, 80),
+        title: prompt.slice(0, 80),
         createdAt: now,
         updatedAt: now,
       });
@@ -2501,7 +2230,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       id: nanoid(),
       conversationId,
       role: "user",
-      content: body.message,
+      content: prompt,
       createdAt: now,
     });
 
@@ -2615,7 +2344,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         },
       });
       publishActivity("thinking");
-      const result = await orchestrator.handle(body.message, priorMessages);
+      const result = await orchestrator.handle(prompt, priorMessages);
 
       for (const trace of result.toolTrace) {
         const failed =
@@ -2723,10 +2452,14 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           aborted: true,
         });
       }
-      const messageText = err instanceof Error ? err.message : "chat_failed";
-      console.error("chat failed:", messageText);
-      const status = messageText.includes("llm_api_key_required") ? 400 : 502;
-      return c.json({ error: messageText }, status);
+      const messageText = messageFromError(err, "chat_failed");
+      console.error("chat failed:", redactString(messageText));
+      // A missing key is the operator's to fix; anything else is the LLM upstream.
+      const needsKey = messageText.includes("llm_api_key_required");
+      throw new HttpError(needsKey ? 400 : 502, messageText, {
+        code: needsKey ? "llm_api_key_required" : "chat_failed",
+        cause: err,
+      });
     } finally {
       abortSignal.removeEventListener("abort", onClientAbort);
       publishActivity("idle");
@@ -2734,17 +2467,14 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/users", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "users.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const body = CreateUserSchema.parse(await c.req.json());
+    requireCan(c, "users.manage");
+    const body = await jsonBody(c, CreateUserRequestSchema);
     const existing = await db
       .select()
       .from(users)
       .where(eq(users.username, body.username))
       .limit(1);
-    if (existing[0]) return c.json({ error: "username_taken" }, 409);
+    if (existing[0]) throw HttpError.conflict("username_taken", { code: "username_taken" });
 
     const id = nanoid();
     const now = new Date();
@@ -2767,18 +2497,14 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/confirm", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "confirm.host")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const body = z
-      .object({
-        requestId: z.string().min(1),
-        approved: z.boolean(),
-      })
-      .parse(await c.req.json());
+    requireCan(c, "confirm.host");
+    const body = await jsonBody(c, ConfirmRequestSchema);
     const ok = confirmService.resolve(body.requestId, body.approved);
-    if (!ok) return c.json({ error: "unknown_or_expired_request" }, 404);
+    if (!ok) {
+      throw HttpError.notFound("unknown_or_expired_request", {
+        code: "unknown_or_expired_request",
+      });
+    }
     return c.json({ ok: true, requestId: body.requestId, approved: body.approved });
   });
 

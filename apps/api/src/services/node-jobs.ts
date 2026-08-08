@@ -28,6 +28,8 @@ export class NodeJobService {
   private readonly jobs = new Map<string, NodeJob>();
   /** Last `jobKinds` advertisement per node; absent means "agent predates the advertisement". */
   private readonly advertised = new Map<string, Set<NodeJobKind>>();
+  /** Wake hooks for in-flight `waitFor` polls, so shutdown can release them. */
+  private readonly waiters = new Set<(reason: string) => void>();
 
   /**
    * Record what a node says it can execute (from heartbeat). Called with
@@ -126,16 +128,46 @@ export class NodeJobService {
     const timeoutMs = opts.timeoutMs ?? 30_000;
     const intervalMs = opts.intervalMs ?? 200;
     const deadline = Date.now() + timeoutMs;
-    while (Date.now() < deadline) {
-      const job = this.get(jobId);
-      if (!job) throw new NodeJobError("unknown_job", { detail: jobId });
-      if (job.status === "done" || job.status === "failed") return job;
-      await new Promise((r) => setTimeout(r, intervalMs));
+    let abortedFor: string | null = null;
+    let wake: (() => void) | null = null;
+    const waiter = (reason: string): void => {
+      abortedFor = reason;
+      wake?.();
+    };
+    this.waiters.add(waiter);
+    try {
+      while (Date.now() < deadline && !abortedFor) {
+        const job = this.get(jobId);
+        if (!job) throw new NodeJobError("unknown_job", { detail: jobId });
+        if (job.status === "done" || job.status === "failed") return job;
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, intervalMs);
+          wake = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+        });
+        wake = null;
+      }
+    } finally {
+      this.waiters.delete(waiter);
     }
     throw new NodeJobError("timeout", {
       kind: this.jobs.get(jobId)?.kind,
-      detail: `job ${jobId} after ${timeoutMs}ms`,
+      detail: abortedFor ? `job ${jobId} ${abortedFor}` : `job ${jobId} after ${timeoutMs}ms`,
     });
+  }
+
+  /**
+   * Release every in-flight `waitFor` caller — best-effort shutdown help, so a
+   * poll with a long timeout does not hold the control plane open. Waiters see
+   * a `timeout` error carrying `reason`; queued jobs themselves are untouched.
+   */
+  abortWaiters(reason = "aborted"): number {
+    const pending = [...this.waiters];
+    this.waiters.clear();
+    for (const waiter of pending) waiter(reason);
+    return pending.length;
   }
 }
 

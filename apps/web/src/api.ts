@@ -1,5 +1,13 @@
+import { apiErrorFromResponse, isApiRequestError, skillInUseServers } from "@playon/shared";
 import type { LlmPresetId, PublicUser, SetupStatus } from "@playon/shared";
 
+export { ApiRequestError, isApiRequestError } from "@playon/shared";
+
+/**
+ * Single choke point for control-plane calls: failures arrive as the shared
+ * `{ error, code?, details? }` envelope and leave as an `ApiRequestError` whose
+ * `message` is still the server text pages already render.
+ */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -10,9 +18,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    const detail = body.error?.trim();
-    throw new Error(detail || `request_failed_${res.status}`);
+    const body = await res.json().catch(() => undefined);
+    throw apiErrorFromResponse(res.status, body);
   }
   return res.json() as Promise<T>;
 }
@@ -571,31 +578,22 @@ export const api = {
       { method: "POST" },
     ),
   uninstallSkill: async (name: string, force = false) => {
-    const res = await fetch(
-      `/api/skills/${encodeURIComponent(name)}${force ? "?force=1" : ""}`,
-      { method: "DELETE", credentials: "include" },
-    );
-    const body = (await res.json().catch(() => ({}))) as {
-      ok?: true;
-      skill?: { skillName: string; path: string };
-      servers?: Array<{ id: string; name: string }>;
-      error?: string;
-    };
-    if (res.status === 409 && body.error === "skill_in_use") {
-      const err = new Error("skill_in_use") as Error & {
-        servers?: Array<{ id: string; name: string }>;
-      };
-      err.servers = body.servers ?? [];
+    try {
+      return await request<{
+        ok: true;
+        skill: { skillName: string; path: string };
+        servers: Array<{ id: string; name: string }>;
+      }>(`/api/skills/${encodeURIComponent(name)}${force ? "?force=1" : ""}`, {
+        method: "DELETE",
+      });
+    } catch (err) {
+      // The 409 lists the servers still bound to the skill in `details`; the
+      // confirm dialog reads them off the thrown error.
+      if (isApiRequestError(err) && err.code === "skill_in_use") {
+        throw Object.assign(err, { servers: skillInUseServers(err.details) });
+      }
       throw err;
     }
-    if (!res.ok) {
-      throw new Error(body.error?.trim() || `uninstall_failed_${res.status}`);
-    }
-    return body as {
-      ok: true;
-      skill: { skillName: string; path: string };
-      servers: Array<{ id: string; name: string }>;
-    };
   },
   promoteServerSkill: (body: { serverId: string; skillSlug: string; overwrite?: boolean }) =>
     request<{ skill: { skillName: string; path: string } }>("/api/skills/promote-server", {
@@ -688,8 +686,11 @@ export const api = {
       credentials: "include",
     });
     if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(body.error?.trim() || `export_failed_${res.status}`);
+      throw apiErrorFromResponse(
+        res.status,
+        await res.json().catch(() => undefined),
+        `export_failed_${res.status}`,
+      );
     }
     const blob = await res.blob();
     const disposition = res.headers.get("content-disposition") ?? "";
@@ -712,8 +713,11 @@ export const api = {
       body,
     });
     if (!res.ok) {
-      const json = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(json.error?.trim() || `import_failed_${res.status}`);
+      throw apiErrorFromResponse(
+        res.status,
+        await res.json().catch(() => undefined),
+        `import_failed_${res.status}`,
+      );
     }
     return res.json() as Promise<{ skill: { skillName: string; path: string; version: string } }>;
   },
