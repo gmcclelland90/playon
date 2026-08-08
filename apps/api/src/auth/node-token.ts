@@ -1,9 +1,13 @@
 import { timingSafeEqual } from "node:crypto";
-import type { Context } from "hono";
+
+/** Minimal view of the request headers the node-token check needs. */
+export type NodeTokenCarrier = {
+  req: { header(name: string): string | undefined };
+};
 
 /** Returns false when a token is configured and the request does not present it. */
 export function nodeTokenAuthorized(
-  c: Context,
+  c: NodeTokenCarrier,
   expectedToken: string | undefined,
 ): boolean {
   const expected = expectedToken?.trim();

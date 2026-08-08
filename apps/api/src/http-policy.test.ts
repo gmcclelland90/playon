@@ -8,12 +8,14 @@ import {
   currentUser,
   jsonBody,
   requireCan,
+  requireNodeToken,
   requireRole,
   requireSession,
   serviceHttpError,
   sessionHasRole,
   type SessionCarrier,
 } from "./http-policy.js";
+import type { NodeTokenCarrier } from "./auth/node-token.js";
 
 function carrier(role: Role | null): SessionCarrier {
   const user: AuthUser | null = role
@@ -55,6 +57,30 @@ describe("policy helpers", () => {
     expect(requireCan(carrier("operator"), "servers.manage").role).toBe("operator");
     expect(() => requireCan(carrier("operator"), "users.manage")).toThrow(/forbidden/);
     expect(() => requireCan(carrier(null), "panel.read")).toThrow(/forbidden/);
+  });
+
+  it("gates node-agent routes on the shared node token", () => {
+    const withBearer = (token: string): NodeTokenCarrier => ({
+      req: {
+        header: (name) =>
+          name.toLowerCase() === "authorization" ? `Bearer ${token}` : undefined,
+      },
+    });
+    const empty: NodeTokenCarrier = { req: { header: () => undefined } };
+
+    expect(() => requireNodeToken(empty, undefined)).not.toThrow();
+    expect(() => requireNodeToken(withBearer("secret"), "secret")).not.toThrow();
+    try {
+      requireNodeToken(empty, "secret");
+      expect.unreachable("requireNodeToken must throw without a matching token");
+    } catch (err) {
+      expect(err).toBeInstanceOf(HttpError);
+      expect((err as HttpError).status).toBe(401);
+      expect((err as HttpError).envelope).toEqual({
+        error: "unauthorized",
+        code: "unauthorized",
+      });
+    }
   });
 
   it("answers the same role question without throwing, for stream upgrades", () => {

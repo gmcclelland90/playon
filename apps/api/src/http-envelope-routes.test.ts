@@ -18,9 +18,10 @@ type Envelope = { error: string; code?: string; details?: unknown };
  * Routes migrated to the shared envelope: session, servers list/detail, every
  * mutating server route (create, import, start, stop, restart, delete, relocate,
  * console), server health, the skill library, watchers, the player panel, the
- * nodes, snapshots, backups, settings and users groups, and the agent
- * conversation surface (chat, conversations, activity, confirm). Status codes
- * and `error` text must match pre-envelope behaviour; `code` is the addition.
+ * nodes (admin + node-token protocol), MCP, snapshots, backups, settings and
+ * users groups, and the agent conversation surface (chat, conversations,
+ * activity, confirm). Status codes and `error` text must match pre-envelope
+ * behaviour; `code` is the addition.
  */
 describe("transport error envelope on migrated routes", () => {
   let db: Db;
@@ -1255,5 +1256,134 @@ describe("transport error envelope on migrated routes", () => {
     const activity = await app.request("/api/activity", { headers: { cookie } });
     expect(activity.status).toBe(200);
     expect(((await activity.json()) as { activity: unknown[] }).activity).toEqual([]);
+  });
+
+  it("gates node-token protocol routes on the shared 401 unauthorized envelope", async () => {
+    config.nodeToken = "envelope-node-token";
+    const app = createApp(db, config);
+    const unauthorized = { error: "unauthorized", code: "unauthorized" };
+    const attempts: Array<[string, RequestInit]> = [
+      ["/api/nodes/heartbeat", { method: "POST", body: "{}" }],
+      ["/api/nodes/node-a/logs", { method: "POST", body: "{}" }],
+      ["/api/nodes/node-a/metrics", { method: "POST", body: "{}" }],
+      ["/api/nodes/node-a/jobs/next", {}],
+      ["/api/nodes/node-a/jobs/job-1/result", { method: "POST", body: "{}" }],
+    ];
+
+    for (const [path_, init] of attempts) {
+      const res = await app.request(path_, {
+        ...init,
+        headers: { "content-type": "application/json", ...(init.headers ?? {}) },
+      });
+      expect([path_, res.status]).toEqual([path_, 401]);
+      expect(await res.json()).toEqual(unauthorized);
+    }
+  });
+
+  it("renders node-token body failures as 400 invalid_request with issues", async () => {
+    config.nodeToken = "envelope-node-token";
+    const app = createApp(db, config);
+    const auth = { authorization: "Bearer envelope-node-token" };
+
+    const enqueued = await app.request("/api/nodes/node-a/jobs", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ kind: "ping" }),
+    });
+    expect(enqueued.status).toBe(201);
+    const jobId = ((await enqueued.json()) as { job: { id: string } }).job.id;
+
+    const cases: Array<[string, unknown, string]> = [
+      ["/api/nodes/heartbeat", { nodeId: "n1" }, "name"],
+      ["/api/nodes/node-a/logs", { serverId: "srv-1" }, "lines"],
+      ["/api/nodes/node-a/metrics", { cpuPercent: 200 }, "cpuPercent"],
+    ];
+
+    for (const [path_, body, expected] of cases) {
+      const res = await app.request(path_, {
+        method: "POST",
+        headers: { ...auth, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      expect([path_, res.status]).toEqual([path_, 400]);
+      const envelope = (await res.json()) as Envelope & {
+        details?: { issues?: Array<{ path: string }> };
+      };
+      expect(envelope).toMatchObject({ error: "invalid_request", code: "invalid_request" });
+      expect(envelope.details?.issues?.map((issue) => issue.path)).toContain(expected);
+    }
+
+    // Result body is a union — zod reports the failure at the root path.
+    const badResult = await app.request(`/api/nodes/node-a/jobs/${jobId}/result`, {
+      method: "POST",
+      headers: { ...auth, "content-type": "application/json" },
+      body: JSON.stringify({ ok: false }),
+    });
+    expect(badResult.status).toBe(400);
+    const badResultBody = (await badResult.json()) as Envelope & {
+      details?: { issues?: unknown[] };
+    };
+    expect(badResultBody).toMatchObject({ error: "invalid_request", code: "invalid_request" });
+    expect((badResultBody.details?.issues ?? []).length).toBeGreaterThan(0);
+  });
+
+  it("gates session node-job routes on 403 and keeps job_not_found codes", async () => {
+    config.nodeToken = "envelope-node-token";
+    const app = createApp(db, config);
+    await expectForbidden(app, [
+      ["/api/nodes/node-a/jobs", { method: "POST" }],
+      ["/api/nodes/node-a/jobs/job-1", {}],
+    ]);
+
+    const missing = await app.request("/api/nodes/node-a/jobs/missing", {
+      headers: { cookie },
+    });
+    expect(missing.status).toBe(404);
+    expect(await missing.json()).toEqual({
+      error: "job_not_found",
+      code: "job_not_found",
+    });
+
+    const badResult = await app.request("/api/nodes/node-a/jobs/missing/result", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer envelope-node-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ ok: true, result: {} }),
+    });
+    expect(badResult.status).toBe(404);
+    expect(await badResult.json()).toEqual({
+      error: "job_not_found",
+      code: "job_not_found",
+    });
+
+    const badKind = await app.request("/api/nodes/node-a/jobs", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ kind: "not-a-job" }),
+    });
+    expect(badKind.status).toBe(400);
+    const envelope = (await badKind.json()) as Envelope & {
+      details?: { issues?: Array<{ path: string }> };
+    };
+    expect(envelope).toMatchObject({ error: "invalid_request", code: "invalid_request" });
+    expect(envelope.details?.issues?.map((issue) => issue.path)).toContain("kind");
+  });
+
+  it("gates /mcp on the shared 401 unauthorized envelope", async () => {
+    const app = createApp(db, config);
+    const unauthorized = { error: "unauthorized", code: "unauthorized" };
+
+    const anon = await app.request("/mcp", { method: "POST" });
+    expect(anon.status).toBe(401);
+    expect(await anon.json()).toEqual(unauthorized);
+
+    const badBearer = await app.request("/mcp", {
+      method: "POST",
+      headers: { authorization: "Bearer playon_not-a-real-token" },
+    });
+    expect(badBearer.status).toBe(401);
+    expect(await badBearer.json()).toEqual(unauthorized);
   });
 });
