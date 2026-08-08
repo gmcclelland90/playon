@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   localDockerTransport,
   openServerRuntime,
+  remoteDockerTransport,
   RuntimeUnsupportedError,
+  type ContainerJobDispatch,
+  type ContainerJobKind,
   type DockerRuntimeTransport,
   type ServerContainerSpec,
 } from "./server-runtime.js";
@@ -210,6 +213,140 @@ describe("localDockerTransport", () => {
 
     await openDocker(transport).start();
     expect(seen).toEqual(["inspect:playon-srv1", "start:x"]);
+  });
+});
+
+interface FakeJob {
+  kind: ContainerJobKind;
+  args: Record<string, unknown>;
+  timeoutMs?: number;
+}
+
+/** A node that only knows the container job contract — no docker adapter in reach. */
+function fakeNode(existing?: ContainerInfo) {
+  const jobs: FakeJob[] = [];
+  const containers = new Map<string, ContainerInfo>();
+  if (existing) containers.set(existing.name, existing);
+
+  const run = async (
+    kind: ContainerJobKind,
+    args: Record<string, unknown>,
+    opts?: { timeoutMs?: number },
+  ): Promise<unknown> => {
+    jobs.push({ kind, args, timeoutMs: opts?.timeoutMs });
+    const id = String(args.id ?? "");
+    const find = (): ContainerInfo | undefined =>
+      containers.get(id) ?? [...containers.values()].find((c) => c.id === id);
+    switch (kind) {
+      case "container_inspect": {
+        const hit = find();
+        if (!hit) throw new Error("job_failed: container_inspect: no such container");
+        return hit;
+      }
+      case "container_create": {
+        const name = String(args.name);
+        const info: ContainerInfo = { id: `id-${name}`, name, status: "created" };
+        containers.set(name, info);
+        return info;
+      }
+      case "container_logs":
+        return { lines: ["node-line-1"] };
+      default:
+        return { ok: true };
+    }
+  };
+
+  return { jobs, containers, dispatch: run as unknown as ContainerJobDispatch };
+}
+
+function openRemoteDocker(node: ReturnType<typeof fakeNode>, serverId = "srv1") {
+  return openServerRuntime(
+    { serverId, mode: "docker", locality: "remote" },
+    {
+      containerName: `playon-${serverId}`,
+      docker: remoteDockerTransport(node.dispatch, { serverId }),
+      resolveContainerSpec: async () => SPEC,
+    },
+  );
+}
+
+describe("remote docker ServerRuntimeHandle", () => {
+  it("creates then starts the container through container_* jobs", async () => {
+    const node = fakeNode();
+
+    const started = await openRemoteDocker(node).start();
+
+    expect(started.id).toBe("id-playon-srv1");
+    expect(node.jobs.map((j) => j.kind)).toEqual([
+      "container_inspect",
+      "container_create",
+      "container_start",
+    ]);
+    expect(node.jobs[1]!.args).toEqual({
+      name: "playon-srv1",
+      image: "playon/fixture:latest",
+      env: { A: "1" },
+      ports: [{ host: 25565, container: 25565, protocol: "tcp" }],
+      binds: [],
+    });
+  });
+
+  it("re-resolves identity on the node instead of creating a second container", async () => {
+    const node = fakeNode({ id: "abc123", name: "playon-srv1", status: "exited" });
+
+    const started = await openRemoteDocker(node).start();
+
+    expect(started.id).toBe("abc123");
+    expect(node.jobs.map((j) => j.kind)).toEqual(["container_inspect", "container_start"]);
+    expect(node.jobs[1]!.args.id).toBe("abc123");
+  });
+
+  it("tags start and stop with the server so the agent follows the right console", async () => {
+    const node = fakeNode({ id: "abc123", name: "playon-srv1", status: "running" });
+
+    await openRemoteDocker(node).stop();
+
+    expect(node.jobs.at(-1)).toMatchObject({
+      kind: "container_stop",
+      args: { id: "abc123", serverId: "srv1" },
+    });
+  });
+
+  it("reports node container state as runtime status, and missing when inspect fails", async () => {
+    const running = fakeNode({ id: "abc123", name: "playon-srv1", status: "running" });
+    await expect(openRemoteDocker(running).status()).resolves.toEqual({
+      state: "running",
+      id: "abc123",
+      detail: "running",
+    });
+
+    await expect(openRemoteDocker(fakeNode()).status()).resolves.toEqual({ state: "missing" });
+  });
+
+  it("bounds inspect and gives create room for an image pull", async () => {
+    const node = fakeNode();
+
+    await openRemoteDocker(node).start();
+
+    expect(node.jobs[0]!.timeoutMs).toBe(15_000);
+    expect(node.jobs[1]!.timeoutMs).toBe(180_000);
+  });
+
+  it("tails logs and writes stdin over the same transport", async () => {
+    const node = fakeNode({ id: "abc123", name: "playon-srv1", status: "running" });
+    const handle = openRemoteDocker(node);
+
+    await expect(handle.logs(20)).resolves.toEqual(["node-line-1"]);
+    expect(node.jobs.at(-1)).toMatchObject({
+      kind: "container_logs",
+      args: { id: "abc123", tail: 20 },
+    });
+
+    await handle.writeStdin("say hi");
+    expect(node.jobs.at(-1)).toMatchObject({
+      kind: "container_stdin",
+      args: { id: "abc123", line: "say hi" },
+    });
   });
 });
 

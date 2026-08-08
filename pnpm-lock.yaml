@@ -208,6 +208,9 @@ importers:
 
   packages/runtime:
     dependencies:
+      '@playon/shared':
+        specifier: workspace:*
+        version: link:../shared
       dockerode:
         specifier: ^4.0.7
         version: 4.0.12

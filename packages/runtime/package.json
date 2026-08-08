@@ -18,6 +18,7 @@
     "lint": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@playon/shared": "workspace:*",
     "dockerode": "^4.0.7"
   },
   "devDependencies": {
