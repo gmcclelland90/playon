@@ -2,14 +2,21 @@
 
 Canonical automated build/test host for PlayOn (Docker + Node).
 
-## Current lab host
+## Current lab / Home host
 
-- Address: `172.16.0.155`
+- Address: `172.16.0.156` (hostname `playon-dev`)
 - User: `playon`
-- Workspace (git): `/home/playon/src/playon-git`  
-  (`/home/playon/src/playon` may be a non-git deploy/rsync tree — use `playon-git` for `loop:verify`)
-- Sync: **git** (`git pull --ff-only` from `origin`)
+- Workspace (git for `loop:verify`): `/home/playon/src/playon-git`
+- Deploy/runtime tree (systemd): `/home/playon/src/playon` — keep durable `apps/api/data` here; do not treat it as the merge-bar checkout
+- Sync: **git** (`git pull --ff-only` from `origin` in `playon-git`)
 - Remote: `git@github.com:gmcclelland90/playon.git` (read-only deploy key `~/.ssh/playon_deploy`)
+- Env: `/etc/playon/playon.env` (systemd `EnvironmentFile` + lab verify)
+
+### Node host (separate)
+
+- Address: `172.16.0.155` (hostname `playon-node-1`)
+- SSH aliases: `playon-old`, `playon-node-1`
+- Env: `/etc/playon/node.env` → Home at `http://172.16.0.156:8787`
 
 ### SSH from the Windows workstation
 
@@ -17,10 +24,10 @@ Canonical automated build/test host for PlayOn (Docker + Node).
 ssh playon-lab
 ```
 
-Host alias in `~/.ssh/config` → `playon@172.16.0.155`, identity `~/.ssh/playon_lab` (ed25519). Non-interactive:
+Host alias in `~/.ssh/config` → `playon@172.16.0.156`, identity `~/.ssh/playon_dev`. Non-interactive:
 
 ```bash
-ssh -o BatchMode=yes playon-lab 'hostname && cd /home/playon/src/playon && git rev-parse --short HEAD'
+ssh -o BatchMode=yes playon-lab 'hostname && cd /home/playon/src/playon-git && git rev-parse --short HEAD'
 ```
 
 ## Toolchain
@@ -39,7 +46,7 @@ Canonical path (CI/CD-aligned):
 git push origin HEAD
 
 # on the lab host
-cd /home/playon/src/playon
+cd /home/playon/src/playon-git
 git pull --ff-only
 pnpm install
 set -a && . /etc/playon/playon.env && set +a   # Venice key + runtime (systemd EnvironmentFile)
@@ -47,7 +54,7 @@ pnpm loop:verify              # merge bar (real Venice + Docker)
 pnpm loop:verify:runtime      # + real Paper Docker smoke
 ```
 
-Preserve durable state across checkouts: `apps/api/data` and host `.env` live outside git (or are gitignored). After a fresh clone, restore those paths before `pnpm start`.
+Preserve durable state across checkouts: Home data lives under `/home/playon/src/playon/apps/api/data` (outside the verify clone). After a fresh Home deploy, restore those paths before `pnpm start` / systemd.
 
 **Disaster fallback only:** rsync/scp a tree when git auth is broken — then re-establish a tracking checkout. Do not treat rsync as the day-to-day sync path.
 
@@ -55,33 +62,23 @@ Loop protocol: [agent-dev-loop.md](agent-dev-loop.md)
 
 ## Production-like start (recommended for LAN UI)
 
+Prefer systemd (`playon` + node agent on the node host) — see [lan-install.md](lan-install.md) and `infra/control-plane/`.
+
 ```bash
 cd /home/playon/src/playon
 pnpm build
-export PLAYON_ENV=production
-export PLAYON_HOST=0.0.0.0
-export PLAYON_ADVERTISE_HOST=172.16.0.155
-export PLAYON_SESSION_SECRET=lab-change-me
-export PLAYON_NODE_TOKEN=$(openssl rand -hex 24)   # required to Add node via SSH
-export PLAYON_RUNTIME=docker
-export PLAYON_LLM_MODE=openai_compatible
-export PLAYON_VENICE_API_KEY= # or rely on Settings DB
-pnpm start &
-PLAYON_API_URL=http://127.0.0.1:8787 PLAYON_NODE_ID=local pnpm --filter @playon/node-agent start
+# /etc/playon/playon.env already sets HOST/ADVERTISE/RUNTIME/VENICE/etc.
+sudo systemctl restart playon
 ```
 
-Open `http://172.16.0.155:8787`. Prefer systemd (`playon` + `playon-node`) — see [lan-install.md](lan-install.md) and `infra/control-plane/`. Without the node-agent, Local stays offline in the dashboard.
+Open `http://172.16.0.156:8787`. Without a connected node-agent, remote placement stays offline; Local can still run when the CP has Docker.
 
 ## Developer hot reload (optional)
 
 ```bash
-cd /home/playon/src/playon
+cd /home/playon/src/playon-git
 export PLAYON_HOST=0.0.0.0
 export PLAYON_RUNTIME=docker
-export PLAYON_LLM_MODE=openai_compatible
-export PLAYON_WEB_HOST=0.0.0.0
-pnpm --filter @playon/api dev &
-pnpm --filter @playon/web dev &
+set -a && . /etc/playon/playon.env && set +a
+pnpm dev
 ```
-
-Then open `http://172.16.0.155:5173` from a machine on the LAN.
