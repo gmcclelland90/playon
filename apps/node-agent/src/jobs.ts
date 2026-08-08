@@ -496,8 +496,17 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
   }
 
   if (job.kind === "process_status") {
-    const { id } = parseNodeJobArgs("process_status", job.args);
-    return parseNodeJobResult("process_status", await proc.status(id));
+    const { id, name, cwd: cwdRel } = parseNodeJobArgs("process_status", job.args);
+    if (id) {
+      return parseNodeJobResult("process_status", await proc.status(id));
+    }
+    // No id to look up: re-resolve from identity, which also sees OS orphans a
+    // restart on either shore would otherwise hide.
+    const found = await proc.find(name!, resolveInJail(dataRoot, cwdRel!));
+    return parseNodeJobResult(
+      "process_status",
+      found ?? { id: name!, name: name!, status: "stopped" },
+    );
   }
 
   if (job.kind === "steamcmd_app_update") {

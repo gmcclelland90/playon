@@ -4,11 +4,15 @@ import {
   localNativeTransport,
   openServerRuntime,
   remoteDockerTransport,
+  remoteNativeTransport,
   RuntimeUnsupportedError,
   type ContainerJobDispatch,
   type ContainerJobKind,
   type DockerRuntimeTransport,
+  type NativeProcessIdentity,
   type NativeRuntimeTransport,
+  type ProcessJobDispatch,
+  type ProcessJobKind,
   type ServerContainerSpec,
   type ServerProcessSpec,
 } from "./server-runtime.js";
@@ -528,6 +532,35 @@ describe("native ServerRuntimeHandle", () => {
     await expect(gone.status()).resolves.toEqual({ state: "stopped" });
   });
 
+  it("sweeps the identity when the re-resolve itself cannot answer", async () => {
+    const transport = fakeNativeTransport();
+    transport.resolve = async () => {
+      transport.calls.push("resolve:unreachable");
+      throw new Error("node_unreachable");
+    };
+
+    await openNative(transport).start();
+
+    // Not knowing is not the same as knowing nothing runs: sweep before starting.
+    expect(transport.calls).toEqual([
+      "resolve:unreachable",
+      "stop:server-srv1:no-id",
+      "start:server-srv1:/srv/srv1/game",
+    ]);
+  });
+
+  it("stops on an unanswerable re-resolve, but refuses to guess a status", async () => {
+    const transport = fakeNativeTransport();
+    transport.resolve = async () => {
+      throw new Error("node_unreachable");
+    };
+
+    await openNative(transport).stop();
+    expect(transport.calls).toEqual(["stop:server-srv1:no-id"]);
+
+    await expect(openNative(transport).status()).rejects.toThrow(/node_unreachable/);
+  });
+
   it("reports logs and stdin as unsupported until those slices land", async () => {
     const handle = openNative(fakeNativeTransport());
 
@@ -619,6 +652,148 @@ describe("localNativeTransport", () => {
       "find:server-srv1:/srv/srv1/game",
       "start:server-srv1:/srv/srv1/game",
     ]);
+  });
+});
+
+/** Identity and spec as a node sees them: every path is jail-relative. */
+const REMOTE_IDENTITY: NativeProcessIdentity = { name: "server-srv1", cwd: "servers/srv1/game" };
+const REMOTE_PROCESS_SPEC: ServerProcessSpec = {
+  command: "/bin/bash",
+  args: ["start.sh"],
+  env: { PLAYON_SERVER_ID: "srv1" },
+  logFile: "servers/srv1/logs/console.log",
+};
+
+interface FakeProcessJob {
+  kind: ProcessJobKind;
+  args: Record<string, unknown>;
+  timeoutMs?: number;
+}
+
+/** A node that only knows the process job contract — no supervisor in reach. */
+function fakeProcessNode(opts?: { running?: ProcessInfo; unreachable?: boolean }) {
+  const jobs: FakeProcessJob[] = [];
+  const state = { running: opts?.running ?? null as ProcessInfo | null };
+  let seq = 0;
+
+  const run = async (
+    kind: ProcessJobKind,
+    args: Record<string, unknown>,
+    o?: { timeoutMs?: number },
+  ): Promise<unknown> => {
+    jobs.push({ kind, args, timeoutMs: o?.timeoutMs });
+    if (opts?.unreachable) throw new Error("job_timeout: node did not answer");
+    const name = String(args.name ?? "");
+    switch (kind) {
+      case "process_status":
+        // An identity the node cannot find still gets an answer, just a stopped one.
+        return state.running ?? { id: name, name, status: "stopped" };
+      case "process_start":
+        state.running = { id: `native-${name}-${++seq}`, name, pid: 900 + seq, status: "running" };
+        return state.running;
+      default:
+        state.running = null;
+        return { ok: true };
+    }
+  };
+
+  return { jobs, state, dispatch: run as unknown as ProcessJobDispatch };
+}
+
+function openRemoteNative(node: ReturnType<typeof fakeProcessNode>, serverId = "srv1") {
+  return openServerRuntime(
+    { serverId, mode: "native", locality: "remote" },
+    {
+      containerName: `playon-${serverId}`,
+      processIdentity: REMOTE_IDENTITY,
+      native: remoteNativeTransport(node.dispatch, { serverId }),
+      resolveProcessSpec: async () => REMOTE_PROCESS_SPEC,
+    },
+  );
+}
+
+describe("remote native ServerRuntimeHandle", () => {
+  it("re-resolves by identity, then starts the process through process_* jobs", async () => {
+    const node = fakeProcessNode();
+
+    const started = await openRemoteNative(node).start();
+
+    expect(started.id).toBe("native-server-srv1-1");
+    expect(node.jobs.map((j) => j.kind)).toEqual(["process_status", "process_start"]);
+    // Nothing is addressed by a stored id: the node is asked who it has running.
+    expect(node.jobs[0]!.args).toEqual({ name: "server-srv1", cwd: "servers/srv1/game" });
+    expect(node.jobs[1]!.args).toEqual({
+      name: "server-srv1",
+      command: "/bin/bash",
+      args: ["start.sh"],
+      cwd: "servers/srv1/game",
+      env: { PLAYON_SERVER_ID: "srv1" },
+      serverId: "srv1",
+      logRel: "servers/srv1/logs/console.log",
+    });
+  });
+
+  it("stops a process the node already runs instead of stacking a second one", async () => {
+    const node = fakeProcessNode({
+      running: { id: "native-orphan-99", name: "server-srv1", pid: 99, status: "running" },
+    });
+
+    await openRemoteNative(node).start();
+
+    expect(node.jobs.map((j) => j.kind)).toEqual([
+      "process_status",
+      "process_stop",
+      "process_start",
+    ]);
+    expect(node.jobs[1]!.args).toEqual({
+      id: "native-orphan-99",
+      name: "server-srv1",
+      cwd: "servers/srv1/game",
+      serverId: "srv1",
+    });
+  });
+
+  it("stops by identity, so a node-agent restart cannot leave an orphan", async () => {
+    const node = fakeProcessNode();
+
+    await openRemoteNative(node).stop();
+
+    expect(node.jobs.map((j) => j.kind)).toEqual(["process_status", "process_stop"]);
+    expect(node.jobs.at(-1)!.args).toEqual({
+      id: "",
+      name: "server-srv1",
+      cwd: "servers/srv1/game",
+      serverId: "srv1",
+    });
+  });
+
+  it("reports the node's process state, and absence as stopped", async () => {
+    const running = fakeProcessNode({
+      running: { id: "native-server-srv1-1", name: "server-srv1", pid: 7, status: "running" },
+    });
+    await expect(openRemoteNative(running).status()).resolves.toEqual({
+      state: "running",
+      id: "native-server-srv1-1",
+      detail: "running",
+    });
+
+    await expect(openRemoteNative(fakeProcessNode()).status()).resolves.toEqual({
+      state: "stopped",
+    });
+  });
+
+  it("bounds the re-resolve so status cannot park behind an unreachable node", async () => {
+    const node = fakeProcessNode();
+
+    await openRemoteNative(node).status();
+
+    expect(node.jobs[0]!.timeoutMs).toBe(15_000);
+  });
+
+  it("refuses to answer for a node that never answered", async () => {
+    const node = fakeProcessNode({ unreachable: true });
+
+    await expect(openRemoteNative(node).status()).rejects.toThrow(/job_timeout/);
   });
 });
 
