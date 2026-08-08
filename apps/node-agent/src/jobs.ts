@@ -13,11 +13,11 @@ import {
   type ProcessSupervisor,
 } from "@playon/runtime";
 import {
-  ImportPackArgsSchema,
-  ImportProbeArgsSchema,
-  ManageCutoverArgsSchema,
-  ManagePackReadArgsSchema,
-  ManageSeedArgsSchema,
+  FS_READ_MAX_BYTES,
+  MANAGE_PACK_STAGING_REL,
+  NodeJobError,
+  parseNodeJobArgs,
+  parseNodeJobResult,
   type NodeJobKind,
 } from "@playon/shared";
 import { assertPackPathAllowed, runImportProbe } from "./import-probe.js";
@@ -31,7 +31,7 @@ import {
 import { performNodeSelfUpdate } from "./self-update.js";
 
 function managePackStagingDir(dataRoot: string): string {
-  const dir = path.join(dataRoot, "tmp", "manage-packs");
+  const dir = path.join(dataRoot, ...MANAGE_PACK_STAGING_REL.split("/"));
   fs.mkdirSync(dir, { recursive: true });
   return dir;
 }
@@ -87,6 +87,48 @@ function approxDirBytes(dir: string): number {
 }
 
 export type RemoteJobKind = NodeJobKind;
+
+/**
+ * Job kinds this agent can execute, advertised on every heartbeat so the control
+ * plane can refuse kinds a skewed agent would not understand. Support here means
+ * "there is a handler"; a handler may still fail at runtime when the host lacks a
+ * dependency (e.g. `container_*` without Docker).
+ *
+ * Kept as an explicit list, not derived from the shared enum: adding a kind to the
+ * protocol must be a deliberate decision on this shore too (see `jobs.test.ts`).
+ */
+export const SUPPORTED_JOB_KINDS: readonly NodeJobKind[] = [
+  "ping",
+  "runtime_caps",
+  "node_self_update",
+  "fs_list",
+  "fs_ensure_dir",
+  "fs_write_text",
+  "fs_read_text",
+  "fs_put_archive",
+  "fs_get_archive",
+  "fs_remove",
+  "fs_rename",
+  "fs_copy",
+  "container_create",
+  "container_start",
+  "container_stop",
+  "container_remove",
+  "container_inspect",
+  "container_logs",
+  "container_stdin",
+  "process_start",
+  "process_stop",
+  "process_status",
+  "steamcmd_app_update",
+  "manage_probe",
+  "manage_pack",
+  "manage_pack_read",
+  "manage_seed",
+  "manage_cutover",
+];
+
+const SUPPORTED_JOB_KIND_SET: ReadonlySet<string> = new Set(SUPPORTED_JOB_KINDS);
 
 export interface RemoteJob {
   id: string;
@@ -158,34 +200,49 @@ export async function reportJobResult(
   }
 }
 
-function strArg(args: Record<string, unknown>, key: string): string {
-  const v = args[key];
-  if (typeof v !== "string" || !v.trim()) throw new Error(`missing_arg: ${key}`);
-  return v;
-}
-
-/** Execute a claimed job locally with path jail under dataRoot. */
+/**
+ * Execute a claimed job locally with path jail under dataRoot.
+ *
+ * Every kind is validated on receive and again before the result is reported, so
+ * a control plane on another version fails loudly instead of half-executing.
+ */
 export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unknown> {
+  if (!SUPPORTED_JOB_KIND_SET.has(job.kind)) {
+    throw new NodeJobError("unsupported_job_kind", {
+      kind: String((job as { kind: string }).kind),
+    });
+  }
+
   if (job.kind === "ping") {
-    return {
+    parseNodeJobArgs("ping", job.args);
+    return parseNodeJobResult("ping", {
       pong: true,
       nodeId: job.nodeId,
       dataRoot,
       at: new Date().toISOString(),
-    };
+    });
   }
 
   if (job.kind === "runtime_caps") {
-    return probeCapabilities(dataRoot);
+    parseNodeJobArgs("runtime_caps", job.args);
+    return parseNodeJobResult("runtime_caps", {
+      ...probeCapabilities(dataRoot),
+      jobKinds: [...SUPPORTED_JOB_KINDS],
+    });
+  }
+
+  if (job.kind === "node_self_update") {
+    const args = parseNodeJobArgs("node_self_update", job.args);
+    return parseNodeJobResult("node_self_update", await performNodeSelfUpdate(args));
   }
 
   if (job.kind === "fs_list") {
-    const rel = typeof job.args.path === "string" ? job.args.path : ".";
+    const { path: rel } = parseNodeJobArgs("fs_list", job.args);
     const target = resolveInJail(dataRoot, rel);
     if (!fs.existsSync(target)) throw new Error(`not_found: ${rel}`);
     const stat = fs.statSync(target);
     if (!stat.isDirectory()) throw new Error(`not_a_directory: ${rel}`);
-    return {
+    return parseNodeJobResult("fs_list", {
       path: rel,
       entries: fs.readdirSync(target).map((name) => {
         const child = path.join(target, name);
@@ -194,28 +251,29 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
           type: fs.statSync(child).isDirectory() ? ("dir" as const) : ("file" as const),
         };
       }),
-    };
+    });
   }
 
   if (job.kind === "fs_ensure_dir") {
-    const rel = strArg(job.args, "path");
+    const { path: rel } = parseNodeJobArgs("fs_ensure_dir", job.args);
     const target = resolveInJail(dataRoot, rel);
     fs.mkdirSync(target, { recursive: true });
-    return { path: rel, ok: true };
+    return parseNodeJobResult("fs_ensure_dir", { path: rel, ok: true });
   }
 
   if (job.kind === "fs_write_text") {
-    const rel = strArg(job.args, "path");
-    const content = typeof job.args.content === "string" ? job.args.content : "";
+    const { path: rel, content } = parseNodeJobArgs("fs_write_text", job.args);
     const target = resolveInJail(dataRoot, rel);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, content, "utf8");
-    return { path: rel, bytes: Buffer.byteLength(content, "utf8") };
+    return parseNodeJobResult("fs_write_text", {
+      path: rel,
+      bytes: Buffer.byteLength(content, "utf8"),
+    });
   }
 
   if (job.kind === "fs_put_archive") {
-    const rel = strArg(job.args, "path");
-    const archiveBase64 = typeof job.args.archiveBase64 === "string" ? job.args.archiveBase64 : "";
+    const { path: rel, archiveBase64 } = parseNodeJobArgs("fs_put_archive", job.args);
     const target = resolveInJail(dataRoot, rel);
     fs.rmSync(target, { recursive: true, force: true });
     fs.mkdirSync(target, { recursive: true });
@@ -229,88 +287,88 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
         fs.rmSync(staging, { recursive: true, force: true });
       }
     }
-    return { path: rel, ok: true };
+    return parseNodeJobResult("fs_put_archive", { path: rel, ok: true });
   }
 
   if (job.kind === "fs_get_archive") {
-    const rel = strArg(job.args, "path");
+    const { path: rel } = parseNodeJobArgs("fs_get_archive", job.args);
     const target = resolveInJail(dataRoot, rel);
     if (!fs.existsSync(target)) {
-      return { archiveBase64: "" };
+      return parseNodeJobResult("fs_get_archive", { archiveBase64: "" });
     }
     const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-get-"));
     const archive = path.join(staging, "tree.tar");
     try {
       execFileSync("tar", ["-cf", archive, "-C", target, "."], { stdio: "pipe" });
-      return { archiveBase64: fs.readFileSync(archive).toString("base64") };
+      return parseNodeJobResult("fs_get_archive", {
+        archiveBase64: fs.readFileSync(archive).toString("base64"),
+      });
     } finally {
       fs.rmSync(staging, { recursive: true, force: true });
     }
   }
 
   if (job.kind === "fs_remove") {
-    const rel = strArg(job.args, "path");
+    const { path: rel } = parseNodeJobArgs("fs_remove", job.args);
     const target = resolveInJail(dataRoot, rel);
     fs.rmSync(target, { recursive: true, force: true });
-    return { path: rel, ok: true };
+    return parseNodeJobResult("fs_remove", { path: rel, ok: true });
   }
 
   if (job.kind === "fs_read_text") {
-    const rel = strArg(job.args, "path");
+    const { path: rel, offset, maxBytes } = parseNodeJobArgs("fs_read_text", job.args);
     const target = resolveInJail(dataRoot, rel);
     if (!fs.existsSync(target) || !fs.statSync(target).isFile()) {
       throw new Error(`not_found: ${rel}`);
     }
     const size = fs.statSync(target).size;
-    const offset = Math.max(0, Math.floor(Number(job.args.offset ?? 0) || 0));
-    const maxCap = 512_000;
-    const maxBytes = Math.min(
-      maxCap,
-      Math.max(1, Math.floor(Number(job.args.maxBytes ?? maxCap) || maxCap)),
-    );
+    // The cap is ours, not the caller's: oversized asks are clamped, not refused.
+    const capped = Math.min(FS_READ_MAX_BYTES, maxBytes ?? FS_READ_MAX_BYTES);
     if (offset > size) {
-      return { path: rel, content: "", bytesRead: 0, truncated: false, size };
+      return parseNodeJobResult("fs_read_text", {
+        path: rel,
+        content: "",
+        bytesRead: 0,
+        truncated: false,
+        size,
+      });
     }
     const fd = fs.openSync(target, "r");
     try {
-      const length = Math.min(maxBytes, size - offset);
+      const length = Math.min(capped, size - offset);
       const buf = Buffer.alloc(length);
       const bytesRead = fs.readSync(fd, buf, 0, length, offset);
-      return {
+      return parseNodeJobResult("fs_read_text", {
         path: rel,
         content: buf.subarray(0, bytesRead).toString("utf8"),
         bytesRead,
         truncated: offset + bytesRead < size,
         size,
-      };
+      });
     } finally {
       fs.closeSync(fd);
     }
   }
 
   if (job.kind === "fs_rename") {
-    const fromRel = strArg(job.args, "from");
-    const toRel = strArg(job.args, "to");
+    const { from: fromRel, to: toRel, overwrite } = parseNodeJobArgs("fs_rename", job.args);
     const from = resolveInJail(dataRoot, fromRel);
     const to = resolveInJail(dataRoot, toRel);
     if (!fs.existsSync(from)) throw new Error(`not_found: ${fromRel}`);
-    const overwrite = job.args.overwrite === true;
     if (fs.existsSync(to) && !overwrite) throw new Error(`already_exists: ${toRel}`);
     fs.mkdirSync(path.dirname(to), { recursive: true });
     if (fs.existsSync(to) && overwrite) {
       fs.rmSync(to, { recursive: true, force: true });
     }
     fs.renameSync(from, to);
-    return { from: fromRel, to: toRel };
+    return parseNodeJobResult("fs_rename", { from: fromRel, to: toRel });
   }
 
   if (job.kind === "fs_copy") {
-    const fromRel = strArg(job.args, "from");
-    const toRel = strArg(job.args, "to");
+    const { from: fromRel, to: toRel, overwrite } = parseNodeJobArgs("fs_copy", job.args);
     const from = resolveInJail(dataRoot, fromRel);
     const to = resolveInJail(dataRoot, toRel);
     if (!fs.existsSync(from)) throw new Error(`not_found: ${fromRel}`);
-    const overwrite = job.args.overwrite === true;
     if (fs.existsSync(to) && !overwrite) throw new Error(`already_exists: ${toRel}`);
     if (fs.existsSync(to) && overwrite) {
       fs.rmSync(to, { recursive: true, force: true });
@@ -328,24 +386,16 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
       fs.copyFileSync(src, dest);
     };
     copyRecursive(from, to);
-    return { from: fromRel, to: toRel };
+    return parseNodeJobResult("fs_copy", { from: fromRel, to: toRel });
   }
 
   const { docker, process: proc } = await ensureAdapters();
 
   if (job.kind === "container_create") {
+    const { name, image, env, ports, binds } = parseNodeJobArgs("container_create", job.args);
     if (!docker) throw new Error("docker_unavailable");
-    const name = strArg(job.args, "name");
-    const image = strArg(job.args, "image");
-    const env = (job.args.env as Record<string, string> | undefined) ?? {};
-    const ports =
-      (job.args.ports as Array<{
-        host: number;
-        container: number;
-        protocol?: "tcp" | "udp";
-      }>) ?? [];
-    const binds =
-      (job.args.binds as Array<{ hostPath: string; containerPath: string }>) ?? [];
+    // An absolute hostPath is a deliberate escape hatch for host-owned mounts;
+    // anything relative resolves inside the jail.
     const resolvedBinds = binds.map((b) => ({
       hostPath: path.isAbsolute(b.hostPath) ? b.hostPath : resolveInJail(dataRoot, b.hostPath),
       containerPath: b.containerPath,
@@ -353,14 +403,16 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
     for (const b of resolvedBinds) {
       fs.mkdirSync(b.hostPath, { recursive: true });
     }
-    return docker.create({ name, image, env, ports, binds: resolvedBinds });
+    return parseNodeJobResult(
+      "container_create",
+      await docker.create({ name, image, env, ports, binds: resolvedBinds }),
+    );
   }
 
   if (job.kind === "container_start") {
+    const { id, serverId } = parseNodeJobArgs("container_start", job.args);
     if (!docker) throw new Error("docker_unavailable");
-    const id = strArg(job.args, "id");
     await docker.start(id);
-    const serverId = typeof job.args.serverId === "string" ? job.args.serverId : "";
     if (serverId) {
       await beginContainerLogFollow(serverId, docker, id).catch((err) => {
         console.warn(
@@ -370,67 +422,67 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
         );
       });
     }
-    return { ok: true };
+    return parseNodeJobResult("container_start", { ok: true });
   }
 
   if (job.kind === "container_stop") {
+    const { id, serverId } = parseNodeJobArgs("container_stop", job.args);
     if (!docker) throw new Error("docker_unavailable");
-    const serverId = typeof job.args.serverId === "string" ? job.args.serverId : "";
     if (serverId) stopLogFollow(serverId);
-    await docker.stop(strArg(job.args, "id"));
-    return { ok: true };
+    await docker.stop(id);
+    return parseNodeJobResult("container_stop", { ok: true });
   }
 
   if (job.kind === "container_remove") {
+    const { id } = parseNodeJobArgs("container_remove", job.args);
     if (!docker) throw new Error("docker_unavailable");
-    await docker.remove(strArg(job.args, "id"));
-    return { ok: true };
+    await docker.remove(id);
+    return parseNodeJobResult("container_remove", { ok: true });
   }
 
   if (job.kind === "container_inspect") {
+    const { id } = parseNodeJobArgs("container_inspect", job.args);
     if (!docker) throw new Error("docker_unavailable");
-    return docker.inspect(strArg(job.args, "id"));
+    return parseNodeJobResult("container_inspect", await docker.inspect(id));
   }
 
   if (job.kind === "container_logs") {
+    const { id, tail } = parseNodeJobArgs("container_logs", job.args);
     if (!docker) throw new Error("docker_unavailable");
-    const tail = typeof job.args.tail === "number" ? job.args.tail : 100;
-    const lines = await docker.logs(strArg(job.args, "id"), tail);
-    return { lines };
+    return parseNodeJobResult("container_logs", { lines: await docker.logs(id, tail) });
   }
 
   if (job.kind === "container_stdin") {
+    const { id, line } = parseNodeJobArgs("container_stdin", job.args);
     if (!docker) throw new Error("docker_unavailable");
     if (typeof docker.writeStdin !== "function") {
       throw new Error("container_stdin_unsupported");
     }
-    const line = strArg(job.args, "line");
-    await docker.writeStdin(strArg(job.args, "id"), line);
-    return { ok: true };
+    await docker.writeStdin(id, line);
+    return parseNodeJobResult("container_stdin", { ok: true });
   }
 
   if (job.kind === "process_start") {
-    const name = strArg(job.args, "name");
-    const command = strArg(job.args, "command");
-    const args = Array.isArray(job.args.args) ? (job.args.args as string[]) : [];
-    const cwdRel = typeof job.args.cwd === "string" ? job.args.cwd : ".";
+    const {
+      name,
+      command,
+      args,
+      cwd: cwdRel,
+      env,
+      serverId,
+      logRel,
+    } = parseNodeJobArgs("process_start", job.args);
     const cwd = resolveInJail(dataRoot, cwdRel);
-    const env = (job.args.env as Record<string, string> | undefined) ?? {};
-    const serverId = typeof job.args.serverId === "string" ? job.args.serverId : "";
-    const logRel = typeof job.args.logRel === "string" ? job.args.logRel : "";
     const logFile = logRel ? resolveInJail(dataRoot, logRel) : undefined;
     const info = await proc.start({ name, command, args, cwd, env, logFile });
     if (serverId && logFile) {
       beginFileLogFollow(serverId, logFile);
     }
-    return info;
+    return parseNodeJobResult("process_start", info);
   }
 
   if (job.kind === "process_stop") {
-    const id = typeof job.args.id === "string" ? job.args.id : "";
-    const cwdRel = typeof job.args.cwd === "string" ? job.args.cwd : "";
-    const name = typeof job.args.name === "string" ? job.args.name : "";
-    const serverId = typeof job.args.serverId === "string" ? job.args.serverId : "";
+    const { id, name, cwd: cwdRel, serverId } = parseNodeJobArgs("process_stop", job.args);
     if (serverId) stopLogFollow(serverId);
     if (id) {
       await proc.stop(id).catch(() => undefined);
@@ -440,49 +492,37 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
       const cwd = resolveInJail(dataRoot, cwdRel);
       await proc.reclaim(name || `server-unknown`, cwd);
     }
-    return { ok: true };
+    return parseNodeJobResult("process_stop", { ok: true });
   }
 
   if (job.kind === "process_status") {
-    return proc.status(strArg(job.args, "id"));
+    const { id } = parseNodeJobArgs("process_status", job.args);
+    return parseNodeJobResult("process_status", await proc.status(id));
   }
 
   if (job.kind === "steamcmd_app_update") {
-    const serverRel = strArg(job.args, "serverRel");
-    const serverDataPath = resolveInJail(dataRoot, serverRel);
-    const appId = Number(job.args.appId);
-    if (!Number.isFinite(appId)) throw new Error("invalid_appId");
-    return steamcmdAppUpdate({
-      serverDataPath,
-      appId,
-      installDirRel: typeof job.args.installDirRel === "string" ? job.args.installDirRel : undefined,
-      validate: job.args.validate === true ? true : job.args.validate === false ? false : undefined,
-    });
-  }
-
-  if (job.kind === "node_self_update") {
-    const downloadUrl = strArg(job.args, "downloadUrl");
-    const sha256 = strArg(job.args, "sha256");
-    const version = strArg(job.args, "version");
-    const preserve = Array.isArray(job.args.preserve)
-      ? (job.args.preserve as string[])
-      : undefined;
-    return performNodeSelfUpdate({
-      downloadUrl,
-      sha256,
-      version,
-      preserve,
-      skipExit: job.args.skipExit === true,
-    });
+    const { serverRel, appId, installDirRel, validate } = parseNodeJobArgs(
+      "steamcmd_app_update",
+      job.args,
+    );
+    return parseNodeJobResult(
+      "steamcmd_app_update",
+      await steamcmdAppUpdate({
+        serverDataPath: resolveInJail(dataRoot, serverRel),
+        appId,
+        installDirRel,
+        validate,
+      }),
+    );
   }
 
   if (job.kind === "manage_probe") {
-    const args = ImportProbeArgsSchema.parse(job.args);
-    return runImportProbe(args);
+    const args = parseNodeJobArgs("manage_probe", job.args);
+    return parseNodeJobResult("manage_probe", runImportProbe(args));
   }
 
   if (job.kind === "manage_pack") {
-    const args = ImportPackArgsSchema.parse(job.args);
+    const args = parseNodeJobArgs("manage_pack", job.args);
     const target = assertPackPathAllowed(args.path, args.allowRoots);
     // Stage on the data disk — never /tmp (often a small tmpfs).
     const packsDir = managePackStagingDir(dataRoot);
@@ -502,11 +542,11 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
         fs.rmSync(archive, { force: true });
         throw new Error(`archive_too_large: ${st.size} bytes (max ${args.maxBytes})`);
       }
-      return {
+      return parseNodeJobResult("manage_pack", {
         packRel: path.relative(dataRoot, archive).split(path.sep).join("/"),
         bytes: st.size,
         path: target,
-      };
+      });
     } catch (err) {
       fs.rmSync(archive, { force: true });
       throw err;
@@ -514,14 +554,8 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
   }
 
   if (job.kind === "manage_seed") {
-    const args = ManageSeedArgsSchema.parse(job.args);
+    const args = parseNodeJobArgs("manage_seed", job.args);
     const source = assertPackPathAllowed(args.sourcePath, args.allowRoots);
-    if (args.destRel.includes("..") || path.isAbsolute(args.destRel)) {
-      throw new Error("invalid_destRel");
-    }
-    if (!args.destRel.startsWith("servers/") || !args.destRel.endsWith("/game")) {
-      throw new Error("destRel_must_be_servers_id_game");
-    }
     const dest = resolveInJail(dataRoot, args.destRel);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.rmSync(dest, { recursive: true, force: true });
@@ -537,23 +571,17 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
       });
     }
     const bytesCopied = approxDirBytes(dest);
-    return {
+    return parseNodeJobResult("manage_seed", {
       destRel: args.destRel,
       sourcePath: source,
       bytesCopied,
-    };
+    });
   }
 
   if (job.kind === "manage_pack_read") {
-    const args = ManagePackReadArgsSchema.parse(job.args);
-    if (args.packRel.includes("..") || path.isAbsolute(args.packRel)) {
-      throw new Error("invalid_packRel");
-    }
+    // The contract already pins packRel under the staging dir; the jail is the backstop.
+    const args = parseNodeJobArgs("manage_pack_read", job.args);
     const abs = resolveInJail(dataRoot, args.packRel);
-    const packs = path.resolve(managePackStagingDir(dataRoot));
-    if (!path.resolve(abs).startsWith(packs + path.sep)) {
-      throw new Error("packRel_not_in_manage_packs");
-    }
     if (!fs.existsSync(abs)) throw new Error(`pack_not_found: ${args.packRel}`);
     const fd = fs.openSync(abs, "r");
     try {
@@ -562,21 +590,23 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
       const slice = buf.subarray(0, read);
       const st = fs.fstatSync(fd);
       const next = args.offset + read;
-      return {
+      return parseNodeJobResult("manage_pack_read", {
         dataBase64: slice.toString("base64"),
         bytes: read,
         offset: args.offset,
         done: next >= st.size,
-      };
+      });
     } finally {
       fs.closeSync(fd);
     }
   }
 
   if (job.kind === "manage_cutover") {
-    const args = ManageCutoverArgsSchema.parse(job.args);
-    return runManageCutover(args, dataRoot);
+    const args = parseNodeJobArgs("manage_cutover", job.args);
+    return parseNodeJobResult("manage_cutover", await runManageCutover(args, dataRoot));
   }
 
-  throw new Error(`unsupported_job_kind: ${String((job as { kind: string }).kind)}`);
+  throw new NodeJobError("unsupported_job_kind", {
+    kind: String((job as { kind: string }).kind),
+  });
 }

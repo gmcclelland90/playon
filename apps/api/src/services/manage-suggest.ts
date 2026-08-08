@@ -6,15 +6,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { nanoid } from "nanoid";
 import {
-  ImportProbeResultSchema,
-  ManageCutoverResultSchema,
-  ManageSeedResultSchema,
   NODE_AUTHORITATIVE_MARKER,
   deriveNodePresence,
   isLocalNodeId,
   type ImportHintManage,
   type ImportHintRule,
   type ImportProbeCandidate,
+  type ManageCutoverResult,
 } from "@playon/shared";
 import { matchHintsAt, runImportProbe } from "@playon/shared/import-probe-walk";
 import type { AppConfig } from "../config.js";
@@ -173,15 +171,14 @@ export class ManageSuggestService {
         }),
     });
 
-    const parsed = ImportProbeResultSchema.parse(probe);
     this.cache.set(nodeId, {
       at: Date.now(),
-      candidates: parsed.candidates,
-      scannedRoots: parsed.scannedRoots,
+      candidates: probe.candidates,
+      scannedRoots: probe.scannedRoots,
     });
     return {
-      candidates: parsed.candidates,
-      scannedRoots: parsed.scannedRoots,
+      candidates: probe.candidates,
+      scannedRoots: probe.scannedRoots,
       cached: false,
     };
   }
@@ -309,53 +306,43 @@ export class ManageSuggestService {
     });
 
     const destRel = nodeServerRelPath(id, "game");
-    const seed = ManageSeedResultSchema.parse(
-      await dispatchNodeJob({
-        nodeId: args.nodeId,
-        kind: "manage_seed",
-        args: {
-          sourcePath,
-          allowRoots: roots,
-          destRel,
-        },
-        timeoutMs: 1_800_000,
-        localHandler: async () => {
-          throw new Error("manage_seed_local_unreachable");
-        },
-      }),
-    );
+    const seed = await dispatchNodeJob({
+      nodeId: args.nodeId,
+      kind: "manage_seed",
+      args: {
+        sourcePath,
+        allowRoots: roots,
+        destRel,
+      },
+      timeoutMs: 1_800_000,
+      localHandler: async () => {
+        throw new Error("manage_seed_local_unreachable");
+      },
+    });
 
     const homeRel = nodeServerRelPath(id, "home");
-    let cutover: {
-      serverName?: string;
-      unitName?: string;
-      playonHome: string;
-      playonHomeRel: string;
-      userdataBytes: number;
-      warnings: string[];
-    } = {
+    // No hint means no external userdata to move; the seed already covered the tree.
+    let cutover: ManageCutoverResult = {
       playonHome: "",
       playonHomeRel: homeRel,
       userdataBytes: 0,
       warnings: manageMeta ? [] : ["manage_cutover_skipped_no_hint"],
     };
     if (manageMeta) {
-      cutover = ManageCutoverResultSchema.parse(
-        await dispatchNodeJob({
-          nodeId: args.nodeId,
-          kind: "manage_cutover",
-          args: {
-            sourcePath,
-            allowRoots: roots,
-            homeRel,
-            manage: manageMeta,
-          },
-          timeoutMs: 1_800_000,
-          localHandler: async () => {
-            throw new Error("manage_cutover_local_unreachable");
-          },
-        }),
-      );
+      cutover = await dispatchNodeJob({
+        nodeId: args.nodeId,
+        kind: "manage_cutover",
+        args: {
+          sourcePath,
+          allowRoots: roots,
+          homeRel,
+          manage: manageMeta,
+        },
+        timeoutMs: 1_800_000,
+        localHandler: async () => {
+          throw new Error("manage_cutover_local_unreachable");
+        },
+      });
     }
 
     if (
@@ -366,17 +353,18 @@ export class ManageSuggestService {
       await this.db.update(servers).set({ name: serverName }).where(eq(servers.id, id));
     }
 
+    // Cutover targets the node that owns the tree; a Home node already has these files.
+    const writeToNode = (rel: string, content: string) =>
+      dispatchNodeJob({
+        nodeId: args.nodeId,
+        kind: "fs_write_text",
+        args: { path: rel, content },
+        timeoutMs: 60_000,
+        localHandler: async () => ({ path: rel, bytes: Buffer.byteLength(content, "utf8") }),
+      });
+
     const skillJson = fs.readFileSync(path.join(dataPath, "skill.json"), "utf8");
-    await dispatchNodeJob({
-      nodeId: args.nodeId,
-      kind: "fs_write_text",
-      args: {
-        path: nodeServerRelPath(id, "skill.json"),
-        content: skillJson,
-      },
-      timeoutMs: 60_000,
-      localHandler: async () => ({ ok: true }),
-    });
+    await writeToNode(nodeServerRelPath(id, "skill.json"), skillJson);
 
     const adminPassword = randomBytes(12).toString("base64url");
     const wantAdminPassword = manageMeta?.adminPasswordArg === true;
@@ -392,27 +380,12 @@ export class ManageSuggestService {
       serverName: cutover.serverName || undefined,
       serverNameArg: manageMeta?.serverNameArg,
     });
-    await dispatchNodeJob({
-      nodeId: args.nodeId,
-      kind: "fs_write_text",
-      args: {
-        path: nodeServerRelPath(id, "game", ".playon-start.env"),
-        content: startEnv,
-      },
-      timeoutMs: 60_000,
-      localHandler: async () => ({ ok: true }),
-    });
+    await writeToNode(nodeServerRelPath(id, "game", ".playon-start.env"), startEnv);
 
-    await dispatchNodeJob({
-      nodeId: args.nodeId,
-      kind: "fs_write_text",
-      args: {
-        path: nodeServerRelPath(id, "game", "start.sh"),
-        content: buildManagedStartWrapper(manageMeta?.serverNameArg ?? "servername"),
-      },
-      timeoutMs: 60_000,
-      localHandler: async () => ({ ok: true }),
-    });
+    await writeToNode(
+      nodeServerRelPath(id, "game", "start.sh"),
+      buildManagedStartWrapper(manageMeta?.serverNameArg ?? "servername"),
+    );
 
     const baseline = await this.snapshots.create(id, "baseline-manage");
     followUp.push("stop_old_host_service_before_start");

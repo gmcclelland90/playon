@@ -1,5 +1,4 @@
-import { surfaceConfirmAction } from "./tool-surface.js";
-import "./tool-surface-overlay.js";
+import { projectConfirmAction } from "./tool-surface.js";
 
 function asNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -72,15 +71,23 @@ function detailFor(toolName: string, args: Record<string, unknown>): string | un
   }
 }
 
-/** Short host-facing confirmation copy (no raw JSON dumps). */
-export function confirmSummary(toolName: string, args: Record<string, unknown>): string {
-  const action = surfaceConfirmAction(toolName);
+/**
+ * Short host-facing confirmation copy (no raw JSON dumps).
+ * Pass `action` from the tool's own surface metadata; without it the copy falls
+ * back to a humanized tool name, which is all an ad-hoc entry can offer.
+ */
+export function confirmSummary(
+  toolName: string,
+  args: Record<string, unknown>,
+  options: { action?: string } = {},
+): string {
+  const action = projectConfirmAction({ confirmAction: options.action }, toolName);
   const detail = detailFor(toolName, args);
   if (detail) return `An agent wants to ${action}: ${detail}`;
   return `An agent wants to ${action}.`;
 }
 
 /** Short label for “always allow this” UI (verb phrase without “An agent wants to”). */
-export function confirmActionLabel(toolName: string): string {
-  return surfaceConfirmAction(toolName);
+export function confirmActionLabel(toolName: string, action?: string): string {
+  return projectConfirmAction({ confirmAction: action }, toolName);
 }

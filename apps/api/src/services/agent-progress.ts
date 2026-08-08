@@ -2,9 +2,8 @@ import { eq } from "drizzle-orm";
 import {
   AGENT_SKILLS,
   skillLabel,
-  surfaceSkill,
-  surfaceXp,
   type AgentSkill,
+  type ToolSurface,
 } from "@playon/agent-core";
 import type { Db } from "../db/client.js";
 import { agentProgress } from "../db/schema.js";
@@ -186,14 +185,16 @@ export class AgentProgressService {
     };
   }
 
+  /** Skills and XP come from the turn's composed surface, never a process global. */
   async awardForTools(
     toolTrace: Array<{ name: string; result?: unknown }>,
+    surface: ToolSurface,
   ): Promise<XpAward[]> {
     const awards: XpAward[] = [];
     for (const trace of toolTrace) {
       if (isFailedResult(trace.result)) continue;
-      const skill = surfaceSkill(trace.name);
-      const spec = surfaceXp(trace.name);
+      const skill = surface.skill(trace.name);
+      const spec = surface.xp(trace.name);
       const award = await this.award(skill, spec.xp, spec.reason);
       award.celebrate = Boolean(spec.celebrate) || award.leveledUp;
       awards.push(award);

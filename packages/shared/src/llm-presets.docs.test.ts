@@ -23,8 +23,9 @@ describe("llm preset public docs freshness", () => {
   });
 
   it("sibling playon-games generated JSON and guide pages stay in sync", () => {
-    if (!fs.existsSync(siteRoot)) {
-      // CI without the marketing repo still validates docsPath above.
+    // Full marketing checkout only. A stub sibling (e.g. skills-src only on the lab)
+    // must not force sync:llm-presets — CI without playon-games still validates docsPath above.
+    if (!fs.existsSync(siteRoot) || !fs.existsSync(docsRoot)) {
       return;
     }
 

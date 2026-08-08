@@ -8,6 +8,7 @@ import {
   createLlmClient,
   createOrchestrator,
   createPlayOnToolRegistry,
+  createPlayOnToolSurface,
 } from "./tools.js";
 import {
   buildWatcherContext,
@@ -39,7 +40,7 @@ async function runToolScript(
   watcher: Watcher,
   action: Extract<WatcherAction, { kind: "tools" }>,
 ): Promise<WatcherActionResult> {
-  const registry = createPlayOnToolRegistry(plane, {
+  const { registry } = createPlayOnToolRegistry(plane, {
     workspaceServerId: watcher.serverId,
   });
   const actor = `watcher:${watcher.id}`;
@@ -131,6 +132,8 @@ async function runAgentTurn(
     }
   }
 
+  const toolSurface = createPlayOnToolSurface(plane, { workspaceServerId: watcher.serverId });
+
   const publishActivity = (
     phase:
       | "thinking"
@@ -142,7 +145,7 @@ async function runAgentTurn(
     extra?: { toolName?: string; label?: string },
   ) => {
     const toolName = extra?.toolName;
-    const verb = toolName ? verbForTool(toolName) : "run";
+    const verb = toolName ? verbForTool(toolName, toolSurface) : "run";
     plane.eventHub.publish({
       type: "agent.activity",
       serverId: watcher.serverId,

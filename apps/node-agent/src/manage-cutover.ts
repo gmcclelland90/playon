@@ -7,8 +7,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { resolveInJail } from "@playon/runtime";
 import {
-  ManageCutoverArgsSchema,
-  ManageCutoverResultSchema,
+  parseNodeJobArgs,
+  parseNodeJobResult,
   type ImportHintManage,
   type ManageCutoverArgs,
   type ManageCutoverResult,
@@ -246,24 +246,14 @@ function approxBytes(p: string): number {
   return total;
 }
 
-function assertHomeRel(homeRel: string): void {
-  if (homeRel.includes("..") || path.isAbsolute(homeRel)) {
-    throw new Error("invalid_homeRel");
-  }
-  const norm = homeRel.split(path.sep).join("/");
-  if (!norm.startsWith("servers/") || !norm.endsWith("/home")) {
-    throw new Error("homeRel_must_be_servers_id_home");
-  }
-}
-
 export async function runManageCutover(
   rawArgs: ManageCutoverArgs,
   dataRoot: string,
   opts?: { unitDirs?: string[] },
 ): Promise<ManageCutoverResult> {
-  const args = ManageCutoverArgsSchema.parse(rawArgs);
+  // The contract pins homeRel to servers/<id>/home; the jail is the backstop.
+  const args = parseNodeJobArgs("manage_cutover", rawArgs);
   const source = assertPackPathAllowed(args.sourcePath, args.allowRoots);
-  assertHomeRel(args.homeRel);
 
   const playonHome = resolveInJail(dataRoot, args.homeRel);
   const warnings: string[] = [];
@@ -271,7 +261,7 @@ export async function runManageCutover(
   if (process.platform === "win32") {
     fs.mkdirSync(playonHome, { recursive: true });
     warnings.push("manage_cutover_windows_skip: systemd/userdata cutover is Linux-only");
-    return ManageCutoverResultSchema.parse({
+    return parseNodeJobResult("manage_cutover", {
       playonHome,
       playonHomeRel: args.homeRel.split(path.sep).join("/"),
       userdataBytes: 0,
@@ -343,7 +333,7 @@ export async function runManageCutover(
 
   if (!unit) warnings.push("no_systemd_unit_for_install");
 
-  return ManageCutoverResultSchema.parse({
+  return parseNodeJobResult("manage_cutover", {
     // Prefer remapped launch path when present; else world key / raw identity.
     serverName: launchServerName || worldKey || rawServerName || undefined,
     unitName: unit?.unitName,

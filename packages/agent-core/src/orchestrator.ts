@@ -1,5 +1,5 @@
 import { AGENT_SYSTEM_PROMPT } from "./agent-prompt.js";
-import { runToolInvocation, type ConfirmPolicy } from "./invoke-tool.js";
+import { runToolInvocation, type ConfirmPolicy, type ToolEntry } from "./invoke-tool.js";
 import type { LlmClient, LlmMessage } from "./llm.js";
 import { toLlmToolDefinition, type ToolDefinition, type ToolHandler } from "./tools.js";
 
@@ -157,7 +157,7 @@ function summarizeMaxIterations(toolTrace: ToolTraceEntry[]): string {
 }
 
 export class Orchestrator {
-  private readonly tools = new Map<string, { def: ToolDefinition; handler: ToolHandler }>();
+  private readonly tools = new Map<string, ToolEntry>();
 
   constructor(
     private readonly llm: LlmClient,
@@ -166,6 +166,11 @@ export class Orchestrator {
 
   registerTool(def: ToolDefinition, handler: ToolHandler): void {
     this.tools.set(def.name, { def, handler });
+  }
+
+  /** Register a colocated entry so confirm copy comes from the tool's own surface. */
+  registerEntry(entry: ToolEntry): void {
+    this.tools.set(entry.def.name, entry);
   }
 
   getToolDefinitions(): ToolDefinition[] {

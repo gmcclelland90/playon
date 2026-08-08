@@ -1,12 +1,18 @@
 import { confirmSummary } from "./confirm-summary.js";
 import type { ConfirmGate } from "./orchestrator.js";
+import type { ToolSurfaceMeta, ToolWorkspacePolicy } from "./tool-surface.js";
 import type { ToolDefinition, ToolHandler } from "./tools.js";
 
 /** How confirm-gated tools are approved. */
 export type ConfirmPolicy = "gate" | "auto";
 
+/** One tool: LLM definition, colocated surface metadata, workspace scope, handler. */
 export type ToolEntry = {
   def: ToolDefinition;
+  /** Skill / confirm copy / activity verb / XP for this tool. */
+  surface?: ToolSurfaceMeta;
+  /** Declared scope; the composing registry resolves it before calling the handler. */
+  workspacePolicy?: ToolWorkspacePolicy;
   handler: ToolHandler;
 };
 
@@ -53,7 +59,7 @@ export async function runToolInvocation(
 
   const decision = await gate.requestConfirmation({
     toolName: entry.def.name,
-    summary: confirmSummary(entry.def.name, args),
+    summary: confirmSummary(entry.def.name, args, { action: entry.surface?.confirmAction }),
     arguments: args,
   });
   if (!decision.approved) {

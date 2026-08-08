@@ -7,10 +7,10 @@ import os from "node:os";
 import path from "node:path";
 import type {
   ImportHintRule,
-  ImportProbeArgs,
   ImportProbeCandidate,
-  ImportProbeResult,
-} from "./import-probe.js";
+  ManageProbeArgs,
+  ManageProbeResult,
+} from "./node-jobs/manage.js";
 
 function expandHome(raw: string): string {
   let s = raw.trim();
@@ -126,7 +126,7 @@ export function isUnderAllowRoot(absPath: string, allowRoots: string[]): boolean
 }
 
 /** Shallow walk allowlisted roots and fingerprint directories. */
-export function runImportProbe(args: ImportProbeArgs): ImportProbeResult {
+export function runImportProbe(args: ManageProbeArgs): ManageProbeResult {
   const scannedRoots = expandScanRoots(args.roots);
   const candidates: ImportProbeCandidate[] = [];
   const seen = new Set<string>();

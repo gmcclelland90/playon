@@ -6,7 +6,8 @@ Canonical automated build/test host for PlayOn (Docker + Node).
 
 - Address: `172.16.0.155`
 - User: `playon`
-- Workspace: `/home/playon/src/playon`
+- Workspace (git): `/home/playon/src/playon-git`  
+  (`/home/playon/src/playon` may be a non-git deploy/rsync tree — use `playon-git` for `loop:verify`)
 - Sync: **git** (`git pull --ff-only` from `origin`)
 - Remote: `git@github.com:gmcclelland90/playon.git` (read-only deploy key `~/.ssh/playon_deploy`)
 
