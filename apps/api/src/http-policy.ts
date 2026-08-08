@@ -44,6 +44,16 @@ export function requireCan(c: SessionCarrier, capability: Capability): AuthUser 
   return user;
 }
 
+/**
+ * Non-throwing form of `requireRole` for stream upgrades: a WebSocket has to
+ * close with a policy code instead of answering with an envelope, but it should
+ * still read the session through the same rule as the JSON routes.
+ */
+export function sessionHasRole(c: SessionCarrier, role: Role): boolean {
+  const user = currentUser(c);
+  return Boolean(user && roleAtLeast(user.role, role));
+}
+
 /** Minimal view of the Hono context `jsonBody` needs. */
 export type JsonBodyCarrier = {
   req: { json(): Promise<unknown> };

@@ -11,6 +11,7 @@ import {
   requireRole,
   requireSession,
   serviceHttpError,
+  sessionHasRole,
   type SessionCarrier,
 } from "./http-policy.js";
 
@@ -54,6 +55,13 @@ describe("policy helpers", () => {
     expect(requireCan(carrier("operator"), "servers.manage").role).toBe("operator");
     expect(() => requireCan(carrier("operator"), "users.manage")).toThrow(/forbidden/);
     expect(() => requireCan(carrier(null), "panel.read")).toThrow(/forbidden/);
+  });
+
+  it("answers the same role question without throwing, for stream upgrades", () => {
+    expect(sessionHasRole(carrier("operator"), "operator")).toBe(true);
+    expect(sessionHasRole(carrier("owner"), "operator")).toBe(true);
+    expect(sessionHasRole(carrier("player"), "operator")).toBe(false);
+    expect(sessionHasRole(carrier(null), "operator")).toBe(false);
   });
 });
 
