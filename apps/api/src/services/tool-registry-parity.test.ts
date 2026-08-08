@@ -25,6 +25,31 @@ const MIGRATED_TOOLS = [
   "node_fs_list",
   "net_port_check",
   "net_suggest_bind",
+  "servers_create_from_skill",
+  "servers_start",
+  "servers_stop",
+  "servers_restart",
+  "servers_list",
+  "servers_health_check",
+  "servers_relocate",
+  "servers_import_local",
+  "servers_import_sftp",
+  "servers_delete",
+  "servers_logs_tail",
+  "servers_query",
+  "servers_query_test",
+];
+
+/** Server-scoped entries the invoke path must resolve before the handler sees them. */
+const SERVER_SCOPED_TOOLS = [
+  "servers_start",
+  "servers_stop",
+  "servers_restart",
+  "servers_health_check",
+  "servers_relocate",
+  "servers_delete",
+  "servers_logs_tail",
+  "servers_query",
 ];
 
 function testConfig(dataRoot: string): AppConfig {
@@ -66,7 +91,8 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
       .map((d) => ({ name: d.name, requiresConfirm: Boolean(d.requiresConfirm) }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
-    expect(fromRegistry.length).toBeGreaterThan(20);
+    // Moving a domain onto ToolEntry must not add, drop, or re-gate a tool.
+    expect(fromRegistry).toHaveLength(59);
     expect(fromOrch).toEqual(fromRegistry);
   });
 
@@ -115,6 +141,27 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(surface.skill("fs_write")).toBe("configurer");
     expect(surface.confirmAction("fs_write")).toBe("change a server file");
     expect(surface.activityVerb("node_ping")).toBe("run");
+    expect(surface.confirmAction("servers_stop")).toBe("stop this server");
+    expect(surface.xp("servers_create_from_skill")).toEqual({
+      xp: 50,
+      reason: "clean_install",
+      celebrate: true,
+    });
+    expect(surface.skill("servers_logs_tail")).toBe("troubleshooter");
+    expect(surface.activityVerb("servers_logs_tail")).toBe("read");
+  });
+
+  it("declares server scope for lifecycle tools that act on one server", () => {
+    const { registry } = createPlayOnToolRegistry(testPlane(), {});
+    const byName = new Map(registry.entries().map((e) => [e.def.name, e]));
+
+    for (const name of SERVER_SCOPED_TOOLS) {
+      expect(byName.get(name)?.workspacePolicy, `${name} is not server-scoped`).toBe(
+        "server_required",
+      );
+    }
+    expect(byName.get("servers_list")?.workspacePolicy).toBe("none");
+    expect(byName.get("servers_query_test")?.workspacePolicy).toBe("none");
   });
 
   it("enforces workspace policy before the handler runs", async () => {
@@ -130,8 +177,19 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
       requestedServerId: "other-server",
     });
 
+    await expect(
+      registry.invoke("servers_logs_tail", { serverId: "other-server" }),
+    ).resolves.toMatchObject({
+      error: "workspace_server_mismatch",
+      workspaceServerId: "bound-server",
+      requestedServerId: "other-server",
+    });
+
     const unbound = createPlayOnToolRegistry(testPlane(), {}).registry;
     await expect(unbound.invoke("fs_list", {})).resolves.toEqual({
+      error: "serverId_required",
+    });
+    await expect(unbound.invoke("servers_logs_tail", {})).resolves.toEqual({
       error: "serverId_required",
     });
   });

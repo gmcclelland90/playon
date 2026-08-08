@@ -1,6 +1,7 @@
 import type { ToolEntry, ToolSurfaceEntry } from "@playon/agent-core";
 import { fsToolModule } from "./fs.js";
 import { metaToolModule } from "./meta.js";
+import { serversToolModule } from "./servers.js";
 import type { PlayOnToolEntry, ToolContext, ToolModule } from "./types.js";
 import {
   resolveOptionalWorkspaceServerId,
@@ -12,11 +13,15 @@ import {
  * Domains already colocated as ToolEntry modules.
  *
  * Still registered the legacy way in `tools.ts` (metadata in `TOOL_SURFACE_OVERLAY`):
- * servers/lifecycle (13), skills (11), snapshots + off-node backup (7), watchers (8),
- * nodes/placement (3), rcon + steamcmd (3), archive_extract + fetch_url (2), panel (2).
+ * skills (11), snapshots + off-node backup (7), watchers (8), nodes/placement (3),
+ * rcon + steamcmd (3), archive_extract + fetch_url (2), panel (2).
  * The overlay table and its process-wide install are deleted with the last domain.
  */
-export const TOOL_MODULES: readonly ToolModule[] = [fsToolModule, metaToolModule];
+export const TOOL_MODULES: readonly ToolModule[] = [
+  fsToolModule,
+  metaToolModule,
+  serversToolModule,
+];
 
 /** Enforce the declared workspace scope, then hand the handler a resolved scope. */
 function bindEntry(entry: PlayOnToolEntry, workspace: WorkspaceBinding): ToolEntry {

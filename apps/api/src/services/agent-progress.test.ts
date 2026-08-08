@@ -3,9 +3,12 @@ import os from "node:os";
 import path from "node:path";
 import Database from "better-sqlite3";
 import { afterAll, describe, expect, it } from "vitest";
+import type { AppConfig } from "../config.js";
+import { createControlPlane } from "../control-plane.js";
 import { createDb } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
 import { AgentProgressService, levelFromXp, titleFor, xpProgressInLevel } from "./agent-progress.js";
+import { createPlayOnToolSurface } from "./tools.js";
 
 const temps: Array<{ root: string; sqlite: Database.Database }> = [];
 
@@ -81,12 +84,28 @@ describe("global agent skill progress", () => {
     const { db, sqlite } = createDb(dbPath);
     temps.push({ root, sqlite });
 
+    const config: AppConfig = {
+      port: 0,
+      advertiseHost: "127.0.0.1",
+      dataRoot: root,
+      dbPath,
+      sessionSecret: "test-session-secret-at-least-32-chars!!",
+      skillsRoots: [path.join(process.cwd(), "skills")],
+      llmMode: "openai_compatible",
+      runtimeMode: "docker",
+    };
+    // Migrated domains carry XP on the entry, so award against the composed surface.
+    const surface = createPlayOnToolSurface(createControlPlane(db, config), {});
+
     const progress = new AgentProgressService(db);
-    const awards = await progress.awardForTools([
-      { name: "servers_start", result: { ok: true } },
-      { name: "servers_start", result: { error: "boom" } },
-      { name: "panel_publish", result: { ok: true } },
-    ]);
+    const awards = await progress.awardForTools(
+      [
+        { name: "servers_start", result: { ok: true } },
+        { name: "servers_start", result: { error: "boom" } },
+        { name: "panel_publish", result: { ok: true } },
+      ],
+      surface,
+    );
     expect(awards).toHaveLength(2);
     expect(awards[0]!.skill).toBe("installer");
     expect(awards[0]!.progress.xp).toBe(15);

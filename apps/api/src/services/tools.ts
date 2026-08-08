@@ -18,11 +18,9 @@ import {
   TOOL_SURFACE_OVERLAY,
   type LlmClient,
 } from "@playon/agent-core";
-import { queryDialectToolEnum } from "@playon/server-query";
 import {
   getLlmPreset,
   type CreateWatcherInput,
-  type QueryDialect,
   type UpdateWatcherInput,
 } from "@playon/shared";
 import type { AppConfig } from "../config.js";
@@ -46,9 +44,8 @@ import {
   resolveSkillsCatalogUrl,
   searchCatalog,
 } from "./skills-catalog.js";
-import { listSkills, loadSkillMetadata, skillsRootsForWorkspace } from "./skills.js";
+import { listSkills, skillsRootsForWorkspace } from "./skills.js";
 import { rconExec, rconExecWithSelfHeal } from "./rcon.js";
-import { isPlayerPanelLiveStatus, safeQueryLive } from "./server-panel.js";
 import { SnapshotService, withSnapshot } from "./snapshots.js";
 import { SteamcmdNotFoundError, steamcmdAppUpdate } from "./steamcmd.js";
 import { composeToolEntries, toSurfaceEntry } from "./tools/index.js";
@@ -59,8 +56,6 @@ import {
   workspaceCreateForbidden,
   type WorkspaceBinding,
 } from "./tools/workspace.js";
-
-const QUERY_DIALECT_TOOL_ENUM = queryDialectToolEnum();
 
 /** Surface metadata for tools that still live in the overlay table (deleted per domain). */
 const LEGACY_TOOL_SURFACE: Record<string, ToolSurfaceMeta | undefined> = TOOL_SURFACE_OVERLAY;
@@ -172,14 +167,9 @@ export function createPlayOnToolRegistry(
     drafts,
     skillPackages,
     placement,
-    migrate,
     offNode,
-    importLocal,
-    importSftp,
     panel,
     playerPanel,
-    queries,
-    health,
     addNode,
     watchers,
     watcherEngine,
@@ -250,55 +240,6 @@ export function createPlayOnToolRegistry(
         required: ["slug"],
       },
     },
-    {
-      name: "servers_create_from_skill",
-      description:
-        "Create a server from a skill. In a bound server chat (or after the first create this turn), this wipes and reinstalls that same server id — it never creates a sibling.",
-      parameters: {
-        type: "object",
-        properties: {
-          skillName: { type: "string" },
-          serverName: { type: "string" },
-          nodeId: { type: "string" },
-        },
-        required: ["skillName"],
-      },
-    },
-    {
-      name: "servers_start",
-      description: "Start a server",
-      parameters: {
-        type: "object",
-        properties: { serverId: { type: "string" } },
-        required: ["serverId"],
-      },
-    },
-    {
-      name: "servers_stop",
-      description: "Stop a server",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: { serverId: { type: "string" } },
-        required: ["serverId"],
-      },
-    },
-    {
-      name: "servers_restart",
-      description: "Restart a server (stop then start)",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: { serverId: { type: "string" } },
-        required: ["serverId"],
-      },
-    },
-    {
-      name: "servers_list",
-      description: "List servers",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
-    },
-
     {
       name: "panel_publish",
       description:
@@ -432,19 +373,6 @@ export function createPlayOnToolRegistry(
       },
     },
     {
-      name: "servers_health_check",
-      description:
-        "Run skill-declared health checks for a server. Set remediate=true to auto-restart on known restartable failures.",
-      parameters: {
-        type: "object",
-        properties: {
-          serverId: { type: "string" },
-          remediate: { type: "boolean" },
-        },
-        required: ["serverId"],
-      },
-    },
-    {
       name: "skill_read",
       description:
         "Read guides/*.md from an installed skill (default INSTALL.md; use MODDING.md for Workshop/mod runbooks). Prefer this before drafting a new skill.",
@@ -569,20 +497,6 @@ export function createPlayOnToolRegistry(
       },
     },
     {
-      name: "servers_relocate",
-      description:
-        "Move a server onto another node: stop, snapshot, sync server dir, rebind nodeId, restart on the target.",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: {
-          serverId: { type: "string" },
-          targetNodeId: { type: "string" },
-        },
-        required: ["serverId", "targetNodeId"],
-      },
-    },
-    {
       name: "backup_offnode",
       description:
         "Create a durable snapshot and copy it to the configured off-node backup root (USB/NAS/second disk).",
@@ -614,45 +528,6 @@ export function createPlayOnToolRegistry(
           serverId: { type: "string" },
         },
         required: ["backupId"],
-      },
-    },
-    {
-      name: "servers_import_local",
-      description:
-        "Import an existing server directory from an absolute local path into PlayOn (copy, attach/detect/draft skill, baseline snapshot).",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: {
-          sourcePath: { type: "string" },
-          serverName: { type: "string" },
-          skillName: { type: "string" },
-          game: { type: "string" },
-          nodeId: { type: "string" },
-        },
-        required: ["sourcePath"],
-      },
-    },
-    {
-      name: "servers_import_sftp",
-      description:
-        "Pull an existing server directory over SFTP into a staging folder, then run the local import pipeline.",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: {
-          host: { type: "string" },
-          port: { type: "number" },
-          username: { type: "string" },
-          password: { type: "string" },
-          privateKey: { type: "string" },
-          remotePath: { type: "string" },
-          serverName: { type: "string" },
-          skillName: { type: "string" },
-          game: { type: "string" },
-          nodeId: { type: "string" },
-        },
-        required: ["host", "username", "remotePath"],
       },
     },
     {
@@ -694,62 +569,6 @@ export function createPlayOnToolRegistry(
           validate: { type: "boolean" },
         },
         required: ["serverId", "appId"],
-      },
-    },
-    {
-      name: "servers_delete",
-      description:
-        "Permanently delete a server: stop runtime, remove Docker container, wipe data dir, panel blocks, chats, and snapshots.",
-      requiresConfirm: true,
-      parameters: {
-        type: "object",
-        properties: { serverId: { type: "string" } },
-        required: ["serverId"],
-      },
-    },
-    {
-      name: "servers_logs_tail",
-      description:
-        "Return the latest runtime log lines for a server (Docker/native adapter). Use after restarts or failed mod loads.",
-      parameters: {
-        type: "object",
-        properties: {
-          serverId: { type: "string" },
-          lines: { type: "number", description: "Number of lines to return (default 80, max 200)" },
-        },
-        required: ["serverId"],
-      },
-    },
-    {
-      name: "servers_query",
-      description:
-        "Query live game stats (players, map, mode, …) for a managed server via its skill queryDialect or skill_module connector.",
-      parameters: {
-        type: "object",
-        properties: { serverId: { type: "string" } },
-        required: ["serverId"],
-      },
-    },
-    {
-      name: "servers_query_test",
-      description:
-        "Test a query dialect or draft skill_module connector against host:port. Use while authoring connectors.",
-      parameters: {
-        type: "object",
-        properties: {
-          host: { type: "string" },
-          port: { type: "number" },
-          queryPort: { type: "number" },
-          gamePort: { type: "number" },
-          skillName: { type: "string" },
-          connectorPath: { type: "string" },
-          queryDialect: {
-            type: "string",
-            enum: QUERY_DIALECT_TOOL_ENUM,
-          },
-          timeoutMs: { type: "number" },
-        },
-        required: ["host", "port"],
       },
     },
     {
@@ -916,93 +735,6 @@ export function createPlayOnToolRegistry(
     return drafts.promote(String(args.slug));
   });
 
-  registerTool(tool("servers_create_from_skill"), async (args) => {
-    const skillName = String(args.skillName);
-    const { server, mode } = await createOrReinstallFromSkill(servers, workspace, {
-      skillName,
-      serverName: args.serverName ? String(args.serverName) : undefined,
-      nodeId: args.nodeId ? String(args.nodeId) : undefined,
-    });
-    await snapshots.create(server.id, "baseline");
-    await playerPanel.publishForStatus(server.id, "stopped");
-    const skill = loadSkillMetadata(skillRoots, skillName);
-    if (skill?.metadata.watchers?.length) {
-      try {
-        await watchers.seedFromSkill(server.id, skill.metadata.name, skill.metadata.watchers);
-      } catch {
-        /* seeding is best-effort */
-      }
-    }
-    const join = await servers.joinInfoFor(server);
-    return {
-      serverId: server.id,
-      name: server.name,
-      status: server.status,
-      runtimeMode: server.runtimeMode,
-      mode,
-      join,
-    };
-  });
-
-  registerTool(tool("servers_start"), async (args) => {
-    const resolved = resolveWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    const server = await servers.start(resolved.serverId);
-    const live = await safeQueryLive(
-      (id) => queries.queryServerWithRetry(id, { attempts: 5, delayMs: 1200 }),
-      server.id,
-    );
-    await playerPanel.publishForStatus(server.id, "running", live);
-    const detail = await servers.detail(server.id);
-    return {
-      serverId: server.id,
-      status: server.status,
-      runtime: detail?.runtime,
-      join: detail?.runtime.join,
-      panelPublished: true,
-      playerVisible: isPlayerPanelLiveStatus(server.status),
-      liveOnline: live?.online ?? false,
-    };
-  });
-
-  registerTool(tool("servers_stop"), async (args) => {
-    const resolved = resolveWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    const server = await servers.stop(resolved.serverId);
-    await playerPanel.publishForStatus(server.id, "stopped");
-    return { serverId: server.id, status: server.status };
-  });
-
-  registerTool(tool("servers_restart"), async (args) => {
-    const resolved = resolveWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    const server = await servers.restart(resolved.serverId);
-    const live = await safeQueryLive(
-      (id) => queries.queryServerWithRetry(id, { attempts: 5, delayMs: 1200 }),
-      server.id,
-    );
-    await playerPanel.publishForStatus(server.id, "running", live);
-    const detail = await servers.detail(server.id);
-    return {
-      serverId: server.id,
-      status: server.status,
-      runtime: detail?.runtime,
-      join: detail?.runtime.join,
-      liveOnline: live?.online ?? false,
-    };
-  });
-
-
-  registerTool(tool("servers_list"), async () => {
-    const rows = await servers.list();
-    return rows.map((s) => ({
-      id: s.id,
-      name: s.name,
-      game: s.game,
-      status: s.status,
-    }));
-  });
-
   registerTool(tool("panel_publish"), async (args) => {
     const resolved = resolveOptionalWorkspaceServerId(args, workspace.serverId);
     if (!resolved.ok) return resolved.error;
@@ -1091,14 +823,6 @@ export function createPlayOnToolRegistry(
       url: String(args.url),
       destPath: String(args.destPath),
       headers,
-    });
-  });
-
-  registerTool(tool("servers_health_check"), async (args) => {
-    const resolved = resolveWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    return health.checkServer(resolved.serverId, {
-      remediate: Boolean(args.remediate),
     });
   });
 
@@ -1232,12 +956,6 @@ export function createPlayOnToolRegistry(
     addNode.removeNode(String(args.nodeId), { force: args.force === true }),
   );
 
-  registerTool(tool("servers_relocate"), async (args) => {
-    const resolved = resolveWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    return migrate.relocate(resolved.serverId, String(args.targetNodeId));
-  });
-
   registerTool(tool("backup_offnode"), async (args) => {
     const resolved = resolveWorkspaceServerId(args, workspace.serverId);
     if (!resolved.ok) return resolved.error;
@@ -1257,62 +975,6 @@ export function createPlayOnToolRegistry(
     const resolved = resolveOptionalWorkspaceServerId(args, workspace.serverId);
     if (!resolved.ok) return resolved.error;
     return offNode.restore(String(args.backupId), resolved.serverId);
-  });
-
-  registerTool(tool("servers_import_local"), async (args) => {
-    const blocked = workspaceCreateForbidden(
-      workspace.serverId,
-      "Deselect the server (install chat) to import another.",
-    );
-    if (blocked) return blocked;
-    const report = await importLocal.importFromPath({
-      sourcePath: String(args.sourcePath),
-      serverName: args.serverName ? String(args.serverName) : undefined,
-      skillName: args.skillName ? String(args.skillName) : undefined,
-      game: args.game ? String(args.game) : undefined,
-      nodeId: args.nodeId ? String(args.nodeId) : undefined,
-    });
-    workspace.serverId = report.server.id;
-    return {
-      serverId: report.server.id,
-      name: report.server.name,
-      skillName: report.skillName,
-      skillSource: report.skillSource,
-      baselineSnapshotId: report.baselineSnapshotId,
-      followUp: report.followUp,
-    };
-  });
-
-  registerTool(tool("servers_import_sftp"), async (args) => {
-    const blocked = workspaceCreateForbidden(
-      workspace.serverId,
-      "Deselect the server (install chat) to import another.",
-    );
-    if (blocked) return blocked;
-    const report = await importSftp.importFromSftp({
-      host: String(args.host),
-      port: args.port !== undefined ? Number(args.port) : undefined,
-      username: String(args.username),
-      password: args.password ? String(args.password) : undefined,
-      privateKey: args.privateKey ? String(args.privateKey) : undefined,
-      remotePath: String(args.remotePath),
-      serverName: args.serverName ? String(args.serverName) : undefined,
-      skillName: args.skillName ? String(args.skillName) : undefined,
-      game: args.game ? String(args.game) : undefined,
-      nodeId: args.nodeId ? String(args.nodeId) : undefined,
-    });
-    // Never echo credentials back through the tool trace.
-    workspace.serverId = report.server.id;
-    return {
-      serverId: report.server.id,
-      name: report.server.name,
-      skillName: report.skillName,
-      skillSource: report.skillSource,
-      baselineSnapshotId: report.baselineSnapshotId,
-      remoteHost: report.remoteHost,
-      remotePath: report.remotePath,
-      followUp: report.followUp,
-    };
   });
 
   registerTool(tool("rcon_exec"), async (args) => {
@@ -1396,58 +1058,6 @@ export function createPlayOnToolRegistry(
       }
       return { error: err instanceof Error ? err.message : "steamcmd_failed" };
     }
-  });
-
-  registerTool(tool("servers_delete"), async (args) => {
-    const resolved = resolveWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    const removed = await servers.remove(resolved.serverId);
-    await panel.clearForServer(removed.id);
-    return { ok: true, removed };
-  });
-
-  registerTool(tool("servers_logs_tail"), async (args) => {
-    const resolved = resolveWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    const requested = args.lines !== undefined ? Number(args.lines) : 80;
-    const lineCount = Number.isFinite(requested) ? requested : 80;
-    const result = await servers.tailLogs(resolved.serverId, lineCount);
-    if (!result) return { error: `unknown_server: ${resolved.serverId}` };
-    return { serverId: resolved.serverId, ...result };
-  });
-
-  registerTool(tool("servers_query"), async (args) => {
-    const resolved = resolveWorkspaceServerId(args, workspace.serverId);
-    if (!resolved.ok) return resolved.error;
-    const state = await queries.queryServer(resolved.serverId);
-    if (state.online) {
-      const server = await servers.get(resolved.serverId);
-      if (server && (server.status === "running" || server.status === "starting")) {
-        try {
-          await playerPanel.publishForStatus(
-            resolved.serverId,
-            server.status === "starting" ? "starting" : "running",
-            state,
-          );
-        } catch {
-          /* panel refresh best-effort */
-        }
-      }
-    }
-    return { serverId: resolved.serverId, ...state };
-  });
-
-  registerTool(tool("servers_query_test"), async (args) => {
-    return queries.queryTest({
-      host: String(args.host ?? "127.0.0.1"),
-      port: Number(args.port),
-      queryPort: args.queryPort !== undefined ? Number(args.queryPort) : undefined,
-      gamePort: args.gamePort !== undefined ? Number(args.gamePort) : undefined,
-      skillName: args.skillName ? String(args.skillName) : undefined,
-      connectorPath: args.connectorPath ? String(args.connectorPath) : undefined,
-      queryDialect: args.queryDialect as QueryDialect | undefined,
-      timeoutMs: args.timeoutMs !== undefined ? Number(args.timeoutMs) : undefined,
-    });
   });
 
   registerTool(tool("skill_draft_set_query_connector"), async (args) => {
@@ -1566,8 +1176,8 @@ export function createPlayOnToolRegistry(
         .sort((a, b) => a.name.localeCompare(b.name)),
     entries: () => [...tools.values()],
     registerInto(orchestrator: Orchestrator) {
-      for (const { def, handler } of tools.values()) {
-        orchestrator.registerTool(def, handler);
+      for (const entry of tools.values()) {
+        orchestrator.registerEntry(entry);
       }
     },
     async invoke(name, args, invokeOptions = {}) {
