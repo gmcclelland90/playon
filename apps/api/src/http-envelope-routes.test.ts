@@ -14,9 +14,10 @@ import { servers, users } from "./db/schema.js";
 type Envelope = { error: string; code?: string; details?: unknown };
 
 /**
- * Routes migrated to the shared envelope in the W4b prove slice: session, servers
- * list/detail, and the stop mutation. Status codes and `error` text must match
- * pre-envelope behaviour; `code` is the addition.
+ * Routes migrated to the shared envelope: session, servers list/detail, and every
+ * mutating server route (create, import, start, stop, restart, delete, relocate,
+ * console). Status codes and `error` text must match pre-envelope behaviour;
+ * `code` is the addition.
  */
 describe("transport error envelope on migrated routes", () => {
   let db: Db;
@@ -176,5 +177,149 @@ describe("transport error envelope on migrated routes", () => {
     const body = (await res.json()) as Envelope;
     expect(body.code).toBe("server_stop_failed");
     expect(body.error).toMatch(/unknown_server/);
+  });
+
+  it("gates every mutating server route on the same 403 forbidden envelope", async () => {
+    const app = createApp(db, config);
+    const forbidden = { error: "forbidden", code: "forbidden" };
+    const attempts: Array<[string, RequestInit]> = [
+      ["/api/servers", { method: "POST" }],
+      ["/api/servers/import", { method: "POST" }],
+      ["/api/servers/import/sftp", { method: "POST" }],
+      ["/api/servers/srv-1/start", { method: "POST" }],
+      ["/api/servers/srv-1/restart", { method: "POST" }],
+      ["/api/servers/srv-1/relocate", { method: "POST" }],
+      ["/api/servers/srv-1/console", { method: "POST" }],
+      ["/api/servers/srv-1", { method: "DELETE" }],
+    ];
+
+    for (const [path_, init] of attempts) {
+      const anon = await app.request(path_, init);
+      expect([path_, anon.status]).toEqual([path_, 403]);
+      expect(await anon.json()).toEqual(forbidden);
+
+      const asPlayer = await app.request(path_, {
+        ...init,
+        headers: { cookie: playerCookie },
+      });
+      expect([path_, asPlayer.status]).toEqual([path_, 403]);
+      expect(await asPlayer.json()).toEqual(forbidden);
+    }
+  });
+
+  it("keeps start/restart on 400 with per-route codes", async () => {
+    const app = createApp(db, config);
+
+    const start = await app.request("/api/servers/unknown/start", {
+      method: "POST",
+      headers: { cookie },
+    });
+    expect(start.status).toBe(400);
+    const startBody = (await start.json()) as Envelope;
+    expect(startBody.code).toBe("server_start_failed");
+    expect(startBody.error).toMatch(/unknown_server/);
+
+    const restart = await app.request("/api/servers/unknown/restart", {
+      method: "POST",
+      headers: { cookie },
+    });
+    expect(restart.status).toBe(400);
+    const restartBody = (await restart.json()) as Envelope;
+    expect(restartBody.code).toBe("server_restart_failed");
+    expect(restartBody.error).toMatch(/unknown_server/);
+  });
+
+  it("keeps delete and relocate promoting unknown ids to 404", async () => {
+    const app = createApp(db, config);
+
+    const removed = await app.request("/api/servers/unknown", {
+      method: "DELETE",
+      headers: { cookie },
+    });
+    expect(removed.status).toBe(404);
+    const removedBody = (await removed.json()) as Envelope;
+    expect(removedBody.code).toBe("server_delete_failed");
+    expect(removedBody.error).toMatch(/unknown_server/);
+
+    const relocated = await app.request("/api/servers/unknown/relocate", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ targetNodeId: "node-a" }),
+    });
+    expect(relocated.status).toBe(404);
+    const relocatedBody = (await relocated.json()) as Envelope;
+    expect(relocatedBody.code).toBe("server_relocate_failed");
+    expect(relocatedBody.error).toMatch(/unknown_server/);
+  });
+
+  it("renders request-contract failures as 400 invalid_request with issues", async () => {
+    const app = createApp(db, config);
+    const cases: Array<[string, unknown, string]> = [
+      ["/api/servers", {}, "skillName_required"],
+      ["/api/servers/import", { serverName: "No source" }, "sourcePath"],
+      ["/api/servers/import/sftp", { host: "h", remotePath: "/x" }, "username"],
+      ["/api/servers/srv-1/relocate", {}, "targetNodeId"],
+    ];
+
+    for (const [path_, body, expected] of cases) {
+      const res = await app.request(path_, {
+        method: "POST",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      expect([path_, res.status]).toEqual([path_, 400]);
+      const envelope = (await res.json()) as Envelope & {
+        details?: { issues?: Array<{ path: string; message: string }> };
+      };
+      expect(envelope).toMatchObject({ error: "invalid_request", code: "invalid_request" });
+      const issues = envelope.details?.issues ?? [];
+      expect(
+        issues.some((issue) => issue.path.includes(expected) || issue.message.includes(expected)),
+      ).toBe(true);
+    }
+  });
+
+  it("answers 400 invalid_json rather than 500 for an unparseable body", async () => {
+    const app = createApp(db, config);
+    const res = await app.request("/api/servers/srv-1/relocate", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: "{not json",
+    });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_json", code: "invalid_json" });
+  });
+
+  it("keeps create and import failures on 400 with per-route codes", async () => {
+    const app = createApp(db, config);
+
+    const create = await app.request("/api/servers", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ skillName: "games.does-not-exist", serverName: "Nope" }),
+    });
+    expect(create.status).toBe(400);
+    const createBody = (await create.json()) as Envelope;
+    expect(createBody.code).toBe("server_create_failed");
+    expect(createBody.error).toMatch(/unknown_skill/);
+
+    const imported = await app.request("/api/servers/import", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ sourcePath: path.join(root, "definitely-missing") }),
+    });
+    expect(imported.status).toBe(400);
+    expect(((await imported.json()) as Envelope).code).toBe("server_import_failed");
+  });
+
+  it("answers 404 on the console route for an unknown server", async () => {
+    const app = createApp(db, config);
+    const res = await app.request("/api/servers/unknown/console", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ command: "list" }),
+    });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ error: "not_found", code: "server_not_found" });
   });
 });

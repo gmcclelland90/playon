@@ -6,6 +6,7 @@ import type { AuthUser } from "./auth/session.js";
 import { httpErrorHandler } from "./http-errors.js";
 import {
   currentUser,
+  jsonBody,
   requireCan,
   requireRole,
   requireSession,
@@ -56,6 +57,36 @@ describe("policy helpers", () => {
   });
 });
 
+describe("jsonBody", () => {
+  const schema = z.object({ targetNodeId: z.string().min(1) });
+
+  it("returns the parsed body", async () => {
+    const carrier = { req: { json: async () => ({ targetNodeId: "node-a" }) } };
+    expect(await jsonBody(carrier, schema)).toEqual({ targetNodeId: "node-a" });
+  });
+
+  it("answers 400 invalid_json when the body is not JSON", async () => {
+    await expect(
+      jsonBody(
+        {
+          req: {
+            json: async () => {
+              throw new SyntaxError("Unexpected end of JSON input");
+            },
+          },
+        },
+        schema,
+      ),
+    ).rejects.toMatchObject({ status: 400, code: "invalid_json" });
+  });
+
+  it("lets schema failures through for the shared invalid_request envelope", async () => {
+    await expect(jsonBody({ req: { json: async () => ({}) } }, schema)).rejects.toMatchObject({
+      name: "ZodError",
+    });
+  });
+});
+
 describe("serviceHttpError", () => {
   it("keeps the service message and tags a route code", () => {
     const err = serviceHttpError(new Error("unknown_server:abc"), {
@@ -76,6 +107,27 @@ describe("serviceHttpError", () => {
       notFoundPrefixes: ["unknown_server"],
     });
     expect(err.status).toBe(404);
+  });
+
+  it("renders a schema failure as invalid_request instead of a zod dump", () => {
+    const zodErr = (() => {
+      try {
+        z.object({ targetNodeId: z.string().min(1) }).parse({});
+        return null;
+      } catch (err) {
+        return err;
+      }
+    })();
+    const err = serviceHttpError(zodErr, {
+      fallback: "relocate_failed",
+      code: "server_relocate_failed",
+    });
+    expect(err.status).toBe(400);
+    expect(err.code).toBe("invalid_request");
+    expect(err.message).toBe("invalid_request");
+    expect(err.details).toEqual({
+      issues: [expect.objectContaining({ path: "targetNodeId" })],
+    });
   });
 
   it("uses the fallback for non-Error throws and passes HttpError through", () => {
