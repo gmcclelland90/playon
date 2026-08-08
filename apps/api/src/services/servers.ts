@@ -6,10 +6,16 @@ import { nanoid } from "nanoid";
 import {
   createRuntime,
   followLogFile,
+  localDockerTransport,
+  openServerRuntime,
   readLogFileTail,
   type DockerAdapter,
   type LogFollowHandle,
   type ProcessSupervisor,
+  type RuntimeLocality,
+  type RuntimeMode,
+  type ServerContainerSpec,
+  type ServerRuntimeHandle,
 } from "@playon/runtime";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db/client.js";
@@ -710,6 +716,96 @@ export class ServerService {
     return false;
   }
 
+  private runtimeTarget(server: ServerRecord): {
+    mode: RuntimeMode;
+    locality: RuntimeLocality;
+    skillName: string;
+    skillMeta: ReturnType<ServerService["readSkillMeta"]>;
+  } {
+    const skillMeta = this.readSkillMeta(server.dataPath);
+    const skillName = skillMeta.skillName || this.readSkillName(server.dataPath);
+    return {
+      mode: this.wantsNativeRuntime(server, skillName, skillMeta.containerSupport)
+        ? "native"
+        : "docker",
+      locality: this.isRemoteNode(server) ? "remote" : "local",
+      skillName,
+      skillMeta,
+    };
+  }
+
+  /** Quadrants already migrated to {@link ServerRuntimeHandle}; the rest stay on the old paths. */
+  private usesRuntimeHandle(server: ServerRecord): boolean {
+    const target = this.runtimeTarget(server);
+    return target.mode === "docker" && target.locality === "local";
+  }
+
+  private localDockerSpec(
+    server: ServerRecord,
+    skillName: string,
+    skillMeta: ReturnType<ServerService["readSkillMeta"]>,
+  ): ServerContainerSpec {
+    const docker = this.dockerSpecFromSkill(skillName, skillMeta);
+    if (!docker) {
+      throw new Error(
+        `no_container_image: skill "${skillName || server.game || "unknown"}" has containerSupport but no dockerImage in metadata. Add dockerImage to the skill or use a native skill.`,
+      );
+    }
+    const gamePort = this.gamePortForSkill(skillName, server.game);
+    const rcon = this.ensureRconConfig(server, skillName);
+    const rconPort = rcon?.port ?? this.rconPortForSkill(skillName, server.game);
+    const env: Record<string, string> = { ...docker.env };
+    if (this.wantsMcRcon(skillName)) {
+      env.ENABLE_RCON = env.ENABLE_RCON ?? "true";
+      env.RCON_PORT = String(rconPort);
+      env.RCON_PASSWORD = rcon?.password ?? generateRconPassword();
+    }
+
+    const ports =
+      docker.ports.length > 0
+        ? docker.ports
+            .filter((p) => p.default)
+            .map((p) => ({
+              host: p.default!,
+              container: p.default!,
+              protocol: p.protocol,
+            }))
+        : [{ host: gamePort, container: gamePort, protocol: "tcp" as const }];
+
+    return {
+      image: docker.image,
+      env,
+      ports,
+      binds: [
+        {
+          hostPath: path.join(server.dataPath, "game"),
+          containerPath: docker.dataMount,
+        },
+      ],
+    };
+  }
+
+  /** Only production choke point for server runtime lifecycle. */
+  async runtime(serverId: string): Promise<ServerRuntimeHandle> {
+    const server = await this.getRaw(serverId);
+    if (!server) throw new Error(`unknown_server: ${serverId}`);
+    return this.openRuntime(server);
+  }
+
+  private async openRuntime(server: ServerRecord): Promise<ServerRuntimeHandle> {
+    const { mode, locality, skillName, skillMeta } = this.runtimeTarget(server);
+    const local = mode === "docker" && locality === "local";
+    if (local) await this.ensureRuntime();
+    return openServerRuntime(
+      { serverId: server.id, mode, locality },
+      {
+        containerName: this.containerName(server.id),
+        docker: local ? localDockerTransport(this.adapterFor(server.id)) : undefined,
+        resolveContainerSpec: async () => this.localDockerSpec(server, skillName, skillMeta),
+      },
+    );
+  }
+
   /** Best-effort kill of native game processes for this server (covers orphans after API restart). */
   private killNativeGameProcesses(serverDataPath: string): void {
     if (process.platform === "win32") return;
@@ -890,6 +986,32 @@ export class ServerService {
     }
 
     await this.ensureRuntime();
+    const missing = async (): Promise<void> => {
+      if (server.status === "running" || server.status === "starting") {
+        await this.db.update(servers).set({ status: "stopped" }).where(eq(servers.id, server.id));
+        this.emitStatus(server.id, "stopped");
+      }
+    };
+
+    if (this.usesRuntimeHandle(server)) {
+      let state: string;
+      try {
+        state = (await (await this.openRuntime(server)).status()).state;
+      } catch {
+        state = "missing";
+      }
+      if (state === "missing") {
+        await missing();
+        return;
+      }
+      const next = state === "running" ? "running" : "stopped";
+      if (next !== server.status) {
+        await this.db.update(servers).set({ status: next }).where(eq(servers.id, server.id));
+        this.emitStatus(server.id, next);
+      }
+      return;
+    }
+
     const adapter = this.adapterFor(server.id);
     try {
       const info = await adapter.inspect(this.containerName(server.id));
@@ -899,10 +1021,7 @@ export class ServerService {
         this.emitStatus(server.id, next);
       }
     } catch {
-      if (server.status === "running" || server.status === "starting") {
-        await this.db.update(servers).set({ status: "stopped" }).where(eq(servers.id, server.id));
-        this.emitStatus(server.id, "stopped");
-      }
+      await missing();
     }
   }
 
@@ -1316,57 +1435,8 @@ export class ServerService {
         return (await this.getRaw(id))!;
       }
 
-      const adapter = this.adapterFor(id);
-      const name = this.containerName(id);
-      const docker = this.dockerSpecFromSkill(skillName, skillMeta);
-      if (!docker) {
-        throw new Error(
-          `no_container_image: skill "${skillName || server.game || "unknown"}" has containerSupport but no dockerImage in metadata. Add dockerImage to the skill or use a native skill.`,
-        );
-      }
-      const gamePort = this.gamePortForSkill(skillName, server.game);
-      const rcon = this.ensureRconConfig(server, skillName);
-      const rconPort = rcon?.port ?? this.rconPortForSkill(skillName, server.game);
-      const env: Record<string, string> = { ...docker.env };
-      if (this.wantsMcRcon(skillName)) {
-        env.ENABLE_RCON = env.ENABLE_RCON ?? "true";
-        env.RCON_PORT = String(rconPort);
-        env.RCON_PASSWORD = rcon?.password ?? generateRconPassword();
-      }
-
-      const portBindings =
-        docker.ports.length > 0
-          ? docker.ports
-              .filter((p) => p.default)
-              .map((p) => ({
-                host: p.default!,
-                container: p.default!,
-                protocol: p.protocol,
-              }))
-          : [{ host: gamePort, container: gamePort, protocol: "tcp" as const }];
-
-      let containerId = name;
-      try {
-        const info = await adapter.inspect(name);
-        containerId = info.id;
-      } catch {
-        const created = await adapter.create({
-          name,
-          image: docker.image,
-          env,
-          ports: portBindings,
-          binds: [
-            {
-              hostPath: path.join(server.dataPath, "game"),
-              containerPath: docker.dataMount,
-            },
-          ],
-        });
-        containerId = created.id;
-      }
-
-      await adapter.start(containerId);
-      this.adapters.set(id, adapter);
+      const handle = await this.openRuntime(server);
+      const { id: containerId } = await handle.start();
 
       await this.db.update(servers).set({ status: "running" }).where(eq(servers.id, id));
       this.emitStatus(id, "running");
@@ -1426,9 +1496,15 @@ export class ServerService {
         this.killNativeGameProcesses(server.dataPath);
       }
 
-      const adapter = this.adapters.get(id) ?? this.sharedDocker;
-      if (adapter) {
-        await adapter.stop(this.containerName(id)).catch(() => undefined);
+      if (this.usesRuntimeHandle(server)) {
+        await this.openRuntime(server)
+          .then((handle) => handle.stop())
+          .catch(() => undefined);
+      } else {
+        const adapter = this.adapters.get(id) ?? this.sharedDocker;
+        if (adapter) {
+          await adapter.stop(this.containerName(id)).catch(() => undefined);
+        }
       }
     }
 
