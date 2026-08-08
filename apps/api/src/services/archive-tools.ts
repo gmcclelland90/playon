@@ -3,8 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { unzipSync, zipSync } from "fflate";
-import { PathJailError, resolveInJail } from "@playon/runtime";
 import type { ServerService } from "./servers.js";
+import { ServerFileStoreError, type ServerFileStore } from "./server-file-store.js";
 
 const MAX_ARCHIVE_BYTES = 100 * 1024 * 1024;
 const MAX_UNCOMPRESSED_BYTES = 500 * 1024 * 1024;
@@ -28,13 +28,6 @@ function stripEntryPath(entryPath: string, stripComponents: number): string | nu
   }
   if (parts.length <= stripComponents) return null;
   return parts.slice(stripComponents).join("/");
-}
-
-function assertUnderJail(root: string, target: string): void {
-  const rel = path.relative(path.resolve(root), path.resolve(target));
-  if (rel.startsWith("..") || path.isAbsolute(rel)) {
-    throw new PathJailError(`path escapes jail: ${target}`);
-  }
 }
 
 function runTarExtract(archive: string, destDir: string, timeoutMs = 120_000): Promise<void> {
@@ -74,6 +67,12 @@ export function buildTestZip(files: Record<string, string | Uint8Array>): Uint8A
   return zipSync(encoded);
 }
 
+function joinServerRel(destDir: string, rel: string): string {
+  const base = destDir.replace(/\\/g, "/").replace(/^\.\/?/, "").replace(/\/+$/, "");
+  if (!base || base === ".") return rel;
+  return `${base}/${rel}`;
+}
+
 export class ServerArchiveService {
   constructor(private readonly servers: ServerService) {}
 
@@ -83,40 +82,32 @@ export class ServerArchiveService {
     destDir: string;
     stripComponents?: number;
   }): Promise<{ extracted: number; destDir: string; format: ArchiveFormat }> {
-    const server = await this.servers.get(args.serverId);
-    if (!server) throw new Error(`unknown_server: ${args.serverId}`);
-
+    const store = await this.servers.files(args.serverId);
     const strip = Math.max(0, Math.floor(args.stripComponents ?? 0));
-    const archiveAbs = resolveInJail(server.dataPath, args.archivePath);
-    const destAbs = resolveInJail(server.dataPath, args.destDir);
+    const format = detectFormat(args.archivePath);
 
-    if (!fs.existsSync(archiveAbs) || !fs.statSync(archiveAbs).isFile()) {
-      throw new Error(`not_found: ${args.archivePath}`);
-    }
-    const archiveSize = fs.statSync(archiveAbs).size;
-    if (archiveSize > MAX_ARCHIVE_BYTES) {
+    const archived = await store.readBytes(args.archivePath);
+    if (archived.size > MAX_ARCHIVE_BYTES) {
       throw new Error("archive_too_large");
     }
 
-    const format = detectFormat(args.archivePath);
-    fs.mkdirSync(destAbs, { recursive: true });
+    await store.ensureDir(args.destDir);
 
     if (format === "zip") {
-      const extracted = this.extractZip(archiveAbs, destAbs, server.dataPath, strip);
+      const extracted = await this.extractZipToStore(archived.data, store, args.destDir, strip);
       return { extracted, destDir: args.destDir, format };
     }
 
-    const extracted = await this.extractTarGz(archiveAbs, destAbs, server.dataPath, strip);
+    const extracted = await this.extractTarGzToStore(archived.data, store, args.destDir, strip);
     return { extracted, destDir: args.destDir, format };
   }
 
-  private extractZip(
-    archiveAbs: string,
-    destAbs: string,
-    jailRoot: string,
+  private async extractZipToStore(
+    zipBytes: Buffer,
+    store: ServerFileStore,
+    destDir: string,
     stripComponents: number,
-  ): number {
-    const zipBytes = fs.readFileSync(archiveAbs);
+  ): Promise<number> {
     const files = unzipSync(new Uint8Array(zipBytes));
     const names = Object.keys(files);
     if (names.length > MAX_ENTRY_COUNT) {
@@ -128,7 +119,6 @@ export class ServerArchiveService {
     for (const name of names) {
       const data = files[name];
       if (!data) continue;
-      // Directory markers often end with /
       if (name.endsWith("/")) continue;
       const rel = stripEntryPath(name, stripComponents);
       if (rel === null) continue;
@@ -136,30 +126,34 @@ export class ServerArchiveService {
       if (uncompressed > MAX_UNCOMPRESSED_BYTES) {
         throw new Error("archive_uncompressed_too_large");
       }
-      const target = resolveInJail(destAbs, rel);
-      assertUnderJail(jailRoot, target);
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, data);
+      const targetRel = joinServerRel(destDir, rel);
+      const parent = path.posix.dirname(targetRel.replace(/\\/g, "/"));
+      if (parent && parent !== ".") await store.ensureDir(parent);
+      await store.writeBytes(targetRel, Buffer.from(data));
       extracted += 1;
     }
     return extracted;
   }
 
-  private async extractTarGz(
-    archiveAbs: string,
-    destAbs: string,
-    jailRoot: string,
+  private async extractTarGzToStore(
+    archiveBytes: Buffer,
+    store: ServerFileStore,
+    destDir: string,
     stripComponents: number,
   ): Promise<number> {
     const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-tar-"));
     try {
-      await runTarExtract(archiveAbs, staging);
+      const archivePath = path.join(staging, "in.tgz");
+      fs.writeFileSync(archivePath, archiveBytes);
+      const extractRoot = path.join(staging, "out");
+      fs.mkdirSync(extractRoot, { recursive: true });
+      await runTarExtract(archivePath, extractRoot);
 
       let uncompressed = 0;
       let entryCount = 0;
       let extracted = 0;
 
-      const copyIn = (fromDir: string, relBase: string) => {
+      const copyIn = async (fromDir: string, relBase: string) => {
         for (const name of fs.readdirSync(fromDir)) {
           const from = path.join(fromDir, name);
           const st = fs.lstatSync(from);
@@ -168,7 +162,7 @@ export class ServerArchiveService {
             throw new Error(`archive_symlink_rejected: ${rel}`);
           }
           if (st.isDirectory()) {
-            copyIn(from, rel);
+            await copyIn(from, rel);
             continue;
           }
           entryCount += 1;
@@ -179,17 +173,22 @@ export class ServerArchiveService {
           }
           const stripped = stripEntryPath(rel, stripComponents);
           if (stripped === null) continue;
-          const target = resolveInJail(destAbs, stripped);
-          assertUnderJail(jailRoot, target);
-          fs.mkdirSync(path.dirname(target), { recursive: true });
-          fs.copyFileSync(from, target);
+          const targetRel = joinServerRel(destDir, stripped);
+          const parent = path.posix.dirname(targetRel.replace(/\\/g, "/"));
+          if (parent && parent !== ".") await store.ensureDir(parent);
+          await store.writeBytes(targetRel, fs.readFileSync(from));
           extracted += 1;
         }
       };
-      copyIn(staging, "");
+      await copyIn(extractRoot, "");
       return extracted;
     } finally {
       fs.rmSync(staging, { recursive: true, force: true });
     }
   }
+}
+
+export function archiveStoreErrorMessage(err: unknown): string {
+  if (err instanceof ServerFileStoreError) return err.message;
+  return err instanceof Error ? err.message : "archive_extract_failed";
 }

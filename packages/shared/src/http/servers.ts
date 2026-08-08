@@ -39,3 +39,11 @@ export const RelocateServerRequestSchema = z.object({
 });
 
 export type RelocateServerRequest = z.infer<typeof RelocateServerRequestSchema>;
+
+/** PUT `/api/servers/:id/fs/content` — path + full text body. */
+export const WriteServerFsContentRequestSchema = z.object({
+  path: z.string().min(1),
+  content: z.string(),
+});
+
+export type WriteServerFsContentRequest = z.infer<typeof WriteServerFsContentRequestSchema>;

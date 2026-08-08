@@ -45,7 +45,8 @@ Prefer new modules under `packages/shared` (e.g. node job contracts) over growin
 | Zone | Owners (typical paths) |
 |------|------------------------|
 | Node seam (W1) | Job contracts in shared, `node-jobs*`, `node-runtime*`, `apps/node-agent/src/jobs.ts` (+ tests) |
-| Runtime Handle (W2) | `servers.ts`, `health.ts`, `server-console.ts`, `native-launch*`, runtime factory touchpoints |
+| Runtime Handle (W2) | `servers.ts` lifecycle/runtime, `health.ts`, `server-console.ts`, `native-launch*`, runtime factory touchpoints |
+| File Store (W3) | `server-file-store*`, `fs-tools*` (during rename), server `/fs` routes in `app.ts`, `tools/fs.ts`, FS helper extractions from `servers.ts`, fetch/archive path wiring |
 | Tool Surface (W1b) | `tools.ts`, `packages/agent-core` tool-surface*, `mcp.ts` |
 | Transport (W4b) | Route policy in `app.ts`, `apps/web/src/api.ts`, shared request/response contracts |
 | Adoption (W4) | `import-*`, `manage-suggest*`, skill-marker write paths in create/import |
@@ -119,6 +120,24 @@ Frozen in W2 deep-grill (after W1 on `main`):
 - **Git:** `arch/w2-integration` + worktree `playon-arch-w2-runtime-handle`; PRs into integration; promote to `main` after lab green.
 - **Parallel:** grill J4∥J6 (W4b/W4c) after this lock; implement them only after W2’s first prove slice is on `main`. Stay off Handle / File Store / node-agent job-body zones.
 - **Zone:** `servers.ts`, `health.ts`, `server-console.ts`, `native-launch*`, runtime factory touchpoints — not Tool Surface or new node-job contracts.
+
+## W3 design lock (Server File Store)
+
+Frozen in W3 deep-grill (after W2 Handle + W4b/W4c on `main`):
+
+- **Job:** Deep module for a **game server data dir** only — jail + I/O + locality. Out: `skill-fs`, node-global `node_fs_list`, snapshot/import/manage engines as owners.
+- **Surface:** `list`, `readText`, `writeText`, `writeBytes`, `delete`, `rename`, `copy`, `ensureDir`. Archives/fetch **call** the store for path ops; do not absorb snapshot/import engines. (`writeBytes` is required so fetch/archive stay binary-safe on both localities.)
+- **Home:** CP module under `apps/api` (`server-file-store*`, deepened from `ServerFsService`). Reuse `packages/runtime` `resolveInJail` + W1 `fs_*` contracts; **do not** edit node-agent job bodies or `packages/shared/src/node-jobs/fs.ts`.
+- **Locality:** Two adapters — Home local disk vs `dispatchNodeJob`. Default routing uses node-authoritative marker rules (same as today’s `ServerFsService`). `ensureDir` on a remote `nodeId` always hits the node (provisioning before the marker exists). Callers that must sync a Home file onto a remote node pass `locality: "remote"`.
+- **Obtain:** `openServerFileStore(server, deps)` + **`servers.files(serverId)`** as the only production choke (re-resolve server row / locality each call). Migrate off direct `plane.serverFs`.
+- **Errors:** Typed store codes (`path_escape`, `not_found`, `is_directory`, `not_directory`, `already_exists`, `io_failed`, `node_unreachable`); map `PathJailError`; HTTP via envelope helpers.
+- **HTTP:** W3 owns `/api/servers/:id/fs*` end-to-end (policy + envelope + store). Skill `/fs` untouched.
+- **Node-aware:** Tool/HTTP CRUD + ensureDir + `fetch_url` / `archive_extract` go through the store. **Snapshots stay Home `cp` for W3.**
+- **`servers.ts`:** Delete parallel `readNodeText` / `writeNodeText` / `listNodeDir` / private `nodeJailRel` / remote ensureDir duplication; RCON/config helpers become thin store callers. Lifecycle start/stop/logs/stdin stay Handle.
+- **Slices:** lock + factory/`servers.files` + typed errors → ensureDir + kill `servers.ts` FS dupes → server FS HTTP envelope → tools + fetch/archive through store → cleanup/lab/promote.
+- **Done when:** No parallel jail remapping; tools + server FS HTTP + former `servers.ts` FS helpers + fetch/archive path ops all through the store; skill FS / snapshots / import ownership unchanged; lab `loop:verify` green.
+- **Git:** worktree `arch/w3-file-store` → PRs into `arch/w3-integration` → lab → promote to `main`.
+- **Zone:** see File Store row in exclusive zones table. Out: skill-fs, node-job contracts/bodies, Handle lifecycle, snapshots/import/manage owners, `node-sync` as archive bulk owner.
 
 ## W4b design lock (HTTP Transport)
 

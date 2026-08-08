@@ -41,6 +41,7 @@ import {
   PromoteServerSkillRequestSchema,
   RelocateServerRequestSchema,
   RestoreOffNodeBackupRequestSchema,
+  WriteServerFsContentRequestSchema,
   RoleSchema,
   UpdateWatcherSchema,
   VultrOAuthCallbackRequestSchema,
@@ -49,7 +50,6 @@ import {
   messageFromError,
   placementBadge,
   placementFromNodeKind,
-  roleAtLeast,
   type NodeKind,
   type Role,
   type SkillInUseDetails,
@@ -127,6 +127,10 @@ import {
   skillsRootsForWorkspace,
 } from "./services/skills.js";
 import { SkillFsService, skillFsHttpStatus } from "./services/skill-fs.js";
+import {
+  serverFileStoreErrorCode,
+  serverFileStoreHttpStatus,
+} from "./services/server-file-store.js";
 import { readSkillMarker } from "./services/skill-marker.js";
 import { ConfirmService } from "./services/confirm.js";
 import { EventHub } from "./services/event-hub.js";
@@ -223,6 +227,13 @@ function skillFsError(err: unknown, fallback: string, code: string): HttpError {
   });
 }
 
+function serverFsHttpError(err: unknown, fallback: string, code: string): HttpError {
+  return new HttpError(serverFileStoreHttpStatus(err), messageFromError(err, fallback), {
+    code: serverFileStoreErrorCode(err, code),
+    cause: err,
+  });
+}
+
 export function createApp(db: Db, config: AppConfig): PlayOnApp {
   const app = new Hono<{ Variables: Vars }>();
   const plane = createControlPlane(db, config);
@@ -244,7 +255,6 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     agentProgress,
     skillPackages,
     drafts: draftService,
-    serverFs,
     tunnel,
     addNode,
     installDocker,
@@ -1058,40 +1068,28 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.get("/api/servers/:id/fs", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    const user = requireRole(c, "operator");
     const serverId = c.req.param("id");
     const server = await serverService.get(serverId);
-    if (!server) return c.json({ error: "not_found" }, 404);
+    if (!server) throw HttpError.notFound("not_found", { code: "server_not_found" });
     const relPath = c.req.query("path")?.trim() || ".";
     try {
-      const entries = await serverFs.list(serverId, relPath);
+      const entries = await (await serverService.files(serverId)).list(relPath);
       return c.json({ path: relPath, entries, writable: can(user.role, "servers.manage") });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "fs_list_failed";
-      const status = message.startsWith("not_found")
-        ? 404
-        : message.startsWith("unknown_server")
-          ? 404
-          : 400;
-      return c.json({ error: message }, status);
+      throw serverFsHttpError(err, "fs_list_failed", "server_fs_list_failed");
     }
   });
 
   app.get("/api/servers/:id/fs/content", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    const user = requireRole(c, "operator");
     const serverId = c.req.param("id");
     const server = await serverService.get(serverId);
-    if (!server) return c.json({ error: "not_found" }, 404);
+    if (!server) throw HttpError.notFound("not_found", { code: "server_not_found" });
     const relPath = c.req.query("path")?.trim();
-    if (!relPath) return c.json({ error: "path_required" }, 400);
+    if (!relPath) throw HttpError.badRequest("path_required", { code: "path_required" });
     try {
-      const file = await serverFs.read(serverId, relPath);
+      const file = await (await serverService.files(serverId)).readText(relPath);
       return c.json({
         path: file.path,
         content: file.content,
@@ -1101,42 +1099,22 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         writable: can(user.role, "servers.manage"),
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "fs_read_failed";
-      const status = message.startsWith("not_found")
-        ? 404
-        : message.startsWith("unknown_server")
-          ? 404
-          : 400;
-      return c.json({ error: message }, status);
+      throw serverFsHttpError(err, "fs_read_failed", "server_fs_read_failed");
     }
   });
 
   app.put("/api/servers/:id/fs/content", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
     const serverId = c.req.param("id");
     const server = await serverService.get(serverId);
-    if (!server) return c.json({ error: "not_found" }, 404);
-    const body = (await c.req.json().catch(() => null)) as {
-      path?: unknown;
-      content?: unknown;
-    } | null;
-    const relPath = typeof body?.path === "string" ? body.path.trim() : "";
-    if (!relPath) return c.json({ error: "path_required" }, 400);
-    if (typeof body?.content !== "string") return c.json({ error: "content_required" }, 400);
+    if (!server) throw HttpError.notFound("not_found", { code: "server_not_found" });
+    const body = await jsonBody(c, WriteServerFsContentRequestSchema);
+    const relPath = body.path.trim();
     try {
-      const written = await serverFs.write(serverId, relPath, body.content);
+      const written = await (await serverService.files(serverId)).writeText(relPath, body.content);
       return c.json(written);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "fs_write_failed";
-      const status = message.startsWith("not_found")
-        ? 404
-        : message.startsWith("unknown_server")
-          ? 404
-          : 400;
-      return c.json({ error: message }, status);
+      throw serverFsHttpError(err, "fs_write_failed", "server_fs_write_failed");
     }
   });
 

@@ -2,7 +2,7 @@ import { serverTool, type ToolModule } from "./types.js";
 
 /** Path-jailed file tools for the chat's bound server. */
 export const fsToolModule: ToolModule = ({ plane }) => {
-  const { serverFs } = plane;
+  const { servers } = plane;
 
   return [
     serverTool({
@@ -20,7 +20,7 @@ export const fsToolModule: ToolModule = ({ plane }) => {
       },
       surface: { skill: "troubleshooter", activityVerb: "read" },
       handler: async (args, { serverId }) =>
-        serverFs.list(serverId, args.path ? String(args.path) : "."),
+        (await servers.files(serverId)).list(args.path ? String(args.path) : "."),
     }),
 
     serverTool({
@@ -41,7 +41,7 @@ export const fsToolModule: ToolModule = ({ plane }) => {
       },
       surface: { skill: "troubleshooter", activityVerb: "read" },
       handler: async (args, { serverId }) =>
-        serverFs.read(serverId, String(args.path), {
+        (await servers.files(serverId)).readText(String(args.path), {
           offset: args.offset !== undefined ? Number(args.offset) : undefined,
           maxBytes: args.maxBytes !== undefined ? Number(args.maxBytes) : undefined,
         }),
@@ -68,7 +68,7 @@ export const fsToolModule: ToolModule = ({ plane }) => {
         activityVerb: "write",
       },
       handler: async (args, { serverId }) =>
-        serverFs.write(serverId, String(args.path), String(args.content)),
+        (await servers.files(serverId)).writeText(String(args.path), String(args.content)),
     }),
 
     serverTool({
@@ -91,7 +91,7 @@ export const fsToolModule: ToolModule = ({ plane }) => {
         confirmAction: "delete a server file or folder",
         activityVerb: "write",
       },
-      handler: async (args, { serverId }) => serverFs.delete(serverId, String(args.path)),
+      handler: async (args, { serverId }) => (await servers.files(serverId)).delete(String(args.path)),
     }),
 
     serverTool({
@@ -116,7 +116,7 @@ export const fsToolModule: ToolModule = ({ plane }) => {
         activityVerb: "write",
       },
       handler: async (args, { serverId }) =>
-        serverFs.rename(serverId, String(args.from), String(args.to), {
+        (await servers.files(serverId)).rename(String(args.from), String(args.to), {
           overwrite: Boolean(args.overwrite),
         }),
     }),
@@ -143,7 +143,7 @@ export const fsToolModule: ToolModule = ({ plane }) => {
         activityVerb: "write",
       },
       handler: async (args, { serverId }) =>
-        serverFs.copy(serverId, String(args.from), String(args.to), {
+        (await servers.files(serverId)).copy(String(args.from), String(args.to), {
           overwrite: Boolean(args.overwrite),
         }),
     }),
