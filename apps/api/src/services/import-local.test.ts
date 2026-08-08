@@ -7,6 +7,7 @@ import { createDb, type Db } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
 import type { AppConfig } from "../config.js";
 import { detectImportHints, ImportLocalService } from "./import-local.js";
+import { ServerAdoptionService } from "./server-adoption.js";
 import { ServerService } from "./servers.js";
 import { SnapshotService } from "./snapshots.js";
 import { listSkills } from "./skills.js";
@@ -45,7 +46,9 @@ function tempEnv(): {
   fs.mkdirSync(path.join(config.dataRoot, "skills"), { recursive: true });
   const servers = new ServerService(db, config);
   const snapshots = new SnapshotService(db, config, servers);
-  const importer = new ImportLocalService(db, config, servers, snapshots);
+  const adoption = new ServerAdoptionService(db, config, servers, snapshots);
+  servers.bindAdoption(adoption);
+  const importer = new ImportLocalService(config, adoption);
   return { db, config, importer, root };
 }
 

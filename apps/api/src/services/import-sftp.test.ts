@@ -6,7 +6,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createDb, type Db } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
 import type { AppConfig } from "../config.js";
+import { ImportLocalService } from "./import-local.js";
 import { ImportSftpService } from "./import-sftp.js";
+import { ServerAdoptionService } from "./server-adoption.js";
 import { ServerService } from "./servers.js";
 import { SnapshotService } from "./snapshots.js";
 
@@ -43,7 +45,10 @@ function tempEnv(): {
   fs.mkdirSync(path.join(config.dataRoot, "skills"), { recursive: true });
   const servers = new ServerService(db, config);
   const snapshots = new SnapshotService(db, config, servers);
-  const importer = new ImportSftpService(db, config, servers, snapshots, async (args) => {
+  const adoption = new ServerAdoptionService(db, config, servers, snapshots);
+  servers.bindAdoption(adoption);
+  const importLocal = new ImportLocalService(config, adoption);
+  const importer = new ImportSftpService(config, importLocal, async (args) => {
     // Fake "remote" payload written into the staging directory.
     fs.mkdirSync(args.localPath, { recursive: true });
     fs.writeFileSync(path.join(args.localPath, "server.properties"), "motd=sftp\n");

@@ -49,7 +49,7 @@ Prefer new modules under `packages/shared` (e.g. node job contracts) over growin
 | File Store (W3) | `server-file-store*`, `fs-tools*` (during rename), server `/fs` routes in `app.ts`, `tools/fs.ts`, FS helper extractions from `servers.ts`, fetch/archive path wiring |
 | Tool Surface (W1b) | `tools.ts`, `packages/agent-core` tool-surface*, `mcp.ts` |
 | Transport (W4b) | Route policy in `app.ts`, `apps/web/src/api.ts`, shared request/response contracts |
-| Adoption (W4) | `import-*`, `manage-suggest*`, skill-marker write paths in create/import |
+| Adoption (W4) | `server-adoption*`, `import-local*`, `import-sftp*`, `manage-suggest*`, skill-marker **write** paths used by adopt/create/import |
 
 Two agents must not share a zone in the same wave.
 
@@ -162,9 +162,31 @@ Frozen in W4c deep-grill (implement after W2 local-docker prove is on `main`):
 - **Zone:** `index.ts` + lifecycle module only for process shell — no route edits in `app.ts`
 - **Git:** worktree `arch/w4-cp-lifecycle` → PRs into shared `arch/w4-integration`
 
+## W4 design lock (Server adoption)
+
+Frozen after W3 File Store on `main`:
+
+- **Job:** Deep shared pipeline for adopting a server onto PlayOn (create-from-skill, import-local, import-sftp, manage cutover). Owns tree materialization + skill marker + baseline snapshot orchestration. Does **not** own lifecycle (Handle) or raw path jail (File Store).
+- **Surface:** `ServerAdoptionService` (name flexible) with shared steps used by all entry points:
+  1. resolve skill + node + runtimeMode
+  2. allocate server id + Home `dataPath`
+  3. `servers.files(...).ensureDir("game")` (and any other dirs needed)
+  4. stage/copy game content into the jail (local `fs.cp` only for bulk import of an external tree into Home jail is OK when source is outside the server dir; once inside the server jail, use File Store)
+  5. write skill marker via existing `writeSkillMarkerFromSkill` / marker helpers
+  6. optional node-authoritative marker + push/sync when manage cutover requires it (keep using `node-sync` / existing manage jobs — do not re-own archive bulk)
+  7. baseline snapshot (call SnapshotService — do not rewrite snapshot engine)
+  8. insert DB server row (coordinate with ServerService — prefer extracting shared helpers rather than duplicating createFromSkill)
+- **Home:** new `apps/api/src/services/server-adoption.ts` (+ tests). Thin `import-local.ts` / `import-sftp.ts` / `manage-suggest.ts` become callers. `servers.createFromSkill` / reinstall should call the same pipeline for marker+dirs (lifecycle stays in servers.ts).
+- **Obtain:** constructed on ControlPlane; entry points stay HTTP/tools but all go through adoption service.
+- **Zone:** `server-adoption*`, `import-local*`, `import-sftp*`, `manage-suggest*`, skill-marker **write** paths used by adopt/create/import. May **call** `servers.files`, `servers.createFromSkill` internals via extracted helpers, SnapshotService. Must **not** edit Handle lifecycle methods, File Store internals, node-agent `jobs.ts`, or W1 contracts.
+- **Slices (land in one PR if coherent, or 2):** (1) lock doc + `ServerAdoptionService` + wire `createFromSkill`/reinstall dir+marker through it; (2) import-local + import-sftp + manage-suggest call the pipeline; delete duplicated mkdir/marker sequences.
+- **Done when:** create/import/manage no longer each reinvent ensureDir+marker+baseline; File Store used for server-jail ensures; lab-ready unit tests; `pnpm check` + `pnpm test:unit` + `pnpm test:contract` green in the worktree.
+- **Git:** `arch/w4-adoption` → PR into `arch/w4-adoption-integration`
+
 ## W4 shared process
 
-- Shared integration branch `arch/w4-integration`; facilitator serializes merges
+- Adoption integration branch: `arch/w4-adoption-integration` (PRs from `arch/w4-adoption`)
+- Transport / CP-lifecycle historically shared `arch/w4-integration`; facilitator serializes promotion to `main`
 - Freeze briefs / open worktrees after lock confirm; **first code PR only after W2 local-docker prove is on `main`**
 - File split: W4b ↔ routes/policy/http; W4c ↔ process shell — no shared `app.ts` edits from W4c
 
@@ -173,4 +195,5 @@ Frozen in W4c deep-grill (implement after W2 local-docker prove is on `main`):
 1. Confirm W4b/W4c locks → keep W2 prove landing on `arch/w2-integration` → `main`
 2. After W2 prove on `main`: spawn W4b∥W4c implementation on `arch/w4-integration`
 3. Continue W2 remaining Handle slices (remote docker → natives → logs → console)
-4. Re-open portfolio ranking only if a wave invalidates a later candidate
+4. After W3 File Store on `main`: implement W4 Adoption on `arch/w4-adoption-integration`
+5. Re-open portfolio ranking only if a wave invalidates a later candidate
