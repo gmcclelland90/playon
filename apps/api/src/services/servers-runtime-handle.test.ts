@@ -75,17 +75,24 @@ const fake = vi.hoisted(() => {
  */
 const node = vi.hoisted(() => {
   type Container = { id: string; name: string; status: "created" | "running" | "exited" };
+  type Process = { id: string; name: string; pid?: number; status: "running" | "stopped" };
   const jobs: Array<{ kind: string; args: Record<string, unknown> }> = [];
   const containers = new Map<string, Container>();
+  /** Keyed by supervisor name, because identity is all the node is ever given. */
+  const processes = new Map<string, Process>();
+  let seq = 0;
   return {
     jobs,
     containers,
+    processes,
     kinds(): string[] {
       return jobs.map((j) => j.kind);
     },
     reset() {
       jobs.length = 0;
       containers.clear();
+      processes.clear();
+      seq = 0;
     },
     async dispatch(opts: { kind: string; args?: Record<string, unknown> }): Promise<unknown> {
       const { parseNodeJobArgs, parseNodeJobResult } = await import("@playon/shared");
@@ -114,6 +121,25 @@ const node = vi.hoisted(() => {
             return { ok: true };
           case "container_stop":
             if (found) found.status = "exited";
+            return { ok: true };
+          case "process_status": {
+            const name = String(args.name ?? "");
+            // The node answers for an identity it cannot find too — just not "running".
+            return processes.get(name) ?? { id: name, name, status: "stopped" };
+          }
+          case "process_start": {
+            const name = String(args.name);
+            const started: Process = {
+              id: `native-${name}-${++seq}`,
+              name,
+              pid: 4200 + seq,
+              status: "running",
+            };
+            processes.set(name, started);
+            return started;
+          }
+          case "process_stop":
+            processes.delete(String(args.name ?? ""));
             return { ok: true };
           default:
             throw new Error(`unexpected_job_kind_in_test: ${kind}`);
@@ -601,6 +627,156 @@ describe("remote docker lifecycle through ServerRuntimeHandle", () => {
 
   it("does not question an offline node, and does not read its silence as stopped", async () => {
     const { db, servers, id } = await remoteServer();
+    await servers.start(id);
+    node.jobs.length = 0;
+    await db
+      .update(nodesTable)
+      .set({ lastSeenAt: new Date(Date.now() - 3_600_000) })
+      .where(eq(nodesTable.id, REMOTE_NODE_ID));
+
+    expect((await servers.get(id))!.status).toBe("running");
+    expect(node.jobs).toEqual([]);
+  });
+});
+
+describe("remote native lifecycle through ServerRuntimeHandle", () => {
+  /** A native server whose game dir only exists on the node. */
+  async function remoteNativeServer(): Promise<{
+    db: Db;
+    config: AppConfig;
+    servers: ServerService;
+    id: string;
+    procName: string;
+    cwd: string;
+  }> {
+    const { db, config, servers } = tempEnv();
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
+    await db
+      .update(serversTable)
+      .set({ runtimeMode: "native" })
+      .where(eq(serversTable.id, server.id));
+    await placeOnRemoteNode(db, server.id);
+    node.jobs.length = 0;
+    host.reset();
+    fake.reset();
+    return {
+      db,
+      config,
+      servers,
+      id: server.id,
+      procName: `server-${server.id}`,
+      cwd: `servers/${server.id}/game`,
+    };
+  }
+
+  const processKinds = (): string[] => node.kinds().filter((k) => k.startsWith("process_"));
+
+  it("exposes a native/remote handle from the runtime choke point", async () => {
+    const { servers, id } = await remoteNativeServer();
+
+    const handle = await servers.runtime(id);
+
+    expect(handle.mode).toBe("native");
+    expect(handle.locality).toBe("remote");
+  });
+
+  it("starts the process on the node, never on Home's supervisor or docker", async () => {
+    const { servers, id, procName, cwd } = await remoteNativeServer();
+
+    const started = await servers.start(id);
+
+    expect(started.status).toBe("running");
+    expect(processKinds()).toEqual(["process_status", "process_start"]);
+    // Home runs neither the process nor a container for a server it does not host.
+    expect(host.calls).toEqual([]);
+    expect(fake.calls).toEqual([]);
+
+    expect(node.jobs.find((j) => j.kind === "process_start")!.args).toEqual({
+      name: procName,
+      command: "/bin/bash",
+      args: ["start.sh"],
+      cwd,
+      env: { PLAYON_SERVER_ID: id },
+      serverId: id,
+      // Jail-relative, so the node writes the console under its own data root.
+      logRel: `servers/${id}/logs/console.log`,
+    });
+  });
+
+  it("re-resolves the node's process on start instead of stacking a second one", async () => {
+    const { servers, id, procName, cwd } = await remoteNativeServer();
+    await servers.start(id);
+    node.jobs.length = 0;
+
+    await servers.start(id);
+
+    expect(processKinds()).toEqual(["process_status", "process_stop", "process_start"]);
+    expect(node.jobs.find((j) => j.kind === "process_stop")!.args).toEqual({
+      id: `native-${procName}-1`,
+      name: procName,
+      cwd,
+      serverId: id,
+    });
+  });
+
+  it("stop is mode-correct: the node's process only, no container_stop", async () => {
+    const { servers, id, procName, cwd } = await remoteNativeServer();
+    await servers.start(id);
+    node.jobs.length = 0;
+
+    const stopped = await servers.stop(id);
+
+    expect(stopped.status).toBe("stopped");
+    expect(node.kinds()).toEqual(["process_status", "process_stop"]);
+    expect(node.jobs.at(-1)!.args).toEqual({
+      id: `native-${procName}-1`,
+      name: procName,
+      cwd,
+      serverId: id,
+    });
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("restart cycles the same identity on the node", async () => {
+    const { servers, id } = await remoteNativeServer();
+    await servers.start(id);
+    node.jobs.length = 0;
+
+    const restarted = await servers.restart(id);
+
+    expect(restarted.status).toBe("running");
+    expect(processKinds()).toEqual([
+      "process_status",
+      "process_stop",
+      "process_status",
+      "process_start",
+    ]);
+  });
+
+  it("status reconciliation follows the node's process, by identity", async () => {
+    const { servers, id, procName, cwd } = await remoteNativeServer();
+    await servers.start(id);
+    node.jobs.length = 0;
+
+    expect((await servers.get(id))!.status).toBe("running");
+    expect(node.jobs.at(-1)).toEqual({ kind: "process_status", args: { name: procName, cwd } });
+
+    // The game exits on the node; Home learns it from the next re-resolve.
+    node.processes.clear();
+    expect((await servers.get(id))!.status).toBe("stopped");
+  });
+
+  it("a fresh control plane re-resolves the node's process from identity alone", async () => {
+    const { db, config, servers, id } = await remoteNativeServer();
+    await servers.start(id);
+
+    // No durable process map survives a restart, and none is needed.
+    const reborn = new ServerService(db, config);
+    expect((await reborn.get(id))!.status).toBe("running");
+  });
+
+  it("does not question an offline node, and does not read its silence as stopped", async () => {
+    const { db, servers, id } = await remoteNativeServer();
     await servers.start(id);
     node.jobs.length = 0;
     await db

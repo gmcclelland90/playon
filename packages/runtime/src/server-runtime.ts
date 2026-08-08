@@ -237,7 +237,11 @@ export type ServerProcessSpec = Omit<ProcessSpec, "name" | "cwd">;
  */
 export interface NativeRuntimeTransport {
   readonly locality: RuntimeLocality;
-  /** Re-resolve the process behind an identity; null when nothing is running. */
+  /**
+   * Re-resolve the process behind an identity; null when nothing is running.
+   * Throwing means "cannot say" (an unreachable host), which is not the same
+   * answer as null — status reports it instead of inventing "stopped".
+   */
   resolve(identity: NativeProcessIdentity): Promise<ProcessInfo | null>;
   start(spec: ProcessSpec): Promise<ProcessInfo>;
   /** Stop by identity; `id` is a hint only, and a dead target is not an error. */
@@ -263,6 +267,83 @@ export function localNativeTransport(supervisor: ProcessSupervisor): NativeRunti
   };
 }
 
+/** The process half of the node job contract — the only kinds a remote native runtime sends. */
+export type ProcessJobKind = Extract<NodeJobKind, `process_${string}`>;
+
+/**
+ * The wire the control plane lends the runtime: run one process job on the node
+ * that hosts this server. Which job each process verb maps to stays here, with
+ * the native mode adapter.
+ */
+export type ProcessJobDispatch = <K extends ProcessJobKind>(
+  kind: K,
+  args: NodeJobArgsInput<K>,
+  opts?: { timeoutMs?: number },
+) => Promise<NodeJobResult<K>>;
+
+export interface RemoteNativeTransportOptions {
+  /** Passed with start/stop so the agent knows whose console to follow. */
+  serverId?: string;
+  /** A game start (and the reclaim before it) can take a while on a busy node. */
+  startTimeoutMs?: number;
+  stopTimeoutMs?: number;
+  /** Identity re-resolution must not park status calls behind an unreachable node. */
+  resolveTimeoutMs?: number;
+}
+
+const REMOTE_PROCESS_START_TIMEOUT_MS = 60_000;
+const REMOTE_PROCESS_STOP_TIMEOUT_MS = 60_000;
+const REMOTE_PROCESS_RESOLVE_TIMEOUT_MS = 15_000;
+
+/**
+ * Locality half of the native mode over the node seam. Identity travels on every
+ * job — the node owns the supervisor id, and this transport never stores one.
+ * Paths in the identity and spec are jail-relative: the node resolves them under
+ * its own data root.
+ */
+export function remoteNativeTransport(
+  dispatch: ProcessJobDispatch,
+  opts: RemoteNativeTransportOptions = {},
+): NativeRuntimeTransport {
+  const serverId = opts.serverId;
+  return {
+    locality: "remote",
+    async resolve(identity) {
+      const info = await dispatch(
+        "process_status",
+        { name: identity.name, cwd: identity.cwd },
+        { timeoutMs: opts.resolveTimeoutMs ?? REMOTE_PROCESS_RESOLVE_TIMEOUT_MS },
+      );
+      // The node answers "stopped" for an identity it cannot find, which is the
+      // same nothing a local supervisor reports as null.
+      return info.status === "stopped" ? null : info;
+    },
+    async start(spec) {
+      return dispatch(
+        "process_start",
+        {
+          name: spec.name,
+          command: spec.command,
+          args: spec.args ?? [],
+          cwd: spec.cwd,
+          env: spec.env ?? {},
+          serverId,
+          logRel: spec.logFile,
+        },
+        { timeoutMs: opts.startTimeoutMs ?? REMOTE_PROCESS_START_TIMEOUT_MS },
+      );
+    },
+    async stop(identity, id) {
+      // Name + cwd always travel: the node reclaims OS orphans a lost id would leave.
+      await dispatch(
+        "process_stop",
+        { id: id ?? "", name: identity.name, cwd: identity.cwd, serverId },
+        { timeoutMs: opts.stopTimeoutMs ?? REMOTE_PROCESS_STOP_TIMEOUT_MS },
+      );
+    },
+  };
+}
+
 function mapProcessState(status: ProcessInfo["status"]): ServerRuntimeState {
   if (status === "running") return "running";
   if (status === "unknown") return "unknown";
@@ -283,10 +364,18 @@ class NativeRuntimeHandle implements ServerRuntimeHandle {
   }
 
   async start(): Promise<{ id: string }> {
-    // Never stack duplicates: a live process for this identity goes first.
-    const running = await this.transport.resolve(this.identity);
-    if (running?.status === "running") {
-      await this.transport.stop(this.identity, running.id);
+    // Never stack duplicates: a live process for this identity goes first. A
+    // re-resolve that cannot answer is treated as "maybe live" — sweeping an
+    // identity that runs nothing is free, starting a second copy is not.
+    let running: ProcessInfo | null = null;
+    let answered = true;
+    try {
+      running = await this.transport.resolve(this.identity);
+    } catch {
+      answered = false;
+    }
+    if (!answered || running?.status === "running") {
+      await this.transport.stop(this.identity, running?.id);
     }
     const spec = await this.resolveSpec();
     const info = await this.transport.start({
@@ -298,7 +387,8 @@ class NativeRuntimeHandle implements ServerRuntimeHandle {
   }
 
   async stop(): Promise<void> {
-    const running = await this.transport.resolve(this.identity);
+    // The id is only a hint, so a re-resolve that fails must not hold up the stop.
+    const running = await this.transport.resolve(this.identity).catch(() => null);
     // Fire even when nothing resolved: an identity stop doubles as the orphan sweep.
     await this.transport.stop(this.identity, running?.id);
   }
