@@ -9,7 +9,10 @@ import {
   localDockerTransport,
   openServerRuntime,
   readLogFileTail,
+  remoteDockerTransport,
+  type ContainerJobDispatch,
   type DockerAdapter,
+  type DockerRuntimeTransport,
   type LogFollowHandle,
   type ProcessSupervisor,
   type RuntimeLocality,
@@ -52,6 +55,7 @@ import {
 import { loadSkillMetadata, type SkillEntry } from "./skills.js";
 import {
   AdminDialectSchema,
+  deriveNodePresence,
   isLocalNodeId,
   NODE_AUTHORITATIVE_MARKER,
   type AdminDialect,
@@ -736,15 +740,15 @@ export class ServerService {
 
   /** Quadrants already migrated to {@link ServerRuntimeHandle}; the rest stay on the old paths. */
   private usesRuntimeHandle(server: ServerRecord): boolean {
-    const target = this.runtimeTarget(server);
-    return target.mode === "docker" && target.locality === "local";
+    return this.runtimeTarget(server).mode === "docker";
   }
 
-  private localDockerSpec(
+  private async containerSpec(
     server: ServerRecord,
     skillName: string,
     skillMeta: ReturnType<ServerService["readSkillMeta"]>,
-  ): ServerContainerSpec {
+    locality: RuntimeLocality,
+  ): Promise<ServerContainerSpec> {
     const docker = this.dockerSpecFromSkill(skillName, skillMeta);
     if (!docker) {
       throw new Error(
@@ -752,7 +756,11 @@ export class ServerService {
       );
     }
     const gamePort = this.gamePortForSkill(skillName, server.game);
-    const rcon = this.ensureRconConfig(server, skillName);
+    // Remote trees may be node-authoritative, so credentials are discovered on the node.
+    const rcon =
+      locality === "remote"
+        ? await this.resolveRconConfig(server, skillName)
+        : this.ensureRconConfig(server, skillName);
     const rconPort = rcon?.port ?? this.rconPortForSkill(skillName, server.game);
     const env: Record<string, string> = { ...docker.env };
     if (this.wantsMcRcon(skillName)) {
@@ -778,7 +786,11 @@ export class ServerService {
       ports,
       binds: [
         {
-          hostPath: path.join(server.dataPath, "game"),
+          // The node resolves a jail-relative host path under its own data root.
+          hostPath:
+            locality === "remote"
+              ? nodeServerRelPath(server.id, "game")
+              : path.join(server.dataPath, "game"),
           containerPath: docker.dataMount,
         },
       ],
@@ -794,16 +806,37 @@ export class ServerService {
 
   private async openRuntime(server: ServerRecord): Promise<ServerRuntimeHandle> {
     const { mode, locality, skillName, skillMeta } = this.runtimeTarget(server);
-    const local = mode === "docker" && locality === "local";
-    if (local) await this.ensureRuntime();
     return openServerRuntime(
       { serverId: server.id, mode, locality },
       {
         containerName: this.containerName(server.id),
-        docker: local ? localDockerTransport(this.adapterFor(server.id)) : undefined,
-        resolveContainerSpec: async () => this.localDockerSpec(server, skillName, skillMeta),
+        docker: mode === "docker" ? await this.dockerTransport(server, locality) : undefined,
+        resolveContainerSpec: () =>
+          this.containerSpec(server, skillName, skillMeta, locality),
       },
     );
+  }
+
+  private async dockerTransport(
+    server: ServerRecord,
+    locality: RuntimeLocality,
+  ): Promise<DockerRuntimeTransport> {
+    if (locality === "local") {
+      await this.ensureRuntime();
+      return localDockerTransport(this.adapterFor(server.id));
+    }
+    const nodeId = server.nodeId!;
+    const dispatch: ContainerJobDispatch = (kind, args, opts) =>
+      dispatchNodeJob({
+        nodeId,
+        kind,
+        args,
+        timeoutMs: opts?.timeoutMs,
+        localHandler: () => {
+          throw new Error("remote_only");
+        },
+      });
+    return remoteDockerTransport(dispatch, { serverId: server.id });
   }
 
   /** Best-effort kill of native game processes for this server (covers orphans after API restart). */
@@ -841,6 +874,11 @@ export class ServerService {
       address: await this.resolveJoinAddress(server),
       port: this.gamePortForSkill(skillName, server.game),
     };
+  }
+
+  private async nodeIsOnline(nodeId: string | null | undefined): Promise<boolean> {
+    const node = await this.nodeRow(nodeId);
+    return !!node && deriveNodePresence(node.lastSeenAt) === "online";
   }
 
   private async nodeRow(nodeId: string | null | undefined) {
@@ -985,7 +1023,10 @@ export class ServerService {
       return;
     }
 
-    await this.ensureRuntime();
+    // A node we cannot reach cannot answer for its containers: asking only parks
+    // list()/get() behind a job that will time out, and silence is not "stopped".
+    if (this.isRemoteNode(server) && !(await this.nodeIsOnline(server.nodeId))) return;
+
     const missing = async (): Promise<void> => {
       if (server.status === "running" || server.status === "starting") {
         await this.db.update(servers).set({ status: "stopped" }).where(eq(servers.id, server.id));
@@ -1012,6 +1053,7 @@ export class ServerService {
       return;
     }
 
+    await this.ensureRuntime();
     const adapter = this.adapterFor(server.id);
     try {
       const info = await adapter.inspect(this.containerName(server.id));
@@ -1225,13 +1267,8 @@ export class ServerService {
     });
   }
 
-  private async startRemote(
-    server: ServerRecord,
-    skillName: string,
-    skillMeta: ReturnType<ServerService["readSkillMeta"]>,
-  ): Promise<ServerRecord> {
-    const id = server.id;
-    const nodeId = server.nodeId!;
+  /** Get the node's copy of the server tree (and any cloud forwards) ready to run. */
+  private async prepareRemoteStart(server: ServerRecord, skillName: string): Promise<void> {
     await this.provisionRemoteDirs(server);
     // Manage-seeded servers keep game files on the node; don't wipe them with an empty Home tree.
     const nodeAuthoritative = fs.existsSync(
@@ -1239,142 +1276,71 @@ export class ServerService {
     );
     if (!nodeAuthoritative) {
       await pushServerDirToNode({
-        nodeId,
-        serverId: id,
+        nodeId: server.nodeId!,
+        serverId: server.id,
         localDataPath: server.dataPath,
       }).catch(() => undefined);
     }
     await this.ensureCloudGateway(server, skillName);
+  }
 
-    if (this.wantsNativeRuntime(server, skillName, skillMeta.containerSupport)) {
-      const skillEntry = this.resolveSkill(skillName);
-      const native = skillEntry?.metadata.native;
-      const isWin = skillEntry?.metadata.os.includes("windows") && !skillEntry?.metadata.os.includes("linux")
-        ? true
-        : undefined;
-      // Prefer start script on the node; fall back to metadata binary relative to game/.
-      const preferScript = native?.preferStartScript !== false;
-      let command: string;
-      let args: string[];
-      if (preferScript) {
-        command = "/bin/bash";
-        args = ["start.sh"];
-      } else if (native?.binary) {
-        command = native.binaryWindows && isWin ? native.binaryWindows : native.binary;
-        args = [...(native.args ?? [])];
-      } else {
-        command = "/bin/bash";
-        args = ["start.sh"];
-      }
-      const cwd = nodeServerRelPath(id, "game");
-      const procName = `server-${id}`;
-      // Reclaim orphans before start (API/node-agent restarts lose the process id map).
-      await dispatchNodeJob({
-        nodeId,
-        kind: "process_stop",
-        args: {
-          id: this.processes.get(id) ?? "",
-          name: procName,
-          cwd,
-        },
-        timeoutMs: 60_000,
-        localHandler: async () => ({ ok: true }),
-      }).catch(() => undefined);
-      this.processes.delete(id);
-      // Ensure RCON credentials (discover/patch on node when authoritative).
-      await this.resolveRconConfig(server, skillName).catch(() => undefined);
-      const info = await dispatchNodeJob({
-        nodeId,
-        kind: "process_start",
-        args: {
-          name: procName,
-          command,
-          args,
-          cwd,
-          env: { PLAYON_SERVER_ID: id, ...(native?.env ?? {}) },
-          serverId: id,
-          logRel: this.consoleLogRel(id),
-        },
-        timeoutMs: 60_000,
-        localHandler: async () => {
-          throw new Error("remote_only");
-        },
-      });
-      this.processes.set(id, info.id);
-      await this.db.update(servers).set({ status: "running" }).where(eq(servers.id, id));
-      this.emitStatus(id, "running");
-      return (await this.getRaw(id))!;
+  private async startRemoteNative(server: ServerRecord, skillName: string): Promise<ServerRecord> {
+    const id = server.id;
+    const nodeId = server.nodeId!;
+    const skillEntry = this.resolveSkill(skillName);
+    const native = skillEntry?.metadata.native;
+    const isWin = skillEntry?.metadata.os.includes("windows") && !skillEntry?.metadata.os.includes("linux")
+      ? true
+      : undefined;
+    // Prefer start script on the node; fall back to metadata binary relative to game/.
+    const preferScript = native?.preferStartScript !== false;
+    let command: string;
+    let args: string[];
+    if (preferScript) {
+      command = "/bin/bash";
+      args = ["start.sh"];
+    } else if (native?.binary) {
+      command = native.binaryWindows && isWin ? native.binaryWindows : native.binary;
+      args = [...(native.args ?? [])];
+    } else {
+      command = "/bin/bash";
+      args = ["start.sh"];
     }
-
-    const docker = this.dockerSpecFromSkill(skillName, skillMeta);
-    if (!docker) {
-      throw new Error(
-        `no_container_image: skill "${skillName || server.game || "unknown"}" has containerSupport but no dockerImage in metadata.`,
-      );
-    }
-    const gamePort = this.gamePortForSkill(skillName, server.game);
-    const rcon = await this.resolveRconConfig(server, skillName);
-    const rconPort = rcon?.port ?? this.rconPortForSkill(skillName, server.game);
-    const env: Record<string, string> = { ...docker.env };
-    if (this.wantsMcRcon(skillName)) {
-      env.ENABLE_RCON = env.ENABLE_RCON ?? "true";
-      env.RCON_PORT = String(rconPort);
-      env.RCON_PASSWORD = rcon?.password ?? generateRconPassword();
-    }
-    const name = this.containerName(id);
-    const portBindings =
-      docker.ports.length > 0
-        ? docker.ports
-            .filter((p) => p.default)
-            .map((p) => ({
-              host: p.default!,
-              container: p.default!,
-              protocol: p.protocol,
-            }))
-        : [{ host: gamePort, container: gamePort, protocol: "tcp" as const }];
-
-    let containerId = name;
-    try {
-      const info = await dispatchNodeJob({
-        nodeId,
-        kind: "container_inspect",
-        args: { id: name },
-        localHandler: async () => {
-          throw new Error("remote_only");
-        },
-      });
-      containerId = info.id;
-    } catch {
-      const created = await dispatchNodeJob({
-        nodeId,
-        kind: "container_create",
-        args: {
-          name,
-          image: docker.image,
-          env,
-          ports: portBindings,
-          binds: [
-            {
-              hostPath: nodeServerRelPath(id, "game"),
-              containerPath: docker.dataMount,
-            },
-          ],
-        },
-        timeoutMs: 180_000,
-        localHandler: async () => {
-          throw new Error("remote_only");
-        },
-      });
-      containerId = created.id;
-    }
+    const cwd = nodeServerRelPath(id, "game");
+    const procName = `server-${id}`;
+    // Reclaim orphans before start (API/node-agent restarts lose the process id map).
     await dispatchNodeJob({
       nodeId,
-      kind: "container_start",
-      args: { id: containerId, serverId: id },
+      kind: "process_stop",
+      args: {
+        id: this.processes.get(id) ?? "",
+        name: procName,
+        cwd,
+      },
+      timeoutMs: 60_000,
+      localHandler: async () => ({ ok: true }),
+    }).catch(() => undefined);
+    this.processes.delete(id);
+    // Ensure RCON credentials (discover/patch on node when authoritative).
+    await this.resolveRconConfig(server, skillName).catch(() => undefined);
+    const info = await dispatchNodeJob({
+      nodeId,
+      kind: "process_start",
+      args: {
+        name: procName,
+        command,
+        args,
+        cwd,
+        env: { PLAYON_SERVER_ID: id, ...(native?.env ?? {}) },
+        serverId: id,
+        logRel: this.consoleLogRel(id),
+      },
+      timeoutMs: 60_000,
       localHandler: async () => {
         throw new Error("remote_only");
       },
     });
+    this.processes.set(id, info.id);
     await this.db.update(servers).set({ status: "running" }).where(eq(servers.id, id));
     this.emitStatus(id, "running");
     return (await this.getRaw(id))!;
@@ -1389,13 +1355,17 @@ export class ServerService {
     await this.db.update(servers).set({ status: "starting" }).where(eq(servers.id, id));
     this.emitStatus(id, "starting");
 
-    try {
-      if (this.isRemoteNode(server)) {
-        return await this.startRemote(server, skillName, skillMeta);
-      }
+    const remote = this.isRemoteNode(server);
+    const native = this.wantsNativeRuntime(server, skillName, skillMeta.containerSupport);
 
-      await this.ensureRuntime();
-      if (this.wantsNativeRuntime(server, skillName, skillMeta.containerSupport)) {
+    try {
+      if (remote) {
+        await this.prepareRemoteStart(server, skillName);
+        if (native) {
+          return await this.startRemoteNative(server, skillName);
+        }
+      } else if (native) {
+        await this.ensureRuntime();
         if (!this.sharedProcess) throw new Error("runtime_not_ready");
         const processSupervisor = this.sharedProcess;
         const existing = this.processes.get(id);
@@ -1440,7 +1410,8 @@ export class ServerService {
 
       await this.db.update(servers).set({ status: "running" }).where(eq(servers.id, id));
       this.emitStatus(id, "running");
-      await this.beginLogFollow(id, containerId);
+      // Remote containers are followed by the node-agent, which streams lines back itself.
+      if (!remote) await this.beginLogFollow(id, containerId);
       return (await this.getRaw(id))!;
     } catch (err) {
       await this.db.update(servers).set({ status: "error" }).where(eq(servers.id, id));
@@ -1464,27 +1435,35 @@ export class ServerService {
     await this.gateway?.releaseServer(id).catch(() => undefined);
 
     if (this.isRemoteNode(server) && server.nodeId) {
-      const processId = this.processes.get(id);
-      // Always pass cwd/name so the node can kill orphans even when the tracked id
-      // was lost (node-agent restart / API restart).
-      await dispatchNodeJob({
-        nodeId: server.nodeId,
-        kind: "process_stop",
-        args: {
-          id: processId ?? "",
-          name: `server-${id}`,
-          cwd: nodeServerRelPath(id, "game"),
-          serverId: id,
-        },
-        localHandler: async () => ({ ok: true }),
-      }).catch(() => undefined);
-      this.processes.delete(id);
-      await dispatchNodeJob({
-        nodeId: server.nodeId,
-        kind: "container_stop",
-        args: { id: this.containerName(id), serverId: id },
-        localHandler: async () => ({ ok: true }),
-      }).catch(() => undefined);
+      if (this.usesRuntimeHandle(server)) {
+        await this.openRuntime(server)
+          .then((handle) => handle.stop())
+          .catch(() => undefined);
+      } else {
+        const processId = this.processes.get(id);
+        // Always pass cwd/name so the node can kill orphans even when the tracked id
+        // was lost (node-agent restart / API restart).
+        await dispatchNodeJob({
+          nodeId: server.nodeId,
+          kind: "process_stop",
+          args: {
+            id: processId ?? "",
+            name: `server-${id}`,
+            cwd: nodeServerRelPath(id, "game"),
+            serverId: id,
+          },
+          localHandler: async () => ({ ok: true }),
+        }).catch(() => undefined);
+        this.processes.delete(id);
+        // Dual-fire until the remote native quadrant moves to the handle: a server
+        // that last ran as a container must still stop.
+        await dispatchNodeJob({
+          nodeId: server.nodeId,
+          kind: "container_stop",
+          args: { id: this.containerName(id), serverId: id },
+          localHandler: async () => ({ ok: true }),
+        }).catch(() => undefined);
+      }
     } else {
       await this.ensureRuntime();
       const processId = this.processes.get(id);
