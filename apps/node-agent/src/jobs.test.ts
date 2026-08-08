@@ -176,6 +176,46 @@ describe("executeJob", () => {
     }
   });
 
+  /**
+   * Docker may or may not exist on the machine running this suite, so assert the
+   * shape of the contract rather than the outcome: args are validated before the
+   * runtime is consulted, and well-formed args always get past that gate.
+   */
+  it("validates container args before touching the runtime", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-ctr-"));
+    const run = (kind: NodeJobKind, args: Record<string, unknown>) =>
+      executeJob({ id: `ctr-${kind}`, nodeId: "n1", kind, args }, root);
+    try {
+      await expect(run("container_inspect", {})).rejects.toMatchObject({
+        code: "validation_failed",
+        kind: "container_inspect",
+      });
+      await expect(run("container_stdin", { id: "playon-a" })).rejects.toMatchObject({
+        code: "validation_failed",
+        kind: "container_stdin",
+      });
+      await expect(run("container_logs", { id: "playon-a", follow: true })).rejects.toMatchObject({
+        code: "validation_failed",
+        kind: "container_logs",
+      });
+      await expect(
+        run("container_create", {
+          name: "playon-a",
+          image: "busybox",
+          binds: [{ hostPath: "../../etc", containerPath: "/data" }],
+        }),
+      ).rejects.toMatchObject({ code: "validation_failed", kind: "container_create" });
+
+      // Whether this then fails on `docker_unavailable` or "no such container" is
+      // a host concern; what matters is that it is no longer a contract failure.
+      await expect(
+        run("container_inspect", { id: "playon-no-such-container-ctr-test" }),
+      ).rejects.not.toMatchObject({ code: "validation_failed" });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("reports runtime caps", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-"));
     const caps = (await executeJob(

@@ -92,7 +92,7 @@ describe("dispatchNodeJob", () => {
   it("keeps the untyped shim for unmigrated kinds", async () => {
     const pending = dispatchNodeJob<{ running: boolean }>({
       nodeId: "spare-4",
-      kind: "container_inspect",
+      kind: "process_status",
       args: { id: "abc" },
       timeoutMs: 2_000,
       localHandler: () => {
@@ -196,6 +196,93 @@ describe("dispatchNodeJob — fs family", () => {
         localHandler: () => ({ path: "servers/a/x.ini", bytes: 3 }),
       }),
     ).resolves.toEqual({ path: "servers/a/x.ini", bytes: 3 });
+  });
+});
+
+describe("dispatchNodeJob — container family", () => {
+  it("fills create defaults before enqueue and infers the info result", async () => {
+    const pending = dispatchNodeJob({
+      nodeId: "ctr-1",
+      kind: "container_create",
+      args: {
+        name: "playon-abc",
+        image: "itzg/minecraft-server:latest",
+        ports: [{ host: 25565, container: 25565, protocol: "tcp" }],
+        binds: [{ hostPath: "servers/abc/game", containerPath: "/data" }],
+      },
+      timeoutMs: 2_000,
+      localHandler: () => {
+        throw new Error("remote_only");
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const job = nodeJobService.claimNext("ctr-1");
+    expect(job?.args).toEqual({
+      name: "playon-abc",
+      image: "itzg/minecraft-server:latest",
+      env: {},
+      ports: [{ host: 25565, container: 25565, protocol: "tcp" }],
+      binds: [{ hostPath: "servers/abc/game", containerPath: "/data" }],
+    });
+    nodeJobService.complete(job!.id, { id: "9f2c1b", name: "playon-abc", status: "created" });
+    const result = await pending;
+    expect(result.id).toBe("9f2c1b");
+    expect(result.status).toBe("created");
+  });
+
+  it("rejects a container result that breaks the contract", async () => {
+    const pending = dispatchNodeJob({
+      nodeId: "ctr-2",
+      kind: "container_inspect",
+      args: { id: "playon-abc" },
+      timeoutMs: 2_000,
+      localHandler: () => {
+        throw new Error("remote_only");
+      },
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    const job = nodeJobService.claimNext("ctr-2");
+    nodeJobService.complete(job!.id, { id: "9f2c1b", name: "playon-abc", status: "paused" });
+    await expect(pending).rejects.toMatchObject({
+      code: "validation_failed",
+      kind: "container_inspect",
+    });
+  });
+
+  it("refuses a bind escape before enqueueing", async () => {
+    await expect(
+      dispatchNodeJob({
+        nodeId: "ctr-3",
+        kind: "container_create",
+        args: {
+          name: "playon-abc",
+          image: "busybox",
+          binds: [{ hostPath: "servers/../../etc", containerPath: "/data" }],
+        },
+        localHandler: () => ({ id: "x", name: "playon-abc", status: "created" as const }),
+      }),
+    ).rejects.toMatchObject({ code: "validation_failed", kind: "container_create" });
+    expect(nodeJobService.claimNext("ctr-3")).toBeNull();
+  });
+
+  it("validates container results produced locally too", async () => {
+    await expect(
+      dispatchNodeJob({
+        nodeId: LOCAL_NODE_ID,
+        kind: "container_stdin",
+        args: { id: "playon-abc", line: "say hi" },
+        localHandler: () => ({ ok: true }),
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    await expect(
+      dispatchNodeJob({
+        nodeId: LOCAL_NODE_ID,
+        kind: "container_stdin",
+        args: { id: "playon-abc", line: "say hi" },
+        localHandler: () => ({ wrote: true }) as never,
+      }),
+    ).rejects.toMatchObject({ code: "validation_failed", kind: "container_stdin" });
   });
 });
 
