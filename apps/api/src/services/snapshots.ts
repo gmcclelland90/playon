@@ -3,9 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
+import { isLocalNodeId, NODE_AUTHORITATIVE_MARKER } from "@playon/shared";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db/client.js";
 import { snapshots } from "../db/schema.js";
+import { pullServerDirFromNode, pushServerDirToNode } from "./node-sync.js";
 import type { ServerRecord } from "./servers.js";
 import { ServerService } from "./servers.js";
 
@@ -67,9 +69,41 @@ export class SnapshotService {
     return rows[0] ? toRecord(rows[0]) : null;
   }
 
+  private isRemoteServer(server: ServerRecord): boolean {
+    return Boolean(server.nodeId && !isLocalNodeId(server.nodeId));
+  }
+
+  private isNodeAuthoritative(server: ServerRecord): boolean {
+    return (
+      this.isRemoteServer(server) &&
+      fs.existsSync(path.join(server.dataPath, NODE_AUTHORITATIVE_MARKER))
+    );
+  }
+
+  /** Pull node-authoritative trees so Home cp snapshots real game files. */
+  private async syncHomeFromNodeIfNeeded(server: ServerRecord): Promise<void> {
+    if (!this.isNodeAuthoritative(server) || !server.nodeId) return;
+    await pullServerDirFromNode({
+      nodeId: server.nodeId,
+      serverId: server.id,
+      localDataPath: server.dataPath,
+    });
+  }
+
+  /** Push restored Home tree back to a remote node. */
+  private async syncNodeFromHomeIfNeeded(server: ServerRecord): Promise<void> {
+    if (!this.isRemoteServer(server) || !server.nodeId) return;
+    await pushServerDirToNode({
+      nodeId: server.nodeId,
+      serverId: server.id,
+      localDataPath: server.dataPath,
+    });
+  }
+
   async create(serverId: string, label: string): Promise<SnapshotRecord> {
     const server = await this.servers.get(serverId);
     if (!server) throw new Error(`unknown_server: ${serverId}`);
+    await this.syncHomeFromNodeIfNeeded(server);
     if (!fs.existsSync(server.dataPath)) {
       throw new Error(`server_data_missing: ${server.dataPath}`);
     }
@@ -134,6 +168,8 @@ export class SnapshotService {
     } finally {
       fs.rmSync(tempBackup, { recursive: true, force: true });
     }
+
+    await this.syncNodeFromHomeIfNeeded(server);
 
     return (await this.servers.get(server.id))!;
   }

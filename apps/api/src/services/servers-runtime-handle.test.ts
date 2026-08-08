@@ -65,6 +65,10 @@ const fake = vi.hoisted(() => {
         calls.push(`logs:${id}:${tail ?? "all"}`);
         return ["fake-log"];
       },
+      async followLogs(id: string, _onLine: (line: string) => void) {
+        calls.push(`follow:${id}`);
+        return { abort: () => calls.push(`follow-abort:${id}`) };
+      },
       async writeStdin(id: string, data: string) {
         calls.push(`stdin:${id}:${data}`);
       },
@@ -548,14 +552,14 @@ describe("local native lifecycle through ServerRuntimeHandle", () => {
     expect(host.running).toBeNull();
   });
 
-  it("stop still fires the container path, so a mode flip cannot orphan a container", async () => {
+  it("stop is mode-correct on Home native: no docker dual-fire after handle.stop", async () => {
     const { servers, id } = await nativeServer();
     await servers.start(id);
     fake.calls.length = 0;
 
     await servers.stop(id);
 
-    expect(fake.calls).toEqual([`stop:playon-${id}`]);
+    expect(fake.calls).toEqual([]);
   });
 
   it("restart cycles the same identity", async () => {
@@ -838,6 +842,18 @@ describe("logs through ServerRuntimeHandle", () => {
 
     expect(tail).toEqual({ status: "running", runtime: "docker", lines: ["fake-log"] });
     expect(fake.calls).toContain(`logs:cid-playon-${server.id}:25`);
+  });
+
+  it("local docker: start follows logs through the handle, stop aborts", async () => {
+    const { servers } = tempEnv();
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
+    fake.calls.length = 0;
+
+    await servers.start(server.id);
+    expect(fake.calls).toContain(`follow:cid-playon-${server.id}`);
+
+    await servers.stop(server.id);
+    expect(fake.calls).toContain(`follow-abort:cid-playon-${server.id}`);
   });
 
   it("remote docker: tails the node's container, never Home's docker", async () => {
