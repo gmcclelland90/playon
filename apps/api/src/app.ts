@@ -12,6 +12,7 @@ import { ChatAbortedError } from "@playon/agent-core";
 import {
   BootstrapOwnerSchema,
   CreateWatcherSchema,
+  HttpError,
   LLM_PRESET_IDS,
   LOCAL_NODE_ID,
   LoginSchema,
@@ -36,6 +37,8 @@ import {
 } from "./config.js";
 import type { Db } from "./db/client.js";
 import { conversations, messages, nodes, toolInvocations, users } from "./db/schema.js";
+import { httpErrorHandler } from "./http-errors.js";
+import { requireRole, requireSession, serviceHttpError } from "./http-policy.js";
 import { redactJson, redactString } from "./services/redaction.js";
 import { mountStaticWeb } from "./static-web.js";
 
@@ -262,6 +265,9 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       advertiseHost: config.advertiseHost,
       port: config.port,
     });
+
+  app.onError(httpErrorHandler);
+
   app.use(
     "*",
     cors({
@@ -427,7 +433,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
 
   app.post("/api/setup/owner", async (c) => {
     const [{ value }] = await db.select({ value: count() }).from(users);
-    if (value > 0) return c.json({ error: "already_setup" }, 409);
+    if (value > 0) throw HttpError.conflict("already_setup", { code: "already_setup" });
 
     const body = BootstrapOwnerSchema.parse(await c.req.json());
     const id = nanoid();
@@ -463,7 +469,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     const rows = await db.select().from(users).where(eq(users.username, body.username)).limit(1);
     const user = rows[0];
     if (!user || !verifyPassword(body.password, user.passwordHash)) {
-      return c.json({ error: "invalid_credentials" }, 401);
+      throw HttpError.unauthorized("invalid_credentials", { code: "invalid_credentials" });
     }
     const sessionId = await createSession(db, user.id);
     setCookie(c, SESSION_COOKIE, sessionId, {
@@ -487,11 +493,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     return c.json({ ok: true });
   });
 
-  app.get("/api/auth/me", async (c) => {
-    const user = c.get("user");
-    if (!user) return c.json({ error: "unauthorized" }, 401);
-    return c.json({ user });
-  });
+  app.get("/api/auth/me", async (c) => c.json({ user: requireSession(c) }));
 
   app.get("/api/settings/llm", async (c) => {
     const user = c.get("user");
@@ -1125,10 +1127,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.get("/api/servers", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     const list = await serverService.list();
     return c.json({
       servers: list,
@@ -1138,12 +1137,9 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.get("/api/servers/:id", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     const detail = await serverService.detail(c.req.param("id"));
-    if (!detail) return c.json({ error: "not_found" }, 404);
+    if (!detail) throw HttpError.notFound("not_found", { code: "server_not_found" });
     return c.json(detail);
   });
 
@@ -1534,17 +1530,13 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/servers/:id/stop", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     try {
       const server = await serverService.stop(c.req.param("id"));
       await playerPanel.publishForStatus(server.id, "stopped");
       return c.json({ server });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "stop_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, { fallback: "stop_failed", code: "server_stop_failed" });
     }
   });
 

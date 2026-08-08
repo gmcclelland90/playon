@@ -1,5 +1,13 @@
+import { apiErrorFromResponse } from "@playon/shared";
 import type { LlmPresetId, PublicUser, SetupStatus } from "@playon/shared";
 
+export { ApiRequestError, isApiRequestError } from "@playon/shared";
+
+/**
+ * Single choke point for control-plane calls: failures arrive as the shared
+ * `{ error, code?, details? }` envelope and leave as an `ApiRequestError` whose
+ * `message` is still the server text pages already render.
+ */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
@@ -10,9 +18,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    const detail = body.error?.trim();
-    throw new Error(detail || `request_failed_${res.status}`);
+    const body = await res.json().catch(() => undefined);
+    throw apiErrorFromResponse(res.status, body);
   }
   return res.json() as Promise<T>;
 }
