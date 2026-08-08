@@ -13,11 +13,14 @@ import {
   BootstrapOwnerSchema,
   CreateWatcherSchema,
   HttpError,
+  ImportLocalServerRequestSchema,
+  ImportSftpServerRequestSchema,
   LLM_PRESET_IDS,
   LOCAL_NODE_ID,
   LoginSchema,
   NodeHeartbeatSchema,
   NodeJobKindSchema,
+  RelocateServerRequestSchema,
   RoleSchema,
   UpdateWatcherSchema,
   can,
@@ -38,7 +41,13 @@ import {
 import type { Db } from "./db/client.js";
 import { conversations, messages, nodes, toolInvocations, users } from "./db/schema.js";
 import { httpErrorHandler } from "./http-errors.js";
-import { requireRole, requireSession, serviceHttpError } from "./http-policy.js";
+import {
+  jsonBody,
+  requireCan,
+  requireRole,
+  requireSession,
+  serviceHttpError,
+} from "./http-policy.js";
 import { redactJson, redactString } from "./services/redaction.js";
 import { mountStaticWeb } from "./static-web.js";
 
@@ -1332,15 +1341,14 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/servers/:id/console", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
+    // Deliberately lenient: a missing/non-string command becomes the
+    // `empty_command` business result rather than a transport-level 400.
     const body = (await c.req.json().catch(() => null)) as { command?: unknown } | null;
     const command = typeof body?.command === "string" ? body.command : "";
     const result = await execConsoleCommand(serverService, c.req.param("id"), command);
     if (result.error === "unknown_server") {
-      return c.json({ error: "not_found" }, 404);
+      throw HttpError.notFound("not_found", { code: "server_not_found" });
     }
     // Business failures stay 200 so the UI can render dialect/body/hint without a throw.
     return c.json(result);
@@ -1413,11 +1421,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.post("/api/servers", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
-    const body = CreateServerSchema.parse(await c.req.json());
+    requireRole(c, "operator");
+    const body = await jsonBody(c, CreateServerSchema);
     try {
       const server = await serverService.createFromSkill({
         skillName: body.skillName!,
@@ -1427,26 +1432,14 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       await playerPanel.publishForStatus(server.id, "stopped");
       return c.json({ server });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "create_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, { fallback: "create_failed", code: "server_create_failed" });
     }
   });
 
   app.post("/api/servers/import", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
+    const body = await jsonBody(c, ImportLocalServerRequestSchema);
     try {
-      const body = z
-        .object({
-          sourcePath: z.string().min(1),
-          serverName: z.string().min(1).optional(),
-          skillName: z.string().min(1).optional(),
-          game: z.string().min(1).optional(),
-          nodeId: z.string().min(1).optional(),
-        })
-        .parse(await c.req.json());
       const report = await importLocal.importFromPath(body);
       await playerPanel.publishForStatus(report.server.id, "stopped");
       return c.json({
@@ -1462,31 +1455,14 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         },
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "import_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, { fallback: "import_failed", code: "server_import_failed" });
     }
   });
 
   app.post("/api/servers/import/sftp", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
+    const body = await jsonBody(c, ImportSftpServerRequestSchema);
     try {
-      const body = z
-        .object({
-          host: z.string().min(1),
-          port: z.number().int().positive().optional(),
-          username: z.string().min(1),
-          password: z.string().min(1).optional(),
-          privateKey: z.string().min(1).optional(),
-          remotePath: z.string().min(1),
-          serverName: z.string().min(1).optional(),
-          skillName: z.string().min(1).optional(),
-          game: z.string().min(1).optional(),
-          nodeId: z.string().min(1).optional(),
-        })
-        .parse(await c.req.json());
       const report = await importSftp.importFromSftp(body);
       await playerPanel.publishForStatus(report.server.id, "stopped");
       return c.json({
@@ -1504,28 +1480,34 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         },
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "sftp_import_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, {
+        fallback: "sftp_import_failed",
+        code: "server_sftp_import_failed",
+      });
     }
   });
 
+  /**
+   * Shared tail of start/restart: publish the running panel with whatever the
+   * live query could reach, then answer with the server plus its runtime view.
+   */
+  const runningServerResponse = async <T extends { id: string }>(server: T) => {
+    const live = await safeQueryLive(
+      (id) => queryService.queryServerWithRetry(id, { attempts: 5, delayMs: 1200 }),
+      server.id,
+    );
+    await playerPanel.publishForStatus(server.id, "running", live);
+    const detail = await serverService.detail(server.id);
+    return { server, runtime: detail?.runtime };
+  };
+
   app.post("/api/servers/:id/start", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     try {
       const server = await serverService.start(c.req.param("id"));
-      const live = await safeQueryLive(
-        (id) => queryService.queryServerWithRetry(id, { attempts: 5, delayMs: 1200 }),
-        server.id,
-      );
-      await playerPanel.publishForStatus(server.id, "running", live);
-      const detail = await serverService.detail(server.id);
-      return c.json({ server, runtime: detail?.runtime });
+      return c.json(await runningServerResponse(server));
     } catch (err) {
-      const message = err instanceof Error ? err.message : "start_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, { fallback: "start_failed", code: "server_start_failed" });
     }
   });
 
@@ -1541,50 +1523,34 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   });
 
   app.delete("/api/servers/:id", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
     try {
       const removed = await serverService.remove(c.req.param("id"));
       await panelService.clearForServer(removed.id);
       return c.json({ ok: true, removed });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "delete_failed";
-      const status = message.startsWith("unknown_server") ? 404 : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "delete_failed",
+        code: "server_delete_failed",
+        notFoundPrefixes: ["unknown_server"],
+      });
     }
   });
 
   app.post("/api/servers/:id/restart", async (c) => {
-    const user = c.get("user");
-    if (!user || !roleAtLeast(user.role, "operator")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireRole(c, "operator");
     try {
       const server = await serverService.restart(c.req.param("id"));
-      const live = await safeQueryLive(
-        (id) => queryService.queryServerWithRetry(id, { attempts: 5, delayMs: 1200 }),
-        server.id,
-      );
-      await playerPanel.publishForStatus(server.id, "running", live);
-      const detail = await serverService.detail(server.id);
-      return c.json({ server, runtime: detail?.runtime });
+      return c.json(await runningServerResponse(server));
     } catch (err) {
-      const message = err instanceof Error ? err.message : "restart_failed";
-      return c.json({ error: message }, 400);
+      throw serviceHttpError(err, { fallback: "restart_failed", code: "server_restart_failed" });
     }
   });
 
   app.post("/api/servers/:id/relocate", async (c) => {
-    const user = c.get("user");
-    if (!user || !can(user.role, "servers.manage")) {
-      return c.json({ error: "forbidden" }, 403);
-    }
+    requireCan(c, "servers.manage");
+    const body = await jsonBody(c, RelocateServerRequestSchema);
     try {
-      const body = z
-        .object({ targetNodeId: z.string().min(1) })
-        .parse(await c.req.json());
       const result = await migrateService.relocate(c.req.param("id"), body.targetNodeId);
       await playerPanel.publishForStatus(
         result.server.id,
@@ -1592,12 +1558,11 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       );
       return c.json({ relocate: result });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "relocate_failed";
-      const status =
-        message.startsWith("unknown_server") || message.startsWith("unknown_node")
-          ? 404
-          : 400;
-      return c.json({ error: message }, status);
+      throw serviceHttpError(err, {
+        fallback: "relocate_failed",
+        code: "server_relocate_failed",
+        notFoundPrefixes: ["unknown_server", "unknown_node"],
+      });
     }
   });
 
