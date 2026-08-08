@@ -25,6 +25,9 @@ const MIGRATED_TOOLS = [
   "node_fs_list",
   "net_port_check",
   "net_suggest_bind",
+  "placement_suggest",
+  "nodes_add",
+  "nodes_remove",
   "servers_create_from_skill",
   "servers_start",
   "servers_stop",
@@ -203,6 +206,11 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(surface.xp("backup_offnode")).toEqual({ xp: 20, reason: "durable_backup" });
     expect(surface.skill("snapshot_list")).toBe("backup");
     expect(surface.activityVerb("backup_offnode_list")).toBe("snapshot");
+    expect(surface.activityVerb("placement_suggest")).toBe("search");
+    expect(surface.confirmAction("nodes_add")).toBe("enroll a new compute node over SSH");
+    expect(surface.confirmAction("nodes_remove")).toBe(
+      "remove a compute node from this deployment",
+    );
   });
 
   it("declares server scope for lifecycle tools that act on one server", () => {
@@ -217,6 +225,12 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(byName.get("servers_list")?.workspacePolicy).toBe("none");
     expect(byName.get("servers_query_test")?.workspacePolicy).toBe("none");
     expect(byName.get("skill_list")?.workspacePolicy).toBe("none");
+    // Node-pool tools are keyed by nodeId or skill name; the workspace binding never applies.
+    for (const name of ["placement_suggest", "nodes_add", "nodes_remove"]) {
+      expect(byName.get(name)?.workspacePolicy, `${name} should not be server-scoped`).toBe(
+        "none",
+      );
+    }
     // Panel tools narrow to the bound server but still answer in an unbound chat.
     expect(byName.get("panel_publish")?.workspacePolicy).toBe("server_optional");
     expect(byName.get("panel_list")?.workspacePolicy).toBe("server_optional");
