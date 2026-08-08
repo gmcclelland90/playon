@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { confirmActionLabel, confirmSummary } from "./confirm-summary.js";
 
 describe("confirmSummary", () => {
-  it("uses friendly copy for known tools", () => {
-    expect(confirmSummary("servers_stop", { serverId: "s1" })).toBe(
-      "An agent wants to stop this server.",
+  it("uses friendly copy for tools still in the overlay table", () => {
+    expect(confirmSummary("snapshot_restore", { snapshotId: "s1" })).toBe(
+      "An agent wants to restore this server from a snapshot.",
     );
-    expect(confirmSummary("servers_delete", {})).toBe(
-      "An agent wants to permanently delete this server.",
+    expect(confirmSummary("skill_import", { zipPath: "data/imports/paper.skill.zip" })).toBe(
+      "An agent wants to import a skill package: data/imports/paper.skill.zip",
     );
   });
 
@@ -26,6 +26,16 @@ describe("confirmSummary", () => {
         { action: "delete a server file or folder" },
       ),
     ).toBe("An agent wants to delete a server file or folder: plugins/Old");
+    expect(
+      confirmSummary("servers_stop", { serverId: "s1" }, { action: "stop this server" }),
+    ).toBe("An agent wants to stop this server.");
+    expect(
+      confirmSummary(
+        "servers_relocate",
+        { serverId: "s1", targetNodeId: "node-2" },
+        { action: "move this server to another machine" },
+      ),
+    ).toBe("An agent wants to move this server to another machine: to node-2");
   });
 
   it("includes useful detail without dumping JSON", () => {
@@ -50,6 +60,9 @@ describe("confirmSummary", () => {
 
 describe("confirmActionLabel", () => {
   it("returns the action phrase", () => {
-    expect(confirmActionLabel("servers_restart")).toBe("restart this server");
+    expect(confirmActionLabel("snapshot_restore")).toBe("restore this server from a snapshot");
+    expect(confirmActionLabel("servers_restart", "restart this server")).toBe(
+      "restart this server",
+    );
   });
 });
