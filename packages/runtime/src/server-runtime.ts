@@ -397,6 +397,8 @@ export function remoteNativeTransport(
       return info.status === "stopped" ? null : info;
     },
     async start(spec) {
+      // Omit keepStdin when false/undefined — older node-agents use .strict()
+      // ProcessStartArgsSchema without this key and reject Unrecognized key(s).
       return dispatch(
         "process_start",
         {
@@ -407,7 +409,7 @@ export function remoteNativeTransport(
           env: spec.env ?? {},
           serverId,
           logRel: spec.logFile,
-          keepStdin: spec.keepStdin,
+          ...(spec.keepStdin ? { keepStdin: true } : {}),
         },
         { timeoutMs: opts.startTimeoutMs ?? REMOTE_PROCESS_START_TIMEOUT_MS },
       );

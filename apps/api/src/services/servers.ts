@@ -905,8 +905,11 @@ export class ServerService {
             )?.relPath
           : undefined;
       if (overlayBat) {
+        // Bare "cmd.exe" fails with spawn ENOENT when the Windows node-agent
+        // process has a stripped PATH (lab playon-win-1). Use the absolute
+        // System32 path; cwd is still the game jail so `start.bat` resolves.
         return {
-          command: "cmd.exe",
+          command: "C:\\Windows\\System32\\cmd.exe",
           args: ["/c", overlayBat],
           env: { PLAYON_SERVER_ID: server.id, ...(native?.env ?? {}) },
           logFile: this.consoleLogRel(server.id),

@@ -54,6 +54,12 @@ sudo apt-get install -y libx11-6 libxcursor1 libxinerama1 libxi6 libxrandr2 libx
 sudo apt-get install -y libgdiplus
 ```
 
+- Source/TF2 (`games.tf2` and similar) need i386 GnuTLS curl for `replay_srv.so`:
+
+```bash
+sudo apt-get install -y libcurl3t64-gnutls:i386
+```
+
 ## Sync from a Windows workstation
 
 Canonical path (CI/CD-aligned):

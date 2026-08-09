@@ -814,14 +814,19 @@ function fakeProcessNode(opts?: { running?: ProcessInfo; unreachable?: boolean }
   return { jobs, state, dispatch: run as unknown as ProcessJobDispatch };
 }
 
-function openRemoteNative(node: ReturnType<typeof fakeProcessNode>, serverId = "srv1") {
+function openRemoteNative(
+  node: ReturnType<typeof fakeProcessNode>,
+  opts?: { serverId?: string; processSpec?: ServerProcessSpec },
+) {
+  const serverId = opts?.serverId ?? "srv1";
+  const processSpec = opts?.processSpec ?? REMOTE_PROCESS_SPEC;
   return openServerRuntime(
     { serverId, mode: "native", locality: "remote" },
     {
       containerName: `playon-${serverId}`,
       processIdentity: REMOTE_IDENTITY,
       native: remoteNativeTransport(node.dispatch, { serverId }),
-      resolveProcessSpec: async () => REMOTE_PROCESS_SPEC,
+      resolveProcessSpec: async () => processSpec,
     },
   );
 }
@@ -844,6 +849,16 @@ describe("remote native ServerRuntimeHandle", () => {
       env: { PLAYON_SERVER_ID: "srv1" },
       serverId: "srv1",
       logRel: "servers/srv1/logs/console.log",
+    });
+  });
+
+  it("sends keepStdin only when true (older agents reject the unrecognized key)", async () => {
+    const node = fakeProcessNode();
+    await openRemoteNative(node, {
+      processSpec: { ...REMOTE_PROCESS_SPEC, keepStdin: true },
+    }).start();
+    expect(node.jobs.find((j) => j.kind === "process_start")!.args).toMatchObject({
+      keepStdin: true,
     });
   });
 
