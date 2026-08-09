@@ -24,6 +24,7 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+.impeccable/
 
 # Test artifacts
 playwright-report/

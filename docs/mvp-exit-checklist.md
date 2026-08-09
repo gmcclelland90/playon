@@ -38,5 +38,5 @@ PlayOn MVP is ready for a LAN demo when all items below are green.
 
 ## Polish (human gate)
 
-- [x] Impeccable audit/polish on admin + player UI to an excellent score
+- [x] Design audit/polish on admin + player UI to an excellent score
 - [x] Host confirms visual brand / first-viewport quality
