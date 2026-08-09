@@ -178,9 +178,9 @@ function buildBody() {
           )
           .join("\n");
 
-  return [
+  const lines = [
     "<!-- playon-lab-status -->",
-    `# Lab live status`,
+    "# Lab live status",
     "",
     `Host: **${host}** · Updated: \`${now}\``,
     "",
@@ -189,16 +189,21 @@ function buildBody() {
     "## Merge bar (`loop:verify`)",
     "",
     verifyLine,
-    verify?.nextAction ? "",
-    verify?.nextAction ? `Next: ${verify.nextAction}` : null,
-    "",
-    "## Catalog matrix",
-    "",
-    matrixLine,
-    m.nextAction ? "",
-    m.nextAction ? `Next: ${m.nextAction}` : null,
-    m.startedAt ? "",
-    m.startedAt ? `Started \`${m.startedAt}\`${m.finishedAt ? ` · Finished \`${m.finishedAt}\`` : " · _running_"}` : null,
+  ];
+  if (verify?.nextAction) {
+    lines.push("", `Next: ${verify.nextAction}`);
+  }
+  lines.push("", "## Catalog matrix", "", matrixLine);
+  if (m.nextAction) {
+    lines.push("", `Next: ${m.nextAction}`);
+  }
+  if (m.startedAt) {
+    lines.push(
+      "",
+      `Started \`${m.startedAt}\`${m.finishedAt ? ` · Finished \`${m.finishedAt}\`` : " · _running_"}`,
+    );
+  }
+  lines.push(
     "",
     "### Recent skills (latest 25)",
     "",
@@ -210,9 +215,8 @@ function buildBody() {
     "",
     "---",
     "_Updated by `scripts/lab-publish-status.mjs`. Local HTTP dash on :8791 is optional._",
-  ]
-    .filter((x) => x !== null)
-    .join("\n");
+  );
+  return lines.join("\n");
 }
 
 function findStatusIssue() {
