@@ -2,6 +2,16 @@
 
 All notable changes to PlayOn Home (root `package.json` version) are listed here.
 
+## [0.2.1] — 2026-08-09
+
+### Fixed
+
+- **Remote node heartbeats after `:80` bind** — when Home prefers LAN `:80` (`playon.local`), also keep LAN `:8787` so existing node-agents with `PLAYON_API_URL=http://home:8787` stay online. 0.2.0 had left `:8787` on loopback only.
+
+### Notes
+
+- Update Home via OTA. Remote agents do not need a URL change for this fix; updating the agent stamp is optional.
+
 ## [0.2.0] — 2026-08-09
 
 ### Added

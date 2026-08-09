@@ -159,12 +159,35 @@ export async function listenPlayOnHttp(opts: {
     }
   }
 
+  // When LAN won privileged :80, also bind fallback :8787 on the LAN so existing
+  // remote node-agents (PLAYON_API_URL=http://home:8787) keep heartbeating.
+  if (
+    privilegedLan &&
+    opts.fallbackPort !== lanPort &&
+    (opts.lanHost === "0.0.0.0" || opts.lanHost === "::")
+  ) {
+    try {
+      const legacy = await listenHttp(listener, opts.lanHost, opts.fallbackPort);
+      endpoints.push({
+        kind: "http",
+        host: opts.lanHost,
+        port: boundPort(legacy) || opts.fallbackPort,
+        server: legacy,
+      });
+    } catch {
+      // Non-fatal — panel :80 still serves; agents may need URL update.
+    }
+  }
+
   // Separate loopback when LAN is not already covering 127.0.0.1:loopbackPort
   const lanCoversLoopback =
     (opts.lanHost === "0.0.0.0" || opts.lanHost === "127.0.0.1" || opts.lanHost === "::") &&
     lanPort === loopbackPort;
+  const lanAlreadyHasFallback =
+    privilegedLan &&
+    endpoints.some((e) => e.port === loopbackPort && (e.host === "0.0.0.0" || e.host === "::"));
 
-  if (!lanCoversLoopback) {
+  if (!lanCoversLoopback && !lanAlreadyHasFallback) {
     try {
       const loopServer = await listenHttp(listener, "127.0.0.1", loopbackPort);
       endpoints.push({
