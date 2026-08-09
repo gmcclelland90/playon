@@ -3,8 +3,45 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { can, type PublicUser } from "@playon/shared";
 import { api } from "../api";
-import { WatchersPanel } from "../components/WatchersPanel";
-import { nodePresenceHint, nodePresenceLabel, statusLabel } from "../status";
+import {
+  nodePresenceHint,
+  nodePresenceLabel,
+  runtimeErrorHint,
+  shortDisplayName,
+  statusLabel,
+} from "../status";
+
+function toolLabel(name: string): string {
+  const map: Record<string, string> = {
+    fs_write: "Wrote a file",
+    fs_read: "Read a file",
+    fs_list: "Listed files",
+    fs_delete: "Deleted a file",
+    servers_start: "Started a server",
+    servers_stop: "Stopped a server",
+    servers_restart: "Restarted a server",
+    servers_health_check: "Checked server health",
+    snapshot_create: "Took a snapshot",
+    snapshot_restore: "Restored a snapshot",
+    rcon_exec: "Ran a console command",
+    rcon_say: "Sent an in-game message",
+  };
+  return map[name] ?? name.replace(/_/g, " ");
+}
+
+function activityServerId(args: unknown): string | null {
+  if (!args || typeof args !== "object") return null;
+  const id = (args as { serverId?: unknown }).serverId;
+  return typeof id === "string" && id.trim() ? id : null;
+}
+
+function openServerOnMap(serverId: string) {
+  try {
+    localStorage.setItem("playon.lastServerId", serverId);
+  } catch {
+    /* ignore */
+  }
+}
 
 function formatBytes(bytes: number | null | undefined): string {
   if (bytes == null || !Number.isFinite(bytes)) return "—";
@@ -29,22 +66,23 @@ export function DashboardPage({ user }: { user: PublicUser }) {
   const qc = useQueryClient();
   const canRestore = can(user.role, "snapshots.restore");
   const canMap = can(user.role, "chat.agent");
-  const restoreCancelRef = useRef<HTMLButtonElement>(null);
+  const confirmCancelRef = useRef<HTMLButtonElement>(null);
   const [pendingRestore, setPendingRestore] = useState<
     | { kind: "snapshot"; id: string; label: string; serverLabel: string }
     | { kind: "offnode"; id: string; label: string }
     | null
   >(null);
+  const [pendingStop, setPendingStop] = useState<{ id: string; label: string } | null>(null);
 
   useEffect(() => {
-    if (!pendingRestore) return;
-    restoreCancelRef.current?.focus();
-  }, [pendingRestore]);
+    if (!pendingRestore && !pendingStop) return;
+    confirmCancelRef.current?.focus();
+  }, [pendingRestore, pendingStop]);
   const [opsNotice, setOpsNotice] = useState<string | null>(null);
 
   function flashOpsNotice(message: string) {
     setOpsNotice(message);
-    window.setTimeout(() => setOpsNotice(null), 3000);
+    window.setTimeout(() => setOpsNotice(null), 4000);
   }
 
   const servers = useQuery({ queryKey: ["servers"], queryFn: api.servers, refetchInterval: 5000 });
@@ -68,13 +106,34 @@ export function DashboardPage({ user }: { user: PublicUser }) {
   const backupTarget = useQuery({ queryKey: ["backup-target"], queryFn: api.backupTarget });
   const activity = useQuery({
     queryKey: ["activity"],
-    queryFn: () => api.activity(30),
+    queryFn: () => api.activity(20),
     refetchInterval: 8_000,
+  });
+
+  const serverList = servers.data?.servers ?? [];
+  const running = serverList.filter((s) => s.status === "running").length;
+  const stopped = serverList.filter((s) => s.status === "stopped").length;
+  const errored = serverList.filter((s) => s.status === "error").length;
+  const serverName = (id: string) => serverList.find((s) => s.id === id)?.name ?? id.slice(0, 8);
+
+  const startServer = useMutation({
+    mutationFn: (id: string) => api.startServer(id),
+    onSuccess: async (_data, id) => {
+      flashOpsNotice(`Starting ${serverName(id)}… status will update below.`);
+      await qc.invalidateQueries({ queryKey: ["servers"] });
+    },
+  });
+  const stopServer = useMutation({
+    mutationFn: (id: string) => api.stopServer(id),
+    onSuccess: async (_data, id) => {
+      flashOpsNotice(`Stopping ${serverName(id)}… status will update below.`);
+      await qc.invalidateQueries({ queryKey: ["servers"] });
+    },
   });
   const createSnap = useMutation({
     mutationFn: (serverId: string) => api.createSnapshot({ serverId, label: "manual" }),
-    onSuccess: async () => {
-      flashOpsNotice("Snapshot started");
+    onSuccess: async (_data, serverId) => {
+      flashOpsNotice(`Snapshot started for ${serverName(serverId)}.`);
       await qc.invalidateQueries({ queryKey: ["snapshots"] });
     },
   });
@@ -104,20 +163,12 @@ export function DashboardPage({ user }: { user: PublicUser }) {
     },
   });
 
-  const serverList = servers.data?.servers ?? [];
-  const running = serverList.filter((s) => s.status === "running").length;
-  const stopped = serverList.filter((s) => s.status === "stopped").length;
-  const errored = serverList.filter((s) => s.status === "error").length;
-  const serverName = (id: string) => serverList.find((s) => s.id === id)?.name ?? id.slice(0, 8);
-
   return (
     <div className="pane dashboard dashboard-page">
       <div className="stack">
         <header className="page-header">
           <h2>Dashboard</h2>
-          <p className="lede">
-            Tonight&apos;s host view — servers, nodes, backups, and recent agent tools.
-          </p>
+          <p className="lede">Tonight&apos;s host view — what&apos;s live, what to restore, what failed.</p>
         </header>
 
         <p className="dash-summary" aria-live="polite">
@@ -138,13 +189,53 @@ export function DashboardPage({ user }: { user: PublicUser }) {
               <strong>{nodes.data?.nodes?.length ?? 0}</strong> nodes
             </>
           )}
-          {canMap ? <Link to="/">Open map</Link> : null}
         </p>
 
         {opsNotice ? (
           <p className="ok dash-ops-notice" role="status" aria-live="polite">
             {opsNotice}
           </p>
+        ) : null}
+
+        {pendingStop ? (
+          <div
+            className="confirm-banner panel stack"
+            role="alertdialog"
+            aria-label="Confirm stop"
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && !stopServer.isPending) {
+                e.preventDefault();
+                setPendingStop(null);
+              }
+            }}
+          >
+            <p className="status-inline">
+              Stop <strong>{pendingStop.label}</strong>? Players on that pad will be kicked.
+            </p>
+            <div className="btn-row">
+              <button
+                type="button"
+                className="btn btn-danger"
+                disabled={stopServer.isPending}
+                onClick={() => {
+                  stopServer.mutate(pendingStop.id, {
+                    onSuccess: () => setPendingStop(null),
+                  });
+                }}
+              >
+                {stopServer.isPending ? "Stopping…" : "Stop server"}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                ref={confirmCancelRef}
+                disabled={stopServer.isPending}
+                onClick={() => setPendingStop(null)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
         ) : null}
 
         {pendingRestore ? (
@@ -186,7 +277,7 @@ export function DashboardPage({ user }: { user: PublicUser }) {
               <button
                 type="button"
                 className="btn btn-ghost"
-                ref={restoreCancelRef}
+                ref={confirmCancelRef}
                 disabled={restoreSnap.isPending || restoreOffnode.isPending}
                 onClick={() => setPendingRestore(null)}
               >
@@ -206,7 +297,11 @@ export function DashboardPage({ user }: { user: PublicUser }) {
           <section className="panel stack dash-primary">
             <div className="dash-section-head">
               <h3>Servers</h3>
-              {canMap ? <Link to="/">Open map →</Link> : null}
+              {canMap ? (
+                <Link className="linkish" to="/" title="Conversation-first map">
+                  Map
+                </Link>
+              ) : null}
             </div>
             {servers.isLoading ? (
               <div className="skeleton" aria-hidden>
@@ -221,32 +316,68 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                 {serverList.map((s) => (
                   <li key={s.id}>
                     <div>
-                      <strong>{s.name}</strong>
+                      <strong title={s.name}>{shortDisplayName(s.name, 28)}</strong>
                       <div className="muted canvas-status-row">
                         <span className={`server-status-pill status-${s.status}`}>
                           {statusLabel(s.status)}
                         </span>
-                        <span>{s.game ?? "—"}</span>
-                        {s.runtimeMode ? <span>{s.runtimeMode}</span> : null}
+                        <span title={s.runtimeMode ? `${s.game ?? ""} · ${s.runtimeMode}` : s.game ?? undefined}>
+                          {s.game ?? "—"}
+                        </span>
                       </div>
                     </div>
                     <div className="btn-row">
+                      {canMap ? (
+                        <Link
+                          className="btn btn-ghost btn-compact"
+                          to="/"
+                          onClick={() => openServerOnMap(s.id)}
+                          title={`Open ${s.name} on the map`}
+                        >
+                          On map
+                        </Link>
+                      ) : null}
+                      {s.status === "running" || s.status === "starting" ? (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-compact"
+                          disabled={stopServer.isPending}
+                          onClick={() =>
+                            setPendingStop({
+                              id: s.id,
+                              label: shortDisplayName(s.name, 28),
+                            })
+                          }
+                        >
+                          Stop
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn btn-primary btn-compact"
+                          disabled={startServer.isPending}
+                          onClick={() => startServer.mutate(s.id)}
+                        >
+                          Start
+                        </button>
+                      )}
                       <button
                         type="button"
-                        className="btn btn-ghost btn-compact"
+                        className="btn btn-ghost btn-compact dash-secondary-action"
                         disabled={createSnap.isPending}
                         onClick={() => createSnap.mutate(s.id)}
+                        title="Save a restore point"
                       >
                         Snapshot
                       </button>
                       {backupTarget.data?.target ? (
                         <button
                           type="button"
-                          className="btn btn-ghost btn-compact"
+                          className="btn btn-ghost btn-compact dash-secondary-action"
                           disabled={offnodeBackup.isPending}
                           onClick={() => offnodeBackup.mutate(s.id)}
                         >
-                          USB/NAS copy
+                          USB/NAS
                         </button>
                       ) : null}
                     </div>
@@ -267,18 +398,23 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                 </p>
               </div>
             )}
+            {startServer.isError ? (
+              <p className="error" role="alert">
+                {runtimeErrorHint((startServer.error as Error).message) ??
+                  (startServer.error as Error).message}
+              </p>
+            ) : null}
+            {stopServer.isError ? (
+              <p className="error" role="alert">
+                {runtimeErrorHint((stopServer.error as Error).message) ??
+                  (stopServer.error as Error).message}
+              </p>
+            ) : null}
             {createSnap.isError ? (
               <p className="error">{(createSnap.error as Error).message}</p>
             ) : null}
             {offnodeBackup.isError ? (
               <p className="error">{(offnodeBackup.error as Error).message}</p>
-            ) : null}
-
-            {can(user.role, "watchers.read") ? (
-              <WatchersPanel
-                user={user}
-                serverOptions={serverList.map((s) => ({ id: s.id, name: s.name }))}
-              />
             ) : null}
           </section>
 
@@ -303,12 +439,36 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                     status: n.status,
                     agentVersion: n.agentVersion,
                   });
+                  const caps = [
+                    n.os,
+                    n.docker ? "Docker" : null,
+                    n.native !== false ? "native" : null,
+                    n.steamcmd ? "SteamCMD" : null,
+                    n.tunnelStatus && n.tunnelStatus !== "none"
+                      ? `tunnel ${n.tunnelStatus}`
+                      : null,
+                    n.agentVersion ? `v${n.agentVersion}` : null,
+                    n.id !== "local" &&
+                    updates.data?.nodes?.some((u) => u.nodeId === n.id && u.updateAvailable)
+                      ? "update available"
+                      : null,
+                  ].filter(Boolean);
                   return (
                   <li key={n.id}>
                     <div>
                       <strong>{n.name}</strong>{" "}
-                      <span className="muted">{n.badge ?? n.placement ?? n.kind ?? ""}</span>
-                      <div className="muted">
+                      {(() => {
+                        const tag = n.badge ?? n.placement ?? n.kind ?? "";
+                        if (!tag) return null;
+                        const lower = tag.toLowerCase();
+                        if (lower === "local" || lower.includes(n.name.toLowerCase())) {
+                          return lower === "local" ? (
+                            <span className="muted">Local</span>
+                          ) : null;
+                        }
+                        return <span className="muted">{tag}</span>;
+                      })()}
+                      <div className="muted canvas-status-row">
                         <span
                           className={`node-status node-${
                             n.agentVersion === "pending" && n.status !== "online"
@@ -321,25 +481,17 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                             agentVersion: n.agentVersion,
                           })}
                         </span>
-                        {" · "}
-                        {n.os}
-                        {n.docker ? " · Docker" : ""}
-                        {n.native !== false ? " · native" : ""}
-                        {n.steamcmd ? " · SteamCMD" : ""}
-                        {n.tunnelStatus && n.tunnelStatus !== "none"
-                          ? ` · tunnel ${n.tunnelStatus}`
-                          : ""}
-                        {" · free "}
-                        {formatBytes(n.freeDiskBytes)}
-                        {n.agentVersion ? ` · v${n.agentVersion}` : ""}
-                        {n.id !== "local" &&
-                        updates.data?.nodes?.some((u) => u.nodeId === n.id && u.updateAvailable)
-                          ? " · update available"
-                          : ""}
+                        <span>{formatBytes(n.freeDiskBytes)} free</span>
+                        <span>Seen {relativeTime(String(n.lastSeenAt))}</span>
                       </div>
-                      <div className="muted">Seen {relativeTime(String(n.lastSeenAt))}</div>
                       {presenceHint ? (
                         <p className="muted status-inline">{presenceHint}</p>
+                      ) : null}
+                      {caps.length ? (
+                        <details className="dash-node-caps">
+                          <summary className="muted small">Host details</summary>
+                          <p className="muted small status-inline">{caps.join(" · ")}</p>
+                        </details>
                       ) : null}
                     </div>
                   </li>
@@ -367,12 +519,15 @@ export function DashboardPage({ user }: { user: PublicUser }) {
               </div>
             ) : snapshots.data?.snapshots?.length ? (
               <ul className="list compact-list">
-                {snapshots.data.snapshots.slice(0, 12).map((snap) => (
+                {snapshots.data.snapshots.slice(0, 5).map((snap) => (
                   <li key={snap.id}>
                     <div>
-                      <strong>{snap.label}</strong>
+                      <strong title={snap.label}>
+                        {shortDisplayName(snap.label, 32)}
+                      </strong>
                       <div className="muted">
-                        {serverName(snap.serverId)} · {relativeTime(snap.createdAt)}
+                        {shortDisplayName(serverName(snap.serverId), 22)} ·{" "}
+                        {relativeTime(snap.createdAt)}
                       </div>
                     </div>
                     {canRestore ? (
@@ -451,12 +606,20 @@ export function DashboardPage({ user }: { user: PublicUser }) {
               <p className="error">{(restoreOffnode.error as Error).message}</p>
             ) : null}
           </section>
-          </div>
 
           <div className="dash-quiet">
             <section className="panel stack">
               <div className="dash-section-head">
-                <h3>Agent activity</h3>
+                <h3>Recent activity</h3>
+                {can(user.role, "watchers.read") ? (
+                  <Link
+                    className="linkish"
+                    to="/settings#watchers"
+                    title="Scheduled health checks and automations"
+                  >
+                    Scheduled checks
+                  </Link>
+                ) : null}
               </div>
               {activity.isLoading ? (
                 <div className="skeleton" aria-hidden>
@@ -464,26 +627,70 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                   <div className="skeleton-row" />
                 </div>
               ) : activity.data?.activity?.length ? (
-                <ul className="activity-feed">
-                  {activity.data.activity.map((item) => (
-                    <li key={item.id}>
-                      <code className="activity-tool">{item.toolName}</code>
-                      <span className={`activity-status status-${item.status}`}>
-                        {statusLabel(item.status)}
-                      </span>
-                      <span className="muted">{relativeTime(item.createdAt)}</span>
-                    </li>
-                  ))}
-                </ul>
+                (() => {
+                  const now = Date.now();
+                  const recentCutoff = now - 24 * 60 * 60_000;
+                  const failCutoff = now - 12 * 60 * 60_000;
+                  const shown = activity.data.activity
+                    .filter((item) => {
+                      const t = new Date(item.createdAt).getTime();
+                      const failed = item.status === "failed" || item.status === "error";
+                      if (failed) return t >= failCutoff;
+                      return t >= recentCutoff;
+                    })
+                    .slice(0, 8);
+                  if (!shown.length) {
+                    return (
+                      <div className="empty-hint">
+                        <strong>Quiet night</strong>
+                        <p className="muted status-inline">
+                          No agent moves in the last day. Map chat will show up here.
+                        </p>
+                      </div>
+                    );
+                  }
+                  return (
+                    <ul className="activity-feed">
+                      {shown.map((item) => {
+                        const failed = item.status === "failed" || item.status === "error";
+                        const sid = activityServerId(item.args);
+                        const label = sid ? serverName(sid) : null;
+                        return (
+                          <li key={item.id}>
+                            <span className="activity-tool">{toolLabel(item.toolName)}</span>
+                            {label ? <span className="muted">{label}</span> : null}
+                            <span className={`activity-status status-${item.status}`}>
+                              {statusLabel(item.status)}
+                            </span>
+                            <span className="muted">{relativeTime(item.createdAt)}</span>
+                            {failed && canMap ? (
+                              <Link
+                                className="linkish"
+                                to="/"
+                                title="Open map to investigate"
+                                onClick={() => {
+                                  if (sid) openServerOnMap(sid);
+                                }}
+                              >
+                                On map
+                              </Link>
+                            ) : null}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  );
+                })()
               ) : (
                 <div className="empty-hint">
                   <strong>Quiet so far</strong>
                   <p className="muted status-inline">
-                    Tool calls from admin chat show up here.
+                    Recent agent tool calls from Map chat show up here.
                   </p>
                 </div>
               )}
             </section>
+          </div>
           </div>
         </div>
       </div>

@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Application, Container, Graphics, Text } from "pixi.js";
 import type { ServerRow } from "../../api";
-import { isPendingNodeSetup, nodePresenceLabel, statusLabel } from "../../status";
+import {
+  isPendingNodeSetup,
+  nodePresenceLabel,
+  shortDisplayName,
+  statusLabel,
+} from "../../status";
 import {
   clusterServersByNode,
   crateOffsetInCluster,
@@ -28,8 +33,8 @@ export type SelectedAnchor = { x: number; y: number };
 
 export type { MapNodeInput };
 
-/** Crate body is roundRect(-48, -40, 96, 80) — top edge is 40px above node center. */
-const CRATE_TOP_OFFSET = 40;
+/** Iso crate apex sits above node center — used for overlay anchors. */
+const CRATE_TOP_OFFSET = 56;
 
 type Props = {
   servers: ServerRow[];
@@ -37,6 +42,8 @@ type Props = {
   /** True while the servers query has not settled — avoid false empty CTA. */
   serversLoading?: boolean;
   selectedId?: string;
+  /** Host pad / rail selection (Scan panel), independent of server selection. */
+  selectedHostId?: string | null;
   /** Latest agent activity (one agent). */
   activity?: AgentActivityView;
   /** Skill roster for accent colors while busy. */
@@ -52,6 +59,8 @@ type Props = {
   onRemoveNode?: (nodeId: string) => void;
   /** Open Scan / manage panel for an online host pad (incl. local). */
   onSelectHost?: (nodeId: string) => void;
+  /** Click empty map space — parent should deselect and close overlays. */
+  onBackgroundClick?: () => void;
   /** Screen-space anchor for overlays above the selected crate. */
   onSelectedAnchorChange?: (anchor: SelectedAnchor | null) => void;
   /** Hide floating add when the chat dock already covers that corner. */
@@ -77,12 +86,32 @@ type AgentSprite = {
   bobPhase: number;
 };
 
-/** Classic 2:1 isometric tile half-size — angled floor, not top-down. */
-const ISO_TILE_W = 56;
-const ISO_TILE_H = 28;
+/**
+ * Dimetric floor (wider than classic 2:1) — lower camera, more foreshortened ground.
+ * Screen Y is further compressed via WORLD_Y_SQUASH on the stage.
+ */
+const ISO_TILE_W = 54;
+const ISO_TILE_H = 18;
 /** How many tiles out from origin along each iso axis. */
-const ISO_RANGE = 48;
+const ISO_RANGE = 56;
 const LERP_SPEED = 8;
+/** Extra vertical squash for a lowered 2.5D camera. */
+const WORLD_Y_SQUASH = 0.88;
+const DEFAULT_ZOOM = 0.62;
+const MIN_ZOOM = 0.38;
+const MAX_ZOOM = 1.35;
+
+function shade(hex: number, factor: number): number {
+  const r = Math.min(255, Math.max(0, Math.round(((hex >> 16) & 0xff) * factor)));
+  const g = Math.min(255, Math.max(0, Math.round(((hex >> 8) & 0xff) * factor)));
+  const b = Math.min(255, Math.max(0, Math.round((hex & 0xff) * factor)));
+  return (r << 16) | (g << 8) | b;
+}
+
+function setWorldZoom(world: Container, zoom: number): void {
+  const z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
+  world.scale.set(z, z * WORLD_Y_SQUASH);
+}
 
 const SKILL_COLORS: Record<string, number> = {
   installer: 0x5ed4c8,
@@ -117,15 +146,39 @@ export function skillColor(skill: string): number {
 }
 
 function homeSpot(): { x: number; y: number } {
-  return { x: 0, y: 140 };
+  return { x: 0, y: 120 };
 }
 
-const PAD_COLORS: Record<string, { fill: number; stroke: number }> = {
-  online: { fill: 0x2a3d38, stroke: 0x5ed4c8 },
-  stale: { fill: 0x3d3528, stroke: 0xc4a35a },
-  offline: { fill: 0x3a282c, stroke: 0xc45a6a },
-  pending_setup: { fill: 0x2e2a38, stroke: 0x8a7fd4 },
+const PAD_COLORS: Record<string, { fill: number; stroke: number; accent: number }> = {
+  online: { fill: 0x243632, stroke: 0x5ed4c8, accent: 0x3d8f8a },
+  stale: { fill: 0x3a3224, stroke: 0xc4a35a, accent: 0x8a7340 },
+  offline: { fill: 0x342428, stroke: 0xc45a6a, accent: 0x6a3a48 },
+  pending_setup: { fill: 0x2a2634, stroke: 0x8a7fd4, accent: 0x5a5488 },
 };
+
+/** Iso diamond corners for a footprint of screen half-width / half-depth. */
+function isoFootprint(hw: number, hd: number): Array<{ x: number; y: number }> {
+  return [
+    { x: 0, y: -hd },
+    { x: hw, y: 0 },
+    { x: 0, y: hd },
+    { x: -hw, y: 0 },
+  ];
+}
+
+function fillPoly(g: Graphics, pts: Array<{ x: number; y: number }>, color: number, alpha = 1): void {
+  if (pts.length < 3) return;
+  g.moveTo(pts[0]!.x, pts[0]!.y);
+  for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y);
+  g.closePath().fill({ color, alpha });
+}
+
+function strokePoly(g: Graphics, pts: Array<{ x: number; y: number }>, color: number, width = 1.5, alpha = 1): void {
+  if (pts.length < 2) return;
+  g.moveTo(pts[0]!.x, pts[0]!.y);
+  for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y);
+  g.closePath().stroke({ width, color, alpha });
+}
 
 function drawHostPad(
   g: Graphics,
@@ -134,12 +187,47 @@ function drawHostPad(
   subtitle: string,
   width: number,
   height: number,
+  selected = false,
 ): void {
   const colors = PAD_COLORS[presence] ?? PAD_COLORS.offline!;
+  const hw = Math.max(110, width * 0.42);
+  const hd = Math.max(48, height * 0.28);
+  const extrude = 18;
+  const top = isoFootprint(hw, hd);
+  const bottom = top.map((p) => ({ x: p.x, y: p.y + extrude }));
+  const stroke = selected ? 0x5ed4c8 : colors.stroke;
   g.clear();
-  g.roundRect(-width / 2, -36, width, height, 18);
-  g.fill({ color: colors.fill, alpha: 0.72 });
-  g.stroke({ width: 2, color: colors.stroke, alpha: 0.85 });
+  // Ground shadow
+  g.ellipse(4, hd + extrude + 6, hw * 0.92, hd * 0.55).fill({ color: 0x000000, alpha: 0.28 });
+  if (selected) {
+    g.ellipse(0, hd * 0.2, hw * 1.05, hd * 0.7).fill({ color: 0x5ed4c8, alpha: 0.1 });
+  }
+  // Side walls (far → near for paint order)
+  fillPoly(g, [top[3]!, top[2]!, bottom[2]!, bottom[3]!], shade(colors.fill, 0.55), 0.95);
+  fillPoly(g, [top[1]!, top[2]!, bottom[2]!, bottom[1]!], shade(colors.fill, 0.7), 0.95);
+  // Top deck
+  fillPoly(g, top, colors.fill, 0.94);
+  strokePoly(g, top, stroke, selected ? 3 : 2, selected ? 1 : 0.92);
+  // Rack block on the far edge of the pad
+  const rackHw = Math.min(54, hw * 0.35);
+  const rackHd = 12;
+  const rackLift = 22;
+  const rackBase = [
+    { x: 0, y: -hd + 10 },
+    { x: rackHw, y: -hd + 10 + rackHd },
+    { x: 0, y: -hd + 10 + rackHd * 2 },
+    { x: -rackHw, y: -hd + 10 + rackHd },
+  ];
+  const rackTop = rackBase.map((p) => ({ x: p.x, y: p.y - rackLift }));
+  fillPoly(g, [rackBase[3]!, rackBase[2]!, rackTop[2]!, rackTop[3]!], shade(colors.accent, 0.55));
+  fillPoly(g, [rackBase[1]!, rackBase[2]!, rackTop[2]!, rackTop[1]!], shade(colors.accent, 0.75));
+  fillPoly(g, rackTop, colors.accent, 0.9);
+  strokePoly(g, rackTop, colors.stroke, 1.25, 0.55);
+  // Status LED near near-corner
+  g.circle(0, hd - 10, 3.5).fill({
+    color: colors.stroke,
+    alpha: presence === "online" ? 0.95 : 0.4,
+  });
   void label;
   void subtitle;
 }
@@ -162,6 +250,34 @@ function isoPoint(i: number, j: number): { x: number; y: number } {
 function drawFloorGrid(g: Graphics) {
   g.clear();
   const n = ISO_RANGE;
+  const fillRange = 22;
+  for (let i = -fillRange; i < fillRange; i++) {
+    for (let j = -fillRange; j < fillRange; j++) {
+      const tl = isoPoint(i, j);
+      const tr = isoPoint(i + 1, j);
+      const br = isoPoint(i + 1, j + 1);
+      const bl = isoPoint(i, j + 1);
+      const checker = (i + j) & 1;
+      const dist = Math.sqrt(i * i + j * j);
+      const fade = Math.max(0, 1 - dist / (fillRange * 0.95));
+      if (fade <= 0.04) continue;
+      const base = checker ? 0x1a1418 : 0x141018;
+      g.moveTo(tl.x, tl.y)
+        .lineTo(tr.x, tr.y)
+        .lineTo(br.x, br.y)
+        .lineTo(bl.x, bl.y)
+        .closePath()
+        .fill({ color: base, alpha: 0.42 * fade });
+      if ((i * 17 + j * 31) % 9 === 0) {
+        g.moveTo(tl.x, tl.y)
+          .lineTo(tr.x, tr.y)
+          .lineTo(br.x, br.y)
+          .lineTo(bl.x, bl.y)
+          .closePath()
+          .fill({ color: 0x2a1c24, alpha: 0.14 * fade });
+      }
+    }
+  }
   for (let i = -n; i <= n; i++) {
     const a = isoPoint(i, -n);
     const b = isoPoint(i, n);
@@ -172,18 +288,45 @@ function drawFloorGrid(g: Graphics) {
     const b = isoPoint(n, j);
     g.moveTo(a.x, a.y).lineTo(b.x, b.y);
   }
-  g.stroke({ width: 1, color: 0xffffff, alpha: 0.05 });
+  g.stroke({ width: 1, color: 0xf2e8ee, alpha: 0.04 });
+  g.ellipse(0, 36, 520, 160).fill({ color: 0x9e3a5c, alpha: 0.055 });
+  g.ellipse(90, -10, 300, 110).fill({ color: 0x3a8a84, alpha: 0.035 });
 }
 
 function drawCrate(g: Graphics, selected: boolean, running: boolean) {
   g.clear();
-  const fill = running ? 0x3d8f8a : 0x4a3548;
-  g.roundRect(-48, -40, 96, 80, 10).fill({ color: fill });
-  g.roundRect(-48, -40, 96, 80, 10).stroke({
-    width: selected ? 3 : 1.5,
-    color: selected ? 0x5ed4c8 : 0x8a6078,
-  });
-  g.rect(-30, -18, 60, 8).fill({ color: 0x2a1f28, alpha: 0.5 });
+  const fill = running ? 0x2f6f6c : 0x4a3548;
+  const topFill = running ? 0x3d8f8a : 0x5a4054;
+  const stroke = selected ? 0x5ed4c8 : running ? 0x6ab8b0 : 0x8a6078;
+  const hw = 36;
+  const hd = 20;
+  const extrude = 44;
+  const top = isoFootprint(hw, hd).map((p) => ({ x: p.x, y: p.y - extrude * 0.35 }));
+  const bottom = top.map((p) => ({ x: p.x, y: p.y + extrude }));
+  // Shadow on the pad
+  g.ellipse(6, bottom[2]!.y + 4, hw * 0.95, hd * 0.55).fill({ color: 0x000000, alpha: 0.3 });
+  // Walls
+  fillPoly(g, [top[3]!, top[2]!, bottom[2]!, bottom[3]!], shade(fill, 0.55));
+  fillPoly(g, [top[1]!, top[2]!, bottom[2]!, bottom[1]!], shade(fill, 0.72));
+  // Top lid
+  fillPoly(g, top, topFill, 0.96);
+  strokePoly(g, top, stroke, selected ? 2.5 : 1.5, selected ? 1 : 0.9);
+  // Band across the near faces
+  const midY = (top[2]!.y + bottom[2]!.y) / 2;
+  g.moveTo(top[3]!.x, midY - 3)
+    .lineTo(top[2]!.x, midY + hd * 0.15)
+    .lineTo(top[1]!.x, midY - 3)
+    .stroke({ width: 5, color: 0x2a1f28, alpha: 0.45 });
+  if (running) {
+    g.circle(top[1]!.x - 8, top[1]!.y + 6, 3.5).fill({ color: 0x5ed4c8, alpha: 0.95 });
+  }
+  if (selected) {
+    const halo = isoFootprint(hw + 10, hd + 6).map((p) => ({
+      x: p.x,
+      y: p.y - extrude * 0.35 - 4,
+    }));
+    strokePoly(g, halo, 0x5ed4c8, 1.5, 0.4);
+  }
 }
 
 function phaseRingColor(phase: string | undefined): number {
@@ -202,19 +345,27 @@ function drawAgentBody(
 ) {
   g.clear();
   const color = opts.busy && opts.skill ? skillColor(opts.skill) : IDLE_COLOR;
-  const r = 18;
-  g.circle(0, 0, r).fill({ color, alpha: opts.busy ? 1 : 0.75 });
+  const hw = 14;
+  const hd = 9;
+  const extrude = 26;
+  const top = isoFootprint(hw, hd).map((p) => ({ x: p.x, y: p.y - 18 }));
+  const bottom = top.map((p) => ({ x: p.x, y: p.y + extrude }));
+  g.ellipse(3, bottom[2]!.y + 2, 16, 7).fill({ color: 0x000000, alpha: 0.3 });
+  fillPoly(g, [top[3]!, top[2]!, bottom[2]!, bottom[3]!], shade(color, 0.55), opts.busy ? 1 : 0.85);
+  fillPoly(g, [top[1]!, top[2]!, bottom[2]!, bottom[1]!], shade(color, 0.75), opts.busy ? 1 : 0.88);
+  fillPoly(g, top, color, opts.busy ? 1 : 0.9);
+  // Head disc sitting on the top face
+  g.circle(0, top[0]!.y - 2, 11).fill({ color, alpha: opts.busy ? 1 : 0.92 });
+  g.circle(0, top[0]!.y - 2, 11).stroke({ width: 1.25, color: shade(color, 0.65), alpha: 0.8 });
   if (opts.busy) {
-    g.circle(0, 0, r + 5).stroke({ width: 2.5, color: phaseRingColor(opts.phase), alpha: 0.95 });
+    g.circle(0, top[0]!.y - 2, 16).stroke({ width: 2.25, color: phaseRingColor(opts.phase), alpha: 0.95 });
+    g.circle(0, top[0]!.y - 2, 20).stroke({ width: 1, color: phaseRingColor(opts.phase), alpha: 0.28 });
   }
-  // Eyes
-  g.circle(-5, -3, 2.4).fill({ color: 0x111111 });
-  g.circle(5, -3, 2.4).fill({ color: 0x111111 });
-  // Soft highlight
-  g.circle(-7, -8, 3).fill({ color: 0xffffff, alpha: 0.18 });
-  // Cap accent when busy on a skill
+  g.roundRect(-8, top[0]!.y - 6, 16, 6, 3).fill({ color: 0x111111, alpha: 0.55 });
+  g.circle(-3.5, top[0]!.y - 3, 1.8).fill({ color: 0xf2e8ee, alpha: 0.92 });
+  g.circle(3.5, top[0]!.y - 3, 1.8).fill({ color: 0xf2e8ee, alpha: 0.92 });
   if (opts.busy && opts.skill) {
-    g.roundRect(-10, -r - 4, 20, 5, 2).fill({ color: 0x2a1f28, alpha: 0.85 });
+    g.circle(0, top[0]!.y - 16, 3).fill({ color: phaseRingColor(opts.phase), alpha: 0.95 });
   }
 }
 
@@ -234,6 +385,7 @@ export function AgentCanvas({
   nodes: hostNodes = [],
   serversLoading = false,
   selectedId,
+  selectedHostId = null,
   activity,
   skills: _skills,
   onSelect,
@@ -242,6 +394,7 @@ export function AgentCanvas({
   onAddNode,
   onRemoveNode,
   onSelectHost,
+  onBackgroundClick,
   onSelectedAnchorChange,
   showAddButton = true,
 }: Props) {
@@ -257,15 +410,18 @@ export function AgentCanvas({
   const onAddServerRef = useRef(onAddServer);
   const onRemoveNodeRef = useRef(onRemoveNode);
   const onSelectHostRef = useRef(onSelectHost);
+  const onBackgroundClickRef = useRef(onBackgroundClick);
   const onSelectedAnchorChangeRef = useRef(onSelectedAnchorChange);
   const selectedIdRef = useRef(selectedId);
   const lastAnchorRef = useRef<SelectedAnchor | null>(null);
   const [stageReady, setStageReady] = useState(false);
+  const [pendingRemoveNodeId, setPendingRemoveNodeId] = useState<string | null>(null);
   onSelectRef.current = onSelect;
   onDescribeRef.current = onDescribe;
   onAddServerRef.current = onAddServer;
   onRemoveNodeRef.current = onRemoveNode;
   onSelectHostRef.current = onSelectHost;
+  onBackgroundClickRef.current = onBackgroundClick;
   onSelectedAnchorChangeRef.current = onSelectedAnchorChange;
   selectedIdRef.current = selectedId;
 
@@ -277,7 +433,7 @@ export function AgentCanvas({
 
     void (async () => {
       await app.init({
-        background: 0x1c1418,
+        background: 0x141016,
         antialias: true,
         resizeTo: host,
         resolution: window.devicePixelRatio || 1,
@@ -293,24 +449,39 @@ export function AgentCanvas({
       const world = new Container();
       world.sortableChildren = true;
       world.x = host.clientWidth / 2;
-      world.y = host.clientHeight / 2;
+      world.y = host.clientHeight * 0.42;
+      setWorldZoom(world, DEFAULT_ZOOM);
       worldRef.current = world;
       app.stage.addChild(world);
 
       const floor = new Graphics();
       drawFloorGrid(floor);
-      world.addChild(floor);
-      setStageReady(true);
-
+      floor.eventMode = "static";
+      floor.cursor = "grab";
+      // Large hit target so empty space between tiles still clears selection.
+      floor.hitArea = {
+        contains: (x: number, y: number) => Math.abs(x) < 8000 && Math.abs(y) < 8000,
+      };
       let dragging = false;
+      let dragMoved = false;
       let lastX = 0;
       let lastY = 0;
       let userPanned = false;
+
+      floor.on("pointertap", () => {
+        // Pan-drag should not clear selection / close overlays.
+        if (dragMoved) return;
+        onBackgroundClickRef.current?.();
+      });
+      world.addChild(floor);
+      setStageReady(true);
+
       app.canvas.style.cursor = "grab";
 
       const onPointerDown = (e: PointerEvent) => {
         if (e.button !== 0) return;
         dragging = true;
+        dragMoved = false;
         lastX = e.clientX;
         lastY = e.clientY;
         app.canvas.style.cursor = "grabbing";
@@ -321,21 +492,24 @@ export function AgentCanvas({
       };
       const onPointerMove = (e: PointerEvent) => {
         if (!dragging) return;
-        world.x += e.clientX - lastX;
-        world.y += e.clientY - lastY;
+        const dx = e.clientX - lastX;
+        const dy = e.clientY - lastY;
+        if (!dragMoved && dx * dx + dy * dy > 36) dragMoved = true;
+        if (!dragMoved) return;
+        world.x += dx;
+        world.y += dy;
         lastX = e.clientX;
         lastY = e.clientY;
         userPanned = true;
       };
       const onWheel = (e: WheelEvent) => {
         e.preventDefault();
-        const scale = Math.min(1.8, Math.max(0.55, world.scale.x * (e.deltaY > 0 ? 0.92 : 1.08)));
-        world.scale.set(scale);
+        setWorldZoom(world, world.scale.x * (e.deltaY > 0 ? 0.92 : 1.08));
       };
       const onResize = () => {
         if (userPanned) return;
         world.x = host.clientWidth / 2;
-        world.y = host.clientHeight / 2;
+        world.y = host.clientHeight * 0.42;
       };
 
       const reduceMotion = prefersReducedMotion();
@@ -359,10 +533,9 @@ export function AgentCanvas({
           }
           return;
         }
-        const scale = world.scale.x;
         const next: SelectedAnchor = {
-          x: world.x + node.x * scale,
-          y: world.y + (node.y - CRATE_TOP_OFFSET) * scale,
+          x: world.x + node.x * world.scale.x,
+          y: world.y + (node.y - CRATE_TOP_OFFSET) * world.scale.y,
         };
         const prev = lastAnchorRef.current;
         if (
@@ -445,8 +618,8 @@ export function AgentCanvas({
     for (const cluster of clusters) {
       seenPads.add(cluster.node.id);
       const presence = padPresenceClass(cluster.node);
-      const padW = Math.max(280, 160 + cluster.serverIds.length * 40);
-      const padH = Math.max(200, 120 + Math.ceil(Math.max(cluster.serverIds.length, 1) / 2) * 160);
+      const padW = Math.max(300, 180 + cluster.serverIds.length * 36);
+      const padH = Math.max(170, 110 + Math.ceil(Math.max(cluster.serverIds.length, 1) / 2) * 130);
 
       let pad = padsRef.current.get(cluster.node.id);
       if (!pad) {
@@ -459,22 +632,23 @@ export function AgentCanvas({
           text: "",
           style: { fill: 0xf2e8ee, fontSize: 14, fontFamily: "DM Sans, sans-serif", fontWeight: "600" },
         });
-        title.anchor.set(0.5, 0);
-        title.y = -28;
+        title.anchor.set(0.5, 1);
+        title.y = -58;
         title.label = "title";
         pad.addChild(title);
         const sub = new Text({
           text: "",
-          style: { fill: 0xa898a0, fontSize: 11, fontFamily: "DM Sans, sans-serif" },
+          style: { fill: 0xc4b4bc, fontSize: 11, fontFamily: "DM Sans, sans-serif" },
         });
-        sub.anchor.set(0.5, 0);
-        sub.y = -10;
+        sub.anchor.set(0.5, 1);
+        sub.y = -42;
         sub.label = "sub";
         pad.addChild(sub);
         pad.eventMode = "static";
         pad.cursor = "pointer";
         const nodeId = cluster.node.id;
-        pad.on("pointertap", () => {
+        pad.on("pointertap", (e) => {
+          e.stopPropagation();
           const n = hostNodes.find((x) => x.id === nodeId);
           if (!n) return;
           if (
@@ -482,13 +656,7 @@ export function AgentCanvas({
             (isPendingNodeSetup({ agentVersion: n.agentVersion, status: n.status }) ||
               n.status === "offline")
           ) {
-            if (
-              window.confirm(
-                `Remove incomplete node “${n.name}”? Bootstrap never finished or the agent is offline.`,
-              )
-            ) {
-              onRemoveNodeRef.current?.(n.id);
-            }
+            setPendingRemoveNodeId(n.id);
             return;
           }
           if (n.status === "online" || n.id === "local") {
@@ -504,8 +672,12 @@ export function AgentCanvas({
       const g = pad.getChildByLabel("pad") as Graphics;
       const title = pad.getChildByLabel("title") as Text;
       const sub = pad.getChildByLabel("sub") as Text;
-      drawHostPad(g, presence, cluster.node.name, "", padW, padH);
+      const hostSelected = cluster.node.id === selectedHostId;
+      drawHostPad(g, presence, cluster.node.name, "", padW, padH, hostSelected);
       title.text = cluster.node.name;
+      title.style.fill = hostSelected ? 0x5ed4c8 : 0xf2e8ee;
+      const padHd = Math.max(48, padH * 0.28);
+      title.y = -padHd - 10;
       const presenceLabel = nodePresenceLabel({
         status: cluster.node.status,
         agentVersion: cluster.node.agentVersion,
@@ -513,6 +685,7 @@ export function AgentCanvas({
       const bits = [cluster.node.badge || cluster.node.kind || "", presenceLabel];
       if (cluster.node.joinHost) bits.push(cluster.node.joinHost);
       sub.text = bits.filter(Boolean).join(" · ");
+      sub.y = title.y + 16;
 
       cluster.serverIds.forEach((serverId, index) => {
         const server = serverById.get(serverId);
@@ -536,10 +709,10 @@ export function AgentCanvas({
 
           const label = new Text({
             text: server.name,
-            style: { fill: 0xf2e8ee, fontSize: 13, fontFamily: "DM Sans, sans-serif" },
+            style: { fill: 0xf2e8ee, fontSize: 12, fontFamily: "DM Sans, sans-serif" },
           });
           label.anchor.set(0.5, 0);
-          label.y = 50;
+          label.y = 36;
           label.label = "name";
           root.addChild(label);
 
@@ -548,11 +721,12 @@ export function AgentCanvas({
             style: { fill: 0xa898a0, fontSize: 11, fontFamily: "DM Sans, sans-serif" },
           });
           status.anchor.set(0.5, 0);
-          status.y = 68;
+          status.y = 52;
           status.label = "status";
           root.addChild(status);
 
-          root.on("pointertap", () => {
+          root.on("pointertap", (e) => {
+            e.stopPropagation();
             onSelectRef.current(server.id);
           });
 
@@ -575,7 +749,7 @@ export function AgentCanvas({
             ? activity
             : undefined;
         drawCrate(crate, selected, server.status === "running");
-        name.text = server.name;
+        name.text = shortDisplayName(server.name, 18);
         status.text = busyHere
           ? `${statusLabel(server.status)} · ${busyHere.label || busyHere.verb}`
           : statusLabel(server.status);
@@ -596,7 +770,7 @@ export function AgentCanvas({
         nodesRef.current.delete(id);
       }
     }
-  }, [servers, hostNodes, selectedId, activity, stageReady]);
+  }, [servers, hostNodes, selectedId, selectedHostId, activity, stageReady]);
 
   // Sync single agent sprite
   useEffect(() => {
@@ -708,8 +882,8 @@ export function AgentCanvas({
         role="img"
         aria-label={
           mapEmpty
-            ? "Empty LAN map"
-            : `LAN map with ${hostNodes.length} host${hostNodes.length === 1 ? "" : "s"} and ${servers.length} server${servers.length === 1 ? "" : "s"}`
+            ? "Decorative empty LAN map. Use Add node or Describe a server."
+            : `Decorative LAN map with ${hostNodes.length} host${hostNodes.length === 1 ? "" : "s"} and ${servers.length} server${servers.length === 1 ? "" : "s"}. Use the Hosts and Servers lists to select.`
         }
       />
       {serversLoading && mapEmpty ? (
@@ -748,11 +922,15 @@ export function AgentCanvas({
         </div>
       ) : (
         <>
-          <p className="agent-canvas-map-hint muted" aria-hidden>
-            Drag to pan · Scroll to zoom
-            {hostNodes.some((n) => n.id !== "local")
-              ? " · Click a pending host pad to remove it · Click an online pad to scan for servers"
-              : ""}
+          <p className="agent-canvas-map-hint muted" id="map-gesture-hint">
+            <span className="hint-full">
+              Drag to pan · Scroll to zoom · Esc clear · A add · N node · S start · X stop ·
+              Hosts/pad: scan · Crates: chat
+              {hostNodes.some((n) => n.id !== "local")
+                ? " · Pending pad: remove setup"
+                : ""}
+            </span>
+            <span className="hint-short">Esc clear · tap host or server</span>
           </p>
           {liveBusy ? (
             <p className="agent-canvas-live-chip" role="status">
@@ -760,23 +938,69 @@ export function AgentCanvas({
             </p>
           ) : null}
           <div className="agent-canvas-rail">
+            <p className="sr-only" role="status" aria-live="polite">
+              {selectedHostId
+                ? `Host selected: ${hostNodes.find((h) => h.id === selectedHostId)?.name ?? selectedHostId}. Scan for installs open.`
+                : selectedId
+                  ? `Server selected: ${servers.find((s) => s.id === selectedId)?.name ?? selectedId}.`
+                  : "Nothing selected on the map."}
+            </p>
             <p className="agent-canvas-rail-label" id="host-list-label">
               Hosts
             </p>
             <ul className="agent-canvas-list" aria-labelledby="host-list-label">
-              {hostNodes.map((n) => (
-                <li key={n.id}>
-                  <div className="agent-canvas-list-item static">
-                    <span className="agent-canvas-list-name">{n.name}</span>
-                    <span className={`node-status node-${padPresenceClass(n)}`}>
-                      {nodePresenceLabel({
-                        status: n.status,
-                        agentVersion: n.agentVersion,
-                      })}
-                    </span>
-                  </div>
-                </li>
-              ))}
+              {hostNodes.map((n) => {
+                const selected = n.id === selectedHostId;
+                const canSelect =
+                  n.id === "local" ||
+                  n.status === "online" ||
+                  isPendingNodeSetup({ agentVersion: n.agentVersion, status: n.status }) ||
+                  n.status === "offline";
+                return (
+                  <li key={n.id}>
+                    <button
+                      type="button"
+                      aria-pressed={selected}
+                      aria-describedby="map-gesture-hint"
+                      className={
+                        selected
+                          ? "agent-canvas-list-item selected"
+                          : "agent-canvas-list-item"
+                      }
+                      disabled={!canSelect || !onSelectHost}
+                      onClick={() => {
+                        if (
+                          n.id !== "local" &&
+                          (isPendingNodeSetup({
+                            agentVersion: n.agentVersion,
+                            status: n.status,
+                          }) ||
+                            n.status === "offline")
+                        ) {
+                          setPendingRemoveNodeId(n.id);
+                          return;
+                        }
+                        if (n.status === "online" || n.id === "local") {
+                          onSelectHostRef.current?.(n.id);
+                        }
+                      }}
+                    >
+                      <span className="agent-canvas-list-name" title={n.name}>
+                        {shortDisplayName(n.name)}
+                      </span>
+                      <span className={`node-status node-${padPresenceClass(n)}`}>
+                        {nodePresenceLabel({
+                          status: n.status,
+                          agentVersion: n.agentVersion,
+                        })}
+                        {n.id === "local" || n.status === "online"
+                          ? " · Scan for installs"
+                          : ""}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
             {servers.length ? (
               <>
@@ -822,7 +1046,9 @@ export function AgentCanvas({
                           }
                           onClick={() => onSelectRef.current(server.id)}
                         >
-                          <span className="agent-canvas-list-name">{server.name}</span>
+                          <span className="agent-canvas-list-name" title={server.name}>
+                            {shortDisplayName(server.name)}
+                          </span>
                           <span className="muted">
                             {busyLabel || statusLabel(server.status)}
                           </span>
@@ -837,7 +1063,11 @@ export function AgentCanvas({
           {showAddButton ? (
             <div className="agent-canvas-add-row">
               {onAddNode ? (
-                <button type="button" className="btn agent-canvas-add-node" onClick={() => onAddNode()}>
+                <button
+                  type="button"
+                  className="btn btn-ghost agent-canvas-add-node"
+                  onClick={() => onAddNode()}
+                >
                   + Add node
                 </button>
               ) : null}
@@ -848,6 +1078,34 @@ export function AgentCanvas({
               >
                 + Add server
               </button>
+            </div>
+          ) : null}
+          {pendingRemoveNodeId ? (
+            <div className="map-inline-confirm" role="alertdialog" aria-labelledby="map-remove-node-title">
+              <p id="map-remove-node-title">
+                Remove incomplete node “
+                {hostNodes.find((h) => h.id === pendingRemoveNodeId)?.name ?? pendingRemoveNodeId}”?
+              </p>
+              <p className="muted small">Bootstrap never finished or the agent is offline.</p>
+              <div className="btn-row">
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => setPendingRemoveNodeId(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  onClick={() => {
+                    onRemoveNodeRef.current?.(pendingRemoveNodeId);
+                    setPendingRemoveNodeId(null);
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
             </div>
           ) : null}
         </>

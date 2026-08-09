@@ -73,7 +73,7 @@ export function LoginPage() {
           {mutation.isPending ? "Signing in…" : "Sign in"}
         </button>
         <p className="muted auth-foot">
-          Players join at <Link to="/play">/play</Link> — no account needed.
+          Players join at <Link to="/play">/play</Link> on this host (e.g. playon.local/play) — no account needed.
         </p>
       </form>
     </div>

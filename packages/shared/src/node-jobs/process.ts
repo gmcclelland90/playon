@@ -48,6 +48,8 @@ export const ProcessStartArgsSchema = z
     serverId: ProcessServerIdSchema,
     /** Console log sink, jail-relative. Also what a `serverId` follow tails. */
     logRel: NodeJailPathSchema.optional(),
+    /** Keep stdin pipe for adminDialect=stdin (default false — safer for GoldSrc). */
+    keepStdin: z.boolean().optional(),
   })
   .strict();
 

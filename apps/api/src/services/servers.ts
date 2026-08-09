@@ -56,8 +56,17 @@ import {
   writeRconConfig,
   type RconEndpoint,
 } from "./rcon.js";
-import { nativeGamePort, nativeRconPort, resolveNativeLaunch } from "./native-launch.js";
+import {
+  nativeGamePort,
+  nativeRconPort,
+  resolveNativeArgs,
+  resolveNativeLaunch,
+} from "./native-launch.js";
 import { ServerAdoptionService } from "./server-adoption.js";
+import {
+  ensureSkillGameOverlay,
+  listSkillGameOverlayFiles,
+} from "./skill-game-overlay.js";
 import {
   readSkillMarker,
 } from "./skill-marker.js";
@@ -586,6 +595,7 @@ export class ServerService {
     containerSupport?: string;
     dockerImage?: string;
     dockerEnv?: Record<string, string>;
+    dockerArgs?: string[];
     dockerDataMount?: string;
     steamAppId?: number;
     adminDialect?: string;
@@ -597,6 +607,7 @@ export class ServerService {
       containerSupport: raw.containerSupport,
       dockerImage: raw.dockerImage,
       dockerEnv: raw.dockerEnv,
+      dockerArgs: raw.dockerArgs,
       dockerDataMount: raw.dockerDataMount,
       steamAppId: raw.steamAppId,
       adminDialect: raw.adminDialect,
@@ -609,6 +620,7 @@ export class ServerService {
   ): {
     image: string;
     env: Record<string, string>;
+    cmd: string[];
     dataMount: string;
     ports: SkillMetadata["ports"];
   } | null {
@@ -618,6 +630,9 @@ export class ServerService {
     return {
       image,
       env: { ...(live?.dockerEnv ?? cached.dockerEnv ?? {}) },
+      cmd: [...(live?.dockerArgs ?? cached.dockerArgs ?? [])],
+      // Sentinel "none" skips the game/ bind (some images ship defaults under the
+      // data path that empty host binds would hide — e.g. Trackmania UserData).
       dataMount: live?.dockerDataMount || cached.dockerDataMount || "/data",
       ports: live?.ports ?? [],
     };
@@ -691,20 +706,24 @@ export class ServerService {
             }))
         : [{ host: gamePort, container: gamePort, protocol: "tcp" as const }];
 
+    const skipBind = docker.dataMount === "none" || docker.dataMount === "-";
     return {
       image: docker.image,
       env,
+      ...(docker.cmd.length ? { cmd: docker.cmd } : {}),
       ports,
-      binds: [
-        {
-          // The node resolves a jail-relative host path under its own data root.
-          hostPath:
-            locality === "remote"
-              ? nodeServerRelPath(server.id, "game")
-              : path.join(server.dataPath, "game"),
-          containerPath: docker.dataMount,
-        },
-      ],
+      binds: skipBind
+        ? []
+        : [
+            {
+              // The node resolves a jail-relative host path under its own data root.
+              hostPath:
+                locality === "remote"
+                  ? nodeServerRelPath(server.id, "game")
+                  : path.join(server.dataPath, "game"),
+              containerPath: docker.dataMount,
+            },
+          ],
     };
   }
 
@@ -790,6 +809,9 @@ export class ServerService {
     if (locality === "remote") return this.remoteProcessSpec(server, skillName);
     const gameDir = this.processIdentity(server, "local").cwd;
     const skillEntry = this.resolveSkill(skillName);
+    if (skillEntry?.path) {
+      ensureSkillGameOverlay(skillEntry.path, gameDir);
+    }
     const launch = resolveNativeLaunch({
       skillName,
       game: server.game,
@@ -810,6 +832,7 @@ export class ServerService {
       args: launch.args,
       env: { PLAYON_SERVER_ID: server.id, ...launch.env },
       logFile: this.consoleLogAbs(server.dataPath),
+      keepStdin: skillEntry?.metadata.adminDialect === "stdin",
     };
   }
 
@@ -817,24 +840,101 @@ export class ServerService {
    * Launch for a game dir Home cannot see: only the node knows what is on its
    * disk, so the spec comes from skill metadata and every path stays jail-relative.
    */
+  /**
+   * Push skill `files/` onto a remote node game/ jail (skip existing).
+   * SteamCMD marks installs node-authoritative, so Home cannot rely on pushServerDirToNode.
+   */
+  private async pushSkillGameOverlayRemote(
+    server: ServerRecord,
+    skillPath: string,
+  ): Promise<void> {
+    const files = listSkillGameOverlayFiles(skillPath);
+    if (!files.length) return;
+    const store = this.openFiles(server, { locality: "remote" });
+    for (const file of files) {
+      const dest = `game/${file.relPath}`;
+      const parent = dest.includes("/") ? dest.slice(0, dest.lastIndexOf("/")) : "game";
+      const base = dest.slice(dest.lastIndexOf("/") + 1);
+      try {
+        const entries = await store.list(parent || "game");
+        if (entries.some((e) => e.name === base)) continue;
+      } catch {
+        /* parent missing — writeBytes/ensure will create */
+      }
+      await store.writeBytes(dest, fs.readFileSync(file.absPath));
+    }
+  }
+
   private async remoteProcessSpec(
     server: ServerRecord,
     skillName: string,
   ): Promise<ServerProcessSpec> {
-    const metadata = this.resolveSkill(skillName)?.metadata;
+    const skillEntry = this.resolveSkill(skillName);
+    if (skillEntry?.path) {
+      await this.pushSkillGameOverlayRemote(server, skillEntry.path).catch(() => undefined);
+    }
+    const metadata = skillEntry?.metadata;
     const native = metadata?.native;
+    const node = await this.nodeRow(server.nodeId);
+    const nodeOs = node?.os === "windows" ? "windows" : "linux";
     const windowsOnly =
-      !!metadata?.os.includes("windows") && !metadata.os.includes("linux");
-    const binary = windowsOnly && native?.binaryWindows ? native.binaryWindows : native?.binary;
-    // Start script is the default contract with a node; a binary is the opt-out.
-    const useBinary = native?.preferStartScript === false && !!binary;
+      Array.isArray(metadata?.os) &&
+      metadata.os.includes("windows") &&
+      !metadata.os.includes("linux");
+    const binaryRaw =
+      (nodeOs === "windows" && (native?.binaryWindows || native?.binary)) ||
+      (windowsOnly && native?.binaryWindows) ||
+      native?.binary;
+    const binary = binaryRaw ? String(binaryRaw).replace(/\\/g, "/") : undefined;
+
     // Credentials may be node-authoritative, so discover/patch them there first.
     await this.resolveRconConfig(server, skillName).catch(() => undefined);
+
+    const keepStdin = metadata?.adminDialect === "stdin";
+    const nativeArgs = resolveNativeArgs({
+      args: [...(native?.args ?? [])],
+      skillName,
+    });
+    // Windows nodes have no /bin/bash start.sh contract — PE binary, or skill start.bat.
+    if (nodeOs === "windows") {
+      const preferScript = native?.preferStartScript !== false;
+      const overlayBat =
+        preferScript && skillEntry?.path
+          ? listSkillGameOverlayFiles(skillEntry.path).find(
+              (f) => f.relPath === "start.bat" || f.relPath === "run.bat",
+            )?.relPath
+          : undefined;
+      if (overlayBat) {
+        return {
+          command: "cmd.exe",
+          args: ["/c", overlayBat],
+          env: { PLAYON_SERVER_ID: server.id, ...(native?.env ?? {}) },
+          logFile: this.consoleLogRel(server.id),
+          keepStdin,
+        };
+      }
+      if (!binary) {
+        throw new Error(
+          `native_binaries_missing: skill "${skillName}" has no Windows native.binary for remote node`,
+        );
+      }
+      return {
+        command: binary,
+        args: nativeArgs,
+        env: { PLAYON_SERVER_ID: server.id, ...(native?.env ?? {}) },
+        logFile: this.consoleLogRel(server.id),
+        keepStdin,
+      };
+    }
+
+    // Linux remote: start.sh is the default contract; binary is the opt-out.
+    const useBinary = native?.preferStartScript === false && !!binary;
     return {
       command: useBinary ? binary! : "/bin/bash",
-      args: useBinary ? [...(native?.args ?? [])] : ["start.sh"],
+      args: useBinary ? nativeArgs : ["start.sh"],
       env: { PLAYON_SERVER_ID: server.id, ...(native?.env ?? {}) },
       logFile: this.consoleLogRel(server.id),
+      keepStdin,
     };
   }
 
@@ -1239,6 +1339,16 @@ export class ServerService {
       await this.db.delete(watcherRuns).where(inArray(watcherRuns.watcherId, watcherIds));
       await this.db.delete(watchers).where(eq(watchers.serverId, id));
     }
+
+    // Wipe the node jail before dropping the DB row (needs server identity for jobs).
+    if (this.isRemoteNode(server)) {
+      try {
+        await this.openFiles(server, { locality: "remote" }).delete(".");
+      } catch {
+        // best-effort — orphans are worse than a failed delete
+      }
+    }
+
     await this.db.delete(servers).where(eq(servers.id, id));
 
     try {

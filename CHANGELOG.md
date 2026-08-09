@@ -2,6 +2,25 @@
 
 All notable changes to PlayOn Home (root `package.json` version) are listed here.
 
+## [0.2.0] — 2026-08-09
+
+### Added
+
+- **`http://playon.local`** — mDNS LAN panel URL (prefer bind `:80`, fallback `:8787`).
+- **Discord-linked `https://<handle>.playon.games`** — optional LAN-only DNS + Let’s Encrypt; Settings → **Panel URL**.
+- playon.games **home-dns** APIs for link + ACME (site already live).
+
+### Changed
+
+- Admin UI **Excellent** pass (Map, Dashboard, Skills, Files, Settings, Player) under the LAN control booth brand.
+- Player `/play` — sticky join actions, clearer Live status, ready/vote undo, calmer multi-server layout.
+
+### Notes
+
+- Update Home via OTA (**Settings → About / Updates → Update & restart**). Update remote nodes from **Settings → Nodes** when the agent stamp matters.
+- Game join addresses still use the LAN IP (`PLAYON_ADVERTISE_HOST`); panel URLs are for the web UI only.
+- No Cloudflare tunnel / paid hostname in this cut — `playon.local` remains the default optics.
+
 ## [0.1.11] — 2026-08-09
 
 ### Added

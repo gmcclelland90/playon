@@ -23,6 +23,16 @@ export const SteamcmdAppUpdateArgsSchema = z
     installDirRel: NodeJailPathSchema.default(STEAMCMD_DEFAULT_INSTALL_DIR_REL),
     /** Pass `validate` to `+app_update`; on by default, as SteamCMD installs go stale. */
     validate: z.boolean().default(true),
+    /**
+     * HLDS app 90 family: emit `+app_set_config <appId> mod <steamMod>` before update
+     * so the selected GoldSrc mod depot is installed (cstrike, czero, valve, tfc).
+     */
+    steamMod: z.string().min(1).optional(),
+    /**
+     * SteamCMD `-beta <name>` after app id — applied only when the node is Linux
+     * (e.g. HumanitZ `linuxbranch`).
+     */
+    steamBetaLinux: z.string().min(1).optional(),
   })
   .strict();
 

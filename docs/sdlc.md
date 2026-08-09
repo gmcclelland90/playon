@@ -91,4 +91,4 @@ label:ready is:open
 label:test-debt is:open
 ```
 
-Full cockpit (Project board, lab dash, CI, notify rules): [observability.md](observability.md).
+Full cockpit (Project board, [#52](https://github.com/gmcclelland90/playon/issues/52) lab-status, Actions `lab-report`, CI, notify rules): [observability.md](observability.md).

@@ -139,6 +139,7 @@ describe("NativeProcessSupervisor", () => {
       args: ["-c", "while read line; do echo \"ran:$line\"; done"],
       cwd: "game",
       logFile: "logs/console.log",
+      keepStdin: true,
     });
 
     await supervisor.writeStdin("server-x", "game", "say hi");

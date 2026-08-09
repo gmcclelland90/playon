@@ -733,6 +733,7 @@ describe("remote native lifecycle through ServerRuntimeHandle", () => {
       cwd,
       env: { PLAYON_SERVER_ID: id },
       serverId: id,
+      keepStdin: false,
       // Jail-relative, so the node writes the console under its own data root.
       logRel: `servers/${id}/logs/console.log`,
     });

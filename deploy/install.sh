@@ -140,6 +140,10 @@ RestartSec=5
 # Keep OTA/apply helpers alive when the main process exits for self-update.
 KillMode=process
 LimitNOFILE=65535
+# Prefer :80 for http://playon.local (falls back to PLAYON_PORT without this).
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
@@ -183,7 +187,9 @@ systemctl enable --now playon.service playon-node.service
 
 echo ""
 echo "PlayOn Home is up."
-echo "  Admin:  http://${ADVERTISE}:8787"
+echo "  Open:   http://playon.local"
+echo "  Fallback: http://${ADVERTISE}:8787 (or :80 if privileged bind worked)"
+echo "  After Discord link (Settings → Panel URL): https://<handle>.playon.games"
 echo "  Data:   ${PLAYON_DATA}"
 echo "  Env:    ${ENV_FILE}"
 echo "  Node:   ${NODE_BIN}"

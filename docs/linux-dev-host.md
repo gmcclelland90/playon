@@ -48,6 +48,12 @@ ssh -o BatchMode=yes playon-lab 'hostname && cd /home/playon/src/playon-git && g
 sudo apt-get install -y libx11-6 libxcursor1 libxinerama1 libxi6 libxrandr2 libxss1 libxxf86vm1 libxrender1
 ```
 
+- Eco (`games.eco`) needs `libgdiplus` for `System.Drawing` on Linux:
+
+```bash
+sudo apt-get install -y libgdiplus
+```
+
 ## Sync from a Windows workstation
 
 Canonical path (CI/CD-aligned):

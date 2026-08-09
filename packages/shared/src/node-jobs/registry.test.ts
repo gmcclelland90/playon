@@ -125,6 +125,7 @@ describe("parseNodeJobArgs", () => {
       name: "playon-a",
       image: "itzg/mc",
       env: {},
+      cmd: [],
       ports: [],
       binds: [],
     });
@@ -140,6 +141,7 @@ describe("parseNodeJobArgs", () => {
         name: "playon-a",
         image: "itzg/minecraft-server:latest",
         env: { ENABLE_RCON: "true", RCON_PORT: "25575" },
+        cmd: ["host"],
         ports: [{ host: 25565, container: 25565, protocol: "tcp" }],
         binds: [{ hostPath: "servers/a/game", containerPath: "/data" }],
       }),
@@ -147,6 +149,7 @@ describe("parseNodeJobArgs", () => {
       name: "playon-a",
       image: "itzg/minecraft-server:latest",
       env: { ENABLE_RCON: "true", RCON_PORT: "25575" },
+      cmd: ["host"],
       ports: [{ host: 25565, container: 25565, protocol: "tcp" }],
       binds: [{ hostPath: "servers/a/game", containerPath: "/data" }],
     });

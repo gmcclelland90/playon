@@ -110,5 +110,33 @@ export function runtimeErrorHint(message: string | null | undefined): string | n
   if (m.includes("node_has_servers")) {
     return "This node still has servers. Move or delete them first, or Force remove to drop the node record anyway.";
   }
+  if (m.includes("manage_scan_roots_missing")) {
+    return "Scan paths aren’t installed on Home — the agent needs import-scan-roots.yaml beside skills. Sync skills from the PlayOn checkout, then Rescan.";
+  }
+  if (m.includes("manage_cutover_local_unreachable")) {
+    return "Couldn’t reach this host to finish Manage. Check the node is Online, then try again.";
+  }
   return null;
+}
+
+/** Short label for dense rails/crates; keeps full name for title/tooltip. */
+export function shortDisplayName(name: string, max = 22): string {
+  const trimmed = name.trim();
+  if (trimmed.length <= max) return trimmed;
+  // lab-matrix-stormworks-mslmnas5 → stormworks
+  const parts = trimmed.split(/[-_]/).filter(Boolean);
+  if (parts.length >= 3) {
+    const noise = new Set(["lab", "matrix", "playon", "test", "tmp"]);
+    const meaningful = parts.filter((p, i) => {
+      if (noise.has(p.toLowerCase())) return false;
+      // Drop trailing hash-like tokens (mslmnas5).
+      if (i === parts.length - 1 && /^[a-z]*\d+[a-z0-9]*$/i.test(p) && p.length <= 12) {
+        return false;
+      }
+      return true;
+    });
+    const mid = meaningful.join("-");
+    if (mid.length >= 3 && mid.length <= max) return mid;
+  }
+  return `${trimmed.slice(0, Math.max(1, max - 1))}…`;
 }

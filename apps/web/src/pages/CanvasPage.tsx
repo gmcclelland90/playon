@@ -212,17 +212,33 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     }
   }
 
+  function clearMapSelection() {
+    setSelectedId(undefined);
+    setInstallOpen(false);
+    setConsoleOpen(false);
+    setSelectedAnchor(null);
+    setScanNodeId(null);
+    setAddNodeOpen(false);
+    setOpsError(null);
+    setSessionError(null);
+    try {
+      localStorage.removeItem("playon.lastServerId");
+    } catch {
+      /* ignore */
+    }
+  }
+
   function selectServer(id: string | undefined) {
     if (!id) {
-      setSelectedId(undefined);
-      setInstallOpen(false);
-      setConsoleOpen(false);
-      setSelectedAnchor(null);
+      clearMapSelection();
       return;
     }
     setInstallOpen(false);
+    setScanNodeId(null);
+    setAddNodeOpen(false);
+    // Chat dock is the control surface; Terminal is opt-in (avoids a second composer).
     if (id !== selectedId) {
-      setConsoleOpen(true);
+      setConsoleOpen(false);
     }
     setSelectedId(id);
     setOpsError(null);
@@ -416,6 +432,53 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const opsBusy =
     start.isPending || stop.isPending || restart.isPending || remove.isPending;
 
+  const startMutateRef = useRef(start.mutate);
+  const stopMutateRef = useRef(stop.mutate);
+  startMutateRef.current = start.mutate;
+  stopMutateRef.current = stop.mutate;
+
+  useEffect(() => {
+    function onKey(e: globalThis.KeyboardEvent) {
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.tagName === "SELECT" ||
+          t.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        clearMapSelection();
+        return;
+      }
+      if (e.key === "a" || e.key === "A") {
+        e.preventDefault();
+        openInstallChat();
+        return;
+      }
+      if ((e.key === "n" || e.key === "N") && !scanNodeId) {
+        e.preventDefault();
+        setScanNodeId(null);
+        setAddNodeOpen(true);
+        return;
+      }
+      if (selectedId && (e.key === "s" || e.key === "S") && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        startMutateRef.current(selectedId);
+        return;
+      }
+      if (selectedId && (e.key === "x" || e.key === "X") && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        stopMutateRef.current(selectedId);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [scanNodeId, selectedId]);
+
   const chat = useMutation({
     mutationFn: (text: string) => {
       const ac = new AbortController();
@@ -580,8 +643,16 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     ? "Try “I want a vanilla Minecraft server”."
     : "Ask about status, config, restarts, snapshots…";
 
+  const pageClass = [
+    "canvas-page",
+    dockOpen ? "map-dock-open" : "",
+    scanNodeId || addNodeOpen ? "map-overlay-open" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div className="canvas-page">
+    <div className={pageClass}>
       <AgentCanvas
         servers={servers.data?.servers ?? []}
         nodes={(nodes.data?.nodes ?? []).map((n) => ({
@@ -595,6 +666,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         }))}
         serversLoading={servers.isLoading || (servers.isFetching && !servers.data)}
         selectedId={selectedId}
+        selectedHostId={scanNodeId}
         activity={activity}
         skills={skills.map((s) => ({
           skill: s.skill,
@@ -610,9 +682,11 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         }}
         onRemoveNode={(id) => removeNodeMut.mutate(id)}
         onSelectHost={(id) => {
-          setAddNodeOpen(false);
+          // Host pad = Scan / manage for that node. Server crates open the inspector.
+          clearMapSelection();
           setScanNodeId(id);
         }}
+        onBackgroundClick={clearMapSelection}
         onSelectedAnchorChange={setSelectedAnchor}
         showAddButton={!dockOpen && !addNodeOpen && !scanNodeId}
       />
@@ -627,13 +701,13 @@ export function CanvasPage({ user }: { user: PublicUser }) {
       ) : null}
 
       {addNodeOpen ? (
-        <div className="map-add-node-overlay">
+        <div className="map-add-node-overlay map-add-node-overlay-start">
           <MapAddNodePanel onClose={() => setAddNodeOpen(false)} />
         </div>
       ) : null}
 
       {scanNodeId ? (
-        <div className="map-add-node-overlay">
+        <div className="map-add-node-overlay map-add-node-overlay-start">
           <MapManageSuggestPanel
             nodeId={scanNodeId}
             nodeName={
@@ -690,6 +764,11 @@ export function CanvasPage({ user }: { user: PublicUser }) {
             </div>
             <p className="canvas-dock-hint">{dockHint}</p>
             {sessionError ? <p className="error">{sessionError}</p> : null}
+            {opsError ? (
+              <p className="error" role="alert">
+                {runtimeErrorHint(opsError) ?? opsError}
+              </p>
+            ) : null}
             {servers.isError ? (
               <p className="error">{(servers.error as Error).message}</p>
             ) : null}
@@ -947,7 +1026,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
           >
             {lines.length === 0 ? (
               <div className="empty-hint">
-                <strong>{unbound ? "Describe what to install" : "Ask the cast"}</strong>
+                <strong>{unbound ? "Describe what to install" : "Ask the agent"}</strong>
                 <p className="muted status-inline">{emptyHint}</p>
               </div>
             ) : (
@@ -992,7 +1071,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                 onChange={(e) => setMessage(e.target.value)}
                 onKeyDown={onComposerKeyDown}
                 placeholder={
-                  unbound ? "Describe the server you want…" : "Tell the agents what you need…"
+                  unbound ? "Describe the server you want…" : "Ask the agent what you need…"
                 }
                 disabled={chat.isPending}
                 rows={2}

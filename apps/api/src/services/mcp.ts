@@ -10,8 +10,10 @@ import { createPlayOnToolRegistry } from "./tools.js";
 
 function resultIsError(result: unknown): boolean {
   if (!result || typeof result !== "object") return false;
-  const err = (result as { error?: unknown }).error;
-  return typeof err === "string" && err.length > 0;
+  const row = result as { error?: unknown; online?: unknown };
+  // LiveServerState uses `error` for offline detail; that is not a tool failure.
+  if (typeof row.online === "boolean") return false;
+  return typeof row.error === "string" && row.error.length > 0;
 }
 
 /** Build a per-request MCP server exposing the shared PlayOn tool registry. */

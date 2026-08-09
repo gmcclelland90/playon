@@ -345,6 +345,7 @@ describe("remote docker ServerRuntimeHandle", () => {
       name: "playon-srv1",
       image: "playon/fixture:latest",
       env: { A: "1" },
+      cmd: [],
       ports: [{ host: 25565, container: 25565, protocol: "tcp" }],
       binds: [],
     });

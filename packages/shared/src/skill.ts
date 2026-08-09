@@ -90,10 +90,25 @@ export const SkillMetadataSchema = z.object({
   dockerImage: z.string().min(1).optional(),
   /** Static container env; runtime may inject RCON_* when adminDialect needs it. */
   dockerEnv: z.record(z.string(), z.string()).default({}),
+  /**
+   * Extra container command args (Docker `Cmd`), appended to the image ENTRYPOINT.
+   * Use for images that require CLI flags (e.g. SuperTuxKart `--lan-server=…`).
+   */
+  dockerArgs: z.array(z.string()).default([]),
   /** Container path for the server game/ bind mount. */
   dockerDataMount: z.string().min(1).default("/data"),
   /** SteamCMD dedicated-server app id (catalog Steam skills). */
   steamAppId: z.number().int().positive().optional(),
+  /**
+   * HLDS multi-mod app 90: SteamCMD `+app_set_config <appId> mod <steamMod>`
+   * before `+app_update` (cstrike, czero, valve, tfc, …).
+   */
+  steamMod: z.string().min(1).optional(),
+  /**
+   * SteamCMD `+app_update <appId> -beta <name>` applied only on Linux install hosts
+   * (e.g. HumanitZ `linuxbranch` — Windows uses the default depot).
+   */
+  steamBetaLinux: z.string().min(1).optional(),
   adminDialect: AdminDialectSchema.default("none"),
   /** Live stats query protocol; skill_module loads query/connector.mjs from the skill. */
   queryDialect: QueryDialectSchema.default("none"),

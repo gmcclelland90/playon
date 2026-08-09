@@ -74,6 +74,15 @@ import {
 } from "./http-policy.js";
 import { redactJson, redactString } from "./services/redaction.js";
 import { mountStaticWeb } from "./static-web.js";
+import { panelUrlsFor, getPanelRuntime, setPanelRuntime } from "./services/panel-runtime.js";
+import {
+  beginDiscordLink,
+  completeDiscordLink,
+  loadHomeHostnameState,
+  saveHomeHostnameState,
+  syncHomeHostname,
+  certIsUsable,
+} from "./services/home-hostname.js";
 
 import { hashPassword, verifyPassword } from "./auth/password.js";
 import {
@@ -258,12 +267,28 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     })();
   });
 
+  const hostnameState = loadHomeHostnameState(config.dataRoot);
   const corsOrigins =
     config.corsOrigins ??
     buildCorsOrigins({
       advertiseHost: config.advertiseHost,
       port: config.port,
+      preferredLanPort: config.preferredLanPort ?? config.port,
+      publicHostname: hostnameState?.hostname,
     });
+
+  const sessionCookieOpts = (c: { req: { url: string } }) => {
+    const url = new URL(c.req.url);
+    const secure =
+      url.protocol === "https:" ||
+      Boolean(hostnameState?.hostname && url.hostname.endsWith(".playon.games"));
+    return {
+      httpOnly: true as const,
+      sameSite: "Lax" as const,
+      path: "/",
+      secure: secure || undefined,
+    };
+  };
 
   app.onError(httpErrorHandler);
 
@@ -426,6 +451,115 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     return c.json({ needsSetup: value === 0, product: "PlayOn" as const });
   });
 
+  app.get("/api/panel-urls", (c) => {
+    const urls = panelUrlsFor(config.advertiseHost);
+    const rt = getPanelRuntime();
+    const hs = rt?.hostnameState ?? loadHomeHostnameState(config.dataRoot);
+    return c.json({
+      ...urls,
+      advertiseHost: config.advertiseHost,
+      lanPort: rt?.lanPort ?? config.port,
+      loopbackPort: rt?.loopbackPort ?? config.loopbackPort ?? config.port,
+      mdnsAdvertised: rt?.mdnsAdvertised ?? false,
+      httpsReady: Boolean(rt?.httpsListening && hs && certIsUsable(hs)),
+      linkedHostname: hs?.hostname ?? null,
+      discordUsername: hs?.discordUsername ?? null,
+      lastError: hs?.lastError ?? null,
+    });
+  });
+
+  app.post("/api/settings/panel-hostname/link/start", async (c) => {
+    requireRole(c, "owner");
+    const existing = loadHomeHostnameState(config.dataRoot);
+    try {
+      const started = await beginDiscordLink(
+        { baseUrl: config.homeDnsApiUrl ?? "https://playon.games" },
+        { installId: existing?.installId },
+      );
+      // Persist install id + device key so a restart mid-link can resume.
+      saveHomeHostnameState(config.dataRoot, {
+        installId: started.installId,
+        deviceKey: started.deviceKey,
+        hostname: existing?.hostname ?? "",
+        slug: existing?.slug ?? "",
+        discordUsername: existing?.discordUsername,
+        certPem: existing?.certPem,
+        keyPem: existing?.keyPem,
+        accountKeyPem: existing?.accountKeyPem,
+        certExpiresAt: existing?.certExpiresAt,
+        publishedIpv4: existing?.publishedIpv4,
+        updatedAt: new Date().toISOString(),
+        lastError: undefined,
+      });
+      return c.json({
+        linkUrl: started.linkUrl,
+        userCode: started.userCode,
+        expiresAt: started.expiresAt,
+        installId: started.installId,
+      });
+    } catch (err) {
+      throw serviceHttpError(err, {
+        fallback: "panel_hostname_link_start_failed",
+        code: "panel_hostname_link_start_failed",
+      });
+    }
+  });
+
+  app.post("/api/settings/panel-hostname/link/complete", async (c) => {
+    requireRole(c, "owner");
+    const body = z.object({ userCode: z.string().min(4) }).parse(await c.req.json());
+    try {
+      const claimed = await completeDiscordLink(
+        { baseUrl: config.homeDnsApiUrl ?? "https://playon.games" },
+        { userCode: body.userCode },
+      );
+      const prev = loadHomeHostnameState(config.dataRoot);
+      const state = {
+        ...prev,
+        installId: claimed.installId,
+        deviceKey: claimed.deviceKey,
+        hostname: claimed.hostname,
+        slug: claimed.slug,
+        discordUsername: claimed.discordUsername,
+        linkedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        lastError: undefined,
+      };
+      saveHomeHostnameState(config.dataRoot, state);
+      const synced = await syncHomeHostname({
+        dataRoot: config.dataRoot,
+        api: { baseUrl: config.homeDnsApiUrl ?? "https://playon.games" },
+        advertiseHost: config.advertiseHost,
+      });
+      const rt = getPanelRuntime();
+      if (rt) {
+        setPanelRuntime({
+          ...rt,
+          hostnameState: synced ?? state,
+          httpsListening: Boolean(synced && certIsUsable(synced)),
+        });
+      }
+      return c.json({
+        ok: true,
+        pending: false,
+        hostname: (synced ?? state).hostname,
+        urls: panelUrlsFor(config.advertiseHost),
+        restartHint:
+          "Restart PlayOn Home to serve HTTPS on :443 if the certificate was just issued.",
+        lastError: synced?.lastError ?? null,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("not_linked_yet")) {
+        return c.json({ ok: false, pending: true, error: "not_linked_yet" });
+      }
+      throw serviceHttpError(err, {
+        fallback: "panel_hostname_link_failed",
+        code: "panel_hostname_link_failed",
+      });
+    }
+  });
+
   app.post("/api/setup/owner", async (c) => {
     const [{ value }] = await db.select({ value: count() }).from(users);
     if (value > 0) throw HttpError.conflict("already_setup", { code: "already_setup" });
@@ -443,11 +577,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     });
 
     const sessionId = await createSession(db, id);
-    setCookie(c, SESSION_COOKIE, sessionId, {
-      httpOnly: true,
-      sameSite: "Lax",
-      path: "/",
-    });
+    setCookie(c, SESSION_COOKIE, sessionId, sessionCookieOpts(c));
 
     return c.json({
       user: {
@@ -467,11 +597,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       throw HttpError.unauthorized("invalid_credentials", { code: "invalid_credentials" });
     }
     const sessionId = await createSession(db, user.id);
-    setCookie(c, SESSION_COOKIE, sessionId, {
-      httpOnly: true,
-      sameSite: "Lax",
-      path: "/",
-    });
+    setCookie(c, SESSION_COOKIE, sessionId, sessionCookieOpts(c));
     return c.json({
       user: {
         id: user.id,

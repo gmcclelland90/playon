@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { can, roleAtLeast, type PublicUser } from "@playon/shared";
 import {
@@ -10,6 +11,7 @@ import {
 } from "../api";
 
 type TabId = "platform" | "installed" | "catalog" | "drafts";
+type CatalogFilter = "all" | "official" | "available";
 
 type Selection =
   | { kind: "local"; name: string }
@@ -20,11 +22,11 @@ type Selection =
 function containerLabel(value?: string | null): string {
   switch (value) {
     case "full":
-      return "Full Docker";
+      return "Docker";
     case "partial":
-      return "Partial Docker";
+      return "Docker (partial)";
     case "none":
-      return "Native only";
+      return "Native";
     default:
       return value?.trim() || "—";
   }
@@ -47,15 +49,39 @@ function sourceLabel(source?: string): string {
   }
 }
 
+function SkillBadges({
+  official,
+  installed,
+  containerSupport,
+  draft,
+}: {
+  official?: boolean;
+  installed?: boolean;
+  containerSupport?: string | null;
+  draft?: boolean;
+}) {
+  return (
+    <span className="skills-badges">
+      {official ? <span className="skills-badge skills-badge-cyan">Official</span> : null}
+      {installed ? <span className="skills-badge skills-badge-cyan">Installed</span> : null}
+      {draft ? <span className="skills-badge skills-badge-rose">Draft</span> : null}
+      {containerSupport ? (
+        <span className="skills-badge">{containerLabel(containerSupport)}</span>
+      ) : null}
+    </span>
+  );
+}
+
 export function SkillsPage({ user }: { user: PublicUser }) {
   const qc = useQueryClient();
   const canPackage = can(user.role, "skills.package");
   const canBrowse = roleAtLeast(user.role, "operator");
 
-  const [tab, setTab] = useState<TabId>("platform");
+  const [tab, setTab] = useState<TabId>("installed");
   const [selection, setSelection] = useState<Selection>(null);
   const [catalogQuery, setCatalogQuery] = useState("");
   const [catalogSearch, setCatalogSearch] = useState("");
+  const [catalogFilter, setCatalogFilter] = useState<CatalogFilter>("all");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [installingSkill, setInstallingSkill] = useState<string | null>(null);
@@ -63,6 +89,12 @@ export function SkillsPage({ user }: { user: PublicUser }) {
     name: string;
     servers: Array<{ id: string; name: string }>;
   } | null>(null);
+  const [pendingRemove, setPendingRemove] = useState<{
+    name: string;
+    kind: "uninstall" | "discard";
+  } | null>(null);
+  const detailPanelRef = useRef<HTMLElement>(null);
+  const defaultsApplied = useRef(false);
 
   const skills = useQuery({
     queryKey: ["skills"],
@@ -112,15 +144,49 @@ export function SkillsPage({ user }: { user: PublicUser }) {
     return catalog.data?.skills.find((s) => s.name === selection.name) ?? null;
   }, [selection, catalog.data?.skills]);
 
+  const filteredCatalog = useMemo(() => {
+    const rows = catalog.data?.skills ?? [];
+    if (catalogFilter === "official") return rows.filter((s) => s.official);
+    if (catalogFilter === "available") return rows.filter((s) => !s.installed);
+    return rows;
+  }, [catalog.data?.skills, catalogFilter]);
+
   const draftSelection: SkillDraftRow | null = useMemo(() => {
     if (selection?.kind !== "draft") return null;
     return drafts.data?.drafts.find((d) => d.slug === selection.slug) ?? null;
   }, [selection, drafts.data?.drafts]);
 
+  useEffect(() => {
+    if (defaultsApplied.current || skills.isLoading) return;
+    defaultsApplied.current = true;
+    if (installedSkills.length > 0) setTab("installed");
+    else setTab("catalog");
+  }, [skills.isLoading, installedSkills.length]);
+
+  useEffect(() => {
+    if (!selection) return;
+    detailPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [selection]);
+
+  useEffect(() => {
+    if (tab !== "catalog") return;
+    const handle = window.setTimeout(() => {
+      setCatalogSearch(catalogQuery.trim());
+    }, 350);
+    return () => window.clearTimeout(handle);
+  }, [catalogQuery, tab]);
+
   function flash(message: string) {
     setNotice(message);
     setError(null);
     window.setTimeout(() => setNotice(null), 4000);
+  }
+
+  function selectSkill(next: Selection) {
+    setSelection(next);
+    setPendingRemove(null);
+    setPendingUninstall(null);
+    setError(null);
   }
 
   const installFromCatalog = useMutation({
@@ -187,22 +253,18 @@ export function SkillsPage({ user }: { user: PublicUser }) {
     <div className="page stack skills-page">
       <header className="page-header">
         <h1>Skills</h1>
-        <p className="muted status-inline">
-          Skills are packages that teach PlayOn how to install, run, and manage a game server.
-          Platform skills ship with Home; game skills install from{" "}
-          <a href="https://playon.games/skills" target="_blank" rel="noreferrer">
-            playon.games
-          </a>{" "}
-          or chat. Agents can search and install the same catalog.
+        <p className="lede">
+          Teach this host how to run a game — install from the catalog, then create the server on the
+          Map.
         </p>
       </header>
 
       <div className="skills-tabs" role="tablist" aria-label="Skill library">
         {(
           [
-            ["platform", "Platform", platformSkills.length],
             ["installed", "Installed", installedSkills.length],
             ["catalog", "Catalog", catalog.data?.skills?.length],
+            ["platform", "Platform", platformSkills.length],
             ["drafts", "Drafts", drafts.data?.drafts?.length],
           ] as const
         ).map(([id, label, count]) => (
@@ -216,6 +278,7 @@ export function SkillsPage({ user }: { user: PublicUser }) {
               setTab(id);
               setSelection(null);
               setPendingUninstall(null);
+              setPendingRemove(null);
               setError(null);
             }}
           >
@@ -236,29 +299,64 @@ export function SkillsPage({ user }: { user: PublicUser }) {
         </p>
       ) : null}
 
-      <div className="skills-layout">
+      <div className={`skills-layout${selection ? " has-selection" : ""}`}>
         <section className="panel stack tight skills-list-panel">
           {tab === "catalog" ? (
             <>
               <form
-                className="btn-row"
+                className="skills-search"
                 onSubmit={(e) => {
                   e.preventDefault();
                   setCatalogSearch(catalogQuery.trim());
                 }}
               >
-                <label className="field" style={{ flex: 1 }}>
-                  <span>Search catalog</span>
+                <label className="skills-search-field">
+                    <span className="sr-only">Search catalog</span>
                   <input
                     value={catalogQuery}
-                    onChange={(e) => setCatalogQuery(e.target.value)}
-                    placeholder="minecraft, rust, …"
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setCatalogQuery(v);
+                    }}
+                    onBlur={() => setCatalogSearch(catalogQuery.trim())}
+                    placeholder="Search games — minecraft, rust…"
+                    autoComplete="off"
                   />
                 </label>
-                <button className="btn" type="submit" disabled={catalog.isFetching}>
-                  {catalog.isFetching ? "Searching…" : "Search"}
+                <button className="btn btn-compact" type="submit" disabled={catalog.isFetching}>
+                  {catalog.isFetching ? "…" : "Search"}
                 </button>
+                {catalogSearch ? (
+                  <button
+                    className="btn btn-ghost btn-compact"
+                    type="button"
+                    onClick={() => {
+                      setCatalogQuery("");
+                      setCatalogSearch("");
+                    }}
+                  >
+                    Clear
+                  </button>
+                ) : null}
               </form>
+              <div className="skills-filter-row" role="group" aria-label="Catalog filters">
+                {(
+                  [
+                    ["all", "All"],
+                    ["official", "Official"],
+                    ["available", "Not installed"],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={catalogFilter === id ? "skills-filter active" : "skills-filter"}
+                    onClick={() => setCatalogFilter(id)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
               {catalog.data?.warnings?.length ? (
                 <p className="muted status-inline">
                   {catalog.data.warnings.length} catalog entr
@@ -268,9 +366,9 @@ export function SkillsPage({ user }: { user: PublicUser }) {
               {catalog.data?.error ? <p className="error">{catalog.data.error}</p> : null}
               {catalog.isLoading ? (
                 <p className="muted">Loading catalog…</p>
-              ) : catalog.data?.skills?.length ? (
+              ) : filteredCatalog.length ? (
                 <ul className="list compact-list skills-select-list">
-                  {catalog.data.skills.map((s) => (
+                  {filteredCatalog.map((s) => (
                     <li key={s.name}>
                       <button
                         type="button"
@@ -279,15 +377,14 @@ export function SkillsPage({ user }: { user: PublicUser }) {
                             ? "skills-row active"
                             : "skills-row"
                         }
-                        onClick={() => setSelection({ kind: "catalog", name: s.name })}
+                        onClick={() => selectSkill({ kind: "catalog", name: s.name })}
                       >
                         <strong>{s.game ?? s.name}</strong>
-                        <span className="muted">
-                          {s.name} · v{s.version}
-                          {s.official ? " · official" : ""}
-                          {s.containerSupport ? ` · ${containerLabel(s.containerSupport)}` : ""}
-                          {s.installed ? " · installed" : ""}
-                        </span>
+                        <SkillBadges
+                          official={s.official}
+                          installed={s.installed}
+                        />
+                        <span className="muted small">v{s.version}</span>
                       </button>
                     </li>
                   ))}
@@ -346,13 +443,12 @@ export function SkillsPage({ user }: { user: PublicUser }) {
                           : "skills-row"
                       }
                       onClick={() =>
-                        setSelection({ kind: "draft", slug: d.slug, name: d.skillName })
+                        selectSkill({ kind: "draft", slug: d.slug, name: d.skillName })
                       }
                     >
                       <strong>{d.game ?? d.skillName}</strong>
-                      <span className="muted">
-                        {d.skillName} · v{d.version} · draft
-                      </span>
+                      <SkillBadges draft containerSupport={null} />
+                      <span className="muted small">v{d.version}</span>
                     </button>
                   </li>
                 ))}
@@ -379,12 +475,17 @@ export function SkillsPage({ user }: { user: PublicUser }) {
                           ? "skills-row active"
                           : "skills-row"
                       }
-                      onClick={() => setSelection({ kind: "local", name: s.name })}
+                      onClick={() => selectSkill({ kind: "local", name: s.name })}
                     >
                       <strong>{s.game ?? s.name}</strong>
-                      <span className="muted">
-                        {s.name} · v{s.version}
-                        {s.containerSupport ? ` · ${containerLabel(s.containerSupport)}` : ""}
+                      <SkillBadges
+                        installed={
+                          tab !== "installed" &&
+                          (s.source === "installed" || s.source === "server")
+                        }
+                      />
+                      <span className="muted small">
+                        v{s.version}
                         {s.source === "server" ? " · server-scoped" : ""}
                         {s.source === "fixture" ? " · fixture" : ""}
                       </span>
@@ -393,19 +494,82 @@ export function SkillsPage({ user }: { user: PublicUser }) {
                 ))}
               </ul>
             ) : (
-              <p className="muted status-inline">
-                {tab === "platform"
-                  ? "No platform skills discovered on this host."
-                  : "No game skills installed yet. Browse the Catalog tab or ask chat to install one."}
-              </p>
+              <div className="empty-hint">
+                <strong>{tab === "platform" ? "No platform skills" : "Nothing installed yet"}</strong>
+                <p className="muted status-inline">
+                  {tab === "platform" ? (
+                    "Platform skills ship with Home and appear here when the host is ready."
+                  ) : (
+                    <>
+                      Open the{" "}
+                      <button
+                        type="button"
+                        className="linkish"
+                        onClick={() => {
+                          setTab("catalog");
+                          setSelection(null);
+                        }}
+                      >
+                        Catalog
+                      </button>{" "}
+                      or ask on the Map to install a game skill.
+                    </>
+                  )}
+                </p>
+              </div>
             )
           ) : null}
         </section>
 
-        <aside className="panel stack tight skills-detail-panel">
+        <aside
+          ref={detailPanelRef}
+          className="panel stack tight skills-detail-panel"
+          aria-live="polite"
+        >
           {!selection ? (
-            <p className="muted status-inline">Select a skill to see details and actions.</p>
-          ) : null}
+            <div className="empty-hint">
+              <strong>
+                {tab === "catalog"
+                  ? "Find tonight’s game"
+                  : tab === "installed"
+                    ? "Pick a skill"
+                    : tab === "drafts"
+                      ? "Review a draft"
+                      : "Platform skills"}
+              </strong>
+              <p className="muted status-inline">
+                {tab === "catalog"
+                  ? "Search or select a game on the left. Install puts it on this host; create the server on the Map."
+                  : tab === "installed"
+                    ? "Installed skills power servers on this host. Add more from the Catalog."
+                    : tab === "drafts"
+                      ? "Agent-invented skills land here until you promote them."
+                      : "Built-in Home skills. They cannot be uninstalled."}
+              </p>
+              {tab === "installed" ? (
+                <button
+                  type="button"
+                  className="btn btn-primary btn-compact"
+                  onClick={() => {
+                    setTab("catalog");
+                    setSelection(null);
+                  }}
+                >
+                  Browse catalog
+                </button>
+              ) : null}
+            </div>
+          ) : (
+            <div className="skills-detail-toolbar">
+              <button
+                type="button"
+                className="btn btn-ghost btn-compact"
+                onClick={() => setSelection(null)}
+              >
+                Clear selection
+              </button>
+            </div>
+          )}
 
           {selection?.kind === "catalog" && catalogSelection ? (
             <CatalogDetail
@@ -420,33 +584,67 @@ export function SkillsPage({ user }: { user: PublicUser }) {
             <>
               {detail.isLoading ? <p className="muted">Loading…</p> : null}
               {detail.data?.skill ? (
-                <LocalDetail skill={detail.data.skill} />
+                <LocalDetail
+                  skill={detail.data.skill}
+                  actions={
+                    canPackage ? (
+                      <div className="btn-row skills-detail-actions">
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          disabled={promoteDraft.isPending}
+                          onClick={() => promoteDraft.mutate(draftSelection.slug)}
+                        >
+                          {promoteDraft.isPending ? "Promoting…" : "Promote to library"}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-danger"
+                          disabled={uninstall.isPending}
+                          onClick={() =>
+                            setPendingRemove({
+                              name: draftSelection.skillName,
+                              kind: "discard",
+                            })
+                          }
+                        >
+                          Discard draft
+                        </button>
+                      </div>
+                    ) : null
+                  }
+                />
               ) : (
                 <div className="stack tight">
                   <h3>{draftSelection.game ?? draftSelection.skillName}</h3>
                   <p className="muted status-inline">{draftSelection.description}</p>
+                  {canPackage ? (
+                    <div className="btn-row skills-detail-actions">
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        disabled={promoteDraft.isPending}
+                        onClick={() => promoteDraft.mutate(draftSelection.slug)}
+                      >
+                        {promoteDraft.isPending ? "Promoting…" : "Promote to library"}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-danger"
+                        disabled={uninstall.isPending}
+                        onClick={() =>
+                          setPendingRemove({
+                            name: draftSelection.skillName,
+                            kind: "discard",
+                          })
+                        }
+                      >
+                        Discard draft
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
               )}
-              {canPackage ? (
-                <div className="btn-row">
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    disabled={promoteDraft.isPending}
-                    onClick={() => promoteDraft.mutate(draftSelection.slug)}
-                  >
-                    {promoteDraft.isPending ? "Promoting…" : "Promote to library"}
-                  </button>
-                  <button
-                    type="button"
-                    className="btn"
-                    disabled={uninstall.isPending}
-                    onClick={() => uninstall.mutate({ name: draftSelection.skillName })}
-                  >
-                    Discard draft
-                  </button>
-                </div>
-              ) : null}
             </>
           ) : null}
 
@@ -457,48 +655,83 @@ export function SkillsPage({ user }: { user: PublicUser }) {
                 <p className="error">{(detail.error as Error).message}</p>
               ) : null}
               {detail.data?.skill ? (
-                <>
-                  <LocalDetail skill={detail.data.skill} />
-                  <div className="btn-row">
-                    {canPackage ? (
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={() => {
-                          void api.exportSkill(selection.name).catch((err: Error) => {
-                            setError(err.message);
-                          });
-                        }}
-                      >
-                        Export zip
-                      </button>
-                    ) : null}
-                    {canPackage &&
-                    (detail.data.skill.source === "installed" ||
-                      detail.data.skill.source === "draft") ? (
-                      <button
-                        type="button"
-                        className="btn"
-                        disabled={uninstall.isPending}
-                        onClick={() => uninstall.mutate({ name: selection.name })}
-                      >
-                        Uninstall
-                      </button>
-                    ) : null}
-                  </div>
-                  {detail.data.skill.source === "platform" ||
-                  detail.data.skill.source === "fixture" ? (
-                    <p className="muted status-inline">
-                      Built-in skills cannot be uninstalled from this host.
-                    </p>
-                  ) : null}
-                </>
+                <LocalDetail
+                  skill={detail.data.skill}
+                  actions={
+                    <div className="btn-row skills-detail-actions">
+                      {detail.data.skill.source === "installed" ||
+                      detail.data.skill.source === "server" ? (
+                        <Link className="btn btn-primary" to="/">
+                          Create on Map
+                        </Link>
+                      ) : null}
+                      {canPackage ? (
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => {
+                            void api.exportSkill(selection.name).catch((err: Error) => {
+                              setError(err.message);
+                            });
+                          }}
+                        >
+                          Export zip
+                        </button>
+                      ) : null}
+                      {canPackage &&
+                      (detail.data.skill.source === "installed" ||
+                        detail.data.skill.source === "draft") ? (
+                        <button
+                          type="button"
+                          className="btn btn-danger"
+                          disabled={uninstall.isPending}
+                          onClick={() =>
+                            setPendingRemove({ name: selection.name, kind: "uninstall" })
+                          }
+                        >
+                          Uninstall
+                        </button>
+                      ) : null}
+                    </div>
+                  }
+                />
               ) : null}
             </>
           ) : null}
 
+          {pendingRemove && !pendingUninstall ? (
+            <div className="confirm-banner stack tight" role="alertdialog" aria-label="Confirm remove">
+              <p className="status-inline">
+                {pendingRemove.kind === "discard"
+                  ? `Discard draft “${pendingRemove.name}”? This cannot be undone.`
+                  : `Uninstall “${pendingRemove.name}” from this host?`}
+              </p>
+              <div className="btn-row">
+                <button
+                  type="button"
+                  className="btn btn-danger"
+                  disabled={uninstall.isPending}
+                  onClick={() => {
+                    uninstall.mutate({ name: pendingRemove.name });
+                    setPendingRemove(null);
+                  }}
+                >
+                  {pendingRemove.kind === "discard" ? "Discard" : "Uninstall"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={uninstall.isPending}
+                  onClick={() => setPendingRemove(null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           {pendingUninstall ? (
-            <div className="stack tight" role="alertdialog" aria-label="Confirm uninstall">
+            <div className="confirm-banner stack tight" role="alertdialog" aria-label="Confirm force uninstall">
               <p className="error">
                 {pendingUninstall.name} is still referenced by{" "}
                 {pendingUninstall.servers.length} server
@@ -508,14 +741,14 @@ export function SkillsPage({ user }: { user: PublicUser }) {
               <div className="btn-row">
                 <button
                   type="button"
-                  className="btn"
+                  className="btn btn-ghost"
                   onClick={() => setPendingUninstall(null)}
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
-                  className="btn btn-primary"
+                  className="btn btn-danger"
                   disabled={uninstall.isPending}
                   onClick={() =>
                     uninstall.mutate({ name: pendingUninstall.name, force: true })
@@ -546,169 +779,192 @@ function CatalogDetail({
   return (
     <div className="stack tight">
       <h3>{skill.game ?? skill.name}</h3>
+      <SkillBadges official={skill.official} installed={skill.installed} />
       <p className="muted status-inline">
-        {skill.name} · v{skill.version}
-        {skill.official ? " · official" : ""}
+        v{skill.version} · {containerLabel(skill.containerSupport)}
+        {skill.minRamMb ? ` · ${skill.minRamMb} MB min` : ""}
       </p>
       {skill.description ? <p>{skill.description}</p> : null}
-      <dl className="skills-meta">
-        <div>
-          <dt>Container</dt>
-          <dd>{containerLabel(skill.containerSupport)}</dd>
-        </div>
-        {skill.minRamMb ? (
-          <div>
-            <dt>Min RAM</dt>
-            <dd>{skill.minRamMb} MB</dd>
-          </div>
-        ) : null}
-        {skill.tags?.length ? (
-          <div>
-            <dt>Tags</dt>
-            <dd>{skill.tags.join(", ")}</dd>
-          </div>
-        ) : null}
-        {skill.dependencies?.length ? (
-          <div>
-            <dt>Dependencies</dt>
-            <dd>{skill.dependencies.join(", ")}</dd>
-          </div>
-        ) : null}
-        <div>
-          <dt>Catalog</dt>
-          <dd>
-            <a href={`https://playon.games/skills/${encodeURIComponent(skill.name)}`} target="_blank" rel="noreferrer">
-              playon.games/skills/{skill.name}
-            </a>
-          </dd>
-        </div>
-      </dl>
       {canPackage ? (
-        <div className="btn-row">
-          <button
-            type="button"
-            className="btn btn-primary"
-            disabled={skill.installed || installing}
-            onClick={onInstall}
-          >
-            {skill.installed ? "Installed" : installing ? "Installing…" : "Install"}
-          </button>
+        <div className="btn-row skills-detail-actions">
+          {skill.installed ? (
+            <Link className="btn btn-primary" to="/">
+              Create on Map
+            </Link>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={installing}
+              onClick={onInstall}
+            >
+              {installing ? "Installing…" : "Install"}
+            </button>
+          )}
         </div>
       ) : (
         <p className="muted status-inline">Admins can install catalog skills on this host.</p>
       )}
+      <details className="skills-advanced-meta">
+        <summary className="muted small">More about this skill</summary>
+        <dl className="skills-meta">
+          <div>
+            <dt>Skill id</dt>
+            <dd>
+              <code>{skill.name}</code>
+            </dd>
+          </div>
+          {skill.tags?.length ? (
+            <div>
+              <dt>Tags</dt>
+              <dd>{skill.tags.join(", ")}</dd>
+            </div>
+          ) : null}
+          {skill.dependencies?.length ? (
+            <div>
+              <dt>Dependencies</dt>
+              <dd>{skill.dependencies.join(", ")}</dd>
+            </div>
+          ) : null}
+          <div>
+            <dt>Catalog</dt>
+            <dd>
+              <a
+                href={`https://playon.games/skills/${encodeURIComponent(skill.name)}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                playon.games/skills/{skill.name}
+              </a>
+            </dd>
+          </div>
+        </dl>
+      </details>
     </div>
   );
 }
 
-function LocalDetail({ skill }: { skill: SkillDetail }) {
+function LocalDetail({
+  skill,
+  actions,
+}: {
+  skill: SkillDetail;
+  actions?: ReactNode;
+}) {
   const m = skill.metadata;
   return (
     <div className="stack tight">
       <h3>{m.game ?? m.name}</h3>
+      <SkillBadges
+        installed={skill.source === "installed" || skill.source === "server"}
+      />
       <p className="muted status-inline">
-        {m.name} · v{m.version}
+        v{m.version} · {containerLabel(m.containerSupport)}
+        {m.minRamMb ? ` · ${m.minRamMb} MB min` : ""}
       </p>
       {m.description ? <p>{m.description}</p> : null}
-      <dl className="skills-meta">
-        <div>
-          <dt>Source</dt>
-          <dd>{sourceLabel(skill.source)}</dd>
-        </div>
-        <div>
-          <dt>Container</dt>
-          <dd>{containerLabel(m.containerSupport)}</dd>
-        </div>
-        {m.dockerImage ? (
+      {actions}
+      {skill.source === "platform" || skill.source === "fixture" ? (
+        <p className="muted status-inline">Built-in — cannot be uninstalled from this host.</p>
+      ) : null}
+      <details className="skills-advanced-meta">
+        <summary className="muted small">More about this skill</summary>
+        <dl className="skills-meta">
           <div>
-            <dt>Docker image</dt>
+            <dt>Source</dt>
+            <dd>{sourceLabel(skill.source)}</dd>
+          </div>
+          <div>
+            <dt>Skill id</dt>
             <dd>
-              <code>{m.dockerImage}</code>
+              <code>{m.name}</code>
             </dd>
           </div>
-        ) : null}
-        {m.os?.length ? (
+          {m.dockerImage ? (
+            <div>
+              <dt>Docker image</dt>
+              <dd>
+                <code>{m.dockerImage}</code>
+              </dd>
+            </div>
+          ) : null}
+          {m.os?.length ? (
+            <div>
+              <dt>OS</dt>
+              <dd>{m.os.join(", ")}</dd>
+            </div>
+          ) : null}
+          {m.arch?.length ? (
+            <div>
+              <dt>Arch</dt>
+              <dd>{m.arch.join(", ")}</dd>
+            </div>
+          ) : null}
+          {m.adminDialect ? (
+            <div>
+              <dt>Admin</dt>
+              <dd>{m.adminDialect}</dd>
+            </div>
+          ) : null}
+          {m.queryDialect ? (
+            <div>
+              <dt>Query</dt>
+              <dd>{m.queryDialect}</dd>
+            </div>
+          ) : null}
+          {m.ports?.length ? (
+            <div>
+              <dt>Ports</dt>
+              <dd>
+                {m.ports
+                  .map(
+                    (p) =>
+                      `${p.name}${p.default ? ` ${p.default}` : ""}${p.protocol ? `/${p.protocol}` : ""}`,
+                  )
+                  .join(", ")}
+              </dd>
+            </div>
+          ) : null}
+          {m.requiredTools?.length ? (
+            <div>
+              <dt>Tools</dt>
+              <dd>{m.requiredTools.join(", ")}</dd>
+            </div>
+          ) : null}
+          {m.tags?.length ? (
+            <div>
+              <dt>Tags</dt>
+              <dd>{m.tags.join(", ")}</dd>
+            </div>
+          ) : null}
+          {skill.dependencies.length ? (
+            <div>
+              <dt>Dependencies</dt>
+              <dd>
+                {skill.dependencies.map((d) => (
+                  <span key={d.name} className={d.present ? undefined : "error"}>
+                    {d.name}
+                    {d.present ? "" : " (missing)"}
+                    {"; "}
+                  </span>
+                ))}
+              </dd>
+            </div>
+          ) : null}
+          {m.join?.clientSetupNotes ? (
+            <div>
+              <dt>Join notes</dt>
+              <dd>{m.join.clientSetupNotes}</dd>
+            </div>
+          ) : null}
           <div>
-            <dt>OS</dt>
-            <dd>{m.os.join(", ")}</dd>
-          </div>
-        ) : null}
-        {m.arch?.length ? (
-          <div>
-            <dt>Arch</dt>
-            <dd>{m.arch.join(", ")}</dd>
-          </div>
-        ) : null}
-        {m.minRamMb ? (
-          <div>
-            <dt>Min RAM</dt>
-            <dd>{m.minRamMb} MB</dd>
-          </div>
-        ) : null}
-        {m.adminDialect ? (
-          <div>
-            <dt>Admin</dt>
-            <dd>{m.adminDialect}</dd>
-          </div>
-        ) : null}
-        {m.queryDialect ? (
-          <div>
-            <dt>Query</dt>
-            <dd>{m.queryDialect}</dd>
-          </div>
-        ) : null}
-        {m.ports?.length ? (
-          <div>
-            <dt>Ports</dt>
+            <dt>Path</dt>
             <dd>
-              {m.ports
-                .map(
-                  (p) =>
-                    `${p.name}${p.default ? ` ${p.default}` : ""}${p.protocol ? `/${p.protocol}` : ""}`,
-                )
-                .join(", ")}
+              <code>{skill.path}</code>
             </dd>
           </div>
-        ) : null}
-        {m.requiredTools?.length ? (
-          <div>
-            <dt>Tools</dt>
-            <dd>{m.requiredTools.join(", ")}</dd>
-          </div>
-        ) : null}
-        {m.tags?.length ? (
-          <div>
-            <dt>Tags</dt>
-            <dd>{m.tags.join(", ")}</dd>
-          </div>
-        ) : null}
-        {skill.dependencies.length ? (
-          <div>
-            <dt>Dependencies</dt>
-            <dd>
-              {skill.dependencies.map((d) => (
-                <span key={d.name} className={d.present ? undefined : "error"}>
-                  {d.name}
-                  {d.present ? "" : " (missing)"}
-                  {"; "}
-                </span>
-              ))}
-            </dd>
-          </div>
-        ) : null}
-        {m.join?.clientSetupNotes ? (
-          <div>
-            <dt>Join notes</dt>
-            <dd>{m.join.clientSetupNotes}</dd>
-          </div>
-        ) : null}
-        <div>
-          <dt>Path</dt>
-          <dd>
-            <code>{skill.path}</code>
-          </dd>
-        </div>
-      </dl>
+        </dl>
+      </details>
     </div>
   );
 }

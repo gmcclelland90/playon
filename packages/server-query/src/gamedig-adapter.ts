@@ -24,9 +24,9 @@ export function createGamedigConnector(opts: {
           host: target.host,
           port,
           givenPortOnly: true,
-          socketTimeout: target.timeoutMs ?? 2000,
-          attemptTimeout: Math.max(target.timeoutMs ?? 2000, 3000),
-          maxRetries: 1,
+          socketTimeout: target.timeoutMs ?? 3000,
+          attemptTimeout: Math.max(target.timeoutMs ?? 3000, 5000),
+          maxRetries: 3,
         });
         return fromGamedig(state, Date.now() - started, opts.gameLabel);
       } catch (err) {

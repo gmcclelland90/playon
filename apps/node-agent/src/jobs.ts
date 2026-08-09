@@ -392,7 +392,7 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
   const { docker, process: proc } = await ensureAdapters();
 
   if (job.kind === "container_create") {
-    const { name, image, env, ports, binds } = parseNodeJobArgs("container_create", job.args);
+    const { name, image, env, cmd, ports, binds } = parseNodeJobArgs("container_create", job.args);
     if (!docker) throw new Error("docker_unavailable");
     // An absolute hostPath is a deliberate escape hatch for host-owned mounts;
     // anything relative resolves inside the jail.
@@ -405,7 +405,14 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
     }
     return parseNodeJobResult(
       "container_create",
-      await docker.create({ name, image, env, ports, binds: resolvedBinds }),
+      await docker.create({
+        name,
+        image,
+        env,
+        ...(cmd.length ? { cmd } : {}),
+        ports,
+        binds: resolvedBinds,
+      }),
     );
   }
 
@@ -471,10 +478,11 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
       env,
       serverId,
       logRel,
+      keepStdin,
     } = parseNodeJobArgs("process_start", job.args);
     const cwd = resolveInJail(dataRoot, cwdRel);
     const logFile = logRel ? resolveInJail(dataRoot, logRel) : undefined;
-    const info = await proc.start({ name, command, args, cwd, env, logFile });
+    const info = await proc.start({ name, command, args, cwd, env, logFile, keepStdin });
     if (serverId && logFile) {
       beginFileLogFollow(serverId, logFile);
     }
@@ -510,10 +518,8 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
   }
 
   if (job.kind === "steamcmd_app_update") {
-    const { serverRel, appId, installDirRel, validate } = parseNodeJobArgs(
-      "steamcmd_app_update",
-      job.args,
-    );
+    const { serverRel, appId, installDirRel, validate, steamMod, steamBetaLinux } =
+      parseNodeJobArgs("steamcmd_app_update", job.args);
     return parseNodeJobResult(
       "steamcmd_app_update",
       await steamcmdAppUpdate({
@@ -521,6 +527,8 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
         appId,
         installDirRel,
         validate,
+        steamMod,
+        steamBetaLinux,
       }),
     );
   }

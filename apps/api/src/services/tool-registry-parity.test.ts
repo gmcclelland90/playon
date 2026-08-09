@@ -55,6 +55,8 @@ const ALL_TOOLS = [
   "skill_search",
   "skill_install_url",
   "panel_publish",
+  "panel_upsert",
+  "panel_theme",
   "panel_list",
   "snapshot_create",
   "snapshot_restore",
@@ -89,6 +91,7 @@ const SERVER_SCOPED_TOOLS = [
   "servers_logs_tail",
   "servers_query",
   "skill_promote_server",
+  "panel_theme",
   "watchers_create",
   "snapshot_create",
   "backup_offnode",
@@ -134,7 +137,7 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
       .sort((a, b) => a.name.localeCompare(b.name));
 
     // Moving a domain onto ToolEntry must not add, drop, or re-gate a tool.
-    expect(fromRegistry).toHaveLength(59);
+    expect(fromRegistry).toHaveLength(ALL_TOOLS.length);
     expect(fromRegistry.map((t) => t.name)).toEqual([...ALL_TOOLS].sort());
     expect(fromOrch).toEqual(fromRegistry);
   });
@@ -266,6 +269,8 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     }
     // Panel tools narrow to the bound server but still answer in an unbound chat.
     expect(byName.get("panel_publish")?.workspacePolicy).toBe("server_optional");
+    expect(byName.get("panel_upsert")?.workspacePolicy).toBe("server_optional");
+    expect(byName.get("panel_theme")?.workspacePolicy).toBe("server_required");
     expect(byName.get("panel_list")?.workspacePolicy).toBe("server_optional");
     expect(byName.get("watchers_list")?.workspacePolicy).toBe("server_optional");
     // Snapshot/backup reads narrow to the bound server but still answer in an unbound chat.

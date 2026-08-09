@@ -238,6 +238,104 @@ function udpOnlyGame(meta) {
   return ports.every((p) => p.protocol === "udp");
 }
 
+/** Disposable Home name — unique per attempt so parallel cleanups cannot target "the" slug. */
+function labMatrixServerName(skillName) {
+  return `lab-matrix-${skillSlug(skillName)}-${Date.now().toString(36)}`;
+}
+
+/**
+ * Resolve Home server status via MCP list (same bearer as tools).
+ * Concurrent `cleanup-lab-matrix-servers` deletes cause REST 404 mid-lifecycle;
+ * surface that as server_missing_mid_lifecycle instead of opaque home_rest_404.
+ */
+async function homeServerStatus(home, serverId) {
+  const rows = await home.tool("servers_list", {});
+  // MCP structuredContent is usually `{ result: ServerSummary[] }`, not a bare array.
+  const list = Array.isArray(rows)
+    ? rows
+    : Array.isArray(rows?.result)
+      ? rows.result
+      : Array.isArray(rows?.servers)
+        ? rows.servers
+        : [];
+  const hit = list.find((s) => s && s.id === serverId);
+  if (hit) return hit.status ?? null;
+  // Confirm via REST for a precise not_found signal.
+  try {
+    const detail = await home.rest(`/api/servers/${serverId}`);
+    return detail?.server?.status ?? detail?.status ?? null;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/home_rest_404|server_not_found/i.test(msg)) {
+      throw new Error(
+        `server_missing_mid_lifecycle: ${serverId} (deleted while matrix owned it — avoid sweeping lab-matrix-* mid-run)`,
+      );
+    }
+    throw err;
+  }
+}
+
+/** Push skill `files/` into remote game/ via MCP (node-authoritative Steam installs skip Home push). */
+async function pushSkillFilesViaHome(home, serverId, skillPath) {
+  const overlayRoot = path.join(skillPath, "files");
+  if (!fs.existsSync(overlayRoot) || !fs.statSync(overlayRoot).isDirectory()) {
+    return [];
+  }
+  const written = [];
+  const walk = async (srcDir, rel = "") => {
+    for (const name of fs.readdirSync(srcDir)) {
+      const src = path.join(srcDir, name);
+      const destRel = rel ? `${rel}/${name}` : name;
+      const st = fs.statSync(src);
+      if (st.isDirectory()) {
+        await walk(src, destRel);
+        continue;
+      }
+      // Skip binaries / huge blobs in skill files — text overlays only.
+      if (st.size > 512_000) continue;
+      const content = fs.readFileSync(src, "utf8");
+      const gamePath = `game/${destRel.replace(/\\/g, "/")}`;
+      try {
+        await home.tool("fs_write", { serverId, path: gamePath, content });
+        written.push(gamePath);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Ignore already-exists style conflicts; surface real failures.
+        if (!/exists|EEXIST/i.test(msg)) throw err;
+      }
+    }
+  };
+  await walk(overlayRoot);
+  return written;
+}
+
+/** Copy skill `files/` into a local matrix game/ jail (skip existing). */
+function copySkillFilesLocal(skillPath, gameDir) {
+  const overlayRoot = path.join(skillPath, "files");
+  if (!fs.existsSync(overlayRoot) || !fs.statSync(overlayRoot).isDirectory()) {
+    return [];
+  }
+  const written = [];
+  const walk = (srcDir, rel = "") => {
+    for (const name of fs.readdirSync(srcDir)) {
+      const src = path.join(srcDir, name);
+      const destRel = rel ? `${rel}/${name}` : name;
+      const st = fs.statSync(src);
+      if (st.isDirectory()) {
+        walk(src, destRel);
+        continue;
+      }
+      const dest = path.join(gameDir, ...destRel.split("/"));
+      if (fs.existsSync(dest)) continue;
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(src, dest);
+      written.push(destRel.replace(/\\/g, "/"));
+    }
+  };
+  walk(overlayRoot);
+  return written;
+}
+
 async function waitForTcpOpen(net, host, port, { attempts = 30, delayMs = 2000 } = {}) {
   let last = null;
   for (let i = 0; i < attempts; i++) {
@@ -308,9 +406,11 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
     phases.static = "ok";
     await home.requireWinNodeOnline(winNodeId);
 
+    const serverName = labMatrixServerName(meta.name);
+    notes.serverName = serverName;
     const created = await home.tool("servers_create_from_skill", {
       skillName: meta.name,
-      serverName: `lab-matrix-${skillSlug(meta.name)}`,
+      serverName,
       nodeId: winNodeId,
     });
     serverId = created.serverId;
@@ -334,9 +434,51 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
           stdoutTail: typeof install.stdoutTail === "string" ? install.stdoutTail.slice(-400) : undefined,
         };
         phases.install = "ok";
+        // SteamCMD can exit 0 while publishing EmptySteamDepot + SizeOnDisk=0
+        // (e.g. Risk of Rain 2 dedicated 1180760 public build 20243729).
+        try {
+          const listing = await home.tool("fs_list", { serverId, path: "game" });
+          const entries = listing.result || listing.entries || [];
+          const names = (Array.isArray(entries) ? entries : []).map((e) => e.name);
+          if (names.includes("EmptySteamDepot")) {
+            let sizeOnDisk = null;
+            try {
+              const acf = await home.tool("fs_read", {
+                serverId,
+                path: `game/steamapps/appmanifest_${meta.steamAppId}.acf`,
+                maxBytes: 4000,
+              });
+              const text = acf.content || acf.text || "";
+              const m = /"SizeOnDisk"\s+"(\d+)"/.exec(text);
+              sizeOnDisk = m ? Number(m[1]) : null;
+            } catch {
+              /* ignore */
+            }
+            if (sizeOnDisk === 0 || sizeOnDisk === null) {
+              const msg = `steamcmd_empty_depot: appId=${meta.steamAppId} EmptySteamDepot SizeOnDisk=${sizeOnDisk ?? "unknown"}`;
+              notes.install.emptyDepot = true;
+              await safeHomeCleanup(home, serverId);
+              return {
+                skillName: meta.name,
+                ok: true,
+                skipped: true,
+                skipReason: "steamcmd_empty_depot",
+                phases: { ...phases, install: "skipped", cleanup: "ok" },
+                durationMs: Date.now() - startedAt,
+                notes,
+                tail: msg,
+              };
+            }
+          }
+        } catch (probeErr) {
+          notes.install.emptyDepotProbe = String(
+            probeErr instanceof Error ? probeErr.message : probeErr,
+          );
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         // Exit 8 / No subscription: paid depot under anonymous SteamCMD.
+        // Also seen when the Windows node is out of disk (orphan lab installs).
         if (/steamcmd_no_subscription|No subscription|exit=8\b/i.test(msg)) {
           await safeHomeCleanup(home, serverId);
           return {
@@ -350,10 +492,32 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
             tail: msg,
           };
         }
+        if (/steamcmd_empty_depot/i.test(msg)) {
+          await safeHomeCleanup(home, serverId);
+          return {
+            skillName: meta.name,
+            ok: true,
+            skipped: true,
+            skipReason: "steamcmd_empty_depot",
+            phases: { ...phases, install: "skipped", cleanup: "ok" },
+            durationMs: Date.now() - startedAt,
+            notes,
+            tail: msg,
+          };
+        }
         throw err;
       }
     } else {
       phases.install = "skipped";
+    }
+
+    try {
+      const overlay = await pushSkillFilesViaHome(home, serverId, skill.path);
+      if (overlay.length) notes.skillOverlay = overlay;
+    } catch (err) {
+      notes.skillOverlay = {
+        error: err instanceof Error ? err.message : String(err),
+      };
     }
 
     const started = await home.tool("servers_start", { serverId });
@@ -388,8 +552,7 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
       // Remote UDP listen isn't visible via Home ss; require running + query when dialect set.
       let running = false;
       for (let i = 0; i < 40; i++) {
-        const detail = await home.rest(`/api/servers/${serverId}`);
-        const status = detail?.server?.status ?? detail?.status;
+        const status = await homeServerStatus(home, serverId);
         running = status === "running";
         if (running) break;
         await sleep(3000);
@@ -397,8 +560,7 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
       if (!running) throw new Error("udp_process_not_running");
       phases.port_open = "ok";
     } else {
-      const detail = await home.rest(`/api/servers/${serverId}`);
-      const status = detail?.server?.status ?? detail?.status;
+      const status = await homeServerStatus(home, serverId);
       if (status !== "running") throw new Error("running_without_ports_failed");
       phases.port_open = "ok";
     }
@@ -627,6 +789,9 @@ async function runLifecycle(cp, skill, { runTools, windows }) {
     }
 
     try {
+      const gameDir = path.join(created.dataPath, "game");
+      const copiedSkillOverlay = copySkillFilesLocal(skill.path, gameDir);
+      if (copiedSkillOverlay.length) notes.skillOverlay = copiedSkillOverlay;
       const started = await servers.start(serverId);
       phases.start = started.status === "running" || started.status === "starting" ? "ok" : "fail";
       if (phases.start !== "ok") throw new Error(`start_status_${started.status}`);
@@ -1062,7 +1227,26 @@ async function main() {
           errorClass: "skill_bug",
           tail: result.tail,
         });
-        break;
+        writeStatus({
+          ok: false,
+          startedAt,
+          finishedAt: new Date().toISOString(),
+          mode: onlySkill ? "single" : resume ? "resume" : "catalog",
+          dataRoot,
+          skillsSource: source,
+          skillsRequested: selected.map((s) => s.metadata.name),
+          skillsRun: results.map((r) => r.skillName),
+          cursor: i,
+          failedSkill: name,
+          results,
+          nextAction: `Fix ${name}, then: pnpm lab:matrix --resume`,
+        });
+        console.log(
+          `result ${name} ok=false skipped=false  duration_ms=0`,
+        );
+        console.log(`tail: ${result.tail}`);
+        if (!continueOnFail) break;
+        continue;
       }
       result = await runLifecycle(cp, skill, { runTools, windows });
     }

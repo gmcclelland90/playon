@@ -69,11 +69,22 @@ describe("loadConfig production guards", () => {
 });
 
 describe("buildCorsOrigins", () => {
-  it("includes vite localhost and advertise host variants", () => {
+  it("includes vite localhost, playon.local, and advertise host variants", () => {
     const origins = buildCorsOrigins({ advertiseHost: "10.0.0.2", port: 8787 });
     expect(origins).toContain("http://localhost:5173");
     expect(origins).toContain("http://10.0.0.2");
     expect(origins).toContain("http://10.0.0.2:8787");
+    expect(origins).toContain("http://playon.local");
+    expect(origins).toContain("http://playon.local:8787");
+  });
+
+  it("includes Discord-linked public hostname", () => {
+    const origins = buildCorsOrigins({
+      advertiseHost: "10.0.0.2",
+      port: 8787,
+      publicHostname: "alice.playon.games",
+    });
+    expect(origins).toContain("https://alice.playon.games");
   });
 });
 

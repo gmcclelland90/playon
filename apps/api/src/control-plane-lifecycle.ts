@@ -1,4 +1,3 @@
-import { serve } from "@hono/node-server";
 import { createApp, type PlayOnApp } from "./app.js";
 import { loadConfig, type AppConfig } from "./config.js";
 import { createDb } from "./db/client.js";
@@ -8,6 +7,14 @@ import { nodeJobService } from "./services/node-jobs.js";
 import { SnapshotScheduler } from "./services/snapshot-scheduler.js";
 import { WatcherScheduler } from "./services/watcher-scheduler.js";
 import { webDistReady } from "./static-web.js";
+import { startMdnsAdvertisement, type MdnsAdvertisement } from "./services/lan-mdns.js";
+import { listenPlayOnHttp } from "./services/http-listen.js";
+import {
+  certIsUsable,
+  loadHomeHostnameState,
+  syncHomeHostname,
+} from "./services/home-hostname.js";
+import { panelUrlsFor, setPanelRuntime, clearPanelRuntime } from "./services/panel-runtime.js";
 
 /** The `node:http` slice this module needs, so tests can pass a fake listener. */
 export interface LifecycleHttpServer {
@@ -69,7 +76,7 @@ export interface RunningControlPlane {
 export interface ControlPlaneHost {
   loadConfig(): AppConfig;
   buildApp(config: AppConfig): PlayOnApp;
-  listen(app: PlayOnApp, config: AppConfig): LifecycleHttpServer;
+  listen(app: PlayOnApp, config: AppConfig): LifecycleHttpServer | Promise<LifecycleHttpServer>;
   createSchedulers(app: PlayOnApp): NamedScheduler[];
   /** Null skips the best-effort waiter abort. */
   jobWaiters: JobWaiterPool | null;
@@ -94,6 +101,9 @@ function consoleLog(record: Record<string, unknown>, level: LifecycleLogLevel = 
 }
 
 export function defaultControlPlaneHost(): ControlPlaneHost {
+  let mdns: MdnsAdvertisement | null = null;
+  let renewTimer: ReturnType<typeof setInterval> | null = null;
+
   return {
     loadConfig: () => loadConfig(),
     buildApp: (config) => {
@@ -101,14 +111,132 @@ export function defaultControlPlaneHost(): ControlPlaneHost {
       const { db } = createDb(config.dbPath);
       return createApp(db, config);
     },
-    listen: (app, config) => {
-      const server = serve({
-        fetch: app.fetch,
-        port: config.port,
-        hostname: config.host ?? "127.0.0.1",
+    listen: async (app, config) => {
+      const lanHost = config.host ?? "127.0.0.1";
+      const fallbackPort = config.port;
+      const preferredLanPort = config.preferredLanPort ?? fallbackPort;
+      const loopbackPort = config.loopbackPort ?? fallbackPort;
+      const homeDnsApiUrl = config.homeDnsApiUrl ?? "https://playon.games";
+
+      let hostnameState = loadHomeHostnameState(config.dataRoot);
+      if (hostnameState?.deviceKey && config.isProduction) {
+        try {
+          hostnameState = await syncHomeHostname({
+            dataRoot: config.dataRoot,
+            api: { baseUrl: homeDnsApiUrl },
+            advertiseHost: config.advertiseHost,
+          });
+        } catch (err) {
+          consoleLog(
+            {
+              msg: "playon_home_hostname_sync_failed",
+              error: err instanceof Error ? err.message : String(err),
+            },
+            "warn",
+          );
+        }
+      }
+
+      const tls =
+        hostnameState && certIsUsable(hostnameState) && hostnameState.certPem && hostnameState.keyPem
+          ? { key: hostnameState.keyPem, cert: hostnameState.certPem, port: 443 }
+          : null;
+
+      const multi = await listenPlayOnHttp({
+        app,
+        lanHost,
+        preferredLanPort,
+        fallbackPort,
+        loopbackPort,
+        tls,
       });
-      app.injectWebSocket(server as Parameters<typeof app.injectWebSocket>[0]);
-      return server as unknown as LifecycleHttpServer;
+
+      multi.injectWebSocket((server) => {
+        app.injectWebSocket(server as Parameters<typeof app.injectWebSocket>[0]);
+      });
+
+      const mdnsEnabled = config.mdnsEnabled ?? false;
+      if (mdnsEnabled) {
+        mdns = startMdnsAdvertisement({
+          port: multi.lanPort,
+          log: consoleLog,
+        });
+      }
+
+      const httpsListening = multi.endpoints.some((e) => e.kind === "https");
+      setPanelRuntime({
+        lanPort: multi.lanPort,
+        loopbackPort: multi.loopbackPort,
+        privilegedLan: multi.privilegedLan,
+        mdnsAdvertised: mdns?.active ?? false,
+        hostnameState,
+        httpsListening,
+      });
+
+      const urls = panelUrlsFor(config.advertiseHost);
+      consoleLog({
+        msg: "playon_panel_urls",
+        preferred: urls.preferredUrl,
+        urls: urls.allUrls,
+        lanPort: multi.lanPort,
+        loopbackPort: multi.loopbackPort,
+        privilegedLan: multi.privilegedLan,
+        mdns: mdns?.active ?? false,
+        https: httpsListening,
+      });
+
+      if (!multi.privilegedLan && preferredLanPort !== multi.lanPort && preferredLanPort === 80) {
+        consoleLog(
+          {
+            msg: "playon_lan_port_fallback",
+            preferred: preferredLanPort,
+            bound: multi.lanPort,
+            hint: "bind :80 failed (permission or in use); using PLAYON_PORT. Elevate or CAP_NET_BIND_SERVICE for http://playon.local without a port.",
+          },
+          "warn",
+        );
+      }
+
+      // Periodic hostname / cert refresh (DHCP + renew)
+      if (hostnameState?.deviceKey) {
+        renewTimer = setInterval(() => {
+          void syncHomeHostname({
+            dataRoot: config.dataRoot,
+            api: { baseUrl: homeDnsApiUrl },
+            advertiseHost: config.advertiseHost,
+          })
+            .then((next) => {
+              if (!next) return;
+              const rt = {
+                lanPort: multi.lanPort,
+                loopbackPort: multi.loopbackPort,
+                privilegedLan: multi.privilegedLan,
+                mdnsAdvertised: mdns?.active ?? false,
+                hostnameState: next,
+                httpsListening,
+              };
+              setPanelRuntime(rt);
+            })
+            .catch(() => {});
+        }, 6 * 60 * 60 * 1000);
+        renewTimer.unref?.();
+      }
+
+      const base = multi.composite;
+      return {
+        close(cb) {
+          if (renewTimer) {
+            clearInterval(renewTimer);
+            renewTimer = null;
+          }
+          mdns?.stop();
+          mdns = null;
+          clearPanelRuntime();
+          return base.close(cb);
+        },
+        closeIdleConnections: () => base.closeIdleConnections?.(),
+        closeAllConnections: () => base.closeAllConnections?.(),
+      };
     },
     createSchedulers: (app) => {
       const { servers, playerPanel, queries, snapshots, watcherEngine } = app.controlPlane;
@@ -152,7 +280,9 @@ function settlesWithin(promise: Promise<unknown>, ms: number): Promise<boolean> 
  * Bring up the control plane: build the service graph, listen, then start the
  * schedulers. SIGTERM/SIGINT are wired to `stop` unless `signals` is null.
  */
-export function startControlPlane(overrides: Partial<ControlPlaneHost> = {}): RunningControlPlane {
+export async function startControlPlane(
+  overrides: Partial<ControlPlaneHost> = {},
+): Promise<RunningControlPlane> {
   const host: ControlPlaneHost = { ...defaultControlPlaneHost(), ...overrides };
   const config = host.loadConfig();
   const app = host.buildApp(config);
@@ -161,13 +291,15 @@ export function startControlPlane(overrides: Partial<ControlPlaneHost> = {}): Ru
   host.log({
     msg: "playon_start",
     env: config.isProduction ? "production" : "development",
-    bind: `http://${config.host ?? "127.0.0.1"}:${config.port}`,
+    bind: `http://${config.host ?? "127.0.0.1"}:${config.preferredLanPort ?? config.port}`,
+    loopback: `http://127.0.0.1:${config.loopbackPort ?? config.port}`,
     advertiseHost: config.advertiseHost,
     webDist: config.webDist,
     webDistReady: webReady,
     llmMode: config.llmMode,
     runtimeMode: config.runtimeMode,
     dataRoot: config.dataRoot,
+    mdnsEnabled: config.mdnsEnabled ?? false,
   });
 
   if (config.isProduction && !webReady) {
@@ -181,7 +313,7 @@ export function startControlPlane(overrides: Partial<ControlPlaneHost> = {}): Ru
     );
   }
 
-  const server = host.listen(app, config);
+  const server = await host.listen(app, config);
   const schedulers = host.createSchedulers(app);
   for (const entry of schedulers) entry.scheduler.start();
 

@@ -31,9 +31,12 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     await this.reclaim(spec.name, cwd);
 
     let logFd: number | undefined;
-    // stdin stays a pipe so a stdin-dialect game keeps a console this supervisor
-    // can address; the child still blocks on an empty read instead of seeing EOF.
-    let stdio: Array<"pipe" | "ignore" | number> = ["pipe", "ignore", "ignore"];
+    // Detach long-running game servers so start() cannot stall on child I/O/session.
+    const detached = process.platform !== "win32";
+    // GoldSrc/HLDS (and some other native dedi) segfault with detached + piped stdin.
+    // Only keep a stdin pipe when the skill explicitly needs console admin.
+    const stdinMode: "pipe" | "ignore" = spec.keepStdin ? "pipe" : "ignore";
+    let stdio: Array<"pipe" | "ignore" | number> = [stdinMode, "ignore", "ignore"];
     if (spec.logFile) {
       const logPath = path.isAbsolute(spec.logFile)
         ? spec.logFile
@@ -42,7 +45,7 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
           : path.resolve(cwd, spec.logFile);
       fs.mkdirSync(path.dirname(logPath), { recursive: true });
       logFd = fs.openSync(logPath, "a");
-      stdio = ["pipe", logFd, logFd];
+      stdio = [stdinMode, logFd, logFd];
     }
 
     const id = `native-${spec.name}-${++this.seq}`;
@@ -52,9 +55,35 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
       shell: false,
       windowsHide: true,
       stdio,
-      // Detach long-running game servers so start() cannot stall on child I/O/session.
-      detached: process.platform !== "win32",
+      detached,
     });
+
+    // Wait for spawn success so missing binaries (ENOENT) reject instead of
+    // crashing the host via an unhandled 'error' event after start() returns.
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (err: Error) => {
+          child.off("spawn", onSpawn);
+          reject(err);
+        };
+        const onSpawn = () => {
+          child.off("error", onError);
+          resolve();
+        };
+        child.once("error", onError);
+        child.once("spawn", onSpawn);
+      });
+    } catch (err) {
+      if (logFd !== undefined) {
+        try {
+          fs.closeSync(logFd);
+        } catch {
+          /* ignore */
+        }
+      }
+      throw err;
+    }
+
     if (process.platform !== "win32") {
       child.unref();
     }
@@ -81,6 +110,8 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
         this.closeLogFd(tracked);
       }
     });
+    // Keep a listener so late spawn failures never become unhandled.
+    child.on("error", () => undefined);
 
     this.procs.set(id, { info, child, cwdJail: cwd, logFd });
     return { ...info };

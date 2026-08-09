@@ -44,8 +44,26 @@ export function FilesPage({ user }: { user: PublicUser }) {
   const [source, setSource] = useState<string | undefined>();
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [treeSlow, setTreeSlow] = useState(false);
+  const [fileOpening, setFileOpening] = useState(false);
+  const [treeFilter, setTreeFilter] = useState("");
 
-  const dirty = activePath != null && draft !== saved;
+  const dirty = activePath != null && draft !== saved && !fileOpening;
+
+  function humanFsError(message: string): string {
+    const m = message.trim();
+    if (m === "list_failed" || m === "read_failed") {
+      return "Couldn’t open that folder. Check the node is online, then Refresh.";
+    }
+    if (m === "file_truncated_reload_before_save") {
+      return "This file is too large to save here. Edit it on the host or via Map chat.";
+    }
+    if (m === "nothing_to_save") return "Nothing to save yet.";
+    if (m.includes("ENOENT") || m.toLowerCase().includes("not found")) {
+      return "That path is gone — Refresh the tree.";
+    }
+    return m;
+  }
 
   const servers = useQuery({
     queryKey: ["servers"],
@@ -97,6 +115,7 @@ export function FilesPage({ user }: { user: PublicUser }) {
     setTruncated(false);
     setSource(undefined);
     setLoadError(null);
+    setFileOpening(false);
   }
 
   function selectKind(next: TargetKind) {
@@ -105,6 +124,7 @@ export function FilesPage({ user }: { user: PublicUser }) {
     setKind(next);
     setTarget(null);
     setTree({});
+    setTreeFilter("");
     resetEditor();
   }
 
@@ -116,6 +136,7 @@ export function FilesPage({ user }: { user: PublicUser }) {
     if (!confirmDiscard()) return;
     setTarget(next);
     setTree({});
+    setTreeFilter("");
     resetEditor();
   }
 
@@ -123,10 +144,16 @@ export function FilesPage({ user }: { user: PublicUser }) {
     if (!target) return [];
     if (target.kind === "server") {
       const res = await api.serverFsList(target.id, relPath);
-      return sortEntries(res.entries);
+        return sortEntries(res.entries);
     }
     const res = await api.skillFsList(target.id, relPath);
     return sortEntries(res.entries);
+  }
+
+  function entryVisible(name: string): boolean {
+    const q = treeFilter.trim().toLowerCase();
+    if (!q) return true;
+    return name.toLowerCase().includes(q);
   }
 
   async function ensureDir(relPath: string) {
@@ -154,10 +181,17 @@ export function FilesPage({ user }: { user: PublicUser }) {
   }
 
   useEffect(() => {
-    if (!target) return;
+    if (!target) {
+      setTreeSlow(false);
+      return;
+    }
     const current = target;
     let cancelled = false;
+    setTreeSlow(false);
     setTree({ ".": { loading: true, open: true } });
+    const slowTimer = window.setTimeout(() => {
+      if (!cancelled) setTreeSlow(true);
+    }, 2500);
     const load =
       current.kind === "server"
         ? api.serverFsList(current.id, ".")
@@ -165,10 +199,12 @@ export function FilesPage({ user }: { user: PublicUser }) {
     void load
       .then((res) => {
         if (cancelled) return;
+        setTreeSlow(false);
         setTree({ ".": { entries: sortEntries(res.entries), loading: false, open: true } });
       })
       .catch((err: unknown) => {
         if (cancelled) return;
+        setTreeSlow(false);
         setTree({
           ".": {
             loading: false,
@@ -179,6 +215,7 @@ export function FilesPage({ user }: { user: PublicUser }) {
       });
     return () => {
       cancelled = true;
+      window.clearTimeout(slowTimer);
     };
   }, [target]);
 
@@ -194,16 +231,19 @@ export function FilesPage({ user }: { user: PublicUser }) {
 
   async function openFile(relPath: string) {
     if (!target) return;
-    if (activePath === relPath) return;
+    if (activePath === relPath && !fileOpening) return;
     if (!confirmDiscard()) return;
     setLoadError(null);
     setNotice(null);
+    setFileOpening(true);
+    setActivePath(relPath);
+    setDraft("");
+    setSaved("");
     try {
       const file =
         target.kind === "server"
           ? await api.serverFsRead(target.id, relPath)
           : await api.skillFsRead(target.id, relPath);
-      setActivePath(file.path);
       setDraft(file.content);
       setSaved(file.content);
       setWritable(file.writable);
@@ -211,7 +251,9 @@ export function FilesPage({ user }: { user: PublicUser }) {
       setSource(file.source);
     } catch (err) {
       resetEditor();
-      setLoadError(err instanceof Error ? err.message : "read_failed");
+      setLoadError(humanFsError(err instanceof Error ? err.message : "read_failed"));
+    } finally {
+      setFileOpening(false);
     }
   }
 
@@ -239,26 +281,67 @@ export function FilesPage({ user }: { user: PublicUser }) {
     },
     onSuccess: () => {
       setSaved(draft);
-      setNotice("Saved");
-      window.setTimeout(() => setNotice(null), 2500);
+      const where = target ? `${target.label}${activePath ? ` / ${activePath}` : ""}` : "file";
+      setNotice(`Saved — wrote into ${where}`);
+      window.setTimeout(() => setNotice(null), 4000);
     },
   });
+
+  const readOnly = !writable || truncated || fileOpening;
+
+  useEffect(() => {
+    if (!activePath || readOnly || !dirty || !target) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "s") return;
+      event.preventDefault();
+      if (save.isPending || fileOpening) return;
+      if (
+        target.kind === "server" &&
+        !window.confirm(
+          `Save ${activePath} on ${target.label}? This writes into the live server folder.`,
+        )
+      ) {
+        return;
+      }
+      save.mutate();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activePath, readOnly, dirty, target, save, fileOpening]);
 
   function renderTree(relPath: string, depth: number): ReactNode {
     const node = tree[relPath];
     if (!node) return null;
     if (node.loading && !node.entries) {
       return (
-        <p className="muted files-tree-status" style={{ paddingLeft: `${depth * 0.85}rem` }}>
-          Loading…
+        <p
+          className="muted files-tree-status"
+          style={{ paddingLeft: `${depth * 0.85}rem` }}
+          role="status"
+        >
+          {treeSlow && relPath === "."
+            ? "Still loading — large folders can take a few seconds…"
+            : "Loading folder…"}
         </p>
       );
     }
     if (node.error) {
       return (
-        <p className="error files-tree-status" style={{ paddingLeft: `${depth * 0.85}rem` }}>
-          {node.error}
-        </p>
+        <div
+          className="stack tight files-tree-status"
+          style={{ paddingLeft: `${depth * 0.85}rem` }}
+        >
+          <p className="error" role="alert">
+            {humanFsError(node.error)}
+          </p>
+          <button
+            type="button"
+            className="btn btn-ghost btn-compact"
+            onClick={() => void ensureDir(relPath)}
+          >
+            Retry
+          </button>
+        </div>
       );
     }
     if (!node.open || !node.entries) return null;
@@ -270,12 +353,14 @@ export function FilesPage({ user }: { user: PublicUser }) {
           if (entry.type === "dir") {
             const child = tree[childPath];
             const open = Boolean(child?.open);
+            if (!entryVisible(entry.name) && !open) return null;
             return (
               <li key={childPath}>
                 <button
                   type="button"
                   className="files-tree-item dir"
                   style={{ paddingLeft: `${depth * 0.85 + 0.35}rem` }}
+                  aria-expanded={open}
                   onClick={() => toggleDir(childPath)}
                 >
                   <span aria-hidden>{open ? "▾" : "▸"}</span>
@@ -285,6 +370,7 @@ export function FilesPage({ user }: { user: PublicUser }) {
               </li>
             );
           }
+          if (!entryVisible(entry.name)) return null;
           return (
             <li key={childPath}>
               <button
@@ -313,17 +399,28 @@ export function FilesPage({ user }: { user: PublicUser }) {
     );
   }
 
-  const readOnly = !writable || truncated;
-
   return (
     <div className="files-page">
       <header className="files-header">
         <div>
           <h1>Files</h1>
-          <p className="muted">
-            Browse and edit server configs or skill package files. Platform and fixture skills are
-            read-only.
-          </p>
+          {!target ? (
+            <p className="lede">
+              Edit configs inside one server or skill folder — browsing stays inside that directory.
+              Built-in platform skills are read-only.
+            </p>
+          ) : (
+            <p className="muted status-inline">
+              Inside <strong>{target.label}</strong>
+              {activePath
+                ? readOnly && !fileOpening
+                  ? " — this file is read-only."
+                    : target.kind === "server"
+                    ? " — edits save into the live folder."
+                    : " — package files for this skill."
+                : " — pick a file to edit."}
+            </p>
+          )}
         </div>
       </header>
 
@@ -331,9 +428,9 @@ export function FilesPage({ user }: { user: PublicUser }) {
         <div className="skills-tabs" role="tablist" aria-label="File target kind">
           {(
             [
-              ["server", "Server"],
-              ["skill", "Skill"],
-              ["draft", "Draft"],
+              ["server", "Servers"],
+              ["skill", "Skills"],
+              ["draft", "Drafts"],
             ] as const
           ).map(([id, label]) => (
             <button
@@ -350,7 +447,7 @@ export function FilesPage({ user }: { user: PublicUser }) {
         </div>
         <label className="files-target-select">
           <span className="muted">
-            {kind === "server" ? "Server" : kind === "draft" ? "Draft" : "Skill"}
+            {kind === "server" ? "Choose server" : kind === "draft" ? "Choose draft" : "Choose skill"}
           </span>
           <select
             value={target?.id ?? ""}
@@ -365,7 +462,13 @@ export function FilesPage({ user }: { user: PublicUser }) {
               selectTarget(e.target.value);
             }}
           >
-            <option value="">Select…</option>
+            <option value="">
+              {kind === "server"
+                ? "Choose a server…"
+                : kind === "draft"
+                  ? "Choose a draft…"
+                  : "Choose a skill…"}
+            </option>
             {targetOptions.map((o) => (
               <option key={o.id} value={o.id}>
                 {o.label}
@@ -376,9 +479,42 @@ export function FilesPage({ user }: { user: PublicUser }) {
       </div>
 
       {!target ? (
-        <p className="muted">Pick a target to open its file tree.</p>
+            <div className="empty-hint files-empty">
+          <strong>Open a server folder</strong>
+          <p className="muted status-inline">
+            {kind === "server"
+              ? "Pick a server to browse its live data directory. You can’t leave that folder."
+              : kind === "draft"
+                ? "Draft skills are agent work-in-progress packages until you promote them."
+                : "Installed and platform skills expose their package files. Built-ins stay read-only."}
+          </p>
+          {targetOptions.length ? (
+            <div className="files-quick-picks">
+              {targetOptions.slice(0, 6).map((o) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  className="btn btn-ghost btn-compact"
+                  onClick={() => selectTarget(o.id)}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+          ) : servers.isLoading || skills.isLoading || drafts.isLoading ? (
+            <p className="muted">Loading…</p>
+          ) : (
+            <p className="muted status-inline">
+              {kind === "server"
+                ? "No servers yet — create one on the Map first."
+                : kind === "draft"
+                  ? "No drafts on this host."
+                  : "No skills discovered yet."}
+            </p>
+          )}
+        </div>
       ) : (
-        <div className="files-layout">
+        <div className={`files-layout${activePath ? " has-file" : ""}`}>
           <aside className="files-sidebar" aria-label="File tree">
             <div className="files-sidebar-head">
               <strong>{target.label}</strong>
@@ -391,6 +527,15 @@ export function FilesPage({ user }: { user: PublicUser }) {
                 Refresh
               </button>
             </div>
+            <label className="files-tree-filter">
+              <span className="sr-only">Filter files</span>
+              <input
+                value={treeFilter}
+                onChange={(e) => setTreeFilter(e.target.value)}
+                placeholder="Filter files…"
+                autoComplete="off"
+              />
+            </label>
             {renderTree(".", 0)}
           </aside>
 
@@ -401,27 +546,51 @@ export function FilesPage({ user }: { user: PublicUser }) {
               </p>
             ) : null}
             {notice ? (
-              <p className="muted status-inline" role="status">
+              <p className="ok status-inline" role="status">
                 {notice}
               </p>
             ) : null}
             {!activePath ? (
-              <p className="muted">Select a file to view or edit.</p>
+              <div className="empty-hint">
+                <strong>Select a file</strong>
+                <p className="muted status-inline">
+                  Staying inside <strong>{target.label}</strong>
+                  <span className="files-tree-hint"> — use the tree beside this pane</span>
+                  <span className="files-tree-hint-mobile"> — pick a file in the list above</span>
+                  . Open a config to edit.
+                </p>
+              </div>
             ) : (
               <>
                 <div className="files-editor-bar">
                   <div className="files-editor-meta">
-                    <code>{activePath}</code>
+                    <button
+                      type="button"
+                      className="linkish files-back-to-tree"
+                      onClick={() => {
+                        if (!confirmDiscard()) return;
+                        resetEditor();
+                      }}
+                    >
+                      ← Files
+                    </button>
+                    <code title={activePath}>
+                      {target.label} / {activePath}
+                    </code>
+                    {fileOpening ? <span className="muted">Opening…</span> : null}
                     {dirty ? <span className="files-dirty">Unsaved</span> : null}
                     {source ? <span className="muted">{source}</span> : null}
-                    {readOnly ? <span className="files-readonly">Read-only</span> : null}
+                    {readOnly && !fileOpening ? (
+                      <span className="files-readonly">Read-only</span>
+                    ) : null}
                   </div>
                   <div className="files-editor-actions btn-row">
                     <button
                       type="button"
                       className="btn btn-ghost btn-compact"
-                      disabled={!dirty || save.isPending}
+                      disabled={!dirty || save.isPending || fileOpening}
                       onClick={() => {
+                        if (!window.confirm("Discard unsaved edits in this file?")) return;
                         setDraft(saved);
                       }}
                     >
@@ -431,9 +600,20 @@ export function FilesPage({ user }: { user: PublicUser }) {
                       type="button"
                       className="btn btn-primary btn-compact"
                       disabled={!dirty || readOnly || save.isPending}
-                      onClick={() => save.mutate()}
+                      title="Ctrl+S"
+                      onClick={() => {
+                        if (
+                          target.kind === "server" &&
+                          !window.confirm(
+                            `Save ${activePath} on ${target.label}? This writes into the live server folder.`,
+                          )
+                        ) {
+                          return;
+                        }
+                        save.mutate();
+                      }}
                     >
-                      {save.isPending ? "Saving…" : "Save"}
+                      {save.isPending ? "Saving…" : dirty ? "Save · Ctrl+S" : "Save"}
                     </button>
                   </div>
                 </div>
@@ -442,7 +622,7 @@ export function FilesPage({ user }: { user: PublicUser }) {
                     File exceeds the read size limit and cannot be saved from this editor.
                   </p>
                 ) : null}
-                {!writable && !truncated ? (
+                {!fileOpening && !writable && !truncated ? (
                   <p className="muted" role="status">
                     This location is read-only
                     {source === "platform" || source === "fixture"
@@ -452,7 +632,7 @@ export function FilesPage({ user }: { user: PublicUser }) {
                 ) : null}
                 {save.isError ? (
                   <p className="error" role="alert">
-                    {(save.error as Error).message}
+                    {humanFsError((save.error as Error).message)}
                   </p>
                 ) : null}
                 <div className="files-monaco">

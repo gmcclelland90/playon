@@ -23,8 +23,11 @@ export type SkillMarker = {
   containerSupport: ContainerSupport;
   dockerImage?: string;
   dockerEnv?: Record<string, string>;
+  dockerArgs?: string[];
   dockerDataMount?: string;
   steamAppId?: number;
+  steamMod?: string;
+  steamBetaLinux?: string;
   adminDialect?: AdminDialect;
   queryDialect?: QueryDialect;
   queryPortName?: string;
@@ -43,8 +46,11 @@ export const SkillMarkerSchema = z.object({
   containerSupport: ContainerSupportSchema,
   dockerImage: z.string().min(1).optional(),
   dockerEnv: z.record(z.string(), z.string()).optional(),
+  dockerArgs: z.array(z.string()).optional(),
   dockerDataMount: z.string().min(1).optional(),
   steamAppId: z.number().int().positive().optional(),
+  steamMod: z.string().min(1).optional(),
+  steamBetaLinux: z.string().min(1).optional(),
   adminDialect: AdminDialectSchema.optional(),
   queryDialect: QueryDialectSchema.optional(),
   queryPortName: z.string().min(1).optional(),
@@ -72,8 +78,11 @@ export function buildSkillMarker(
     containerSupport: m.containerSupport,
     dockerImage: m.dockerImage,
     dockerEnv: m.dockerEnv,
+    dockerArgs: m.dockerArgs,
     dockerDataMount: m.dockerDataMount,
     steamAppId: m.steamAppId,
+    steamMod: m.steamMod,
+    steamBetaLinux: m.steamBetaLinux,
     adminDialect: m.adminDialect,
     queryDialect: m.queryDialect,
     queryPortName: m.queryPortName,

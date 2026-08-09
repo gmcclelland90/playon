@@ -23,8 +23,9 @@ export type NodeCluster = {
   origin: { x: number; y: number };
 };
 
-const COL_GAP = 420;
-const ROW_GAP = 160;
+/** Wider spacing reads better at the pulled-back 2.5D camera. */
+const COL_GAP = 480;
+const ROW_GAP = 150;
 const CRATES_PER_COL = 2;
 
 function kindRank(kind: string | null | undefined): number {
@@ -98,8 +99,8 @@ export function crateOffsetInCluster(indexInCluster: number): { x: number; y: nu
   const col = indexInCluster % CRATES_PER_COL;
   const row = Math.floor(indexInCluster / CRATES_PER_COL);
   return {
-    x: (col - (CRATES_PER_COL - 1) / 2) * 140,
-    y: 40 + row * ROW_GAP,
+    x: (col - (CRATES_PER_COL - 1) / 2) * 120,
+    y: 28 + row * ROW_GAP,
   };
 }
 

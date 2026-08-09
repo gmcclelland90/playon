@@ -1,5 +1,6 @@
 import type { QueryDialect } from "@playon/shared";
 import { createGamedigConnector } from "./gamedig-adapter.js";
+import { factorioConnector } from "./connectors/factorio.js";
 import { minecraftStatusConnector } from "./connectors/minecraft-status.js";
 import { createSkillModuleConnector } from "./skill-module/loader.js";
 import type { Connector, SkillModuleResolve } from "./types.js";
@@ -24,8 +25,13 @@ const descriptors: DialectDescriptor[] = [
   },
   {
     id: "a2s",
+    // Generic Valve A2S — not Rust-specific (CS2, TF2, Source, etc.).
     portPreference: "query",
-    connector: createGamedigConnector({ id: "a2s", gamedigType: "rust", gameLabel: "Rust" }),
+    connector: createGamedigConnector({
+      id: "a2s",
+      gamedigType: "protocol-valve",
+      gameLabel: "Source",
+    }),
   },
   {
     id: "valheim",
@@ -58,8 +64,9 @@ const descriptors: DialectDescriptor[] = [
   },
   {
     id: "factorio",
+    // Prefer skill queryPortName=rcon (TCP). gamedig factorio is public-API-only.
     portPreference: "query",
-    connector: createGamedigConnector({ id: "factorio", gamedigType: "factorio", gameLabel: "Factorio" }),
+    connector: factorioConnector,
   },
 ];
 

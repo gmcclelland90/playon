@@ -4,6 +4,8 @@ export interface ContainerSpec {
   name: string;
   image: string;
   env?: Record<string, string>;
+  /** Docker Cmd (replaces image CMD). Empty/undefined keeps the image default. */
+  cmd?: string[];
   ports?: Array<{ host: number; container: number; protocol?: "tcp" | "udp" }>;
   binds?: Array<{ hostPath: string; containerPath: string }>;
 }
@@ -25,6 +27,11 @@ export interface ProcessSpec {
    * Used for live Terminal log follow across native skills.
    */
   logFile?: string;
+  /**
+   * Keep a writable stdin pipe (adminDialect=stdin). Default is ignore when the
+   * supervisor detaches on Linux — GoldSrc/HLDS segfaults with detached+piped stdin.
+   */
+  keepStdin?: boolean;
 }
 
 export interface ProcessInfo {

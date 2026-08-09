@@ -137,6 +137,7 @@ export function remoteDockerTransport(
           name: spec.name,
           image: spec.image,
           env: spec.env ?? {},
+          cmd: spec.cmd ?? [],
           ports: spec.ports ?? [],
           binds: spec.binds ?? [],
         },
@@ -406,6 +407,7 @@ export function remoteNativeTransport(
           env: spec.env ?? {},
           serverId,
           logRel: spec.logFile,
+          keepStdin: spec.keepStdin,
         },
         { timeoutMs: opts.startTimeoutMs ?? REMOTE_PROCESS_START_TIMEOUT_MS },
       );

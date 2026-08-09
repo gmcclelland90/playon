@@ -3,6 +3,8 @@ Description=PlayOn local node-agent
 After=network-online.target playon.service docker.service
 Wants=network-online.target
 Requires=playon.service
+# Follow Home stop/restart so deploys don't leave Local stuck offline.
+PartOf=playon.service
 
 [Service]
 Type=simple

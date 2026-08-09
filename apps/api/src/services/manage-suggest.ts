@@ -62,8 +62,9 @@ export function buildManagedStartWrapper(serverNameArg = "servername"): string {
     '  export JAVA_TOOL_OPTIONS="-Duser.home=${PLAYON_HOME}${JAVA_TOOL_OPTIONS:+ $JAVA_TOOL_OPTIONS}"',
     // Project Zomboid: -cachedir is the authoritative userdata root (passwd-home bypass).
     '  if [[ -x ./ProjectZomboid64 || -f ./ProjectZomboid64.json ]]; then',
+    // Realpath: SandboxOptions.writeLuaFile rejects cachedir paths with "..".
     '    mkdir -p "${PLAYON_HOME}/Zomboid"',
-    '    EXTRA+=(-cachedir="${PLAYON_HOME}/Zomboid")',
+    '    EXTRA+=(-cachedir="$(cd "${PLAYON_HOME}/Zomboid" && pwd)")',
     "  fi",
     "fi",
     'if [[ -n "${PLAYON_ADMIN_PASSWORD:-}" ]]; then',

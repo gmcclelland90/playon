@@ -3,7 +3,7 @@
 > **Preferred path:** [deploy.md](deploy.md) — Home tarball + `deploy/install.sh` (control plane + local node, Docker optional).
 > This page remains the **checkout / systemd** path for developers and air-gapped clones.
 
-Run PlayOn on a machine that can publish game ports to the LAN. Production is **one process**: the API serves the built web UI on `PLAYON_PORT` (default `8787`). Pair with `playon-node` (local node-agent) when using remote job routing.
+Run PlayOn on a machine that can publish game ports to the LAN. Production is **one process**: the API serves the built web UI (prefer port **80** / `http://playon.local`, fall back to `PLAYON_PORT` default `8787`). Pair with `playon-node` (local node-agent) when using remote job routing. Optional: link Discord under **Settings → Panel URL** for `https://<handle>.playon.games` (LAN-only DNS; not remote access).
 
 ## Quick path (Linux host recommended)
 
@@ -51,14 +51,21 @@ pnpm start &
 PLAYON_API_URL=http://127.0.0.1:8787 PLAYON_NODE_ID=local pnpm --filter @playon/node-agent start
 ```
 
-6. Open `http://<your-lan-ip>:8787` for admin; players use `/play`. Local should show **online** within ~15s.
+6. Open `http://playon.local` (or `http://<your-lan-ip>:8787` if mDNS/:80 failed) for admin; players use `/play`. Local should show **online** within ~15s.
 7. Create Owner on first run, save Venice API key under Settings → Model, then install Paper from the Map chat.
+8. Optional: **Settings → Panel URL → Link Discord hostname** for `https://<handle>.playon.games` alongside `playon.local`.
 
 Production refuses to start without `PLAYON_SESSION_SECRET` and `PLAYON_ADVERTISE_HOST` when `PLAYON_ENV=production` (or `NODE_ENV=production`).
 
-## Optional TLS
+## Panel URLs
 
-Terminate HTTPS with Caddy or nginx in front of PlayOn (app stays HTTP). Point the proxy at `127.0.0.1:8787` if you bind only locally, or keep `PLAYON_HOST=0.0.0.0` on a trusted LAN. If the browser origin is an HTTPS hostname, add it to `PLAYON_CORS_ORIGINS` and set `PLAYON_ADVERTISE_HOST` to the name players should see for game joins (often still the LAN IP).
+- Everyone on the LAN: `http://playon.local` (mDNS) and/or `http://<lan-ip>` / `:8787`.
+- After Discord link: also `https://<handle>.playon.games` (public DNS A → your LAN IP; traffic never leaves the LAN).
+- Game join cards still use `PLAYON_ADVERTISE_HOST` (LAN IP).
+
+## Optional reverse-proxy TLS
+
+You can still terminate HTTPS with Caddy or nginx in front of PlayOn. Prefer the built-in Discord hostname path for Home optics. If you use your own proxy, point it at `127.0.0.1:8787` (loopback) or the LAN bind, and keep `PLAYON_ADVERTISE_HOST` as the LAN IP for game joins.
 
 ## Reboot recovery
 

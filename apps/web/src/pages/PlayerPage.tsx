@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { parsePanelBody, type PanelBlockType } from "@playon/shared";
 import { api, type PanelBlockRow } from "../api";
 import { groupPanelByServer, joinEndpoint } from "../panel-view";
 import { panelSocket } from "../panel-ws";
@@ -62,19 +62,39 @@ function chipLabel(type: string): string {
       return "Ready";
     case "guide":
       return "Guide";
+    case "file_drop":
+      return "Download";
+    case "discovery":
+      return "Next up";
     default:
       return "Update";
   }
+}
+
+const PANEL_TYPES = new Set<string>([
+  "server_status",
+  "join_info",
+  "client_setup",
+  "guide",
+  "vote",
+  "readiness",
+  "announcement",
+  "file_drop",
+  "discovery",
+]);
+
+function asBlockType(type: string): PanelBlockType {
+  return (PANEL_TYPES.has(type) ? type : "announcement") as PanelBlockType;
 }
 
 /** Skill-owned copy under the join hero (client_setup notes/instructions). */
 function setupHeroHint(rest: PanelBlockRow[]): string {
   const setup = rest.find((b) => b.type === "client_setup");
   if (setup) {
-    const notes = typeof setup.body.notes === "string" ? setup.body.notes.trim() : "";
+    const body = parsePanelBody("client_setup", setup.body);
+    const notes = typeof body.notes === "string" ? body.notes.trim() : "";
     if (notes) return notes;
-    const instructions =
-      typeof setup.body.instructions === "string" ? setup.body.instructions.trim() : "";
+    const instructions = typeof body.instructions === "string" ? body.instructions.trim() : "";
     if (instructions) return instructions;
   }
   return "Copy the address above and paste it in your game client";
@@ -88,6 +108,16 @@ function sectionTitle(join: PanelBlockRow | undefined, themeGame?: string): stri
   return "Live server";
 }
 
+function safeHttpUrl(url: string): string | null {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
 export function PlayerPage() {
   const qc = useQueryClient();
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -96,6 +126,7 @@ export function PlayerPage() {
   const [voteChoiceByBlock, setVoteChoiceByBlock] = useState<Record<string, string>>({});
   const [voteAckByBlock, setVoteAckByBlock] = useState<Record<string, string>>({});
   const [wsOpen, setWsOpen] = useState(false);
+  const [expandedServers, setExpandedServers] = useState<Record<string, boolean>>({});
   const [visible, setVisible] = useState(
     () => typeof document === "undefined" || document.visibilityState === "visible",
   );
@@ -151,9 +182,10 @@ export function PlayerPage() {
   }, [panel.data, hydrated]);
 
   const ready = useMutation({
-    mutationFn: () => api.panelInput({ type: "readiness", payload: { ready: true } }),
-    onSuccess: async () => {
-      setReadyAck(true);
+    mutationFn: (isReady: boolean) =>
+      api.panelInput({ type: "readiness", payload: { ready: isReady } }),
+    onSuccess: async (_data, isReady) => {
+      setReadyAck(isReady);
       await qc.invalidateQueries({ queryKey: ["panel"] });
     },
   });
@@ -179,6 +211,12 @@ export function PlayerPage() {
     return general?.rest ?? [];
   }, [groups]);
   const hasLive = liveGroups.length > 0;
+  const primaryGroup = liveGroups[0];
+  const primaryJoin = primaryGroup?.join ? joinEndpoint(primaryGroup.join.body) : null;
+  const primarySteam = primaryGroup?.join
+    ? steamConnectUrlFromBody(primaryGroup.join.body)
+    : null;
+  const liveFreshLabel = wsOpen ? "Live updates on" : "Refreshing…";
 
   async function copyValue(key: string, value: string) {
     const ok = await copyText(value);
@@ -220,7 +258,7 @@ export function PlayerPage() {
 
   return (
     <div
-      className={`player${hydrated ? " panel-live" : ""}`}
+      className={`player${hydrated ? " panel-live" : ""}${hasLive ? " player-has-sticky" : ""}`}
       aria-busy={panel.isFetching && !panel.data ? true : undefined}
     >
       <header className="player-header">
@@ -229,10 +267,15 @@ export function PlayerPage() {
         </h1>
         <p className="muted player-lede">
           {liveGroups.length > 1
-            ? `${liveGroups.length} live servers — join info updated by the host.`
-            : "Tonight’s join info — updated live by the host."}
+            ? `${liveGroups.length} live servers — pick one and join.`
+            : "Tonight’s join info — copy the address and hop in."}
           {theme.game && liveGroups.length <= 1 ? ` · ${theme.game}` : ""}
         </p>
+        {hasLive ? (
+          <p className="muted status-inline player-freshness" aria-live="polite">
+            <span className={`status-chip${wsOpen ? " live" : ""}`}>{liveFreshLabel}</span>
+          </p>
+        ) : null}
       </header>
 
       {panel.isLoading ? (
@@ -243,14 +286,19 @@ export function PlayerPage() {
       ) : null}
 
       {panel.isError ? (
-        <p className="error" role="alert">
-          {(panel.error as Error).message || "Could not load the player panel."}
-        </p>
+        <div className="stack tight" role="alert">
+          <p className="error">Couldn’t load tonight’s panel. Check you’re on the LAN and try again.</p>
+          <div className="btn-row">
+            <button type="button" className="btn btn-primary" onClick={() => void panel.refetch()}>
+              Retry
+            </button>
+          </div>
+        </div>
       ) : null}
 
       {!panel.isLoading && !panel.isError && !hasLive ? (
         <div className={gameThemeClass("block")} {...gameThemeAttrs}>
-          <span className="chip">Waiting</span>
+          <span className="status-chip warn">Waiting</span>
           <h2>No live servers yet</h2>
           <p className="muted status-inline">
             When the host starts a game, the join address shows up here.
@@ -267,67 +315,109 @@ export function PlayerPage() {
           typeof group.status?.body.status === "string"
             ? group.status.body.status
             : undefined;
-        const statusBody = group.status?.body ?? {};
+        const statusBody = group.status
+          ? parsePanelBody("server_status", group.status.body)
+          : {};
         const players =
-          typeof statusBody.players === "number" ? statusBody.players : undefined;
+          typeof statusBody.players === "number"
+            ? statusBody.players
+            : typeof statusBody.players === "string"
+              ? Number(statusBody.players)
+              : undefined;
         const maxPlayers =
-          typeof statusBody.maxPlayers === "number" ? statusBody.maxPlayers : undefined;
+          typeof statusBody.maxPlayers === "number"
+            ? statusBody.maxPlayers
+            : typeof statusBody.maxPlayers === "string"
+              ? Number(statusBody.maxPlayers)
+              : undefined;
         const map = typeof statusBody.map === "string" ? statusBody.map : undefined;
         const mode = typeof statusBody.mode === "string" ? statusBody.mode : undefined;
+        const playerList = Array.isArray(statusBody.playerList)
+          ? statusBody.playerList.map(String).filter(Boolean)
+          : [];
         const liveBits: string[] = [];
-        if (players !== undefined) {
+        if (players !== undefined && Number.isFinite(players)) {
           liveBits.push(
-            maxPlayers !== undefined ? `${players}/${maxPlayers} players` : `${players} players`,
+            maxPlayers !== undefined && Number.isFinite(maxPlayers)
+              ? `${players}/${maxPlayers} players`
+              : `${players} players`,
           );
         }
         if (map) liveBits.push(map);
         if (mode) liveBits.push(mode);
         const addrKey = `${group.key}:address`;
         const cmdKey = `${group.key}:command`;
+        const title = sectionTitle(joinBlock, theme.game);
+        const isPrimary = index === 0;
+        const expanded =
+          isPrimary || expandedServers[group.key] === true || liveGroups.length === 1;
+        const statusChip =
+          status === "running" || !status ? (
+            <span className="status-chip live">Live</span>
+          ) : (
+            <span className="status-chip warn">{statusLabel(status)}</span>
+          );
+
+        if (!expanded) {
+          return (
+            <button
+              key={group.key}
+              type="button"
+              className={gameThemeClass("server-section", "server-section-collapsed")}
+              {...gameThemeAttrs}
+              onClick={() =>
+                setExpandedServers((prev) => ({ ...prev, [group.key]: true }))
+              }
+            >
+              <div className="player-live-row">
+                {statusChip}
+                <strong className="server-section-title">{title}</strong>
+              </div>
+              <p className="muted status-inline mono-soft">{join}</p>
+              <span className="linkish">Show join</span>
+            </button>
+          );
+        }
 
         return (
           <section
             key={group.key}
             className={gameThemeClass(
               "server-section",
-              index === 0 ? "server-section-primary" : "",
+              isPrimary ? "server-section-primary" : "",
             )}
             {...gameThemeAttrs}
-            aria-label={sectionTitle(joinBlock, theme.game)}
+            aria-label={title}
+            id={`player-server-${group.key}`}
           >
             <header className="server-section-header">
-              <span className="chip">Join</span>
-              <h2 className="server-section-title">{sectionTitle(joinBlock, theme.game)}</h2>
-              {status ? (
-                <p
-                  className={`status status-inline ${status === "running" ? "" : "stopped"}`}
-                >
-                  {statusLabel(status)}
-                  {liveBits.length ? ` · ${liveBits.join(" · ")}` : ""}
-                </p>
-              ) : (
-                <p className="status status-inline">
-                  Live{liveBits.length ? ` · ${liveBits.join(" · ")}` : ""}
-                </p>
-              )}
+              <div className="player-live-row">{statusChip}</div>
+              <h2 className="server-section-title">{title}</h2>
+              <p className="status status-inline">
+                {liveBits.length ? liveBits.join(" · ") : "Ready to join"}
+              </p>
             </header>
 
-            <p className="join-label muted">Address</p>
-            <p className="join-endpoint">{join}</p>
-            <div className="btn-row">
-              {steamConnectUrl ? (
-                <a className="btn btn-primary" href={steamConnectUrl}>
-                  Open in Steam
-                </a>
-              ) : null}
-              <button
-                className={steamConnectUrl ? "btn btn-ghost" : "btn btn-primary"}
-                type="button"
-                onClick={() => void copyValue(addrKey, join)}
-                aria-live="polite"
-              >
-                {copiedKey === addrKey ? "Copied" : "Copy address"}
-              </button>
+            <div className="join-hero">
+              <p className="join-label muted">Address</p>
+              <div className="join-endpoint-wrap">
+                <p className="join-endpoint">{join}</p>
+                <div className="btn-row join-actions-inline">
+                  {steamConnectUrl ? (
+                    <a className="btn btn-primary" href={steamConnectUrl}>
+                      Open in Steam
+                    </a>
+                  ) : null}
+                  <button
+                    className={steamConnectUrl ? "btn btn-ghost" : "btn btn-primary"}
+                    type="button"
+                    onClick={() => void copyValue(addrKey, join)}
+                    aria-live="polite"
+                  >
+                    {copiedKey === addrKey ? "Copied" : "Copy address"}
+                  </button>
+                </div>
+              </div>
             </div>
             {connectCommand ? (
               <div className="join-command">
@@ -352,7 +442,59 @@ export function PlayerPage() {
             ) : null}
             <p className="muted status-inline">{setupHeroHint(group.rest)}</p>
 
-            {group.rest.map((block) => (
+            {playerList.length ? (
+              <div className="panel-block">
+                <span className="chip">Roster</span>
+                <ul className="panel-roster">
+                  {playerList.map((name) => (
+                    <li key={name} title={name}>
+                      {name}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            <div className="player-ready-row">
+              <button
+                className={`btn btn-ghost${readyAck ? " ready-pulse" : ""}`}
+                type="button"
+                onClick={() => ready.mutate(!readyAck)}
+                disabled={ready.isPending}
+                aria-busy={ready.isPending}
+              >
+                {ready.isPending
+                  ? "Sending…"
+                  : readyAck
+                    ? "Not ready"
+                    : "I'm ready"}
+              </button>
+              {readyAck ? (
+                <p className="muted status-inline" aria-live="polite">
+                  Host notified you’re ready.
+                </p>
+              ) : (
+                <p className="muted status-inline">Tell the host you’re set.</p>
+              )}
+              {ready.isError ? (
+                <p className="error status-inline" role="alert">
+                  Couldn’t send ready —{" "}
+                  <button type="button" className="linkish" onClick={() => ready.mutate(!readyAck)}>
+                    Retry
+                  </button>
+                </p>
+              ) : null}
+            </div>
+
+            {group.rest
+              .filter((block) => {
+                // Join hero already surfaces client_setup notes — avoid a duplicate card.
+                if (block.type !== "client_setup") return true;
+                const body = parsePanelBody("client_setup", block.body);
+                const steps = Array.isArray(body.steps) ? body.steps : [];
+                return steps.length > 0;
+              })
+              .map((block) => (
               <PanelBlockCard
                 key={block.id}
                 block={block}
@@ -365,7 +507,19 @@ export function PlayerPage() {
                   const choice = voteChoiceByBlock[block.id];
                   if (choice) vote.mutate({ blockId: block.id, choice });
                 }}
+                onChangeVote={() => {
+                  setVoteAckByBlock((prev) => {
+                    const next = { ...prev };
+                    delete next[block.id];
+                    return next;
+                  });
+                }}
                 votePending={vote.isPending}
+                voteError={
+                  vote.isError
+                    ? "Couldn’t send vote — try again."
+                    : undefined
+                }
               />
             ))}
           </section>
@@ -387,53 +541,41 @@ export function PlayerPage() {
                 const choice = voteChoiceByBlock[block.id];
                 if (choice) vote.mutate({ blockId: block.id, choice });
               }}
+              onChangeVote={() => {
+                setVoteAckByBlock((prev) => {
+                  const next = { ...prev };
+                  delete next[block.id];
+                  return next;
+                });
+              }}
               votePending={vote.isPending}
+              voteError={vote.isError ? "Couldn’t send vote — try again." : undefined}
             />
           ))}
         </div>
       ) : null}
 
-      {hasLive ? (
-        <>
+      {hasLive && primaryJoin ? (
+        <div className="player-sticky-join" role="region" aria-label="Join actions">
+          <p className="player-sticky-endpoint mono-soft">{primaryJoin}</p>
           <div className="btn-row">
+            {primarySteam ? (
+              <a className="btn btn-primary" href={primarySteam}>
+                Open in Steam
+              </a>
+            ) : null}
             <button
-              className="btn btn-ghost"
+              className={primarySteam ? "btn btn-ghost" : "btn btn-primary"}
               type="button"
-              onClick={() => ready.mutate()}
-              disabled={ready.isPending}
-              aria-busy={ready.isPending}
+              onClick={() => void copyValue("sticky:address", primaryJoin)}
             >
-              {ready.isPending ? "Sending…" : readyAck ? "Ready ✓" : "I'm ready"}
+              {copiedKey === "sticky:address" ? "Copied" : "Copy"}
             </button>
           </div>
-          {readyAck ? (
-            <p className="muted status-inline" aria-live="polite">
-              Host notified you&apos;re ready.
-            </p>
-          ) : null}
-          {ready.isError ? (
-            <p className="error" role="alert">
-              {(ready.error as Error).message}
-            </p>
-          ) : null}
-          {vote.isError ? (
-            <p className="error" role="alert">
-              {(vote.error as Error).message}
-            </p>
-          ) : null}
-          <p className="muted status-inline">
-            Tells the host you’re set. Hosts manage servers from the{" "}
-            <Link to="/login">admin login</Link>.
-          </p>
-        </>
+        </div>
       ) : null}
     </div>
   );
-}
-
-function bodySteps(body: Record<string, unknown>): string[] {
-  if (!Array.isArray(body.steps)) return [];
-  return body.steps.map(String).map((s) => s.trim()).filter(Boolean);
 }
 
 function PanelBlockCard({
@@ -442,30 +584,70 @@ function PanelBlockCard({
   voteAcked,
   onVoteChoice,
   onVote,
+  onChangeVote,
   votePending,
+  voteError,
 }: {
   block: PanelBlockRow;
   voteChoice: string;
   voteAcked?: string;
   onVoteChoice: (value: string) => void;
   onVote: () => void;
+  onChangeVote: () => void;
   votePending: boolean;
+  voteError?: string;
 }) {
-  const options = Array.isArray(block.body.options)
-    ? block.body.options.map(String)
-    : Array.isArray(block.body.choices)
-      ? block.body.choices.map(String)
+  const type = asBlockType(block.type);
+  const body = parsePanelBody(type, block.body);
+  const options = Array.isArray(body.options)
+    ? body.options.map(String)
+    : Array.isArray(body.choices)
+      ? body.choices.map(String)
       : [];
-  const steps = bodySteps(block.body);
+  const steps = Array.isArray(body.steps)
+    ? body.steps.map(String).map((s) => s.trim()).filter(Boolean)
+    : [];
+  const links = Array.isArray(body.links)
+    ? body.links
+        .map((l) => {
+          if (!l || typeof l !== "object") return null;
+          const row = l as { label?: unknown; url?: unknown };
+          const label = typeof row.label === "string" ? row.label : "";
+          const url = typeof row.url === "string" ? safeHttpUrl(row.url) : null;
+          if (!label || !url) return null;
+          return { label, url };
+        })
+        .filter((l): l is { label: string; url: string } => Boolean(l))
+    : [];
+  const suggestions: Array<{ title: string; detail?: string; skillName?: string }> = [];
+  if (Array.isArray(body.suggestions)) {
+    for (const s of body.suggestions) {
+      if (!s || typeof s !== "object") continue;
+      const row = s as { title?: unknown; detail?: unknown; skillName?: unknown };
+      const title = typeof row.title === "string" ? row.title : "";
+      if (!title) continue;
+      suggestions.push({
+        title,
+        ...(typeof row.detail === "string" ? { detail: row.detail } : {}),
+        ...(typeof row.skillName === "string" ? { skillName: row.skillName } : {}),
+      });
+    }
+  }
+  const fileUrl = typeof body.url === "string" ? safeHttpUrl(body.url) : null;
+  const level = body.level === "warn" || body.level === "fun" || body.level === "info" ? body.level : undefined;
+  const levelClass = level ? ` level-${level}` : "";
 
   return (
-    <article className="block">
+    <article className={`panel-block block${levelClass}`}>
       <span className="chip">{chipLabel(block.type)}</span>
       <h2>{block.title}</h2>
-      {typeof block.body.summary === "string" ? <p>{block.body.summary}</p> : null}
-      {typeof block.body.notes === "string" ? <p>{block.body.notes}</p> : null}
-      {typeof block.body.instructions === "string" ? (
-        <p className="muted">{block.body.instructions}</p>
+      {typeof body.summary === "string" ? <p>{body.summary}</p> : null}
+      {typeof body.notes === "string" ? <p>{body.notes}</p> : null}
+      {typeof body.instructions === "string" ? (
+        <p className="muted">{body.instructions}</p>
+      ) : null}
+      {typeof body.label === "string" && type === "readiness" ? (
+        <p className="muted status-inline">{body.label}</p>
       ) : null}
       {steps.length ? (
         <ol className="panel-steps">
@@ -474,16 +656,51 @@ function PanelBlockCard({
           ))}
         </ol>
       ) : null}
-      {typeof block.body.url === "string" ? (
+      {links.length ? (
+        <ul className="panel-links">
+          {links.map((link) => (
+            <li key={`${block.id}-${link.url}`}>
+              <a href={link.url} target="_blank" rel="noreferrer">
+                {link.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {type === "file_drop" && fileUrl ? (
+        <div className="btn-row">
+          <a className="btn btn-primary" href={fileUrl} target="_blank" rel="noreferrer">
+            {typeof body.label === "string" && body.label.trim() ? body.label : "Download file"}
+          </a>
+        </div>
+      ) : null}
+      {type !== "file_drop" && fileUrl ? (
         <p>
-          <a href={block.body.url}>{block.body.url}</a>
+          <a href={fileUrl} target="_blank" rel="noreferrer">
+            {fileUrl}
+          </a>
         </p>
+      ) : null}
+      {type === "discovery" && suggestions.length ? (
+        <ul className="panel-suggestions">
+          {suggestions.map((s) => (
+            <li key={`${block.id}-${s.title}`} className="panel-suggestion">
+              <strong>{s.title}</strong>
+              {s.detail ? <span className="muted status-inline">{s.detail}</span> : null}
+            </li>
+          ))}
+        </ul>
       ) : null}
       {block.type === "vote" && options.length ? (
         voteAcked ? (
-          <p className="ok status-inline" aria-live="polite">
-            Voted · {voteAcked}
-          </p>
+          <div className="stack tight vote-stack">
+            <p className="ok status-inline ready-pulse" aria-live="polite">
+              Voted · {voteAcked}
+            </p>
+            <button type="button" className="linkish" onClick={onChangeVote}>
+              Change vote
+            </button>
+          </div>
         ) : (
           <div className="stack vote-stack">
             <label className="field">
@@ -509,6 +726,14 @@ function PanelBlockCard({
             >
               {votePending ? "Sending…" : "Submit vote"}
             </button>
+            {voteError ? (
+              <p className="error status-inline" role="alert">
+                {voteError}{" "}
+                <button type="button" className="linkish" onClick={onVote} disabled={!voteChoice || votePending}>
+                  Retry
+                </button>
+              </p>
+            ) : null}
           </div>
         )
       ) : null}

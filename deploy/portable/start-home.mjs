@@ -151,13 +151,16 @@ function spawnChild(label, scriptRel, extraEnv) {
 const vars = ensureEnv();
 const port = vars.PLAYON_PORT || "8787";
 const advertise = vars.PLAYON_ADVERTISE_HOST;
-const adminUrl = `http://${advertise}:${port}`;
+const mdnsUrl = "http://playon.local";
+const ipFallback = `http://${advertise}:${port}`;
 
 console.log("PlayOn Home (portable)");
 console.log(`  Root:   ${root}`);
 console.log(`  Node:   ${nodeBin}`);
-console.log(`  Admin:  ${adminUrl}`);
-console.log(`  Players:${adminUrl.replace(/\/?$/, "")}/play`);
+console.log(`  Open:   ${mdnsUrl}`);
+console.log(`  Fallback: ${ipFallback}`);
+console.log(`  Players: ${mdnsUrl}/play (or ${ipFallback}/play)`);
+console.log(`  Discord HTTPS: link in Settings → Panel URL → https://<handle>.playon.games`);
 console.log(`  Data:   ${vars.PLAYON_DATA_ROOT}`);
 console.log("");
 
@@ -171,10 +174,11 @@ const nodeAgent = spawnChild("node-agent", path.join("apps", "node-agent", "dist
 
 const ready = await waitForHttp(`http://127.0.0.1:${port}/api/setup`);
 if (ready) {
-  console.log(`Ready — opening ${adminUrl}`);
-  openBrowser(adminUrl);
+  // Prefer discovery URL; IP fallback still printed above.
+  console.log(`Ready — opening ${mdnsUrl} (fallback ${ipFallback})`);
+  openBrowser(mdnsUrl);
 } else {
-  console.log(`Still starting — open ${adminUrl} when ready.`);
+  console.log(`Still starting — open ${mdnsUrl} or ${ipFallback} when ready.`);
 }
 
 function shutdown() {

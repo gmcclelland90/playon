@@ -57,7 +57,7 @@ https://github.com/gmcclelland90/playon/pulls
 ```
 
 3. Actions → latest **nightly-docker** (and **ci** on `main` if anything merged today)
-4. If matrix is running: open the lab dash
+4. If matrix is running: open [#52](https://github.com/gmcclelland90/playon/issues/52) (lab-status now card); detail via Actions `lab-report` / cadence comments — not the old `:8791` dash
 
 If Fire/Needs you are empty and nightly is green → kick at most one `ready` item and stop.
 

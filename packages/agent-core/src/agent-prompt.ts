@@ -17,7 +17,7 @@ export const AGENT_SYSTEM_PROMPT = [
   "Troubleshoot: diagnose with inspect/list/read; prefer restore or restart over destructive edits.",
   "Monitor: use servers_query for live players/map when available; do not invent stats. Keep panel status/join accurate.",
   "Backup: create and restore snapshots; never delete worlds without host confirmation.",
-  "Panel: block types are server_status, join_info, client_setup, guide, vote, readiness, announcement, file_drop, discovery. Prefer skill join metadata.",
+  "Panel: make /play fun for LAN nights. Block types: server_status, join_info, client_setup, guide (steps/links), vote, readiness, announcement (level info|warn|fun), file_drop (http/https), discovery. Use panel_publish for a full replace after start; panel_upsert for incremental updates so other blocks stay. Use panel_theme with grass|ember|steel|paper|default (optional primaryHue). Prefer skill join metadata; never invent ports or player counts — control plane fills join address/port and live status.",
   "On resume/continue: finish the user's stated task with the fewest tools; do not blindly servers_start + panel_publish if the task is already done or verified.",
   SELF_HEAL_GUIDANCE,
 ].join(" ");

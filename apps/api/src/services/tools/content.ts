@@ -1,4 +1,8 @@
+import fs from "node:fs";
+import path from "node:path";
+import { isLocalNodeId, NODE_AUTHORITATIVE_MARKER } from "@playon/shared";
 import { dispatchNodeJob, nodeServerRelPath } from "../node-runtime.js";
+import { readSkillMarker } from "../skill-marker.js";
 import { SteamcmdNotFoundError, steamcmdAppUpdate } from "../steamcmd.js";
 import { serverTool, type ToolModule } from "./types.js";
 
@@ -110,6 +114,10 @@ export const contentToolModule: ToolModule = ({ plane }) => {
             appId: { type: "number" },
             installDir: { type: "string" },
             validate: { type: "boolean" },
+            /** HLDS app 90: SteamCMD mod name (cstrike, czero, valve, tfc). */
+            steamMod: { type: "string" },
+            /** Linux-only SteamCMD beta (e.g. HumanitZ linuxbranch). Defaults from skill.json. */
+            steamBetaLinux: { type: "string" },
           },
           required: ["serverId", "appId"],
         },
@@ -125,11 +133,31 @@ export const contentToolModule: ToolModule = ({ plane }) => {
         const appId = Number(args.appId);
         const installDirRel = args.installDir ? String(args.installDir) : undefined;
         const validate = args.validate === undefined ? true : Boolean(args.validate);
+        const marker = readSkillMarker(server.dataPath);
+        const steamMod =
+          typeof args.steamMod === "string" && args.steamMod.trim()
+            ? args.steamMod.trim()
+            : typeof marker?.steamMod === "string" && marker.steamMod.trim()
+              ? marker.steamMod.trim()
+              : undefined;
+        const steamBetaLinux =
+          typeof args.steamBetaLinux === "string" && args.steamBetaLinux.trim()
+            ? args.steamBetaLinux.trim()
+            : typeof marker?.steamBetaLinux === "string" && marker.steamBetaLinux.trim()
+              ? marker.steamBetaLinux.trim()
+              : undefined;
         try {
           const result = await dispatchNodeJob({
             nodeId: server.nodeId,
             kind: "steamcmd_app_update",
-            args: { serverRel: nodeServerRelPath(server.id), appId, installDirRel, validate },
+            args: {
+              serverRel: nodeServerRelPath(server.id),
+              appId,
+              installDirRel,
+              validate,
+              steamMod,
+              steamBetaLinux,
+            },
             timeoutMs: STEAMCMD_TIMEOUT_MS,
             localHandler: () =>
               steamcmdAppUpdate({
@@ -137,8 +165,20 @@ export const contentToolModule: ToolModule = ({ plane }) => {
                 appId,
                 installDirRel,
                 validate,
+                steamMod,
+                steamBetaLinux,
               }),
           });
+          // SteamCMD writes on the node; Home's game/ stays empty. Mark the
+          // tree node-authoritative so prepareRemoteStart won't push-wipe it.
+          if (server.nodeId && !isLocalNodeId(server.nodeId)) {
+            fs.mkdirSync(server.dataPath, { recursive: true });
+            fs.writeFileSync(
+              path.join(server.dataPath, NODE_AUTHORITATIVE_MARKER),
+              `${server.nodeId}\n`,
+              "utf8",
+            );
+          }
           return {
             serverId,
             appId: result.appId,

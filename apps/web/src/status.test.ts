@@ -4,6 +4,7 @@ import {
   nodePresenceHint,
   nodePresenceLabel,
   runtimeErrorHint,
+  shortDisplayName,
   statusHint,
   statusLabel,
 } from "./status";
@@ -50,5 +51,15 @@ describe("status helpers", () => {
     expect(
       nodePresenceHint({ id: "node-x", status: "online", agentVersion: "pending" }),
     ).toMatch(/Bootstrap never finished/);
+  });
+
+  it("maps manage scan failures", () => {
+    expect(runtimeErrorHint("manage_scan_roots_missing")).toMatch(/import-scan-roots/);
+    expect(runtimeErrorHint("manage_cutover_local_unreachable")).toMatch(/Online/);
+  });
+
+  it("shortens long display names", () => {
+    expect(shortDisplayName("Minecraft Small")).toBe("Minecraft Small");
+    expect(shortDisplayName("lab-matrix-stormworks-mslmnas5")).toBe("stormworks");
   });
 });

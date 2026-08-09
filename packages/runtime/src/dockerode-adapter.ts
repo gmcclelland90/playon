@@ -23,6 +23,28 @@ export class DockerodeAdapter implements DockerAdapter {
     await this.docker.ping();
   }
 
+  /** Pull image if missing locally (createContainer does not auto-pull). */
+  private async ensureImage(image: string): Promise<void> {
+    try {
+      await this.docker.getImage(image).inspect();
+      return;
+    } catch {
+      /* missing — pull below */
+    }
+    await new Promise<void>((resolve, reject) => {
+      this.docker.pull(image, (err: Error | null, stream: NodeJS.ReadableStream) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        this.docker.modem.followProgress(stream, (progressErr: Error | null) => {
+          if (progressErr) reject(progressErr);
+          else resolve();
+        });
+      });
+    });
+  }
+
   async create(spec: ContainerSpec): Promise<ContainerInfo> {
     const exposed: Record<string, object> = {};
     const portBindings: Record<string, Array<{ HostPort: string }>> = {};
@@ -35,10 +57,14 @@ export class DockerodeAdapter implements DockerAdapter {
 
     const binds = (spec.binds ?? []).map((b) => `${b.hostPath}:${b.containerPath}`);
 
+    await this.ensureImage(spec.image);
+
+    const cmd = spec.cmd?.filter((a) => a.length > 0);
     const container = await this.docker.createContainer({
       name: spec.name,
       Image: spec.image,
       Env: Object.entries(spec.env ?? {}).map(([k, v]) => `${k}=${v}`),
+      ...(cmd?.length ? { Cmd: cmd } : {}),
       // Keep stdin open so adminDialect=stdin can attach and write console commands.
       OpenStdin: true,
       AttachStdin: true,

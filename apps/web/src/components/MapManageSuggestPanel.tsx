@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
+import { runtimeErrorHint } from "../status";
 
 type Candidate = {
   path: string;
@@ -8,6 +9,11 @@ type Candidate = {
   suggestedGame?: string;
   suggestedSkillName?: string;
 };
+
+function scanErrorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : "Scan failed";
+  return runtimeErrorHint(raw) ?? raw;
+}
 
 export function MapManageSuggestPanel({
   nodeId,
@@ -21,6 +27,8 @@ export function MapManageSuggestPanel({
   const qc = useQueryClient();
   const [notice, setNotice] = useState<string | null>(null);
   const [managingPath, setManagingPath] = useState<string | null>(null);
+  const [showCutoverHelp, setShowCutoverHelp] = useState(false);
+  const [pendingManage, setPendingManage] = useState<Candidate | null>(null);
 
   const suggest = useQuery({
     queryKey: ["manage-suggest", nodeId],
@@ -32,6 +40,8 @@ export function MapManageSuggestPanel({
   useEffect(() => {
     setNotice(null);
     setManagingPath(null);
+    setShowCutoverHelp(false);
+    setPendingManage(null);
   }, [nodeId]);
 
   const manageMut = useMutation({
@@ -45,48 +55,83 @@ export function MapManageSuggestPanel({
       }),
     onMutate: (c) => {
       setManagingPath(c.path);
+      setPendingManage(null);
       setNotice(null);
     },
     onSuccess: async (res) => {
       setManagingPath(null);
       setNotice(
-        `“${res.manage.server.name}” is on this pad (stopped). Stop the old host service, then Start here to cut over.`,
+        `“${res.manage.server.name}” is on this pad (stopped). Stop the old host service, then Start here.`,
       );
       await qc.invalidateQueries({ queryKey: ["servers"] });
       await qc.invalidateQueries({ queryKey: ["manage-suggest", nodeId] });
     },
     onError: (err) => {
       setManagingPath(null);
-      setNotice(err instanceof Error ? err.message : "Could not add server");
+      setNotice(scanErrorMessage(err));
     },
   });
 
   const candidates = suggest.data?.candidates ?? [];
+  const rootsMissing =
+    suggest.isError &&
+    suggest.error instanceof Error &&
+    suggest.error.message.includes("manage_scan_roots_missing");
 
   return (
     <div className="map-add-node-panel" role="dialog" aria-label={`Scan ${nodeName}`}>
       <div className="dash-section-head">
-        <h3>Scan · {nodeName}</h3>
-        <button type="button" className="linkish" onClick={onClose}>
-          Close
-        </button>
+        <h3>Scan for installs · {nodeName}</h3>
+        <div className="btn-row">
+          <button
+            type="button"
+            className="btn btn-primary btn-compact"
+            disabled={suggest.isFetching}
+            onClick={() => void suggest.refetch()}
+          >
+            {suggest.isFetching ? "Scanning…" : "Rescan"}
+          </button>
+          <button type="button" className="linkish" onClick={onClose}>
+            Close
+          </button>
+        </div>
       </div>
       <p className="muted small">
-        PlayOn copies the install on that host into its own server directory, and for known games also
-        pulls external world/config (for example Project Zomboid’s home data) into a per-server HOME.
-        The original install stays as a fallback — nothing is hauled to Home. Starting under PlayOn is
-        a cutover: stop any existing host service first; players need a maintenance window.
+        Find game installs already on this host and bring them under PlayOn on the same machine.
       </p>
+
+      <details
+        className="map-scan-cutover"
+        open={showCutoverHelp}
+        onToggle={(e) => setShowCutoverHelp((e.target as HTMLDetailsElement).open)}
+      >
+        <summary>How cutover works</summary>
+        <p className="muted small">
+          PlayOn copies the install into its own server directory on that host (and for known games,
+          pulls external world/config into a per-server HOME). The original stays as a fallback —
+          nothing is hauled to Home. Starting under PlayOn is a cutover: stop any existing host
+          service first; players need a maintenance window.
+        </p>
+      </details>
 
       {suggest.isLoading ? <p className="muted">Scanning…</p> : null}
       {suggest.isError ? (
-        <p className="error-text">
-          {suggest.error instanceof Error ? suggest.error.message : "Scan failed"}
-        </p>
+        <div className="map-scan-error" role="alert">
+          <p className="error-text">{scanErrorMessage(suggest.error)}</p>
+          {rootsMissing ? (
+            <p className="muted small">
+              After skills are synced on Home, Rescan. Settings → Nodes if this host still looks
+              offline.
+            </p>
+          ) : null}
+        </div>
       ) : null}
 
       {!suggest.isLoading && !suggest.isError && candidates.length === 0 ? (
-        <p className="muted">No matching servers under allowlisted paths.</p>
+        <p className="muted">
+          No game installs found in the scan folders on this host. Rescan after installs land under
+          Steam/common or ~/servers.
+        </p>
       ) : null}
 
       {candidates.length > 0 ? (
@@ -103,22 +148,7 @@ export function MapManageSuggestPanel({
               <button
                 type="button"
                 disabled={manageMut.isPending}
-                onClick={() => {
-                  const label = c.suggestedGame ?? c.path;
-                  if (
-                    window.confirm(
-                      [
-                        `Manage “${label}” with PlayOn on ${nodeName}?`,
-                        "",
-                        "PlayOn will copy this install (and known external world/config) into its jail on that host and leave the original in place.",
-                        "It does not stop your current server process — do that yourself before Start in PlayOn.",
-                        "Cutover needs downtime; players cannot stay online through this.",
-                      ].join("\n"),
-                    )
-                  ) {
-                    manageMut.mutate(c);
-                  }
-                }}
+                onClick={() => setPendingManage(c)}
               >
                 {managingPath === c.path ? "Adding…" : "Manage"}
               </button>
@@ -127,16 +157,30 @@ export function MapManageSuggestPanel({
         </ul>
       ) : null}
 
-      <div className="btn-row">
-        <button
-          type="button"
-          className="secondary"
-          disabled={suggest.isFetching}
-          onClick={() => void suggest.refetch()}
-        >
-          {suggest.isFetching ? "Scanning…" : "Rescan"}
-        </button>
-      </div>
+      {pendingManage ? (
+        <div className="map-inline-confirm map-inline-confirm-nested" role="alertdialog">
+          <p>
+            Manage “{pendingManage.suggestedGame ?? pendingManage.path}” with PlayOn on {nodeName}?
+          </p>
+          <p className="muted small">
+            Copies the install into PlayOn’s jail on this host. Stop the old process yourself before
+            Start. Cutover needs downtime.
+          </p>
+          <div className="btn-row">
+            <button type="button" className="btn btn-ghost" onClick={() => setPendingManage(null)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={manageMut.isPending}
+              onClick={() => manageMut.mutate(pendingManage)}
+            >
+              Manage
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {notice ? <p className="muted small">{notice}</p> : null}
     </div>

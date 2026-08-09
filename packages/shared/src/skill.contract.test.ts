@@ -63,12 +63,14 @@ describe("SkillMetadataSchema contract", () => {
       containerSupport: "full",
       dockerImage: "itzg/minecraft-server:latest",
       dockerEnv: { TYPE: "PAPER", EULA: "TRUE" },
+      dockerArgs: ["--lan-server=PlayOn"],
       adminDialect: "mc_rcon",
       minRamMb: 2048,
       dependencies: ["platform.docker-basics"],
       steamAppId: undefined,
     });
     expect(parsed.dockerImage).toContain("itzg/");
+    expect(parsed.dockerArgs).toEqual(["--lan-server=PlayOn"]);
     expect(parsed.adminDialect).toBe("mc_rcon");
     expect(parsed.dependencies).toEqual(["platform.docker-basics"]);
   });
@@ -83,6 +85,36 @@ describe("SkillMetadataSchema contract", () => {
       dependencies: ["platform.steamcmd"],
     });
     expect(parsed.steamAppId).toBe(258550);
+  });
+
+  it("accepts steamMod for HLDS multi-mod app 90", () => {
+    const parsed = SkillMetadataSchema.parse({
+      name: "games.cs-1.6",
+      version: "0.1.1",
+      containerSupport: "none",
+      steamAppId: 90,
+      steamMod: "cstrike",
+      queryDialect: "a2s",
+      native: {
+        binary: "hlds_run",
+        args: ["-game", "cstrike", "+map", "de_dust2"],
+      },
+    });
+    expect(parsed.steamMod).toBe("cstrike");
+    expect(parsed.native?.args).toContain("cstrike");
+  });
+
+  it("accepts steamBetaLinux for Linux-only SteamCMD branches", () => {
+    const parsed = SkillMetadataSchema.parse({
+      name: "games.humanitz",
+      version: "0.1.1",
+      containerSupport: "none",
+      steamAppId: 2728330,
+      steamBetaLinux: "linuxbranch",
+      queryDialect: "a2s",
+      native: { binary: "HumanitZServer.sh" },
+    });
+    expect(parsed.steamBetaLinux).toBe("linuxbranch");
   });
 });
 

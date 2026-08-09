@@ -70,6 +70,7 @@ A skill is `ok` only when `port_open` passes (TCP listen, or UDP + process/query
 - FOSS titles without packaged fetch automation → `no_automated_install` after a failed start
 - SteamCMD `Invalid platform` on Linux Local → dual-place to `playon-win-1` when online; only `windows_only_depot` skip if Windows worker is off
 - SteamCMD `No subscription` under anonymous login (paid/licensed depot; e.g. `games.arma3`, `games.assetto-corsa`) → `steamcmd_no_subscription`
+- SteamCMD exits 0 but ships `EmptySteamDepot` / `SizeOnDisk=0` (publisher emptied the public depot; e.g. `games.risk-of-rain-2` app 1180760 build 20243729) → `steamcmd_empty_depot`
 - Skill `os` / PE binary needs Windows but dual-place is disabled or `playon-win-1` offline → `unsupported_host_os` / `windows_only_pe`
 
 Everything else must pass E2E or be fixed.

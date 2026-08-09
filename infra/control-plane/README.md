@@ -28,12 +28,12 @@ sudo systemctl enable --now playon playon-node
 sudo systemctl status playon playon-node
 ```
 
-Open `http://<PLAYON_ADVERTISE_HOST>:8787` (Owner bootstrap on first run).
+Open `http://playon.local` (or `http://<PLAYON_ADVERTISE_HOST>:8787` if mDNS/:80 failed). Owner bootstrap on first run. Optional: **Settings → Panel URL** for `https://<handle>.playon.games`.
 
 `PLAYON_NODE_TOKEN` must be set before **Settings → Nodes → Add via SSH** (or the bootstrap one-liner). Home’s `deploy/install.sh` generates this automatically; the checkout path does not.
 
 Without `playon-node`, the dashboard still shows a Local row, but it stays **offline** (no heartbeats / job execution).
 
-## Optional TLS
+## Panel HTTPS (Discord)
 
-Terminate TLS with Caddy or nginx in front of `127.0.0.1:8787` (or the LAN bind). Keep PlayOn on HTTP; set `PLAYON_CORS_ORIGINS` / advertise host to the public HTTPS name if the browser origin differs.
+Link Discord from Home Settings to claim `https://<handle>.playon.games` (DNS A → LAN IP, Let’s Encrypt via playon.games). Not remote access. Advanced: you can still put Caddy/nginx in front of `127.0.0.1:8787` if you prefer.

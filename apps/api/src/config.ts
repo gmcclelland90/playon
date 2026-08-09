@@ -7,6 +7,13 @@ export interface AppConfig {
   port: number;
   /** Bind address for the HTTP server (set by loadConfig; tests may omit). */
   host?: string;
+  /**
+   * Preferred LAN HTTP port (80 in production when binding 0.0.0.0).
+   * Falls back to `port` when bind fails (EACCES / in use).
+   */
+  preferredLanPort?: number;
+  /** Loopback HTTP port for local node-agent (defaults to `port`). */
+  loopbackPort?: number;
   dataRoot: string;
   dbPath: string;
   sessionSecret: string;
@@ -29,6 +36,10 @@ export interface AppConfig {
   corsOrigins?: string[];
   /** True when PLAYON_ENV or NODE_ENV is production. */
   isProduction?: boolean;
+  /** playon.games origin for Discord hostname DNS/ACME helper. */
+  homeDnsApiUrl?: string;
+  /** When true, try mDNS playon.local (default on in production LAN bind). */
+  mdnsEnabled?: boolean;
 }
 
 export function isProductionEnv(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -80,10 +91,12 @@ function parseCorsExtra(raw: string | undefined): string[] {
     .filter(Boolean);
 }
 
-/** Build browser CORS allowlist for Vite dev + LAN advertise + extras. */
+/** Build browser CORS allowlist for Vite dev + LAN advertise + playon.local + extras. */
 export function buildCorsOrigins(opts: {
   advertiseHost: string;
   port: number;
+  preferredLanPort?: number;
+  publicHostname?: string;
   extra?: string[];
 }): string[] {
   const origins = new Set<string>([
@@ -91,7 +104,16 @@ export function buildCorsOrigins(opts: {
     "http://127.0.0.1:5173",
     `http://localhost:${opts.port}`,
     `http://127.0.0.1:${opts.port}`,
+    "http://playon.local",
+    "http://playon.local:80",
+    `http://playon.local:${opts.port}`,
   ]);
+  const lanPort = opts.preferredLanPort ?? opts.port;
+  if (lanPort !== opts.port) {
+    origins.add(`http://playon.local:${lanPort}`);
+    origins.add(`http://localhost:${lanPort}`);
+    origins.add(`http://127.0.0.1:${lanPort}`);
+  }
   const host = opts.advertiseHost.trim();
   if (host) {
     const bare = host.replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
@@ -100,7 +122,17 @@ export function buildCorsOrigins(opts: {
     if (!bare.includes(":")) {
       origins.add(`http://${bare}:${opts.port}`);
       origins.add(`https://${bare}:${opts.port}`);
+      if (lanPort !== opts.port) {
+        origins.add(`http://${bare}:${lanPort}`);
+        origins.add(`https://${bare}:${lanPort}`);
+      }
     }
+  }
+  const pub = opts.publicHostname?.trim();
+  if (pub) {
+    const bare = pub.replace(/^https?:\/\//i, "").replace(/\/.*$/, "");
+    origins.add(`https://${bare}`);
+    origins.add(`http://${bare}`);
   }
   for (const o of opts.extra ?? []) origins.add(o);
   return [...origins];
@@ -136,9 +168,25 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   const repoRoot = findRepoRoot(process.cwd());
   const port = Number(env.PLAYON_PORT ?? 8787);
+  const host = env.PLAYON_HOST?.trim() || "127.0.0.1";
+  const loopbackPort = Number(env.PLAYON_LOOPBACK_PORT ?? port);
+  const preferPrivileged =
+    env.PLAYON_LAN_PORT?.trim() ||
+    (production && (host === "0.0.0.0" || host === "::") ? "80" : String(port));
+  const preferredLanPort = Number(preferPrivileged);
   const advertiseHost = production
     ? env.PLAYON_ADVERTISE_HOST!.trim()
     : detectAdvertiseHost(env);
+  const homeDnsApiUrl = (env.PLAYON_HOME_DNS_API_URL?.trim() || "https://playon.games").replace(
+    /\/$/,
+    "",
+  );
+  const mdnsEnabled =
+    env.PLAYON_MDNS === "0" || env.PLAYON_MDNS === "false"
+      ? false
+      : env.PLAYON_MDNS === "1" || env.PLAYON_MDNS === "true"
+        ? true
+        : production && (host === "0.0.0.0" || host === "::");
   const extraCors = parseCorsExtra(env.PLAYON_CORS_ORIGINS);
   /**
    * `minimal` = platform skills only (Home / production shape).
@@ -183,7 +231,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
 
   return {
     port,
-    host: env.PLAYON_HOST?.trim() || "127.0.0.1",
+    host,
+    preferredLanPort: Number.isFinite(preferredLanPort) ? preferredLanPort : port,
+    loopbackPort: Number.isFinite(loopbackPort) ? loopbackPort : port,
     dataRoot,
     dbPath: path.resolve(env.PLAYON_DB_PATH ?? path.join(dataRoot, "playon.db")),
     sessionSecret: env.PLAYON_SESSION_SECRET?.trim() || `dev-${os.hostname()}-playon`,
@@ -194,7 +244,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     nodeToken: env.PLAYON_NODE_TOKEN?.trim() || undefined,
     backupRoot: env.PLAYON_BACKUP_ROOT?.trim() || undefined,
     webDist: resolveWebDist(env, repoRoot),
-    corsOrigins: buildCorsOrigins({ advertiseHost, port, extra: extraCors }),
+    corsOrigins: buildCorsOrigins({
+      advertiseHost,
+      port,
+      preferredLanPort: Number.isFinite(preferredLanPort) ? preferredLanPort : port,
+      extra: extraCors,
+    }),
     isProduction: production,
+    homeDnsApiUrl,
+    mdnsEnabled,
   };
 }

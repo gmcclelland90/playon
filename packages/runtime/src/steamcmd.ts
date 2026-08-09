@@ -265,11 +265,74 @@ export async function ensureSteamcmdBinary(opts?: {
   return { binary, provisioned: true };
 }
 
+/**
+ * SteamCMD sometimes exits 0 while appmanifest is still staged
+ * (SizeOnDisk=0 / empty InstalledDepots, content stuck under steamapps/downloading).
+ * Refuse that so native start does not launch a half-written tree.
+ *
+ * Also refuse publisher-empty depots: Valve may mark app_update success while
+ * shipping only `EmptySteamDepot` + redistributables (e.g. RoR2 1180760 build
+ * 20243729 with depot size 0). InstalledDepots alone is not proof of content.
+ */
+export function assertSteamAppInstallComplete(installDir: string, appId: number): void {
+  const manifestPath = path.join(installDir, "steamapps", `appmanifest_${appId}.acf`);
+  if (!fs.existsSync(manifestPath)) return;
+
+  const text = fs.readFileSync(manifestPath, "utf8");
+  const sizeMatch = /"SizeOnDisk"\s+"(\d+)"/.exec(text);
+  const sizeOnDisk = sizeMatch ? Number(sizeMatch[1]) : 0;
+
+  const depsBlock = /"InstalledDepots"\s*\{([\s\S]*?)\n\t\}/.exec(text)?.[1] ?? "";
+  const hasInstalledDepot = /"\d+"\s*\{/.test(depsBlock);
+  const depotSizes = [...depsBlock.matchAll(/"size"\s+"(\d+)"/g)].map((m) => Number(m[1]));
+  const allDepotsEmpty = depotSizes.length > 0 && depotSizes.every((s) => s === 0);
+  const emptyDepotMarker = fs.existsSync(path.join(installDir, "EmptySteamDepot"));
+
+  if (sizeOnDisk > 0) return;
+
+  if (emptyDepotMarker || allDepotsEmpty) {
+    throw new Error(
+      `steamcmd_empty_depot: appId=${appId} SizeOnDisk=0 (publisher empty depot / EmptySteamDepot)`,
+    );
+  }
+
+  if (hasInstalledDepot) return;
+
+  const downloading = path.join(installDir, "steamapps", "downloading", String(appId));
+  if (fs.existsSync(downloading)) {
+    throw new Error(
+      `steamcmd_incomplete_install: appId=${appId} SizeOnDisk=0 InstalledDepots empty (steamapps/downloading still present)`,
+    );
+  }
+
+  // Anonymous SteamCMD often exits 0 with an empty "fully installed" manifest when
+  // the account has no depot entitlement (e.g. Starbound 211820) instead of printing
+  // "No subscription". BytesToDownload=0 means Steam decided there is nothing to fetch.
+  const bytesMatch = /"BytesToDownload"\s+"(\d+)"/.exec(text);
+  const bytesToDownload = bytesMatch ? Number(bytesMatch[1]) : null;
+  if (bytesToDownload === 0) {
+    throw new Error(
+      `steamcmd_no_subscription: appId=${appId} (anonymous login has no entitlement; SizeOnDisk=0 BytesToDownload=0)`,
+    );
+  }
+
+  throw new Error(
+    `steamcmd_incomplete_install: appId=${appId} SizeOnDisk=0 InstalledDepots empty`,
+  );
+}
+
 export async function steamcmdAppUpdate(args: {
   serverDataPath: string;
   appId: number;
   installDirRel?: string;
   validate?: boolean;
+  /** HLDS app 90: `+app_set_config <appId> mod <steamMod>` before update. */
+  steamMod?: string;
+  /**
+   * SteamCMD `-beta <name>` — only emitted on Linux hosts (Windows ignores).
+   * Used for Linux-only depots such as HumanitZ `linuxbranch`.
+   */
+  steamBetaLinux?: string;
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
   autoInstall?: boolean;
@@ -289,28 +352,51 @@ export async function steamcmdAppUpdate(args: {
     installDir,
     "+login",
     "anonymous",
-    "+app_update",
-    String(args.appId),
   ];
+  const steamMod = args.steamMod?.trim();
+  if (steamMod) {
+    cmdArgs.push("+app_set_config", String(args.appId), "mod", steamMod);
+  }
+  cmdArgs.push("+app_update", String(args.appId));
+  const steamBetaLinux = args.steamBetaLinux?.trim();
+  if (steamBetaLinux && process.platform === "linux") {
+    cmdArgs.push("-beta", steamBetaLinux);
+  }
   if (args.validate !== false) cmdArgs.push("validate");
   cmdArgs.push("+quit");
 
   const cwd = path.dirname(binary);
+  // Large Steam dedi apps (ARK ~20GB staged) routinely exceed 10 minutes.
   const { exitCode, stdout, stderr } = await runProcess(
     binary,
     cmdArgs,
     cwd,
-    args.timeoutMs ?? 600_000,
+    args.timeoutMs ?? 1_800_000,
     env,
   );
 
-  if (exitCode !== 0) {
-    const detail = `steamcmd_failed: exit=${exitCode} appId=${args.appId} stderr=${stderr.slice(-400)}`;
+  const combined = `${stdout}\n${stderr}`;
+  const invalidPlatform = /Invalid platform|Failed to install app .*Invalid platform/i.test(
+    combined,
+  );
+  // Anonymous SteamCMD cannot fetch paid/licensed depots (arma3, assetto-corsa, …).
+  const noSubscription = /No subscription|Failed to install app .*No subscription/i.test(
+    combined,
+  );
+  if (exitCode !== 0 || invalidPlatform || noSubscription) {
+    const tail = combined.slice(-600).replace(/\s+/g, " ").trim();
+    const detail = invalidPlatform
+      ? `steamcmd_invalid_platform: appId=${args.appId} (depot not available on ${process.platform}) ${tail}`
+      : noSubscription
+        ? `steamcmd_no_subscription: appId=${args.appId} (anonymous login has no entitlement) ${tail}`
+        : `steamcmd_failed: exit=${exitCode} appId=${args.appId} ${tail}`;
     if (exitCode === 127) {
       throw new SteamcmdNotFoundError(detail);
     }
     throw new Error(detail);
   }
+
+  assertSteamAppInstallComplete(installDir, args.appId);
 
   return {
     ok: true,

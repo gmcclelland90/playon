@@ -75,6 +75,8 @@ export const ContainerCreateArgsSchema = z
     name: z.string().min(1).max(256),
     image: z.string().min(1).max(512),
     env: z.record(z.string(), z.string()).default({}),
+    /** Docker Cmd — replaces image CMD; usually skill `dockerArgs`. */
+    cmd: z.array(z.string()).default([]),
     ports: z.array(ContainerPortBindingSchema).default([]),
     binds: z.array(ContainerBindSchema).default([]),
   })

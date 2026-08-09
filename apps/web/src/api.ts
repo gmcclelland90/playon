@@ -474,6 +474,45 @@ export const api = {
       `/api/nodes/${encodeURIComponent(nodeId)}/update`,
       { method: "POST", body: JSON.stringify({}) },
     ),
+  getPanelUrls: () =>
+    request<{
+      mdnsUrl: string;
+      ipUrl: string;
+      httpsUrl?: string;
+      preferredUrl: string;
+      allUrls: string[];
+      advertiseHost: string;
+      lanPort: number;
+      loopbackPort: number;
+      mdnsAdvertised: boolean;
+      httpsReady: boolean;
+      linkedHostname: string | null;
+      discordUsername: string | null;
+      lastError: string | null;
+    }>("/api/panel-urls"),
+  startPanelHostnameLink: () =>
+    request<{
+      linkUrl: string;
+      userCode: string;
+      expiresAt: string;
+      installId: string;
+    }>("/api/settings/panel-hostname/link/start", {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  completePanelHostnameLink: (userCode: string) =>
+    request<{
+      ok: boolean;
+      pending?: boolean;
+      hostname?: string;
+      urls?: { preferredUrl: string; allUrls: string[] };
+      restartHint?: string;
+      lastError?: string | null;
+      error?: string;
+    }>("/api/settings/panel-hostname/link/complete", {
+      method: "POST",
+      body: JSON.stringify({ userCode }),
+    }),
   getLlmSettings: () => request<{ llm: LlmPublic }>("/api/settings/llm"),
   putLlmSettings: (body: {
     preset: LlmPresetId;

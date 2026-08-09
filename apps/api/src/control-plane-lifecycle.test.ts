@@ -100,9 +100,9 @@ function harness(
 }
 
 describe("startControlPlane", () => {
-  it("builds the plane, listens, then starts schedulers in order", () => {
+  it("builds the plane, listens, then starts schedulers in order", async () => {
     const { events, host } = harness();
-    const running = startControlPlane(host);
+    const running = await startControlPlane(host);
     expect(events).toEqual([
       "app:build",
       "http:listen",
@@ -114,11 +114,11 @@ describe("startControlPlane", () => {
     expect(running.config.port).toBe(0);
   });
 
-  it("logs the start banner and warns when a production build has no web dist", () => {
+  it("logs the start banner and warns when a production build has no web dist", async () => {
     const { logs, host } = harness({
       config: testConfig({ isProduction: true, webDist: "/nope/dist" }),
     });
-    startControlPlane(host);
+    await startControlPlane(host);
     expect(logs[0]?.record.msg).toBe("playon_start");
     expect(logs[0]?.record.webDistReady).toBe(false);
     expect(logs[1]).toMatchObject({ level: "warn", record: { msg: "playon_web_dist_missing" } });
@@ -128,7 +128,7 @@ describe("startControlPlane", () => {
 describe("stopControlPlane", () => {
   it("closes HTTP, stops schedulers in reverse, then aborts job waiters", async () => {
     const { events, host } = harness({ waitersAborted: 2 });
-    const running = startControlPlane(host);
+    const running = await startControlPlane(host);
     const report = await stopControlPlane(running, "SIGTERM");
 
     expect(events.slice(5)).toEqual([
@@ -150,21 +150,23 @@ describe("stopControlPlane", () => {
 
   it("drains lingering WebSockets after the grace period", async () => {
     const { events, host } = harness({ closes: "on-force" });
-    const report = await startControlPlane(host).stop("SIGINT");
+    const running = await startControlPlane(host);
+    const report = await running.stop("SIGINT");
     expect(events).toContain("http:close-all");
     expect(report).toMatchObject({ httpClosed: true, forcedConnections: true });
   });
 
   it("still settles when connections never report closed", async () => {
     const { host, stopped } = harness({ closes: "never" });
-    const report = await startControlPlane(host).stop();
+    const running = await startControlPlane(host);
+    const report = await running.stop();
     expect(report).toMatchObject({ reason: "manual", httpClosed: false, forcedConnections: true });
     expect(stopped).toEqual([report]);
   });
 
   it("is idempotent — a second stop reuses the first shutdown", async () => {
     const { events, host } = harness();
-    const running = startControlPlane(host);
+    const running = await startControlPlane(host);
     const [first, second] = await Promise.all([running.stop("SIGTERM"), running.stop("SIGINT")]);
     expect(second).toBe(first);
     expect(first.reason).toBe("SIGTERM");
@@ -181,7 +183,8 @@ describe("stopControlPlane", () => {
       };
       return entries;
     };
-    const report = await startControlPlane(host).stop();
+    const running = await startControlPlane(host);
+    const report = await running.stop();
     expect(report.schedulersStopped).toEqual(["watcher", "live-query", "snapshot"]);
     expect(events).toContain("snapshot:stop");
     expect(report.httpClosed).toBe(true);
@@ -194,7 +197,8 @@ describe("stopControlPlane", () => {
         throw new Error("pool gone");
       },
     };
-    const report = await startControlPlane(host).stop();
+    const running = await startControlPlane(host);
+    const report = await running.stop();
     expect(report.waitersAborted).toBe(0);
     expect(report.httpClosed).toBe(true);
   });
@@ -203,7 +207,7 @@ describe("stopControlPlane", () => {
 describe("shutdown signals", () => {
   it("stops on SIGTERM and detaches both handlers", async () => {
     const { host, signalHandlers, stopped } = harness();
-    startControlPlane(host);
+    await startControlPlane(host);
     expect([...signalHandlers.keys()]).toEqual(["SIGTERM", "SIGINT"]);
 
     signalHandlers.get("SIGTERM")!();
@@ -212,10 +216,10 @@ describe("shutdown signals", () => {
     expect(signalHandlers.size).toBe(0);
   });
 
-  it("leaves process signals alone when no target is given", () => {
+  it("leaves process signals alone when no target is given", async () => {
     const { host, events } = harness();
     host.signals = null;
-    startControlPlane(host);
+    await startControlPlane(host);
     expect(events).toContain("http:listen");
   });
 });

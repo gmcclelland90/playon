@@ -33,7 +33,7 @@ curl -fsSL https://playon.games/install | bash
 | Default dir | `%LOCALAPPDATA%\PlayOn` | `~/playon` |
 | Optional | `PLAYON_HOME`, `PLAYON_VERSION`, `PLAYON_START=0` | same |
 
-Each Home archive includes **Node.js**, production dependencies, the API, web UI, local node-agent, and platform skills. Create Owner → Settings → pick an LLM provider (or MCP) → optionally **Settings → Nodes** to add LAN/cloud capacity → start a game. Players use `/play`.
+Each Home archive includes **Node.js**, production dependencies, the API, web UI, local node-agent, and platform skills. Open **`http://playon.local`** (or the printed LAN IP fallback) → create Owner → Settings → pick an LLM provider (or MCP) → optionally **Settings → Panel URL** to link Discord for `https://<handle>.playon.games` → optionally **Settings → Nodes** to add capacity → start a game. Players use `/play` on either panel URL.
 
 ### Manual archive
 

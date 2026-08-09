@@ -89,25 +89,43 @@ set PLAYON_RUNTIME=$Runtime
 set PLAYON_INSTALL_ROOT=$InstallRoot
 "@ | Set-Content -Path $envFile -Encoding ASCII
 
+# Ensure workspace deps are linked (release zip may ship without node_modules/@playon).
+$env:Path = (Join-Path $InstallRoot "runtime\node") + ";" + $env:Path
+$env:CI = "true"
+Push-Location $InstallRoot
+try {
+  if ($useBundled) {
+    & (Join-Path $InstallRoot "runtime\node\corepack.cmd") pnpm install --prod --force
+  } else {
+    pnpm install --prod --frozen-lockfile=$false
+  }
+} finally {
+  Pop-Location
+}
+
 $start = Join-Path $InstallRoot "start-node.cmd"
+$logFile = Join-Path $DataRoot "agent-stdout.log"
 if ($useBundled) {
   @"
 @echo off
 call `"$envFile`"
 cd /d `"$InstallRoot`"
-`"$nodeExe`" `"$agentJs`"
+if not exist `"$DataRoot`" mkdir `"$DataRoot`"
+`"$nodeExe`" `"$agentJs`" >> `"$logFile`" 2>&1
 "@ | Set-Content -Path $start -Encoding ASCII
 } else {
   @"
 @echo off
 call `"$envFile`"
 cd /d `"$InstallRoot`"
-pnpm --filter @playon/node-agent start
+if not exist `"$DataRoot`" mkdir `"$DataRoot`"
+pnpm --filter @playon/node-agent start >> `"$logFile`" 2>&1
 "@ | Set-Content -Path $start -Encoding ASCII
 }
 
-$action = New-ScheduledTaskAction -Execute $start
+$action = New-ScheduledTaskAction -Execute $start -WorkingDirectory $InstallRoot
 $trigger = New-ScheduledTaskTrigger -AtStartup
-Register-ScheduledTask -TaskName "PlayOnNodeAgent" -Action $action -Trigger $trigger -Force | Out-Null
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+Register-ScheduledTask -TaskName "PlayOnNodeAgent" -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName "PlayOnNodeAgent"
 Write-Host "Node $NodeId joining $ApiUrl"

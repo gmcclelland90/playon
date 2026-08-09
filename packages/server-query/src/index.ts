@@ -14,6 +14,7 @@ export {
   type ResolveConnectorArgs,
 } from "./registry.js";
 export { minecraftStatusConnector, parseMinecraftStatusJson, writeVarInt } from "./connectors/minecraft-status.js";
+export { factorioConnector, probeFactorioRcon } from "./connectors/factorio.js";
 export { fromGamedig, validateLiveState, offlineState } from "./normalize.js";
 export { createGamedigConnector } from "./gamedig-adapter.js";
 export {

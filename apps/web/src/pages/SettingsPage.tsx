@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   can,
@@ -16,13 +16,113 @@ import {
   nodePresenceLabel,
   runtimeErrorHint,
 } from "../status";
+import { McpAccessTokensSection } from "./settings/McpAccessTokensSection";
+
+type SettingsSectionId =
+  | "about"
+  | "panel"
+  | "nodes"
+  | "llm"
+  | "mcp"
+  | "backups"
+  | "accounts"
+  | "watchers";
+
+const SETTINGS_SECTIONS: Array<{ id: SettingsSectionId; label: string }> = [
+  { id: "about", label: "About / Updates" },
+  { id: "panel", label: "Panel URL" },
+  { id: "nodes", label: "Nodes" },
+  { id: "llm", label: "In-app agents" },
+  { id: "mcp", label: "External agents" },
+  { id: "backups", label: "Off-node backups" },
+  { id: "accounts", label: "Accounts" },
+  { id: "watchers", label: "Watchers" },
+];
 
 function nodeActionError(err: Error): string {
   return runtimeErrorHint(err.message) ?? err.message;
 }
 
+function sectionFromHash(hash: string, canAccounts: boolean, canWatchers: boolean): SettingsSectionId {
+  const raw = hash.replace(/^#/, "") as SettingsSectionId;
+  const allowed = SETTINGS_SECTIONS.filter((s) => {
+    if (s.id === "accounts") return canAccounts;
+    if (s.id === "watchers") return canWatchers;
+    return true;
+  }).map((s) => s.id);
+  if (allowed.includes(raw)) return raw;
+  return "about";
+}
+
 export function SettingsPage({ user }: { user: PublicUser }) {
   const qc = useQueryClient();
+  const location = useLocation();
+  const canAccounts = can(user.role, "users.manage");
+  const canWatchers = can(user.role, "watchers.read");
+  const [activeSection, setActiveSection] = useState<SettingsSectionId>(() =>
+    typeof window === "undefined"
+      ? "about"
+      : sectionFromHash(window.location.hash, canAccounts, canWatchers),
+  );
+  useEffect(() => {
+    setActiveSection(sectionFromHash(location.hash, canAccounts, canWatchers));
+  }, [location.hash, canAccounts, canWatchers]);
+
+  function goToSection(id: SettingsSectionId) {
+    setActiveSection(id);
+    const next = `#${id}`;
+    if (window.location.hash !== next) {
+      window.history.replaceState(null, "", `${location.pathname}${next}`);
+    }
+  }
+
+  const visibleSections = SETTINGS_SECTIONS.filter((s) => {
+    if (s.id === "accounts") return canAccounts;
+    if (s.id === "watchers") return canWatchers;
+    return true;
+  });
+
+  // One section at a time on every viewport — sticky nav jumps, no desktop wall of forms.
+  const showSection = (id: SettingsSectionId) => activeSection === id;
+
+  const panelUrls = useQuery({ queryKey: ["panel-urls"], queryFn: api.getPanelUrls });
+  const [panelLink, setPanelLink] = useState<{
+    linkUrl: string;
+    userCode: string;
+  } | null>(null);
+  const [panelLinkMsg, setPanelLinkMsg] = useState<string | null>(null);
+  const startPanelLink = useMutation({
+    mutationFn: () => api.startPanelHostnameLink(),
+    onSuccess: (data) => {
+      setPanelLink({ linkUrl: data.linkUrl, userCode: data.userCode });
+      setPanelLinkMsg("Open the link, sign in with Discord, then click Finish here.");
+    },
+    onError: (err: Error) => setPanelLinkMsg(err.message),
+  });
+  const finishPanelLink = useMutation({
+    mutationFn: async () => {
+      if (!panelLink) throw new Error("Start linking first");
+      for (let i = 0; i < 60; i++) {
+        const res = await api.completePanelHostnameLink(panelLink.userCode);
+        if (res.pending) {
+          await new Promise((r) => setTimeout(r, 2000));
+          continue;
+        }
+        return res;
+      }
+      throw new Error("Still waiting for Discord link — confirm on playon.games, then retry.");
+    },
+    onSuccess: (res) => {
+      setPanelLinkMsg(
+        res.hostname
+          ? `Linked ${res.hostname}. ${res.restartHint ?? ""}`.trim()
+          : "Linked.",
+      );
+      void qc.invalidateQueries({ queryKey: ["panel-urls"] });
+    },
+    onError: (err: Error) => setPanelLinkMsg(err.message),
+  });
+
   const llm = useQuery({ queryKey: ["llm"], queryFn: api.getLlmSettings });
   const [preset, setPreset] = useState<LlmPresetId>("venice");
   const [baseUrl, setBaseUrl] = useState("");
@@ -45,6 +145,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
 
   const [nodeNotice, setNodeNotice] = useState<string | null>(null);
   const [nodeError, setNodeError] = useState<string | null>(null);
+  const [aboutError, setAboutError] = useState<string | null>(null);
   /** Shown after Remove hits node_has_servers for this id. */
   const [forceRemoveNodeId, setForceRemoveNodeId] = useState<string | null>(null);
   const [dockerInstallNodeId, setDockerInstallNodeId] = useState<string | null>(null);
@@ -93,13 +194,15 @@ export function SettingsPage({ user }: { user: PublicUser }) {
   const checkUpdates = useMutation({
     mutationFn: () => api.updatesStatus(true),
     onSuccess: async () => {
+      setAboutError(null);
       await qc.invalidateQueries({ queryKey: ["updates"] });
     },
+    onError: (err) => setAboutError((err as Error).message || "Could not check for updates."),
   });
 
   const applyHomeUpdate = useMutation({
     mutationFn: api.applyHomeUpdate,
-    onError: (err) => setNodeError((err as Error).message),
+    onError: (err) => setAboutError((err as Error).message || "Update failed."),
   });
 
   const updateNodeMut = useMutation({
@@ -385,7 +488,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
   }
 
   return (
-    <div className="pane settings-page stack">
+    <div className="settings-page">
       <header className="page-header">
         <h2>Settings</h2>
         <p className="lede">
@@ -394,18 +497,43 @@ export function SettingsPage({ user }: { user: PublicUser }) {
         </p>
       </header>
 
-      {can(user.role, "watchers.read") ? (
-        <WatchersPanel
-          user={user}
-          serverOptions={(serversList.data?.servers ?? []).map((s) => ({
-            id: s.id,
-            name: s.name,
-          }))}
-        />
-      ) : null}
+      <div className="settings-workspace">
+        <nav className="settings-nav" aria-label="Settings sections">
+          {visibleSections.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className={`settings-nav-btn${activeSection === s.id ? " active" : ""}`}
+              onClick={() => goToSection(s.id)}
+            >
+              {s.label}
+            </button>
+          ))}
+        </nav>
 
-      <section className="panel stack tight">
-        <h3>About / Updates</h3>
+        <div className="settings-section-picker">
+          <label className="field">
+            <span>Section</span>
+            <select
+              value={activeSection}
+              onChange={(e) => goToSection(e.target.value as SettingsSectionId)}
+            >
+              {visibleSections.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="settings-content stack">
+      <section
+        className="panel stack tight settings-section"
+        id="settings-about"
+        hidden={!showSection("about")}
+      >
+        <h3 className="section-title">About / Updates</h3>
         <p className="muted status-inline">
           PlayOn Home {updates.data?.currentVersion ?? "…"}
           {updates.data?.latestVersion
@@ -429,7 +557,10 @@ export function SettingsPage({ user }: { user: PublicUser }) {
             type="button"
             className="btn"
             disabled={checkUpdates.isPending}
-            onClick={() => checkUpdates.mutate()}
+            onClick={() => {
+              setAboutError(null);
+              checkUpdates.mutate();
+            }}
           >
             {checkUpdates.isPending ? "Checking…" : "Check now"}
           </button>
@@ -442,7 +573,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                 if (!window.confirm("Download and install the update? PlayOn will restart briefly.")) {
                   return;
                 }
-                setNodeError(null);
+                setAboutError(null);
                 applyHomeUpdate.mutate();
               }}
             >
@@ -453,39 +584,128 @@ export function SettingsPage({ user }: { user: PublicUser }) {
         {updates.data?.applyMessage ? (
           <p className="muted status-inline">{updates.data.applyMessage}</p>
         ) : null}
+        {aboutError ? (
+          <p className="error" role="alert">
+            {aboutError}
+          </p>
+        ) : null}
         {updates.data?.nodes?.some((n) => n.updateAvailable) ? (
           <p className="muted status-inline">
-            Some remote nodes need an update — use Update on each node below (after Home is current).
+            Some remote nodes need an update — open{" "}
+            <button type="button" className="linkish" onClick={() => goToSection("nodes")}>
+              Nodes
+            </button>{" "}
+            and use Update on each one (after Home is current).
           </p>
         ) : null}
       </section>
 
-      <section className="panel stack tight">
-        <h3>Nodes</h3>
+      <section
+        className="panel stack tight settings-section"
+        id="settings-panel"
+        hidden={!showSection("panel")}
+      >
+        <h3 className="section-title">Panel URL</h3>
+        <p className="muted status-inline">
+          Open PlayOn at <code>http://playon.local</code>
+          {panelUrls.data?.linkedHostname
+            ? `, or your linked https://${panelUrls.data.linkedHostname}`
+            : ", or link Discord for a https://your-handle.playon.games address"}
+          . Game join addresses stay on your LAN IP.
+        </p>
+        <ul className="stack tight">
+          {(panelUrls.data?.allUrls ?? []).map((u) => (
+            <li key={u}>
+              <a href={u} target="_blank" rel="noreferrer">
+                {u}
+              </a>
+              {u === panelUrls.data?.preferredUrl ? " · preferred" : ""}
+            </li>
+          ))}
+        </ul>
+        {panelUrls.data?.lastError ? (
+          <p className="muted status-inline">Hostname sync: {panelUrls.data.lastError}</p>
+        ) : null}
+        {user.role === "owner" ? (
+          <div className="stack tight">
+            <div className="btn-row">
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={startPanelLink.isPending}
+                onClick={() => {
+                  setPanelLinkMsg(null);
+                  startPanelLink.mutate();
+                }}
+              >
+                {panelUrls.data?.linkedHostname ? "Re-link Discord hostname" : "Link Discord hostname"}
+              </button>
+              {panelLink ? (
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={finishPanelLink.isPending}
+                  onClick={() => finishPanelLink.mutate()}
+                >
+                  {finishPanelLink.isPending ? "Waiting for Discord…" : "Finish link"}
+                </button>
+              ) : null}
+            </div>
+            {panelLink ? (
+              <p className="muted status-inline">
+                Code <code>{panelLink.userCode}</code> —{" "}
+                <a href={panelLink.linkUrl} target="_blank" rel="noreferrer">
+                  open link page
+                </a>
+              </p>
+            ) : null}
+            {panelLinkMsg ? <p className="muted status-inline">{panelLinkMsg}</p> : null}
+          </div>
+        ) : null}
+      </section>
+
+      <section
+        className="panel stack tight settings-section"
+        id="settings-nodes"
+        hidden={!showSection("nodes")}
+      >
+        <h3 className="section-title">Nodes</h3>
         <p className="muted status-inline">
           Add and monitor hosts on the{" "}
           <Link to="/">Map</Link> (host pads + Add node). Below: Local hosting toggle and
           maintenance for existing nodes.
         </p>
-        <label className="field" style={{ flexDirection: "row", alignItems: "center", gap: "0.5rem" }}>
-          <input
-            type="checkbox"
-            checked={nodeSettings.data?.nodes.localComputeEnabled ?? true}
-            onChange={(e) => {
-              setNodeError(null);
-              saveNodeSettings.mutate(e.target.checked);
-            }}
-            disabled={saveNodeSettings.isPending || nodeSettings.isLoading}
-          />
-          <span>Also host game servers on this machine (Local)</span>
-        </label>
-        {nodesList.data?.wireguardTools === false ? (
+        {dockerInstallNodeId ? (
+          <p className="muted status-inline" role="status">
+            Docker install in progress — finish or Cancel below. Other node rows are hidden until
+            you close the wizard.
+          </p>
+        ) : (
+          <label className="field checkbox-row">
+            <input
+              type="checkbox"
+              checked={nodeSettings.data?.nodes.localComputeEnabled ?? true}
+              onChange={(e) => {
+                const next = e.target.checked;
+                const msg = next
+                  ? "Enable Local hosting? This machine will be eligible to run game servers."
+                  : "Turn off Local hosting? New servers won’t be placed on this machine until you turn it back on.";
+                if (!window.confirm(msg)) return;
+                setNodeError(null);
+                saveNodeSettings.mutate(next);
+              }}
+              disabled={saveNodeSettings.isPending || nodeSettings.isLoading}
+            />
+            <span>Also host game servers on this machine (Local)</span>
+          </label>
+        )}
+        {!dockerInstallNodeId && nodesList.data?.wireguardTools === false ? (
           <p className="muted status-inline">
             WireGuard tools not detected on Home — install wireguard-tools (Linux) or WireGuard for
             Windows before adding cloud nodes.
           </p>
         ) : null}
-        {nodesList.data?.nodeTokenConfigured === false ? (
+        {!dockerInstallNodeId && nodesList.data?.nodeTokenConfigured === false ? (
           <p className="error" role="alert">
             PLAYON_NODE_TOKEN is not set on this control plane. Add a token to the PlayOn env file
             and restart before adding LAN or cloud nodes. Home install sets this automatically.
@@ -494,7 +714,9 @@ export function SettingsPage({ user }: { user: PublicUser }) {
 
         {nodesList.data?.nodes?.length ? (
           <ul className="list compact-list">
-            {nodesList.data.nodes.map((n) => {
+            {nodesList.data.nodes
+              .filter((n) => !dockerInstallNodeId || n.id === dockerInstallNodeId)
+              .map((n) => {
               const needsDocker = !n.docker;
               const isWindows = n.os === "windows";
               const panelOpen = dockerInstallNodeId === n.id;
@@ -511,30 +733,39 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                 status: n.status,
                 agentVersion: n.agentVersion,
               });
+              const presenceLabel = nodePresenceLabel({
+                status: n.status,
+                agentVersion: n.agentVersion,
+              });
+              const onlineish =
+                n.status === "online" || presenceLabel.toLowerCase().includes("online");
               return (
               <li key={n.id}>
                 <div className="btn-row" style={{ justifyContent: "space-between" }}>
                   <div>
                     <strong>{n.name}</strong>{" "}
                     <span className="muted">{n.badge ?? n.kind}</span>
-                    <div className="muted">
-                      {nodePresenceLabel({
-                        status: n.status,
-                        agentVersion: n.agentVersion,
-                      })}
-                      {pendingSetup
-                        ? ""
-                        : n.docker
-                          ? " · Docker"
-                          : " · no Docker"}
-                      {n.agentVersion && n.agentVersion !== "pending"
-                        ? ` · v${n.agentVersion}`
-                        : ""}
-                      {needsAgentUpdate ? " · update available" : ""}
-                      {n.tunnelStatus && n.tunnelStatus !== "none"
-                        ? ` · tunnel ${n.tunnelStatus}`
-                        : ""}
-                      {dockerWaitingId === n.id ? " · waiting for Docker…" : ""}
+                    <div className="settings-node-chips" aria-label="Node status">
+                      <span className={`status-chip${onlineish ? " live" : " warn"}`}>
+                        {presenceLabel}
+                      </span>
+                      {!pendingSetup ? (
+                        <span className={`status-chip${n.docker ? " live" : " warn"}`}>
+                          {n.docker ? "Docker" : "No Docker"}
+                        </span>
+                      ) : null}
+                      {n.agentVersion && n.agentVersion !== "pending" ? (
+                        <span className="status-chip">v{n.agentVersion}</span>
+                      ) : null}
+                      {needsAgentUpdate ? (
+                        <span className="status-chip warn">Update available</span>
+                      ) : null}
+                      {n.tunnelStatus && n.tunnelStatus !== "none" ? (
+                        <span className="status-chip">Tunnel {n.tunnelStatus}</span>
+                      ) : null}
+                      {dockerWaitingId === n.id ? (
+                        <span className="status-chip warn">Waiting for Docker…</span>
+                      ) : null}
                     </div>
                     {presenceHint ? (
                       <p className="muted status-inline">{presenceHint}</p>
@@ -580,7 +811,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                     ) : null}
                     {n.id !== "local" ? (
                       <button
-                        className="btn"
+                        className="btn btn-danger"
                         type="button"
                         disabled={removeNodeMut.isPending}
                         onClick={() => {
@@ -599,7 +830,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                     ) : null}
                     {n.id !== "local" && forceRemoveNodeId === n.id ? (
                       <button
-                        className="btn"
+                        className="btn btn-danger"
                         type="button"
                         disabled={removeNodeMut.isPending}
                         title="Delete the node record even if servers still reference it"
@@ -714,8 +945,13 @@ export function SettingsPage({ user }: { user: PublicUser }) {
         {nodeError ? <p className="error">{nodeError}</p> : null}
       </section>
 
-      <form className="panel stack tight" onSubmit={onSubmit}>
-        <h3>In-app agents (LLM provider)</h3>
+      <form
+        className="panel stack tight settings-section"
+        id="settings-llm"
+        onSubmit={onSubmit}
+        hidden={!showSection("llm")}
+      >
+        <h3 className="section-title">In-app agents (LLM provider)</h3>
         {llm.isLoading ? (
           <div className="skeleton" aria-hidden>
             <div className="skeleton-row" />
@@ -1020,16 +1256,20 @@ export function SettingsPage({ user }: { user: PublicUser }) {
         )}
       </form>
 
-      <McpAccessTokensSection />
+      <div hidden={!showSection("mcp")}>
+        <McpAccessTokensSection />
+      </div>
 
       <form
-        className="panel stack tight"
+        className="panel stack tight settings-section"
+        id="settings-backups"
         onSubmit={(e) => {
           e.preventDefault();
           saveBackup.mutate();
         }}
+        hidden={!showSection("backups")}
       >
-        <h3>Off-node backups</h3>
+        <h3 className="section-title">Off-node backups</h3>
         <p className="muted status-inline">
           Absolute path to an external disk, USB stick, or NAS mount. Durable backups copy here so a
           dead host disk is not the only copy.
@@ -1052,186 +1292,86 @@ export function SettingsPage({ user }: { user: PublicUser }) {
         {saveBackup.isError ? <p className="error">{(saveBackup.error as Error).message}</p> : null}
       </form>
 
-      {can(user.role, "users.manage") ? (
-        <form className="panel stack tight" onSubmit={onCreateUser}>
-          <h3>Create account</h3>
+      {canAccounts ? (
+        <form
+          className="panel stack tight settings-section"
+          id="settings-accounts"
+          onSubmit={onCreateUser}
+          hidden={!showSection("accounts")}
+        >
+          <h3 className="section-title">Accounts</h3>
           <p className="muted status-inline">
-            Operators can start/stop servers and watch logs. Admins also get chat, LLM settings, and host
-            confirms.
+            Create operator or admin logins. Operators can start/stop servers and watch logs. Admins also
+            get chat, LLM settings, and host confirms.
           </p>
-          <div className="stack tight">
-            <label className="field">
-              <span>Username</span>
-              <input
-                value={newUsername}
-                onChange={(e) => setNewUsername(e.target.value)}
-                minLength={3}
-                required
-                autoComplete="off"
-              />
-            </label>
-            <label className="field">
-              <span>Password</span>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                minLength={8}
-                required
-                autoComplete="new-password"
-              />
-            </label>
-            <label className="field">
-              <span>Role</span>
-              <select
-                value={newRole}
-                onChange={(e) => setNewRole(e.target.value as "admin" | "operator")}
-              >
-                <option value="operator">Operator</option>
-                <option value="admin">Admin</option>
-              </select>
-            </label>
-            <div className="btn-row">
-              <button className="btn btn-primary" type="submit" disabled={createUser.isPending}>
-                {createUser.isPending ? "Creating…" : "Create user"}
-              </button>
-              {userCreated ? <span className="ok">Created {userCreated}</span> : null}
+          <div className="settings-two-col">
+            <div className="stack tight">
+              <label className="field">
+                <span>Username</span>
+                <input
+                  value={newUsername}
+                  onChange={(e) => setNewUsername(e.target.value)}
+                  minLength={3}
+                  required
+                  autoComplete="off"
+                />
+              </label>
+              <label className="field">
+                <span>Password</span>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  minLength={8}
+                  required
+                  autoComplete="new-password"
+                />
+              </label>
+              <label className="field">
+                <span>Role</span>
+                <select
+                  value={newRole}
+                  onChange={(e) => setNewRole(e.target.value as "admin" | "operator")}
+                >
+                  <option value="operator">Operator</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </label>
+              <div className="btn-row">
+                <button className="btn btn-primary" type="submit" disabled={createUser.isPending}>
+                  {createUser.isPending ? "Creating…" : "Create user"}
+                </button>
+                {userCreated ? <span className="ok">Created {userCreated}</span> : null}
+              </div>
+              {createUser.isError ? <p className="error">{(createUser.error as Error).message}</p> : null}
             </div>
-            {createUser.isError ? <p className="error">{(createUser.error as Error).message}</p> : null}
+            <aside className="field-group">
+              <p className="section-label">Roles</p>
+              <p className="muted status-inline">
+                Operator: servers + logs. Admin: chat, LLM settings, confirms. Owner stays unique.
+              </p>
+            </aside>
           </div>
         </form>
       ) : null}
-    </div>
-  );
-}
 
-function McpAccessTokensSection() {
-  const qc = useQueryClient();
-  const tokens = useQuery({ queryKey: ["access-tokens"], queryFn: api.listAccessTokens });
-  const [name, setName] = useState("Cursor / Claude / Codex");
-  const [autoApprove, setAutoApprove] = useState(false);
-  const [createdPlaintext, setCreatedPlaintext] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-
-  const mcpUrl =
-    typeof window !== "undefined" ? `${window.location.origin}/mcp` : "http://<host>:8787/mcp";
-
-  const create = useMutation({
-    mutationFn: () =>
-      api.createAccessToken({ name: name.trim() || "MCP token", autoApproveConfirms: autoApprove }),
-    onSuccess: async (result) => {
-      setCreatedPlaintext(result.token.token);
-      setCopied(false);
-      await qc.invalidateQueries({ queryKey: ["access-tokens"] });
-    },
-  });
-
-  const revoke = useMutation({
-    mutationFn: (id: string) => api.revokeAccessToken(id),
-    onSuccess: async () => {
-      await qc.invalidateQueries({ queryKey: ["access-tokens"] });
-    },
-  });
-
-  const snippet = `{
-  "mcpServers": {
-    "playon": {
-      "url": "${mcpUrl}",
-      "headers": {
-        "Authorization": "Bearer ${createdPlaintext ?? "playon_…"}"
-      }
-    }
-  }
-}`;
-
-  return (
-    <section className="panel stack tight">
-      <h3>External agents (MCP)</h3>
-      <p className="muted status-inline">
-        Connect Claude Code, Codex, Cursor, OpenClaw, Hermes, or other MCP clients with a PlayOn
-        access token. Your agent can set up servers end-to-end and manage them afterward — same tools
-        as in-app agents. No cloud LLM key required on this host.{" "}
-        <a href="https://playon.games/docs/mcp" target="_blank" rel="noreferrer">
-          Setup guides
-        </a>
-      </p>
-      <label className="field">
-        <span>MCP URL</span>
-        <input value={mcpUrl} readOnly />
-      </label>
-      <label className="field">
-        <span>Token name</span>
-        <input value={name} onChange={(e) => setName(e.target.value)} />
-      </label>
-      <label className="field checkbox-row">
-        <input
-          type="checkbox"
-          checked={autoApprove}
-          onChange={(e) => setAutoApprove(e.target.checked)}
-        />
-        <span>Auto-approve confirm-gated tools (trusted automation; still audited)</span>
-      </label>
-      <div className="btn-row">
-        <button
-          className="btn btn-primary"
-          type="button"
-          disabled={create.isPending}
-          onClick={() => create.mutate()}
+      {canWatchers ? (
+        <section
+          className="settings-section settings-span-full"
+          id="settings-watchers"
+          hidden={!showSection("watchers")}
         >
-          {create.isPending ? "Creating…" : "Create access token"}
-        </button>
-      </div>
-      {create.isError ? <p className="error">{(create.error as Error).message}</p> : null}
-      {createdPlaintext ? (
-        <div className="stack tight">
-          <p className="ok">Copy this token now — it will not be shown again.</p>
-          <label className="field">
-            <span>Token</span>
-            <input value={createdPlaintext} readOnly />
-          </label>
-          <pre className="code-block">{snippet}</pre>
-          <div className="btn-row">
-            <button
-              className="btn"
-              type="button"
-              onClick={async () => {
-                await navigator.clipboard.writeText(snippet);
-                setCopied(true);
-                window.setTimeout(() => setCopied(false), 2000);
-              }}
-            >
-              {copied ? "Copied" : "Copy client snippet"}
-            </button>
-          </div>
-        </div>
+          <WatchersPanel
+            user={user}
+            serverOptions={(serversList.data?.servers ?? []).map((s) => ({
+              id: s.id,
+              name: s.name,
+            }))}
+          />
+        </section>
       ) : null}
-      {tokens.isLoading ? (
-        <p className="muted">Loading tokens…</p>
-      ) : tokens.data?.tokens.length ? (
-        <ul className="stack tight">
-          {tokens.data.tokens.map((t) => (
-            <li key={t.id} className="btn-row" style={{ justifyContent: "space-between" }}>
-              <span>
-                {t.name}
-                {t.autoApproveConfirms ? " · auto-approve" : ""}
-                <span className="muted"> · {new Date(t.createdAt).toLocaleString()}</span>
-              </span>
-              <button
-                className="btn"
-                type="button"
-                disabled={revoke.isPending}
-                onClick={() => {
-                  if (window.confirm(`Revoke token “${t.name}”?`)) revoke.mutate(t.id);
-                }}
-              >
-                Revoke
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="muted">No active access tokens.</p>
-      )}
-    </section>
+        </div>
+      </div>
+    </div>
   );
 }

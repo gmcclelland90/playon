@@ -204,6 +204,7 @@ describe("dispatchNodeJob — container family", () => {
       name: "playon-abc",
       image: "itzg/minecraft-server:latest",
       env: {},
+      cmd: [],
       ports: [{ host: 25565, container: 25565, protocol: "tcp" }],
       binds: [{ hostPath: "servers/abc/game", containerPath: "/data" }],
     });
