@@ -26,15 +26,37 @@ jobs:
         run: pnpm loop:verify
         env:
           PLAYON_LAB_FILE_ISSUES: "0"
+          PLAYON_LAB_PUBLISH_STATUS: "0"
       - name: Real Docker Paper smoke
         id: runtime
         run: pnpm loop:verify:runtime
         env:
           PLAYON_RUNTIME: docker
           PLAYON_LAB_FILE_ISSUES: "0"
+          PLAYON_LAB_PUBLISH_STATUS: "0"
       - name: File GitHub issues from failed bar
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
           PLAYON_LAB_FILE_ISSUES: "1"
         run: node scripts/lab-file-github-issues.mjs --from verify
+      - name: Lab report (summary + HTML)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAYON_LAB_REPORT_TITLE: nightly-docker
+          PLAYON_LAB_HOST_LABEL: github-actions
+          PLAYON_LAB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          PLAYON_LAB_PUBLISH_STATUS: "1"
+        run: |
+          node scripts/lab-report.mjs --title "nightly-docker"
+          node scripts/lab-publish-status.mjs --force --history-comment || true
+      - name: Upload lab-report HTML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab-report-nightly
+          path: |
+            tmp/lab-report.html
+            tmp/lab-report.md
+          if-no-files-found: ignore

@@ -29,14 +29,13 @@ Requires sibling `playon-games` (or `PLAYON_GAMES_SKILLS_ROOT`) and Docker when 
 
 ## Live visibility (GitHub)
 
-Sticky issue labeled `lab-status` (updated by `pnpm lab:publish-status` during matrix/cadence):
+- **Now card:** [#52](https://github.com/gmcclelland90/playon/issues/52) (`lab-status`) — short status during/after runs  
+- **Detail:** `pnpm lab:report` → `tmp/lab-report.html`; Actions Summary + artifacts on nightly/e2e; cadence posts a history comment on #52  
 
 ```bash
-pnpm lab:publish-status --force
-gh issue list --repo gmcclelland90/playon --label lab-status
+pnpm lab:report
+pnpm lab:publish-status --force --history-comment
 ```
-
-Canonical issue: https://github.com/gmcclelland90/playon/issues/52
 
 ## Artifacts
 

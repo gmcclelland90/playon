@@ -1,18 +1,16 @@
 #!/usr/bin/env node
 /**
- * Publish lab verify + matrix visibility to a sticky GitHub Issue
- * Publishes lab verify + matrix visibility to the sticky GitHub Issue
- * labeled `lab-status` (GitHub cockpit; no local HTTP dashboard).
+ * Publish a short “Lab now” card to the sticky GitHub issue labeled `lab-status`.
+ * Detailed skill tables live in Actions summaries / lab-report artifacts / issue comments.
  *
  *   node scripts/lab-publish-status.mjs
  *   node scripts/lab-publish-status.mjs --force
- *
- * Finds/creates the open issue labeled `lab-status` on PLAYON_GITHUB_REPO
- * and replaces its body with a live markdown summary.
+ *   node scripts/lab-publish-status.mjs --force --history-comment
  *
  * Env:
  *   PLAYON_LAB_PUBLISH_STATUS=0  disable
  *   PLAYON_LAB_PUBLISH_MIN_MS    throttle (default 90000)
+ *   PLAYON_LAB_RUN_URL           optional link to Actions run / report
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -21,6 +19,7 @@ import { join } from "node:path";
 const root = process.cwd();
 const repo = process.env.PLAYON_GITHUB_REPO || "gmcclelland90/playon";
 const force = process.argv.includes("--force");
+const historyComment = process.argv.includes("--history-comment");
 const minMs = Number(process.env.PLAYON_LAB_PUBLISH_MIN_MS || 90_000);
 const throttlePath = join(root, "tmp", "lab-publish-status.throttle.json");
 const STATUS_ISSUE_TITLE = "[lab] Live status";
@@ -66,158 +65,6 @@ function markThrottle() {
     throttlePath,
     `${JSON.stringify({ at: new Date().toISOString() }, null, 2)}\n`,
   );
-}
-
-function summarizeMatrix(status) {
-  const results = status?.results ?? [];
-  const requested = status?.skillsRequested?.length ?? results.length;
-  let ok = 0;
-  let fail = 0;
-  let skip = 0;
-  for (const r of results) {
-    if (r.skipped) skip += 1;
-    else if (r.ok) ok += 1;
-    else fail += 1;
-  }
-  return {
-    requested,
-    done: results.length,
-    ok,
-    fail,
-    skip,
-    pct: requested ? Math.round((results.length / requested) * 1000) / 10 : 0,
-    current: results.length ? results[results.length - 1] : null,
-    failedSkill: status?.failedSkill ?? null,
-    mode: status?.mode ?? null,
-    startedAt: status?.startedAt ?? null,
-    finishedAt: status?.finishedAt ?? null,
-    nextAction: status?.nextAction ?? null,
-    results,
-  };
-}
-
-function pill(r) {
-  if (r.skipped) return "skip";
-  if (r.ok) return "ok";
-  return "fail";
-}
-
-function fmtDur(ms) {
-  if (ms == null) return "—";
-  if (ms < 1000) return `${ms}ms`;
-  return `${(ms / 1000).toFixed(1)}s`;
-}
-
-function recentIssuesJsonl() {
-  const p = process.env.PLAYON_LAB_MATRIX_ISSUES
-    ? process.env.PLAYON_LAB_MATRIX_ISSUES
-    : join(root, "tmp", "lab-matrix-issues.jsonl");
-  if (!existsSync(p)) return [];
-  return readFileSync(p, "utf8")
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .slice(-15)
-    .map((line) => {
-      try {
-        return JSON.parse(line);
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean)
-    .reverse();
-}
-
-function buildBody() {
-  const verify = readJson(join(root, "tmp", "agent-loop-status.json"));
-  const matrix = readJson(
-    process.env.PLAYON_LAB_MATRIX_STATUS
-      ? process.env.PLAYON_LAB_MATRIX_STATUS
-      : join(root, "tmp", "lab-matrix-status.json"),
-  );
-  const m = summarizeMatrix(matrix);
-  const now = new Date().toISOString();
-  const host = process.env.PLAYON_LAB_HOST_LABEL || "playon-dev";
-
-  const verifyLine = !verify
-    ? "_No `tmp/agent-loop-status.json` yet._"
-    : verify.ok
-      ? `**Green** · mode=\`${verify.mode ?? "?"}\` · finished \`${verify.finishedAt ?? "?"}\``
-      : `**Red** at layer \`${verify.failedLayer}\` · mode=\`${verify.mode ?? "?"}\` · finished \`${verify.finishedAt ?? "?"}\``;
-
-  const matrixLine = !matrix
-    ? "_No matrix run status yet._"
-    : `**${m.done}/${m.requested}** (${m.pct}%) · ok=${m.ok} fail=${m.fail} skip=${m.skip}` +
-      (m.mode ? ` · mode=\`${m.mode}\`` : "") +
-      (m.current?.skillName ? ` · last=\`${m.current.skillName}\`` : "") +
-      (m.failedSkill ? ` · failed=\`${m.failedSkill}\`` : "");
-
-  const rows = [...(m.results || [])].slice(-25).reverse();
-  const table =
-    rows.length === 0
-      ? "_No skill results yet._"
-      : [
-          "| Skill | Status | Duration | Detail |",
-          "|-------|--------|----------|--------|",
-          ...rows.map((r) => {
-            const st = pill(r);
-            const detail = r.skipped
-              ? r.skipReason || "skip"
-              : (r.tail || "").split(/\r?\n/)[0]?.slice(0, 80) || "";
-            return `| \`${r.skillName}\` | ${st} | ${fmtDur(r.durationMs)} | ${detail.replace(/\|/g, "/")} |`;
-          }),
-        ].join("\n");
-
-  const issueRows = recentIssuesJsonl();
-  const issueBlock =
-    issueRows.length === 0
-      ? "_No recent matrix issue rows._"
-      : issueRows
-          .map(
-            (i) =>
-              `- \`${i.at || "?"}\` **${i.skill || "?"}** · ${i.phase || "?"} · ${i.errorClass || "?"} — ${(i.tail || "").split(/\r?\n/)[0]?.slice(0, 100) || ""}`,
-          )
-          .join("\n");
-
-  const lines = [
-    "<!-- playon-lab-status -->",
-    "# Lab live status",
-    "",
-    `Host: **${host}** · Updated: \`${now}\``,
-    "",
-    "Primary cockpit: [PlayOn Ops](https://github.com/users/gmcclelland90/projects/1) · failures land as `source:lab` issues.",
-    "",
-    "## Merge bar (`loop:verify`)",
-    "",
-    verifyLine,
-  ];
-  if (verify?.nextAction) {
-    lines.push("", `Next: ${verify.nextAction}`);
-  }
-  lines.push("", "## Catalog matrix", "", matrixLine);
-  if (m.nextAction) {
-    lines.push("", `Next: ${m.nextAction}`);
-  }
-  if (m.startedAt) {
-    lines.push(
-      "",
-      `Started \`${m.startedAt}\`${m.finishedAt ? ` · Finished \`${m.finishedAt}\`` : " · _running_"}`,
-    );
-  }
-  lines.push(
-    "",
-    "### Recent skills (latest 25)",
-    "",
-    table,
-    "",
-    "### Recent matrix failure rows",
-    "",
-    issueBlock,
-    "",
-    "---",
-    "_Updated by `scripts/lab-publish-status.mjs`._",
-  );
-  return lines.join("\n");
 }
 
 function findStatusIssue() {
@@ -286,7 +133,6 @@ function main() {
     process.exit(0);
   }
 
-  // ensure label exists (ignore errors)
   gh([
     "label",
     "create",
@@ -299,7 +145,29 @@ function main() {
     "Sticky live lab status issue",
   ]);
 
-  const body = buildBody();
+  // Generate report artifacts + now card
+  const report = spawnSync(
+    process.execPath,
+    [
+      join(root, "scripts", "lab-report.mjs"),
+      "--title",
+      process.env.PLAYON_LAB_REPORT_TITLE || "Lab report",
+    ],
+    { cwd: root, encoding: "utf8", env: process.env },
+  );
+  if (report.stdout) console.log(report.stdout.trimEnd());
+  if (report.status !== 0) {
+    console.error(report.stderr || "lab-report failed");
+  }
+
+  const nowPath = join(root, "tmp", "lab-now.md");
+  const detailPath = join(root, "tmp", "lab-report.md");
+  if (!existsSync(nowPath)) {
+    console.error("missing tmp/lab-now.md");
+    process.exit(0);
+  }
+  const body = readFileSync(nowPath, "utf8");
+
   const issue = ensureStatusIssue(body);
   if (!issue?.number) process.exit(0);
 
@@ -316,6 +184,27 @@ function main() {
     console.error(edited.stderr || edited.stdout);
     process.exit(0);
   }
+
+  if (historyComment && existsSync(detailPath)) {
+    const detail = readFileSync(detailPath, "utf8");
+    const comment = [
+      `### Cadence tick \`${new Date().toISOString()}\``,
+      "",
+      detail,
+    ].join("\n");
+    const c = gh([
+      "issue",
+      "comment",
+      String(issue.number),
+      "--repo",
+      repo,
+      "--body",
+      comment,
+    ]);
+    if (!c.ok) console.error(c.stderr || c.stdout);
+    else console.log(`history comment on #${issue.number}`);
+  }
+
   markThrottle();
   const url =
     issue.url || `https://github.com/${repo}/issues/${issue.number}`;

@@ -5,7 +5,8 @@ How Glenn (and agents) see the SDLC loop **as it runs**. Companion: [sdlc.md](sd
 ## Always-open tabs
 
 1. **[PlayOn Ops](https://github.com/users/gmcclelland90/projects/1)** — work queue (Fire / Needs you / Ready / …)
-2. **Lab live status** — issue labeled `lab-status` (matrix + merge-bar summary, updated during cadence/matrix)
+2. **Lab now** — [#52](https://github.com/gmcclelland90/playon/issues/52) (`lab-status`) short live card  
+3. **Lab detail** — Actions job summary + `lab-report` HTML artifact (nightly / e2e); cadence ticks also leave a history comment on #52
 
 **PlayOn Ops** project (linked to `gmcclelland90/playon`) is the mission-control board.
 
@@ -35,10 +36,13 @@ Agents **must** keep Issues honest so the board stays live:
 | **PR** + Checks | While CI runs | PR “Checks” tab |
 | **Actions** | Nightly / release | https://github.com/gmcclelland90/playon/actions |
 | **Cursor** agent / Automation run | That session’s tool stream | Cursor UI |
-| **Lab live status issue** | Verify + matrix progress | [#52](https://github.com/gmcclelland90/playon/issues/52) / `label:lab-status` |
+| **Lab now (#52)** | Short live verify/matrix card | [`lab-status` issue](https://github.com/gmcclelland90/playon/issues/52) |
+| **Lab report** | Full skill table + HTML | Actions Summary / artifact `lab-report-*`; cadence comments on #52 |
 | **Lab → Issues** | After red verify/matrix/e2e | New/updated Issues with `source:lab` (auto-add to PlayOn Ops) |
 | **Lab cadence timer** | Daily tick on playon-dev | `systemctl list-timers playon-lab-cadence.timer` |
 | **Lab status JSON** | Agent/local debug on lab host | `tmp/agent-loop-status.json`, `tmp/lab-matrix-status.json` |
+
+Generate locally: `pnpm lab:report` → `tmp/lab-report.html`.
 
 ## Weeknight scan (~2 minutes)
 

@@ -26,23 +26,51 @@ jobs:
       - name: Playwright smoke
         id: e2e
         run: pnpm test:e2e
+      - name: Record status for report / filing
+        if: always()
+        run: |
+          mkdir -p tmp
+          node -e '
+            const fs = require("fs");
+            const ok = process.env.E2E_OK === "true";
+            fs.writeFileSync("tmp/agent-loop-status.json", JSON.stringify({
+              ok,
+              mode: "e2e-weekly",
+              failedLayer: ok ? null : "e2e",
+              results: [{
+                name: "e2e",
+                ok,
+                code: ok ? 0 : 1,
+                tail: ok ? "pnpm test:e2e passed" : "pnpm test:e2e failed — see Actions run logs",
+              }],
+              startedAt: new Date().toISOString(),
+              finishedAt: new Date().toISOString(),
+            }, null, 2));
+          '
+        env:
+          E2E_OK: ${{ steps.e2e.outcome == 'success' }}
       - name: File issue on failure
         if: failure()
         env:
           GH_TOKEN: ${{ github.token }}
           PLAYON_LAB_FILE_ISSUES: "1"
+        run: node scripts/lab-file-github-issues.mjs --from verify
+      - name: Lab report (summary + HTML)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAYON_LAB_REPORT_TITLE: e2e-weekly
+          PLAYON_LAB_HOST_LABEL: github-actions
+          PLAYON_LAB_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          mkdir -p tmp
-          node -e '
-            const fs = require("fs");
-            fs.writeFileSync("tmp/agent-loop-status.json", JSON.stringify({
-              ok: false,
-              mode: "e2e-weekly",
-              failedLayer: "e2e",
-              results: [{ name: "e2e", ok: false, code: 1, tail: "pnpm test:e2e failed — see Actions run logs" }],
-              startedAt: new Date().toISOString(),
-              finishedAt: new Date().toISOString(),
-            }, null, 2));
-          '
-          # Reuse verify filer with a one-off title path: map e2e via verify fingerprint
-          node scripts/lab-file-github-issues.mjs --from verify
+          node scripts/lab-report.mjs --title "e2e-weekly"
+          node scripts/lab-publish-status.mjs --force --history-comment || true
+      - name: Upload lab-report HTML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lab-report-e2e-weekly
+          path: |
+            tmp/lab-report.html
+            tmp/lab-report.md
+          if-no-files-found: ignore
