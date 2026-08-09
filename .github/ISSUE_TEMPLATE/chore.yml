@@ -1,0 +1,53 @@
+name: Chore
+description: Test debt, infra, docs hygiene, CI/lab maintenance
+title: "[chore] "
+labels: ["chore", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use for `test-debt`, tooling, and non-user-facing maintenance. See `docs/testing-plan.md`.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why now
+      description: Risk if we skip this
+    validations:
+      required: true
+  - type: checkboxes
+    id: flags
+    attributes:
+      label: Flags
+      options:
+        - label: test-debt (coverage gap)
+        - label: Blocks release or nightly
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - lab
+        - release
+        - docs
+        - api
+        - web
+        - node-agent
+        - runtime
+        - agent-core
+        - skills
+        - unknown
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: Acceptance criteria
+    validations:
+      required: true

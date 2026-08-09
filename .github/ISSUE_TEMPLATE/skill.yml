@@ -1,0 +1,58 @@
+name: Skill / catalog failure
+description: games.* or platform skill install, start, query, or matrix failure
+title: "[skill] "
+labels: ["skill", "needs-triage", "skills"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Lab matrix classification: skill_bug / platform_bug / platform_unsupported / flake (`docs/lab-matrix.md`).
+  - type: input
+    id: skill-id
+    attributes:
+      label: Skill id
+      placeholder: games.minecraft-paper
+    validations:
+      required: true
+  - type: dropdown
+    id: class
+    attributes:
+      label: Classification (best guess)
+      options:
+        - skill_bug
+        - platform_bug
+        - platform_unsupported
+        - flake
+        - unknown
+    validations:
+      required: true
+  - type: input
+    id: phase
+    attributes:
+      label: Failed phase
+      placeholder: e.g. start, port_open, query
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+      description: Ports, query online, etc.
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Matrix log tail, status JSON, host (lab temp root vs win node). Redact secrets.
+  - type: dropdown
+    id: host
+    attributes:
+      label: Host path
+      options:
+        - linux-lab-temp
+        - playon-win-1
+        - durable-home-out-of-bounds
+        - unknown

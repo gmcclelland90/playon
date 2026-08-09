@@ -1,0 +1,24 @@
+# Auto-add new issues to the PlayOn Ops Project board.
+# Needs repo secret PROJECT_TOKEN = PAT with project + repo scopes
+# (gh auth token with `project` works; prefer a fine-grained PAT long-term).
+name: issue-to-project
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  add:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add issue to PlayOn Ops
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          PROJECT_ID: PVT_kwHOACGBN84Bfz5V
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "PROJECT_TOKEN secret missing; skip auto-add"
+            exit 0
+          fi
+          gh project item-add 1 --owner gmcclelland90 --url "$ISSUE_URL"

@@ -1,0 +1,62 @@
+name: Bug
+description: Something broken in PlayOn Home, API, agent, runtime, or UI
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Triage agents will classify priority and `safe-auto` vs `needs-human`. See `docs/issue-triage.md`.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact steps, skill id, OS, PlayOn version if known
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area (best guess)
+      options:
+        - unknown
+        - api
+        - web
+        - node-agent
+        - runtime
+        - agent-core
+        - skills
+        - docs
+        - release
+        - lab
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / evidence
+      description: Redact secrets. Paste tails, status JSON snippets, or screenshots descriptions.
+  - type: input
+    id: version
+    attributes:
+      label: PlayOn version
+      placeholder: e.g. 0.1.x or git SHA

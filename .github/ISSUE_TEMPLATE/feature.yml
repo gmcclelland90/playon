@@ -1,0 +1,45 @@
+name: Feature
+description: New capability or product change
+title: "[feature] "
+labels: ["feature", "needs-triage", "needs-human"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Features default to human gate until scope is approved (`docs/issue-triage.md`).
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Who hurts and what job are they trying to do?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should PlayOn do?
+    validations:
+      required: true
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Explicitly out of scope
+      description: What this request is not asking for
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area (best guess)
+      options:
+        - unknown
+        - api
+        - web
+        - node-agent
+        - runtime
+        - agent-core
+        - skills
+        - docs
+        - release
+        - lab
+    validations:
+      required: true

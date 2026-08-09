@@ -52,15 +52,22 @@ curl -fsSL https://playon.games/home/latest.json | head
 
 ## Standard Home release (every version)
 
-Do this on `main` after `pnpm verify` is green.
+Do this on `main` after the **merge bar** is green on the lab (`pnpm loop:verify`; add `:runtime` when the release touches Docker lifecycle). Fast CI (`pnpm verify`) alone is not enough for a Home tag.
+
+**Preflight**
+
+- [ ] No open `P0` issues
+- [ ] Open `P1` issues empty **or** explicitly deferred in the CHANGELOG Notes
+- [ ] `pnpm loop:verify` green on the Linux lab (record in release PR/commit notes if useful)
+- [ ] Human approves the tag (agents prepare; do not push `v*` without approval) — see [sdlc.md](sdlc.md)
 
 1. **Bump** root `package.json` `version` (and keep `apps/node-agent` version stamped by packaging / aligned in repo).
-2. **CHANGELOG.md** — new `## [X.Y.Z] — YYYY-MM-DD` section (Added / Changed / Notes).
+2. **CHANGELOG.md** — new `## [X.Y.Z] — YYYY-MM-DD` section (Added / Changed / Fixed / Notes).
 3. **Commit** on `main`:
    ```text
    Release X.Y.Z: <one-line why>.
    ```
-4. **Tag + push**:
+4. **Tag + push** (human gate):
    ```bash
    git push origin main
    git tag -a vX.Y.Z -m "PlayOn Home X.Y.Z"
@@ -77,6 +84,7 @@ Do this on `main` after `pnpm verify` is green.
    # expect "version":"X.Y.Z" and home/node linux-x64 + windows-x64 sha256 entries
    gh release view vX.Y.Z --repo gmcclelland90/playon
    ```
+8. **Learn** — skim CHANGELOG Fixed; file `test-debt` issues for any `P0`/`P1` fix without a regression test ([testing-plan.md](testing-plan.md)).
 
 Hosts on ≥0.1.5 then see **Update & restart** in the admin UI. Jumping from older builds still uses the one-liner once.
 

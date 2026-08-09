@@ -32,7 +32,8 @@ pnpm dev # api + web + local node-agent
 
 Autonomous loop protocol: [docs/agent-dev-loop.md](docs/agent-dev-loop.md)  
 Linux lab host notes: [docs/linux-dev-host.md](docs/linux-dev-host.md)  
-Home release / playon.games CI/CD: [docs/release.md](docs/release.md)
+Home release / playon.games CI/CD: [docs/release.md](docs/release.md)  
+SDLC / intake: [docs/sdlc.md](docs/sdlc.md) · triage: [docs/issue-triage.md](docs/issue-triage.md) · testing plan: [docs/testing-plan.md](docs/testing-plan.md) · automations: [docs/automations.md](docs/automations.md) · cockpit: [docs/observability.md](docs/observability.md)
 
 ## Autonomy rules
 
@@ -44,6 +45,9 @@ Home release / playon.games CI/CD: [docs/release.md](docs/release.md)
 - Path jail: agent FS tools may only touch the target server dir + read global skills
 - After each implementation slice: run `pnpm loop:verify` on the lab; if red, fix that layer before new work
 - Read `tmp/agent-loop-status.json` at the start of a turn when present
+- Work intake is GitHub Issues ([docs/sdlc.md](docs/sdlc.md)): fire (`P0` / red bars) before new features; stop on human gates (`blocked-human`)
+- Prefer `Fixes #N` on PRs; follow [docs/testing-plan.md](docs/testing-plan.md) DoD for the change type
+- Keep the ops cockpit honest ([docs/observability.md](docs/observability.md)): label transitions, progress comments, `@gmcclelland90` on every `P0` / `blocked-human` decision
 
 ## Conventions
 
