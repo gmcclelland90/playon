@@ -28,4 +28,4 @@ journalctl -u playon-lab-cadence.service -n 100 --no-pager
 
 Disable filing without stopping the bar: `PLAYON_LAB_FILE_ISSUES=0` in the env file.
 
-Live visibility goes to the sticky GitHub issue labeled `lab-status` (`pnpm lab:publish-status`), not the optional `:8791` HTTP dash.
+Live visibility: sticky GitHub issue labeled `lab-status` (`pnpm lab:publish-status`) — https://github.com/gmcclelland90/playon/issues/52

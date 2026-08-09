@@ -34,7 +34,6 @@
     "smoke:venice": "pnpm --filter @playon/api smoke:venice",
     "smoke:paper-docker": "node scripts/paper-docker-smoke.mjs",
     "lab:matrix": "node scripts/lab-matrix.mjs",
-    "lab:matrix:dash": "node scripts/lab-matrix-dashboard.mjs",
     "lab:file-issues": "node scripts/lab-file-github-issues.mjs",
     "lab:publish-status": "node scripts/lab-publish-status.mjs",
     "lab:cadence": "bash scripts/lab-cadence.sh",

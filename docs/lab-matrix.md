@@ -29,20 +29,14 @@ Requires sibling `playon-games` (or `PLAYON_GAMES_SKILLS_ROOT`) and Docker when 
 
 ## Live visibility (GitHub)
 
-Primary: sticky issue labeled `lab-status` (updated by `pnpm lab:publish-status` during matrix/cadence).
+Sticky issue labeled `lab-status` (updated by `pnpm lab:publish-status` during matrix/cadence):
 
 ```bash
-# on playon-dev / any machine with gh
 pnpm lab:publish-status --force
 gh issue list --repo gmcclelland90/playon --label lab-status
 ```
 
-Optional LAN-only HTTP dash (not required):
-
-```bash
-cd /home/playon/src/playon-git
-pnpm lab:matrix:dash   # http://172.16.0.156:8791/
-```
+Canonical issue: https://github.com/gmcclelland90/playon/issues/52
 
 ## Artifacts
 

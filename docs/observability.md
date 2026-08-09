@@ -35,11 +35,10 @@ Agents **must** keep Issues honest so the board stays live:
 | **PR** + Checks | While CI runs | PR “Checks” tab |
 | **Actions** | Nightly / release | https://github.com/gmcclelland90/playon/actions |
 | **Cursor** agent / Automation run | That session’s tool stream | Cursor UI |
-| **Lab live status issue** | Verify + matrix progress (replaces :8791 as primary) | Open issue labeled `lab-status` — search `label:lab-status` |
+| **Lab live status issue** | Verify + matrix progress | [#52](https://github.com/gmcclelland90/playon/issues/52) / `label:lab-status` |
 | **Lab → Issues** | After red verify/matrix/e2e | New/updated Issues with `source:lab` (auto-add to PlayOn Ops) |
 | **Lab cadence timer** | Daily tick on playon-dev | `systemctl list-timers playon-lab-cadence.timer` |
-| **Lab status JSON** | Agent/local debug | `tmp/agent-loop-status.json`, `tmp/lab-matrix-status.json` |
-| **Local matrix HTTP dash** | Optional LAN-only | `pnpm lab:matrix:dash` → `:8791` (not required) |
+| **Lab status JSON** | Agent/local debug on lab host | `tmp/agent-loop-status.json`, `tmp/lab-matrix-status.json` |
 
 ## Weeknight scan (~2 minutes)
 

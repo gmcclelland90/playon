@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
  * Publish lab verify + matrix visibility to a sticky GitHub Issue
- * (replaces the custom http://lab:8791 dashboard as the primary cockpit).
+ * Publishes lab verify + matrix visibility to the sticky GitHub Issue
+ * labeled `lab-status` (GitHub cockpit; no local HTTP dashboard).
  *
  *   node scripts/lab-publish-status.mjs
  *   node scripts/lab-publish-status.mjs --force
@@ -214,7 +215,7 @@ function buildBody() {
     issueBlock,
     "",
     "---",
-    "_Updated by `scripts/lab-publish-status.mjs`. Local HTTP dash on :8791 is optional._",
+    "_Updated by `scripts/lab-publish-status.mjs`._",
   );
   return lines.join("\n");
 }
