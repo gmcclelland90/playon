@@ -32,3 +32,9 @@ test-results/
 dist-package/
 dist-home/
 
+# Local release/build outputs + one-off probes
+dist-node/
+dist-manifest/
+latest.json
+scripts/tmp-*
+
