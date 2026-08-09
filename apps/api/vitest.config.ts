@@ -1,5 +1,7 @@
 import { defineConfig } from "vitest/config";
 
+const isWin = process.platform === "win32";
+
 export default defineConfig({
   test: {
     include: ["src/**/*.test.ts"],
@@ -14,5 +16,18 @@ export default defineConfig({
      */
     testTimeout: 30_000,
     hookTimeout: 30_000,
+    /*
+     * Windows CI: vitest 3.x forks + heavy sync I/O can miss the birpc
+     * onTaskUpdate heartbeat (all tests pass, then unhandled Timeout — #51 /
+     * vitest#8164). Do not use pool:"threads" here: better-sqlite3 is native and
+     * Access-Violates under worker_threads on Windows. Serialize forks instead.
+     */
+    ...(isWin
+      ? {
+          fileParallelism: false,
+          maxWorkers: 1,
+          teardownTimeout: 60_000,
+        }
+      : {}),
   },
 });
