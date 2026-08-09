@@ -23,11 +23,14 @@ pnpm install --frozen-lockfile || pnpm install
 # Merge bar first (fire rule). On red, issues are filed; stop before matrix.
 if ! pnpm loop:verify; then
   echo "merge bar red — matrix skipped this cadence tick"
+  node scripts/lab-publish-status.mjs --force || true
   exit 1
 fi
+node scripts/lab-publish-status.mjs --force || true
 
 # Full catalog matrix; continue-on-fail so one skill does not hide the rest, then file all.
 pnpm lab:matrix --continue-on-fail || true
 node scripts/lab-file-github-issues.mjs --from matrix || true
+node scripts/lab-publish-status.mjs --force || true
 
 echo "lab cadence tick complete"

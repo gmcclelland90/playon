@@ -180,6 +180,18 @@ function loadStatus() {
 function writeStatus(status) {
   fs.mkdirSync(path.dirname(STATUS_PATH), { recursive: true });
   fs.writeFileSync(STATUS_PATH, `${JSON.stringify(status, null, 2)}\n`, "utf8");
+  // Throttled publish to sticky GitHub Lab status issue (primary cockpit).
+  if ((process.env.PLAYON_LAB_PUBLISH_STATUS ?? "1") !== "0") {
+    try {
+      execSync(`${process.execPath} scripts/lab-publish-status.mjs`, {
+        cwd: repoRoot,
+        stdio: "ignore",
+        env: process.env,
+      });
+    } catch {
+      /* non-fatal */
+    }
+  }
 }
 
 function appendIssue(issue) {

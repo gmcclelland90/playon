@@ -154,8 +154,25 @@ if (failed) {
     if (filed.stdout) console.log(filed.stdout.trimEnd());
     if (filed.stderr) console.error(filed.stderr.trimEnd());
   }
+  if ((process.env.PLAYON_LAB_PUBLISH_STATUS ?? "1") !== "0") {
+    const publisher = join(scriptsDir, "lab-publish-status.mjs");
+    spawnSync(process.execPath, [publisher, "--force"], {
+      cwd: root,
+      encoding: "utf8",
+      env: process.env,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+  }
   process.exit(failed.code || 1);
 }
 
 console.log(`\n${status.nextAction}`);
+if ((process.env.PLAYON_LAB_PUBLISH_STATUS ?? "1") !== "0") {
+  const publisher = join(scriptsDir, "lab-publish-status.mjs");
+  spawnSync(process.execPath, [publisher, "--force"], {
+    cwd: root,
+    encoding: "utf8",
+    env: process.env,
+  });
+}
 process.exit(0);

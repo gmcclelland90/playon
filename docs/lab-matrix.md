@@ -27,16 +27,22 @@ Filters: `docker` | `steam` | `windows` | `native` | `other`. `steam` includes W
 
 Requires sibling `playon-games` (or `PLAYON_GAMES_SKILLS_ROOT`) and Docker when skills use images. SteamCMD auto-provisions on Linux when missing.
 
-## Live dashboard
+## Live visibility (GitHub)
 
-On playon-dev (while a matrix run is active):
+Primary: sticky issue labeled `lab-status` (updated by `pnpm lab:publish-status` during matrix/cadence).
+
+```bash
+# on playon-dev / any machine with gh
+pnpm lab:publish-status --force
+gh issue list --repo gmcclelland90/playon --label lab-status
+```
+
+Optional LAN-only HTTP dash (not required):
 
 ```bash
 cd /home/playon/src/playon-git
 pnpm lab:matrix:dash   # http://172.16.0.156:8791/
 ```
-
-Auto-refreshes every 4s from `tmp/lab-matrix-status.json` + the newest matrix log.
 
 ## Artifacts
 

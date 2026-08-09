@@ -2,7 +2,10 @@
 
 How Glenn (and agents) see the SDLC loop **as it runs**. Companion: [sdlc.md](sdlc.md), [issue-triage.md](issue-triage.md), [automations.md](automations.md).
 
-## Always-open tab: GitHub Project
+## Always-open tabs
+
+1. **[PlayOn Ops](https://github.com/users/gmcclelland90/projects/1)** — work queue (Fire / Needs you / Ready / …)
+2. **Lab live status** — issue labeled `lab-status` (matrix + merge-bar summary, updated during cadence/matrix)
 
 **PlayOn Ops** project (linked to `gmcclelland90/playon`) is the mission-control board.
 
@@ -32,10 +35,11 @@ Agents **must** keep Issues honest so the board stays live:
 | **PR** + Checks | While CI runs | PR “Checks” tab |
 | **Actions** | Nightly / release | https://github.com/gmcclelland90/playon/actions |
 | **Cursor** agent / Automation run | That session’s tool stream | Cursor UI |
-| **Lab matrix dash** | Catalog matrix running | On playon-dev: `pnpm lab:matrix:dash` → `http://172.16.0.156:8791/` |
-| **Lab status JSON** | After verify / between agent turns | `tmp/agent-loop-status.json`, `tmp/lab-matrix-status.json` |
+| **Lab live status issue** | Verify + matrix progress (replaces :8791 as primary) | Open issue labeled `lab-status` — search `label:lab-status` |
 | **Lab → Issues** | After red verify/matrix/e2e | New/updated Issues with `source:lab` (auto-add to PlayOn Ops) |
 | **Lab cadence timer** | Daily tick on playon-dev | `systemctl list-timers playon-lab-cadence.timer` |
+| **Lab status JSON** | Agent/local debug | `tmp/agent-loop-status.json`, `tmp/lab-matrix-status.json` |
+| **Local matrix HTTP dash** | Optional LAN-only | `pnpm lab:matrix:dash` → `:8791` (not required) |
 
 ## Weeknight scan (~2 minutes)
 
