@@ -12,11 +12,16 @@ Canonical automated build/test host for PlayOn (Docker + Node).
 - Remote: `git@github.com:gmcclelland90/playon.git` (read-only deploy key `~/.ssh/playon_deploy`)
 - Env: `/etc/playon/playon.env` (systemd `EnvironmentFile` + lab verify)
 
-### Node host (separate)
+### Node hosts (separate)
 
-- Address: `172.16.0.155` (hostname `playon-node-1`)
-- SSH aliases: `playon-old`, `playon-node-1`
-- Env: `/etc/playon/node.env` → Home at `http://172.16.0.156:8787`
+- **Linux (legacy):** `172.16.0.155` (hostname `playon-node-1`) — SSH aliases `playon-old`, `playon-node-1`
+- **Windows 11 Pro lab worker:** `172.16.0.94` (hostname `PLAYON-DEV-NODE`, node id `playon-win-1`)
+  - User: `playon-dev-node` (OpenSSH + WinRM)
+  - Install root: `C:\playon-node` (data `C:\playon-node\data`)
+  - Joins Home at `http://172.16.0.156:8787` with the same `PLAYON_NODE_TOKEN`
+  - Set `nodes.join_host=172.16.0.94` so query/join target the Windows box (not Home’s advertiseHost)
+  - Host deps for UE/Steam PE titles: VC++ 2010–2022 x64 redistributables + DirectX End-User Runtime (`d3dx9_43` / `XAudio2_7`)
+  - Matrix: `pnpm lab:matrix --filter windows` (or `--skill games.*`) dual-places Windows-only skills here via live Home API/MCP
 
 ### SSH from the Windows workstation
 
@@ -36,6 +41,12 @@ ssh -o BatchMode=yes playon-lab 'hostname && cd /home/playon/src/playon-git && g
 - Node.js 22 via NodeSource
 - pnpm 9.15.4 via Corepack
 - Docker Engine (user in `docker` group)
+- SteamCMD (`~/steamcmd`, see `infra/control-plane/linux/install-steamcmd.sh`)
+- X11 client libs for Unreal-based native dedications on headless hosts (ARK Evolved, etc.):
+
+```bash
+sudo apt-get install -y libx11-6 libxcursor1 libxinerama1 libxi6 libxrandr2 libxss1 libxxf86vm1 libxrender1
+```
 
 ## Sync from a Windows workstation
 
@@ -52,7 +63,11 @@ pnpm install
 set -a && . /etc/playon/playon.env && set +a   # Venice key + runtime (systemd EnvironmentFile)
 pnpm loop:verify              # merge bar (real Venice + Docker)
 pnpm loop:verify:runtime      # + real Paper Docker smoke
+pnpm lab:matrix               # catalog E2E (see lab-matrix.md)
+pnpm lab:file-issues          # push lab failures into GitHub Issues (source:lab)
 ```
+
+Standing daily cadence (verify → matrix → Issues): [infra/lab/README.md](../infra/lab/README.md).
 
 Preserve durable state across checkouts: Home data lives under `/home/playon/src/playon/apps/api/data` (outside the verify clone). After a fresh Home deploy, restore those paths before `pnpm start` / systemd.
 

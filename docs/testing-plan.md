@@ -11,8 +11,8 @@ Companion docs: [agent-dev-loop.md](agent-dev-loop.md), [lab-matrix.md](lab-matr
 | Fast | `pnpm verify` | Every PR; GitHub Actions CI | Continuous |
 | Merge | `pnpm loop:verify` | Before merge when touching API / agent / runtime; always before release | Linux lab + [nightly-docker](../.github/workflows/nightly-docker.yml) |
 | Runtime | `pnpm loop:verify:runtime` | Docker lifecycle / Paper path changes | Lab + nightly |
-| Catalog | `pnpm lab:matrix` | Skill / catalog changes; weekly sweep when quiet | Lab opt-in |
-| UI smoke | `pnpm test:e2e` | Auth / panel / UI flows | Opt-in; promote to weekly once stable |
+| Catalog | `pnpm lab:matrix` | Skill / catalog changes; standing lab cadence | Lab timer ([infra/lab](../infra/lab/README.md)) |
+| UI smoke | `pnpm test:e2e` | Auth / panel / UI flows | Weekly Actions (`e2e-weekly.yml`) |
 
 CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the **fast** bar plus packaging and image smoke on ubuntu + windows. Full merge bar stays on the lab host (real Venice + Docker) — see [linux-dev-host.md](linux-dev-host.md).
 
@@ -50,8 +50,22 @@ Always: link the issue (`Fixes #N`), keep secrets out of logs/fixtures, isolated
 | `tmp/agent-loop-status.json` | Last merge/fast/runtime bar result + failed layer tail |
 | `tmp/lab-matrix-status.json` | Matrix resume cursor + per-skill phases |
 | `tmp/lab-matrix-issues.jsonl` | Matrix failures for triage / fix agents |
+| `tmp/lab-filed-issues.json` | Ledger of fingerprints already filed to GitHub |
 
 Protocol: if `agent-loop-status.json` has `ok=false`, fix that layer before new feature work ([agent-dev-loop.md](agent-dev-loop.md)).
+
+## Lab → GitHub loop
+
+On failure, `scripts/lab-file-github-issues.mjs` opens or updates Issues labeled `needs-triage` + `source:lab` (deduped by fingerprint). PlayOn Ops auto-adds them; the triage automation classifies to `ready` / `blocked-human`.
+
+| Source | When filed |
+|--------|------------|
+| `pnpm loop:verify` / `:runtime` | After red bar (lab host; nightly Actions on failure) |
+| `pnpm lab:matrix` | After run with failures |
+| Lab cadence timer | Daily on playon-dev — verify then matrix ([infra/lab](../infra/lab/README.md)) |
+| Weekly e2e | `e2e-weekly.yml` on failure |
+
+Disable: `PLAYON_LAB_FILE_ISSUES=0`. Manual: `pnpm lab:file-issues`.
 
 ## Flake policy
 
@@ -68,13 +82,11 @@ Every closed `P0` or `P1` **bug** must either:
 
 After each release, skim CHANGELOG **Fixed** entries and file `test-debt` for gaps.
 
-## Known gaps (bootstrap)
+## Known gaps
 
-Track as GitHub issues labeled `chore` + `test-debt` (seeded when this plan lands):
-
-- Playwright e2e not part of merge bar or scheduled CI
-- Catalog `lab:matrix` not on a fixed weekly schedule
-- Windows PE / Steam dual-place coverage depends on `playon-win-1` online
+- Windows PE / Steam dual-place coverage still depends on `playon-win-1` online ([#46](https://github.com/gmcclelland90/playon/issues/46))
+- Weekly e2e is scheduled but not yet in every-PR CI ([#44](https://github.com/gmcclelland90/playon/issues/44))
+- Lab cadence timer must be installed once on playon-dev ([infra/lab](../infra/lab/README.md), [#45](https://github.com/gmcclelland90/playon/issues/45))
 
 ## Human gates for testing
 

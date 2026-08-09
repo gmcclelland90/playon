@@ -34,6 +34,8 @@ Agents **must** keep Issues honest so the board stays live:
 | **Cursor** agent / Automation run | That session’s tool stream | Cursor UI |
 | **Lab matrix dash** | Catalog matrix running | On playon-dev: `pnpm lab:matrix:dash` → `http://172.16.0.156:8791/` |
 | **Lab status JSON** | After verify / between agent turns | `tmp/agent-loop-status.json`, `tmp/lab-matrix-status.json` |
+| **Lab → Issues** | After red verify/matrix/e2e | New/updated Issues with `source:lab` (auto-add to PlayOn Ops) |
+| **Lab cadence timer** | Daily tick on playon-dev | `systemctl list-timers playon-lab-cadence.timer` |
 
 ## Weeknight scan (~2 minutes)
 

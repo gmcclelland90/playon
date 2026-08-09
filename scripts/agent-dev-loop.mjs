@@ -15,9 +15,11 @@
  */
 import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const root = process.cwd();
+const scriptsDir = dirname(fileURLToPath(import.meta.url));
 const statusPath = join(root, "tmp", "agent-loop-status.json");
 const args = new Set(process.argv.slice(2));
 
@@ -140,6 +142,18 @@ if (failed) {
   console.log(`\nFAILED layer=${failed.name}`);
   console.log(failed.tail);
   console.log(`\n${status.nextAction}`);
+  // Close the SDLC loop: lab red → GitHub needs-triage (source:lab)
+  if ((process.env.PLAYON_LAB_FILE_ISSUES ?? "1") !== "0") {
+    const filer = join(scriptsDir, "lab-file-github-issues.mjs");
+    const filed = spawnSync(process.execPath, [filer, "--from", "verify"], {
+      cwd: root,
+      encoding: "utf8",
+      env: process.env,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    if (filed.stdout) console.log(filed.stdout.trimEnd());
+    if (filed.stderr) console.error(filed.stderr.trimEnd());
+  }
   process.exit(failed.code || 1);
 }
 

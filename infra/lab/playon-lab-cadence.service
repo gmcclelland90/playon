@@ -1,0 +1,18 @@
+[Unit]
+Description=PlayOn lab cadence (loop:verify + lab:matrix → GitHub issues)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=playon
+Group=playon
+WorkingDirectory=/home/playon/src/playon-git
+Environment=PLAYON_LAB_GIT_ROOT=/home/playon/src/playon-git
+Environment=PLAYON_LAB_FILE_ISSUES=1
+EnvironmentFile=-/etc/playon/playon.env
+ExecStart=/bin/bash /home/playon/src/playon-git/scripts/lab-cadence.sh
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

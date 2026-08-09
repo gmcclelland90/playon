@@ -1,0 +1,11 @@
+[Unit]
+Description=Run PlayOn lab cadence daily (24/7 playon-dev)
+
+[Timer]
+# Daily 04:00 local lab time; override with systemctl edit if needed
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=5m
+
+[Install]
+WantedBy=timers.target

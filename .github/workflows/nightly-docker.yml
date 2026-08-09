@@ -8,6 +8,9 @@ on:
 jobs:
   paper-smoke:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -18,8 +21,20 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install
-      - run: pnpm loop:verify
+      - name: Merge bar
+        id: verify
+        run: pnpm loop:verify
+        env:
+          PLAYON_LAB_FILE_ISSUES: "0"
       - name: Real Docker Paper smoke
+        id: runtime
         run: pnpm loop:verify:runtime
         env:
           PLAYON_RUNTIME: docker
+          PLAYON_LAB_FILE_ISSUES: "0"
+      - name: File GitHub issues from failed bar
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAYON_LAB_FILE_ISSUES: "1"
+        run: node scripts/lab-file-github-issues.mjs --from verify

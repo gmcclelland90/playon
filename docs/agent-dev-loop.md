@@ -10,6 +10,9 @@ PlayOn is built by an agent that **implements → verifies → fixes → next to
 | Merge bar | `pnpm loop:verify` | check → unit → contract → int → agent (Venice + Docker) |
 | Runtime bar | `pnpm loop:verify:runtime` | merge bar + Paper Docker smoke |
 | Status artifact | `tmp/agent-loop-status.json` | last run result + failed layer tail |
+| File issues on red | `pnpm lab:file-issues` | auto after failed `loop:verify` / matrix (disable with `PLAYON_LAB_FILE_ISSUES=0`) |
+| Catalog matrix | `pnpm lab:matrix` | E2E every `games.*` skill — standing cadence on lab, see [lab-matrix.md](lab-matrix.md) |
+| Lab cadence | `pnpm lab:cadence` / systemd timer | daily verify → matrix → GitHub Issues ([infra/lab](../infra/lab/README.md)) |
 
 **Required on the lab host:** Git checkout of the repo, Docker engine, `PLAYON_VENICE_API_KEY` (or `VENICE_API_KEY`), network access to `api.venice.ai`.
 

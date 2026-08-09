@@ -7,12 +7,18 @@ Sibling site/catalog work follows the same model in [`playon-games`](https://git
 ## Loop
 
 ```text
-Issue opened → triage → ready | blocked-human
+Lab/CI red (loop:verify / matrix / e2e)
+       ↓ auto-file
+Issue (needs-triage, source:lab) → PlayOn Ops
+       ↓ triage automation
+ready | blocked-human
        ↓ ready
-Agent implements → verify bars → PR (Fixes #N) → merge
+Agent implements → verify bars on lab → PR (Fixes #N) → merge
        ↓
 Release (human approves tag) → CHANGELOG / close issues → evolve testing plan
 ```
+
+Lab filing: `pnpm lab:file-issues` / [testing-plan.md](testing-plan.md). Cadence timer: [infra/lab/README.md](../infra/lab/README.md).
 
 Details:
 
