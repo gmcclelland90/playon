@@ -89,6 +89,9 @@ export function runtimeErrorHint(message: string | null | undefined): string | n
   if (m.includes("docker_unavailable") || m.includes("docker unavailable")) {
     return "Docker missing on this node — Settings → Nodes → Install Docker.";
   }
+  if (m.includes("no_eligible_node") || m.includes("os_mismatch") || m.includes("node_ineligible")) {
+    return "No suitable node for this game — Settings → Nodes → add a Linux machine (or enable a Linux runtime on Windows when available).";
+  }
   if (m.includes("no_container_image")) {
     return "This skill needs a container image. Install the skill from the catalog, or pick a native skill.";
   }

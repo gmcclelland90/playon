@@ -1,6 +1,47 @@
-import { describe, expect, it } from "vitest";
-import { SkillMetadataSchema } from "@playon/shared";
-import { scoreNodeForSkill, type NodeCaps } from "./placement.js";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
+import { LOCAL_NODE_ID, SkillMetadataSchema } from "@playon/shared";
+import { createDb, type Db } from "../db/client.js";
+import { applyBootstrap } from "../db/migrate.js";
+import { nodes } from "../db/schema.js";
+import type { AppConfig } from "../config.js";
+import { PlacementService, scoreNodeForSkill, type NodeCaps } from "./placement.js";
+
+const temps: Array<{ root: string; close: () => void }> = [];
+
+afterEach(() => {
+  for (const entry of temps.splice(0)) {
+    entry.close();
+    fs.rmSync(entry.root, { recursive: true, force: true });
+  }
+});
+
+function placementEnv(skillYaml: string): { placement: PlacementService; db: Db; skillName: string } {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-placement-"));
+  const dbPath = path.join(root, "playon.db");
+  applyBootstrap(dbPath);
+  const skillName = "fixtures.linux-only-demo";
+  const skillDir = path.join(root, "skills", skillName);
+  fs.mkdirSync(skillDir, { recursive: true });
+  fs.writeFileSync(path.join(skillDir, "metadata.yaml"), skillYaml, "utf8");
+  const config: AppConfig = {
+    port: 0,
+    dataRoot: path.join(root, "data"),
+    dbPath,
+    sessionSecret: "test",
+    llmMode: "openai_compatible",
+    runtimeMode: "docker",
+    advertiseHost: "127.0.0.1",
+    skillsRoots: [path.join(root, "skills")],
+  };
+  fs.mkdirSync(config.dataRoot, { recursive: true });
+  const { db, sqlite } = createDb(dbPath);
+  temps.push({ root, close: () => sqlite.close() });
+  return { placement: new PlacementService(db, config), db, skillName };
+}
 
 const baseSkill = SkillMetadataSchema.parse({
   name: "games.demo",
@@ -146,5 +187,60 @@ describe("scoreNodeForSkill", () => {
     );
     expect(cloud.eligible).toBe(false);
     expect(cloud.placement).toBe("cloud");
+  });
+});
+
+describe("PlacementService.resolveNodeId", () => {
+  const linuxOnlyYaml = `
+name: fixtures.linux-only-demo
+version: 1.0.0
+description: linux only
+os: [linux]
+arch: [amd64]
+containerSupport: full
+dockerImage: example/demo:latest
+ports:
+  - name: game
+    protocol: tcp
+    default: 25565
+`;
+
+  it("throws no_eligible_node when Local is Windows-only for a linux skill", async () => {
+    const { placement, db, skillName } = placementEnv(linuxOnlyYaml);
+    await placement.ensureLocalNode();
+    await db
+      .update(nodes)
+      .set({ os: "windows", docker: false, lastSeenAt: new Date() })
+      .where(eq(nodes.id, LOCAL_NODE_ID));
+
+    await expect(placement.resolveNodeId(skillName)).rejects.toThrow(/no_eligible_node/);
+    await expect(placement.resolveNodeId(skillName, LOCAL_NODE_ID)).rejects.toThrow(
+      /node_ineligible:.*os_mismatch:windows/,
+    );
+  });
+
+  it("returns an eligible remote linux docker node when Local cannot host", async () => {
+    const { placement, db, skillName } = placementEnv(linuxOnlyYaml);
+    // Force Local ineligible (ensureLocalNode would otherwise re-probe the host OS).
+    await placement.ensureLocalNode();
+    await db
+      .update(nodes)
+      .set({ os: "windows", docker: false, lastSeenAt: new Date() })
+      .where(eq(nodes.id, LOCAL_NODE_ID));
+    await db.insert(nodes).values({
+      id: "lab-linux",
+      name: "lab",
+      os: "linux",
+      docker: true,
+      native: true,
+      steamcmd: false,
+      freeDiskBytes: 20 * 1024 ** 3,
+      agentVersion: "test",
+      lastSeenAt: new Date(),
+      kind: "lan",
+      tunnelStatus: "none",
+    });
+
+    await expect(placement.resolveNodeId(skillName)).resolves.toBe("lab-linux");
   });
 });

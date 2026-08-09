@@ -41,7 +41,6 @@ export class MigrateService {
     if (!skillName) throw new Error("server_skill_unknown");
 
     const toNodeId = await this.placement.resolveNodeId(skillName, targetNodeId);
-    if (!toNodeId) throw new Error("no_eligible_node");
 
     const fromNodeId = server.nodeId;
     if (fromNodeId === toNodeId) {

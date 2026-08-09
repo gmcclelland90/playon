@@ -40,7 +40,7 @@ export type AdoptionRuntimeMode = "native" | "docker";
 
 export type ResolvedAdoptionTarget = {
   skill: SkillEntry;
-  nodeId: string | null;
+  nodeId: string;
   runtimeMode: AdoptionRuntimeMode;
 };
 
