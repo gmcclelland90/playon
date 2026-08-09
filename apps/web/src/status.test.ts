@@ -21,6 +21,13 @@ describe("status helpers", () => {
     expect(runtimeErrorHint("something else")).toBeNull();
   });
 
+  it("maps placement / OS mismatch failures", () => {
+    expect(runtimeErrorHint("no_eligible_node: os_mismatch:windows")).toMatch(/Linux/);
+    expect(runtimeErrorHint("node_ineligible: local (os_mismatch:windows)")).toMatch(
+      /Settings → Nodes/,
+    );
+  });
+
   it("maps node_token_unset", () => {
     expect(runtimeErrorHint("node_token_unset")).toMatch(/PLAYON_NODE_TOKEN/);
   });

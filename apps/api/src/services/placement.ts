@@ -305,7 +305,7 @@ export class PlacementService {
     };
   }
 
-  async resolveNodeId(skillName: string, requested?: string): Promise<string | null> {
+  async resolveNodeId(skillName: string, requested?: string): Promise<string> {
     const plan = await this.plan(skillName);
     if (requested) {
       const hit = plan.candidates.find((c) => c.nodeId === requested);
@@ -314,6 +314,11 @@ export class PlacementService {
         throw new Error(`node_ineligible: ${requested} (${hit.reasons.join(",")})`);
       }
       return hit.nodeId;
+    }
+    if (!plan.recommendedNodeId) {
+      const top = plan.candidates[0];
+      const detail = top?.reasons.join(",") || "no_candidates";
+      throw new Error(`no_eligible_node: ${detail}`);
     }
     return plan.recommendedNodeId;
   }
