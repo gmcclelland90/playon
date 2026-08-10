@@ -49,10 +49,15 @@ const sources =
     : { verify: from.includes("verify"), matrix: from.includes("matrix") };
 
 const statusVerify = join(root, "tmp", "agent-loop-status.json");
+const statusMatrix = process.env.PLAYON_LAB_MATRIX_STATUS
+  ? process.env.PLAYON_LAB_MATRIX_STATUS
+  : join(root, "tmp", "lab-matrix-status.json");
 const issuesJsonl = process.env.PLAYON_LAB_MATRIX_ISSUES
   ? process.env.PLAYON_LAB_MATRIX_ISSUES
   : join(root, "tmp", "lab-matrix-issues.jsonl");
 const ledgerPath = join(root, "tmp", "lab-filed-issues.json");
+const refileClosed =
+  (process.env.PLAYON_LAB_REFILE ?? "").trim() === "1" || args.has("--refile");
 
 function enabled() {
   const v = (process.env.PLAYON_LAB_FILE_ISSUES ?? "1").trim().toLowerCase();
@@ -106,7 +111,7 @@ function findOpenByFingerprint(fp) {
     "--label",
     "source:lab",
     "--limit",
-    "50",
+    "500",
     "--json",
     "number,body,title",
   ]);
@@ -120,7 +125,26 @@ function findOpenByFingerprint(fp) {
   return items.find((i) => (i.body || "").includes(marker)) ?? null;
 }
 
-function createOrUpdate({ fingerprint, title, body, labels }) {
+function issueState(number) {
+  if (!number) return null;
+  const q = gh([
+    "issue",
+    "view",
+    String(number),
+    "--repo",
+    repo,
+    "--json",
+    "state,number",
+  ]);
+  if (!q.ok) return null;
+  try {
+    return JSON.parse(q.stdout || "{}");
+  } catch {
+    return null;
+  }
+}
+
+function createOrUpdate({ fingerprint, title, body, labels, filedLedger }) {
   const marker = fingerprintMarker(fingerprint);
   const fullBody = `${marker}\n\n${body}`;
   const existing = findOpenByFingerprint(fingerprint);
@@ -145,6 +169,38 @@ function createOrUpdate({ fingerprint, title, body, labels }) {
     }
     console.log(`updated #${existing.number} fp=${fingerprint}`);
     return { number: existing.number, action: "comment" };
+  }
+
+  // Do not reopen spam: if we already filed this fingerprint and the issue is
+  // closed (or still tracked), skip unless PLAYON_LAB_REFILE=1 / --refile.
+  const prior = filedLedger?.fingerprints?.[fingerprint];
+  if (prior?.number && !refileClosed) {
+    const st = issueState(prior.number);
+    if (st?.state === "OPEN") {
+      const comment = `## Lab update\n\n${body}\n`;
+      if (dryRun) {
+        console.log(`dry-run: comment prior #${prior.number} fp=${fingerprint}`);
+        return { number: prior.number, action: "comment" };
+      }
+      const r = gh([
+        "issue",
+        "comment",
+        String(prior.number),
+        "--repo",
+        repo,
+        "--body",
+        comment,
+      ]);
+      if (r.ok) {
+        console.log(`updated prior #${prior.number} fp=${fingerprint}`);
+        return { number: prior.number, action: "comment" };
+      }
+    } else {
+      console.log(
+        `skip closed/known fp=${fingerprint} prior=#${prior.number} (set PLAYON_LAB_REFILE=1 to recreate)`,
+      );
+      return { number: prior.number, action: "skip_closed" };
+    }
   }
 
   if (dryRun) {
@@ -269,24 +325,66 @@ function mapErrorClass(errorClass) {
   }
 }
 
-function fileMatrixFailures() {
-  const rows = readJsonl(issuesJsonl);
-  if (!rows.length) {
-    console.log("skip matrix: no lab-matrix-issues.jsonl rows");
-    return [];
+function failRowFromStatusResult(r) {
+  if (!r || r.ok || r.skipped) return null;
+  const phase =
+    Object.entries(r.phases || {}).find(([, v]) => v === "fail")?.[0] ||
+    "unknown";
+  const errorClass =
+    phase === "static" ? "skill_bug" : r.errorClass || "lifecycle_fail";
+  return {
+    skill: r.skillName || "unknown",
+    phase,
+    errorClass,
+    at: new Date().toISOString(),
+    tail: r.tail || "",
+  };
+}
+
+function fileMatrixFailures(filedLedger) {
+  // Prefer the current matrix status file (this run only) so a single red
+  // skill cannot re-file the entire historical issues.jsonl backlog.
+  const fromStatus = [];
+  if (existsSync(statusMatrix)) {
+    try {
+      const status = JSON.parse(readFileSync(statusMatrix, "utf8"));
+      for (const r of status.results || []) {
+        const row = failRowFromStatusResult(r);
+        if (row) fromStatus.push(row);
+      }
+    } catch (err) {
+      console.warn(
+        `matrix status unreadable: ${err instanceof Error ? err.message : err}`,
+      );
+    }
   }
-  // Prefer latest row per skill+phase+errorClass
-  const latest = new Map();
-  for (const row of rows) {
-    const skill = row.skill || "unknown";
-    const phase = row.phase || "unknown";
-    const errorClass = row.errorClass || "unknown";
-    const key = `${skill}|${phase}|${errorClass}`;
-    latest.set(key, row);
+
+  let rows = fromStatus;
+  if (!rows.length) {
+    const jsonlRows = readJsonl(issuesJsonl);
+    if (!jsonlRows.length) {
+      console.log("skip matrix: no status failures and no issues.jsonl rows");
+      return [];
+    }
+    // Fallback: only rows from the last 6 hours (still deduped by key).
+    const cutoff = Date.now() - 6 * 3600_000;
+    const latest = new Map();
+    for (const row of jsonlRows) {
+      const at = Date.parse(row.at || "") || 0;
+      if (at && at < cutoff) continue;
+      const skill = row.skill || "unknown";
+      const phase = row.phase || "unknown";
+      const errorClass = row.errorClass || "unknown";
+      latest.set(`${skill}|${phase}|${errorClass}`, row);
+    }
+    rows = [...latest.values()];
+    console.log(`matrix filing from recent jsonl rows=${rows.length}`);
+  } else {
+    console.log(`matrix filing from status failures=${rows.length}`);
   }
 
   const out = [];
-  for (const row of latest.values()) {
+  for (const row of rows) {
     const skill = row.skill || "unknown";
     const phase = row.phase || "unknown";
     const errorClass = row.errorClass || "unknown";
@@ -324,7 +422,13 @@ function fileMatrixFailures() {
       mapped.priority,
       ...(mapped.extra || []),
     ];
-    const result = createOrUpdate({ fingerprint: fp, title, body, labels });
+    const result = createOrUpdate({
+      fingerprint: fp,
+      title,
+      body,
+      labels,
+      filedLedger,
+    });
     if (result) out.push({ fingerprint: fp, ...result });
   }
   return out;
@@ -346,10 +450,11 @@ function main() {
   const ledger = loadLedger();
   const filed = [];
   if (sources.verify) filed.push(...fileVerifyFailure());
-  if (sources.matrix) filed.push(...fileMatrixFailures());
+  if (sources.matrix) filed.push(...fileMatrixFailures(ledger));
 
   for (const f of filed) {
     if (!f.fingerprint || !f.number) continue;
+    if (f.action === "skip_closed") continue;
     ledger.fingerprints[f.fingerprint] = {
       number: f.number,
       action: f.action,
@@ -359,12 +464,17 @@ function main() {
   }
   if (!dryRun && filed.length) saveLedger(ledger);
 
-  const summaryLine = `${new Date().toISOString()} filed=${filed.length} ${filed
+  const created = filed.filter((f) => f.action === "create").length;
+  const commented = filed.filter((f) => f.action === "comment").length;
+  const skipped = filed.filter((f) => f.action === "skip_closed").length;
+  const summaryLine = `${new Date().toISOString()} filed=${filed.length} create=${created} comment=${commented} skip_closed=${skipped} ${filed
     .map((f) => `#${f.number}:${f.action}`)
     .join(" ")}\n`;
   mkdirSync(join(root, "tmp"), { recursive: true });
   appendFileSync(join(root, "tmp", "lab-file-issues.log"), summaryLine, "utf8");
-  console.log(`done filed=${filed.length}`);
+  console.log(
+    `done filed=${filed.length} create=${created} comment=${commented} skip_closed=${skipped}`,
+  );
 }
 
 main();

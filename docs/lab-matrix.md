@@ -83,4 +83,16 @@ Not part of `pnpm loop:verify`. Use after the merge bar is green when validating
 
 On playon-dev (24/7), install the systemd timer in [infra/lab/README.md](../infra/lab/README.md). Each tick: merge bar → `lab:matrix --continue-on-fail` → file Issues.
 
-Failures also file immediately at the end of a matrix run via `scripts/lab-file-github-issues.mjs` (`source:lab`). See [testing-plan.md](testing-plan.md) and [sdlc.md](sdlc.md).
+Failures also file immediately at the end of a matrix run via `scripts/lab-file-github-issues.mjs` (`source:lab`). Filing uses the **current** status file’s failures (not the full historical `issues.jsonl`), and will not reopen a closed fingerprint unless `PLAYON_LAB_REFILE=1`. See [testing-plan.md](testing-plan.md) and [sdlc.md](sdlc.md).
+
+### Cleanup
+
+Each matrix run deletes its disposable Home `lab-matrix-*` server and removes its temp `dataRoot` in a `finally` (including SIGINT/SIGTERM). At start it also sweeps other `/tmp/playon-lab-matrix-*` trees older than 1h that no live matrix process still holds.
+
+If agents were killed mid-run, reclaim leftovers explicitly:
+
+```bash
+pnpm lab:matrix-cleanup              # stale temps (>1h) + Home lab-matrix-* when idle
+pnpm lab:matrix-cleanup --max-age-hours 0
+pnpm lab:matrix-cleanup --dry-run
+```
