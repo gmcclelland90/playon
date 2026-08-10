@@ -321,6 +321,25 @@ export function assertSteamAppInstallComplete(installDir: string, appId: number)
   );
 }
 
+/**
+ * SteamCMD `Error! App '…' state is 0x602 after update job` means the update
+ * job aborted (CDN/network glitch, corrupt staged depot under
+ * steamapps/downloading). Not disk-full (that is usually 0x202) and not
+ * "No subscription". Large anonymous apps (ARK ASE ~23GB) hit this mid-verify;
+ * clearing the staged download and retrying with validate usually succeeds.
+ */
+export function isRetryableSteamcmdFailure(combined: string): boolean {
+  return /state is 0x602\b/i.test(combined);
+}
+
+/** Remove SteamCMD's staged depot for one app so a retry does not resume trash. */
+export function clearStagedSteamDownload(installDir: string, appId: number): void {
+  const downloading = path.join(installDir, "steamapps", "downloading", String(appId));
+  if (fs.existsSync(downloading)) {
+    fs.rmSync(downloading, { recursive: true, force: true });
+  }
+}
+
 export async function steamcmdAppUpdate(args: {
   serverDataPath: string;
   appId: number;
@@ -336,6 +355,8 @@ export async function steamcmdAppUpdate(args: {
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
   autoInstall?: boolean;
+  /** Extra attempts after a retryable 0x602 (default 1 retry → 2 total runs). */
+  maxAttempts?: number;
 }): Promise<SteamcmdRunResult> {
   const env = args.env ?? process.env;
   const { binary, provisioned } = await ensureSteamcmdBinary({
@@ -367,47 +388,76 @@ export async function steamcmdAppUpdate(args: {
 
   const cwd = path.dirname(binary);
   // Large Steam dedi apps (ARK ~20GB staged) routinely exceed 10 minutes.
-  const { exitCode, stdout, stderr } = await runProcess(
-    binary,
-    cmdArgs,
-    cwd,
-    args.timeoutMs ?? 1_800_000,
-    env,
-  );
+  const timeoutMs = args.timeoutMs ?? 1_800_000;
+  const maxAttempts = Math.max(1, Math.min(4, args.maxAttempts ?? 2));
 
-  const combined = `${stdout}\n${stderr}`;
-  const invalidPlatform = /Invalid platform|Failed to install app .*Invalid platform/i.test(
-    combined,
-  );
-  // Anonymous SteamCMD cannot fetch paid/licensed depots (arma3, assetto-corsa, …).
-  const noSubscription = /No subscription|Failed to install app .*No subscription/i.test(
-    combined,
-  );
-  if (exitCode !== 0 || invalidPlatform || noSubscription) {
+  let lastStdout = "";
+  let lastStderr = "";
+  let lastExitCode = 1;
+  let lastDetail = "";
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const { exitCode, stdout, stderr } = await runProcess(
+      binary,
+      cmdArgs,
+      cwd,
+      timeoutMs,
+      env,
+    );
+    lastStdout = stdout;
+    lastStderr = stderr;
+    lastExitCode = exitCode;
+
+    const combined = `${stdout}\n${stderr}`;
+    const invalidPlatform = /Invalid platform|Failed to install app .*Invalid platform/i.test(
+      combined,
+    );
+    // Anonymous SteamCMD cannot fetch paid/licensed depots (arma3, assetto-corsa, …).
+    const noSubscription = /No subscription|Failed to install app .*No subscription/i.test(
+      combined,
+    );
+    if (exitCode === 0 && !invalidPlatform && !noSubscription) {
+      assertSteamAppInstallComplete(installDir, args.appId);
+      return {
+        ok: true,
+        binary,
+        exitCode,
+        stdout: stdout.slice(-4_000),
+        stderr: stderr.slice(-2_000),
+        installDir,
+        appId: args.appId,
+        provisioned,
+      };
+    }
+
     const tail = combined.slice(-600).replace(/\s+/g, " ").trim();
-    const detail = invalidPlatform
+    lastDetail = invalidPlatform
       ? `steamcmd_invalid_platform: appId=${args.appId} (depot not available on ${process.platform}) ${tail}`
       : noSubscription
         ? `steamcmd_no_subscription: appId=${args.appId} (anonymous login has no entitlement) ${tail}`
         : `steamcmd_failed: exit=${exitCode} appId=${args.appId} ${tail}`;
+
     if (exitCode === 127) {
-      throw new SteamcmdNotFoundError(detail);
+      throw new SteamcmdNotFoundError(lastDetail);
     }
-    throw new Error(detail);
+    // Permanent classification — do not retry.
+    if (invalidPlatform || noSubscription) {
+      throw new Error(lastDetail);
+    }
+    if (isRetryableSteamcmdFailure(combined) && attempt < maxAttempts) {
+      clearStagedSteamDownload(installDir, args.appId);
+      continue;
+    }
+    throw new Error(lastDetail);
   }
 
-  assertSteamAppInstallComplete(installDir, args.appId);
-
-  return {
-    ok: true,
-    binary,
-    exitCode,
-    stdout: stdout.slice(-4_000),
-    stderr: stderr.slice(-2_000),
-    installDir,
-    appId: args.appId,
-    provisioned,
-  };
+  throw new Error(
+    lastDetail ||
+      `steamcmd_failed: exit=${lastExitCode} appId=${args.appId} ${`${lastStdout}\n${lastStderr}`
+        .slice(-600)
+        .replace(/\s+/g, " ")
+        .trim()}`,
+  );
 }
 
 export async function steamcmdProbe(

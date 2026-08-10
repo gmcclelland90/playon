@@ -614,9 +614,10 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        // Exit 8 / No subscription: paid depot under anonymous SteamCMD.
-        // Also seen when the Windows node is out of disk (orphan lab installs).
-        if (/steamcmd_no_subscription|No subscription|exit=8\b/i.test(msg)) {
+        // Paid depot under anonymous SteamCMD ("No subscription"). Do NOT key
+        // off bare exit=8 — SteamCMD also exits 8 for retryable 0x602 aborts
+        // (e.g. ARK ASE 376030 mid-verify), which must surface as install fail.
+        if (/steamcmd_no_subscription|No subscription/i.test(msg)) {
           await safeHomeCleanup(home, serverId);
           return {
             skillName: meta.name,
