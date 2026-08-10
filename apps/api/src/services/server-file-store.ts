@@ -390,7 +390,9 @@ export function openServerFileStore(
           const result = await onNode(
             "fs_write_text",
             { path: nodeJailRel(serverId, relPath), content },
-            60_000,
+            // Large SteamCMD commits can stall the Windows agent >60s; overlays
+            // like start.bat must still land (else cmd /c start.bat exits).
+            180_000,
           );
           return { path: relPath, bytes: result.bytes };
         } catch (err) {

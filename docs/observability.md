@@ -117,4 +117,13 @@ After `gh project` setup:
 
 Live board: **[PlayOn Ops](https://github.com/users/gmcclelland90/projects/1)**
 
+Views:
+
+| View | Filter | Use |
+|------|--------|-----|
+| **Active** (default) | `status:Fire,"Needs you",Ready,"In progress"` | Day-to-day queue — excludes Done |
+| **Ops board** | same | Kanban by Status |
+| **Open inbox** | `is:open -status:Done` | Untriaged / no Status yet (incl. lab spam) |
+| **Done archive** | `status:Done` | History when you want it |
+
 New issues are auto-added by [`.github/workflows/issue-to-project.yml`](../.github/workflows/issue-to-project.yml) when the `PROJECT_TOKEN` repo secret is set (PAT with `project` + `repo`). You can also enable the Project UI ⋯ → Workflows → **Auto-add** as a backup. Agents still set **Status** to match labels (`Fire` / `Needs you` / `Ready` / `In progress` / `Done`).

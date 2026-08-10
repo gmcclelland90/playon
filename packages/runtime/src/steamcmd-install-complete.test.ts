@@ -2,7 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { assertSteamAppInstallComplete } from "./steamcmd.js";
+import {
+  assertSteamAppInstallComplete,
+  clearStagedSteamDownload,
+  isRetryableSteamcmdFailure,
+} from "./steamcmd.js";
 
 function writeManifest(installDir: string, appId: number, body: string): void {
   const dir = path.join(installDir, "steamapps");
@@ -71,6 +75,31 @@ describe("assertSteamAppInstallComplete", () => {
   it("no-ops when the manifest is absent", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-steam-complete-"));
     expect(() => assertSteamAppInstallComplete(root, 376030)).not.toThrow();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+});
+
+describe("steamcmd 0x602 retry helpers", () => {
+  it("detects App state 0x602 tails", () => {
+    expect(
+      isRetryableSteamcmdFailure(
+        "Update state (0x81) verifying update\nError! App '376030' state is 0x602 after update job.",
+      ),
+    ).toBe(true);
+    expect(isRetryableSteamcmdFailure("No subscription")).toBe(false);
+    expect(isRetryableSteamcmdFailure("Invalid platform")).toBe(false);
+  });
+
+  it("clears only the staged downloading/<appId> tree", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-steam-clear-"));
+    const staged = path.join(root, "steamapps", "downloading", "376030");
+    const other = path.join(root, "steamapps", "downloading", "740");
+    fs.mkdirSync(staged, { recursive: true });
+    fs.mkdirSync(other, { recursive: true });
+    fs.writeFileSync(path.join(staged, "chunk"), "x");
+    clearStagedSteamDownload(root, 376030);
+    expect(fs.existsSync(staged)).toBe(false);
+    expect(fs.existsSync(other)).toBe(true);
     fs.rmSync(root, { recursive: true, force: true });
   });
 });

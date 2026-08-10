@@ -199,6 +199,99 @@ function appendIssue(issue) {
   fs.appendFileSync(ISSUES_PATH, `${JSON.stringify({ at: new Date().toISOString(), ...issue })}\n`);
 }
 
+/** True if a live lab-matrix.mjs process has cwd/fds under this temp root. */
+function tempRootInUse(root) {
+  const norm = path.resolve(root);
+  let pids = [];
+  try {
+    const out = execSync("pgrep -af 'node .*scripts/lab-matrix\\.mjs' || true", {
+      encoding: "utf8",
+      shell: "/bin/bash",
+    });
+    pids = [];
+    for (const line of out.split(/\n/)) {
+      const m = line.trim().match(/^(\d+)\s+(.*)$/);
+      if (!m) continue;
+      if (m[1] === String(process.pid)) continue;
+      if (!/node\s+.*lab-matrix\.mjs/.test(m[2])) continue;
+      if (m[2].includes("lab-matrix-cleanup")) continue;
+      pids.push(m[1]);
+    }
+  } catch {
+    return false;
+  }
+  for (const pid of pids) {
+    try {
+      const cwd = fs.readlinkSync(`/proc/${pid}/cwd`);
+      if (cwd === norm || cwd.startsWith(`${norm}/`) || norm.startsWith(`${cwd}/`)) {
+        return true;
+      }
+    } catch {
+      /* ignore */
+    }
+    try {
+      for (const fd of fs.readdirSync(`/proc/${pid}/fd`)) {
+        try {
+          const target = fs.readlinkSync(path.join(`/proc/${pid}/fd`, fd));
+          if (target === norm || target.startsWith(`${norm}/`)) return true;
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return false;
+}
+
+/**
+ * Remove abandoned /tmp/playon-lab-matrix-* trees left by killed matrix runs.
+ * Keeps roots younger than maxAgeMs and any still referenced by a live process.
+ */
+function sweepStaleMatrixTempRoots({ keepPath = null, maxAgeMs = 3600_000 } = {}) {
+  const tmp = os.tmpdir();
+  let removed = 0;
+  let entries;
+  try {
+    entries = fs.readdirSync(tmp);
+  } catch {
+    return 0;
+  }
+  for (const name of entries) {
+    if (!name.startsWith("playon-lab-matrix-")) continue;
+    const full = path.join(tmp, name);
+    if (keepPath && path.resolve(full) === path.resolve(keepPath)) continue;
+    let st;
+    try {
+      st = fs.statSync(full);
+    } catch {
+      continue;
+    }
+    if (!st.isDirectory()) continue;
+    if (Date.now() - st.mtimeMs < maxAgeMs) continue;
+    if (tempRootInUse(full)) continue;
+    try {
+      fs.rmSync(full, { recursive: true, force: true });
+      removed += 1;
+      console.log(`lab-matrix swept stale temp ${full}`);
+    } catch (err) {
+      console.warn(
+        `lab-matrix sweep failed ${full}: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+  return removed;
+}
+
+function removeDataRoot(dataRoot) {
+  try {
+    fs.rmSync(dataRoot, { recursive: true, force: true });
+  } catch {
+    console.warn(`temp dataRoot left at ${dataRoot}`);
+  }
+}
+
 function phaseMap() {
   return {
     static: null,
@@ -307,6 +400,34 @@ async function pushSkillFilesViaHome(home, serverId, skillPath) {
   };
   await walk(overlayRoot);
   return written;
+}
+
+/**
+ * Retry overlay push — Windows nodes often stall fs_* for ~60s right after a
+ * large SteamCMD commit (lab KF2: missing start.bat → udp_process_not_running).
+ */
+async function pushSkillFilesViaHomeWithRetry(home, serverId, skillPath, opts = {}) {
+  const attempts = opts.attempts ?? 4;
+  const delayMs = opts.delayMs ?? 15_000;
+  let lastErr = null;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await pushSkillFilesViaHome(home, serverId, skillPath);
+    } catch (err) {
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!/timeout|ECONN|ENOTFOUND|job_failed/i.test(msg) || i === attempts - 1) {
+        throw err;
+      }
+      await sleep(delayMs);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+function skillOverlayHasStartBat(skillPath) {
+  const bat = path.join(skillPath, "files", "start.bat");
+  return fs.existsSync(bat) && fs.statSync(bat).isFile();
 }
 
 /** Copy skill `files/` into a local matrix game/ jail (skip existing). */
@@ -419,6 +540,22 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
     notes.runtimeMode = created.runtimeMode;
     phases.create = "ok";
 
+    // Push overlays BEFORE SteamCMD. Large depots saturate Windows disk I/O so
+    // post-install fs_write_text often hits the 60s job timeout; missing
+    // start.bat then makes supervised cmd.exe exit (udp_process_not_running).
+    try {
+      const overlay = await pushSkillFilesViaHomeWithRetry(home, serverId, skill.path, {
+        attempts: 3,
+        delayMs: 10_000,
+      });
+      if (overlay.length) notes.skillOverlay = overlay;
+    } catch (err) {
+      notes.skillOverlay = {
+        error: err instanceof Error ? err.message : String(err),
+        phase: "pre_install",
+      };
+    }
+
     if (typeof meta.steamAppId === "number") {
       try {
         const install = await home.tool("steamcmd_app_update", {
@@ -477,9 +614,10 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        // Exit 8 / No subscription: paid depot under anonymous SteamCMD.
-        // Also seen when the Windows node is out of disk (orphan lab installs).
-        if (/steamcmd_no_subscription|No subscription|exit=8\b/i.test(msg)) {
+        // Paid depot under anonymous SteamCMD ("No subscription"). Do NOT key
+        // off bare exit=8 — SteamCMD also exits 8 for retryable 0x602 aborts
+        // (e.g. ARK ASE 376030 mid-verify), which must surface as install fail.
+        if (/steamcmd_no_subscription|No subscription/i.test(msg)) {
           await safeHomeCleanup(home, serverId);
           return {
             skillName: meta.name,
@@ -511,13 +649,49 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
       phases.install = "skipped";
     }
 
+    // Re-push after install (SteamCMD validate can clobber root bats) + cool-down.
     try {
-      const overlay = await pushSkillFilesViaHome(home, serverId, skill.path);
-      if (overlay.length) notes.skillOverlay = overlay;
+      await sleep(5_000);
+      const overlay = await pushSkillFilesViaHomeWithRetry(home, serverId, skill.path, {
+        attempts: 4,
+        delayMs: 20_000,
+      });
+      notes.skillOverlay = overlay.length
+        ? overlay
+        : notes.skillOverlay ?? overlay;
     } catch (err) {
       notes.skillOverlay = {
+        ...(typeof notes.skillOverlay === "object" && notes.skillOverlay
+          ? notes.skillOverlay
+          : {}),
         error: err instanceof Error ? err.message : String(err),
+        phase: "post_install",
       };
+    }
+
+    if (skillOverlayHasStartBat(skill.path)) {
+      const overlayOk = Array.isArray(notes.skillOverlay)
+        ? notes.skillOverlay.some((p) => String(p).endsWith("start.bat"))
+        : false;
+      if (!overlayOk) {
+        // Verify on node — may already exist from a partial write.
+        let present = false;
+        try {
+          await home.tool("fs_read", {
+            serverId,
+            path: "game/start.bat",
+            maxBytes: 200,
+          });
+          present = true;
+        } catch {
+          present = false;
+        }
+        if (!present) {
+          throw new Error(
+            `skill_overlay_missing: game/start.bat (${JSON.stringify(notes.skillOverlay)})`,
+          );
+        }
+      }
     }
 
     const started = await home.tool("servers_start", { serverId });
@@ -1052,13 +1226,49 @@ async function main() {
   }
 
   const platformRoot = path.join(repoRoot, "skills", "platform");
+  const swept = sweepStaleMatrixTempRoots({ maxAgeMs: 3600_000 });
+  if (swept > 0) console.log(`lab-matrix reclaimed ${swept} stale temp root(s)`);
   const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), "playon-lab-matrix-"));
   assertSafeDataRoot(dataRoot);
   const dbPath = path.join(dataRoot, "playon.db");
   applyBootstrap(dbPath);
   const { db, sqlite } = createDb(dbPath);
 
-  const skillsRoots = [gamesRoot, platformRoot, path.join(dataRoot, "skills")];
+  let exitCode = 0;
+  const finalizeTemp = () => {
+    try {
+      sqlite.close();
+    } catch {
+      /* already closed */
+    }
+    removeDataRoot(dataRoot);
+  };
+  const onSignal = (sig) => {
+    console.warn(`lab-matrix caught ${sig}; cleaning temp dataRoot`);
+    finalizeTemp();
+    process.exit(130);
+  };
+  process.once("SIGINT", () => onSignal("SIGINT"));
+  process.once("SIGTERM", () => onSignal("SIGTERM"));
+
+  try {
+    exitCode = await runMatrixBody({
+      dataRoot,
+      db,
+      sqlite,
+      skillsRoots: [gamesRoot, platformRoot, path.join(dataRoot, "skills")],
+      gamesRoot,
+    });
+  } finally {
+    process.removeAllListeners("SIGINT");
+    process.removeAllListeners("SIGTERM");
+    finalizeTemp();
+  }
+  process.exit(exitCode);
+}
+
+async function runMatrixBody({ dataRoot, db, sqlite, skillsRoots, gamesRoot }) {
+  const dbPath = path.join(dataRoot, "playon.db");
   const advertiseHost = matrixAdvertiseHost();
   const config = {
     port: 0,
@@ -1077,7 +1287,7 @@ async function main() {
     const adapters = await createRuntimeAdapters("docker");
     if (adapters.mode !== "docker") {
       console.error("expected docker runtime");
-      process.exit(2);
+      return 2;
     }
   }
 
@@ -1111,7 +1321,7 @@ async function main() {
 
   if (!windows.enabled && filter === "windows") {
     console.error("windows placement unavailable (is playon-win-1 online?)");
-    process.exit(2);
+    return 2;
   }
 
   let selected = allSkills;
@@ -1119,7 +1329,7 @@ async function main() {
     selected = allSkills.filter((s) => s.metadata.name === onlySkill);
     if (!selected.length) {
       console.error(`skill not found: ${onlySkill}`);
-      process.exit(2);
+      return 2;
     }
   }
   if (filter) {
@@ -1138,7 +1348,7 @@ async function main() {
     });
     if (!["docker", "steam", "native", "other", "windows"].includes(filter)) {
       console.error(`unknown --filter ${filter} (docker|steam|native|other|windows)`);
-      process.exit(2);
+      return 2;
     }
     console.log(`filter=${filter} ${before} → ${selected.length}`);
   }
@@ -1146,7 +1356,7 @@ async function main() {
     const idx = selected.findIndex((s) => s.metadata.name === fromSkill);
     if (idx === -1) {
       console.error(`--from skill not in set: ${fromSkill}`);
-      process.exit(2);
+      return 2;
     }
     selected = selected.slice(idx);
   }
@@ -1294,12 +1504,7 @@ async function main() {
     if (!result.ok && !continueOnFail) break;
   }
 
-  sqlite.close();
-  try {
-    fs.rmSync(dataRoot, { recursive: true, force: true });
-  } catch {
-    console.warn(`temp dataRoot left at ${dataRoot}`);
-  }
+  // Temp dataRoot / sqlite closed by main()'s finally (also on SIGINT/SIGTERM).
 
   const final = loadStatus();
   console.log("\n==> lab-matrix summary");
@@ -1326,10 +1531,10 @@ async function main() {
   if (failedSkill) {
     console.log(`FAILED skill=${failedSkill}`);
     console.log(final?.nextAction);
-    process.exit(1);
+    return 1;
   }
   console.log(final?.nextAction ?? "done");
-  process.exit(0);
+  return 0;
 }
 
 main().catch((err) => {
