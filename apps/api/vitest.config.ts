@@ -6,6 +6,7 @@ export default defineConfig({
   test: {
     include: ["src/**/*.test.ts"],
     exclude: ["src/**/*.int.test.ts"],
+    setupFiles: ["src/test/setup-unit.ts"],
     /*
      * Most of these "unit" tests bootstrap a real temp PLAYON_DATA_ROOT: SQLite
      * migrations, skill trees on disk, archive extraction, snapshot copies. On a
