@@ -2,13 +2,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
 import { LOCAL_NODE_ID, SkillMetadataSchema } from "@playon/shared";
 import { createDb, type Db } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
 import { nodes } from "../db/schema.js";
 import type { AppConfig } from "../config.js";
-import { PlacementService, scoreNodeForSkill, type NodeCaps } from "./placement.js";
+import {
+  PlacementService,
+  scoreNodeForSkill,
+  type HostCapabilityProbe,
+  type NodeCaps,
+} from "./placement.js";
 
 const temps: Array<{ root: string; close: () => void }> = [];
 
@@ -19,7 +23,18 @@ afterEach(() => {
   }
 });
 
-function placementEnv(skillYaml: string): { placement: PlacementService; db: Db; skillName: string } {
+const windowsLocalProbe: HostCapabilityProbe = () => ({
+  os: "windows",
+  docker: false,
+  native: true,
+  steamcmd: false,
+  freeDiskBytes: 20 * 1024 ** 3,
+});
+
+function placementEnv(
+  skillYaml: string,
+  probeHost?: HostCapabilityProbe,
+): { placement: PlacementService; db: Db; skillName: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-placement-"));
   const dbPath = path.join(root, "playon.db");
   applyBootstrap(dbPath);
@@ -40,7 +55,7 @@ function placementEnv(skillYaml: string): { placement: PlacementService; db: Db;
   fs.mkdirSync(config.dataRoot, { recursive: true });
   const { db, sqlite } = createDb(dbPath);
   temps.push({ root, close: () => sqlite.close() });
-  return { placement: new PlacementService(db, config), db, skillName };
+  return { placement: new PlacementService(db, config, undefined, probeHost), db, skillName };
 }
 
 const baseSkill = SkillMetadataSchema.parse({
@@ -206,12 +221,10 @@ ports:
 `;
 
   it("throws no_eligible_node when Local is Windows-only for a linux skill", async () => {
-    const { placement, db, skillName } = placementEnv(linuxOnlyYaml);
+    // Probe override: plan() always re-syncs Local from host caps, so DB-only OS
+    // mutations are overwritten on Linux CI.
+    const { placement, skillName } = placementEnv(linuxOnlyYaml, windowsLocalProbe);
     await placement.ensureLocalNode();
-    await db
-      .update(nodes)
-      .set({ os: "windows", docker: false, lastSeenAt: new Date() })
-      .where(eq(nodes.id, LOCAL_NODE_ID));
 
     await expect(placement.resolveNodeId(skillName)).rejects.toThrow(/no_eligible_node/);
     await expect(placement.resolveNodeId(skillName, LOCAL_NODE_ID)).rejects.toThrow(
@@ -220,13 +233,8 @@ ports:
   });
 
   it("returns an eligible remote linux docker node when Local cannot host", async () => {
-    const { placement, db, skillName } = placementEnv(linuxOnlyYaml);
-    // Force Local ineligible (ensureLocalNode would otherwise re-probe the host OS).
+    const { placement, db, skillName } = placementEnv(linuxOnlyYaml, windowsLocalProbe);
     await placement.ensureLocalNode();
-    await db
-      .update(nodes)
-      .set({ os: "windows", docker: false, lastSeenAt: new Date() })
-      .where(eq(nodes.id, LOCAL_NODE_ID));
     await db.insert(nodes).values({
       id: "lab-linux",
       name: "lab",
