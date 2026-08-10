@@ -11,7 +11,7 @@ import {
   type NodeTunnelStatus,
   type SkillMetadata,
 } from "@playon/shared";
-import { probeHostCapabilities } from "@playon/runtime";
+import { probeHostCapabilities, type HostCapabilities } from "@playon/runtime";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db/client.js";
 import { nodes } from "../db/schema.js";
@@ -25,6 +25,9 @@ import {
 } from "./settings.js";
 
 const MIN_DISK_BYTES = 512 * 1024 * 1024;
+
+/** Optional override for tests (e.g. simulate Windows Local on a Linux CI host). */
+export type HostCapabilityProbe = (dataRoot: string) => HostCapabilities;
 
 export type PlacementCandidate = {
   nodeId: string;
@@ -182,6 +185,7 @@ export class PlacementService {
     private readonly db: Db,
     private readonly config: AppConfig,
     private readonly net?: NetToolsService,
+    private readonly probeHost: HostCapabilityProbe = probeHostCapabilities,
   ) {}
 
   async getNodeSettings(): Promise<NodeSettings> {
@@ -196,7 +200,7 @@ export class PlacementService {
   /** Ensure a durable `local` control-plane row exists for FK placement. */
   async ensureLocalNode(): Promise<NodeCaps> {
     const now = new Date();
-    const probed = probeHostCapabilities(this.config.dataRoot);
+    const probed = this.probeHost(this.config.dataRoot);
     // Host PLAYON_RUNTIME=native means we will not use Docker even if the socket exists.
     const docker = this.config.runtimeMode === "docker" && probed.docker;
     const local: NodeCaps = {
