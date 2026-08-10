@@ -25,6 +25,9 @@ jobs:
         env:
           PLAYON_LAB_FILE_ISSUES: "0"
           PLAYON_LAB_PUBLISH_STATUS: "0"
+          # Int/agent layers need Venice; lab host has the key in env — GHA must too.
+          PLAYON_VENICE_API_KEY: ${{ secrets.PLAYON_VENICE_API_KEY }}
+          VENICE_API_KEY: ${{ secrets.PLAYON_VENICE_API_KEY }}
       - name: Real Docker Paper smoke
         id: runtime
         run: pnpm loop:verify:runtime
@@ -32,6 +35,8 @@ jobs:
           PLAYON_RUNTIME: docker
           PLAYON_LAB_FILE_ISSUES: "0"
           PLAYON_LAB_PUBLISH_STATUS: "0"
+          PLAYON_VENICE_API_KEY: ${{ secrets.PLAYON_VENICE_API_KEY }}
+          VENICE_API_KEY: ${{ secrets.PLAYON_VENICE_API_KEY }}
       - name: File GitHub issues from failed bar
         if: failure()
         env:
