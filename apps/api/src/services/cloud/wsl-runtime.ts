@@ -158,6 +158,7 @@ export class WslRuntimeService {
 
     return new Promise((resolve) => {
       const ps = spawn("powershell.exe", [
+        "-NoProfile",
         "-ExecutionPolicy",
         "Bypass",
         "-File",
@@ -167,6 +168,23 @@ export class WslRuntimeService {
 
       let stdout = "";
       let stderr = "";
+      let settled = false;
+      const finish = (result: WslStatusResult) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(result);
+      };
+      const timer = setTimeout(() => {
+        ps.kill();
+        finish({
+          status: "error",
+          message: "WSL status probe timed out",
+          distro: WSL_DISTRO_NAME,
+          nodeId: LOCAL_WSL_NODE_ID,
+          error: "wsl_spawn_failed",
+        });
+      }, 15_000);
 
       ps.stdout.on("data", (data: Buffer) => {
         stdout += data.toString("utf8");
@@ -180,7 +198,7 @@ export class WslRuntimeService {
         const error = codeToError(parsed.code);
         const nodeOnline = await this.isNodeOnline();
 
-        resolve({
+        finish({
           status: parsed.status,
           message: parsed.message,
           distro: WSL_DISTRO_NAME,
@@ -191,7 +209,7 @@ export class WslRuntimeService {
       });
 
       ps.on("error", (err) => {
-        resolve({
+        finish({
           status: "error",
           message: err.message,
           distro: WSL_DISTRO_NAME,
