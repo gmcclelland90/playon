@@ -12,6 +12,12 @@ export type NodeTunnelStatus = "none" | "unconfigured" | "pending" | "up" | "dow
 /** Durable id for the control-plane host’s local node. */
 export const LOCAL_NODE_ID = "local";
 
+/** Durable id for the WSL-backed Linux node on Windows Home. */
+export const LOCAL_WSL_NODE_ID = "local-wsl";
+
+/** WSL distro name for the Linux runtime on Windows. */
+export const WSL_DISTRO_NAME = "playon-linux";
+
 /**
  * Home-side marker in a server's data dir: the game files live on the node, so
  * Home must not push its own (empty) tree over them.
@@ -44,7 +50,10 @@ export function placementBadge(opts: {
   name?: string | null;
   tunnelStatus?: NodeTunnelStatus | string | null;
   rttMs?: number | null;
+  /** Node id for special badges like local-wsl. */
+  nodeId?: string | null;
 }): string {
+  if (opts.nodeId === LOCAL_WSL_NODE_ID) return "Local · Linux (WSL)";
   const placement = placementFromNodeKind(opts.kind);
   if (placement === "local") return "Local";
   if (placement === "cloud") {

@@ -440,6 +440,31 @@ export const api = {
       method: "POST",
       body: JSON.stringify({}),
     }),
+  wslStatus: () =>
+    request<{
+      status: "not_installed" | "reboot_required" | "distro_missing" | "docker_missing" | "agent_missing" | "ready" | "error";
+      message: string;
+      distro: string;
+      nodeId: string;
+      error?: string;
+      nodeOnline?: boolean;
+    }>("/api/wsl/status"),
+  wslEnable: () =>
+    request<{
+      ok: boolean;
+      status: string;
+      message: string;
+      nodeId: string;
+      error?: string;
+    }>("/api/wsl/enable", { method: "POST", body: JSON.stringify({}) }),
+  wslRepair: () =>
+    request<{
+      ok: boolean;
+      status: string;
+      message: string;
+      nodeId: string;
+      error?: string;
+    }>("/api/wsl/repair", { method: "POST", body: JSON.stringify({}) }),
   updatesStatus: (force?: boolean) =>
     request<{
       currentVersion: string;

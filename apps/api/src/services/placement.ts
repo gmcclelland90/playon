@@ -172,7 +172,7 @@ export function scoreNodeForSkill(
     status,
     kind,
     placement,
-    badge: placementBadge({ kind, name: node.name, tunnelStatus }),
+    badge: placementBadge({ kind, name: node.name, tunnelStatus, nodeId: node.id }),
     tunnelStatus,
     eligible,
     score: eligible ? score : score - 1000,

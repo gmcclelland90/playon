@@ -26,6 +26,7 @@ import {
   InstallDockerRequestSchema,
   InstallSkillFromCatalogRequestSchema,
   LOCAL_NODE_ID,
+  LOCAL_WSL_NODE_ID,
   LlmSettingsPutRequestSchema,
   LoginSchema,
   ManageNodeServerRequestSchema,
@@ -237,6 +238,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     tunnel,
     addNode,
     installDocker,
+    wslRuntime,
     updates: updateService,
     watchers: watcherService,
     watcherEngine,
@@ -1575,7 +1577,9 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       /** True when PLAYON_NODE_TOKEN is set — required to add LAN/cloud nodes. */
       nodeTokenConfigured: Boolean(config.nodeToken?.trim()),
       nodes: list.map((n) => {
-        const kind = (n.kind as NodeKind) || (n.id === LOCAL_NODE_ID ? "local" : "lan");
+        const kind =
+          (n.kind as NodeKind) ||
+          (n.id === LOCAL_NODE_ID || n.id === LOCAL_WSL_NODE_ID ? "local" : "lan");
         return {
           id: n.id,
           name: n.name,
@@ -1593,6 +1597,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
             kind,
             name: n.name,
             tunnelStatus: n.tunnelStatus,
+            nodeId: n.id,
           }),
           tunnelStatus: n.tunnelStatus,
           overlayIp: n.overlayIp,
@@ -1763,6 +1768,54 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     } catch (err) {
       const message = err instanceof Error ? err.message : "install_docker_failed";
       return c.text(`#!/bin/bash\necho ${JSON.stringify(message)} >&2\nexit 1\n`, 400);
+    }
+  });
+
+  app.get("/api/wsl/status", async (c) => {
+    requireCan(c, "settings.llm");
+    try {
+      return c.json(await wslRuntime.status());
+    } catch (err) {
+      throw serviceHttpError(err, {
+        fallback: "wsl_status_failed",
+        code: "wsl_status_failed",
+      });
+    }
+  });
+
+  app.post("/api/wsl/enable", async (c) => {
+    requireCan(c, "servers.manage");
+    if (!wslRuntime.isAvailable()) {
+      throw HttpError.badRequest("wsl_not_available", {
+        code: "wsl_not_available",
+        details: { hint: "WSL is only available on Windows" },
+      });
+    }
+    try {
+      return c.json(await wslRuntime.enable());
+    } catch (err) {
+      throw serviceHttpError(err, {
+        fallback: "wsl_enable_failed",
+        code: "wsl_enable_failed",
+      });
+    }
+  });
+
+  app.post("/api/wsl/repair", async (c) => {
+    requireCan(c, "servers.manage");
+    if (!wslRuntime.isAvailable()) {
+      throw HttpError.badRequest("wsl_not_available", {
+        code: "wsl_not_available",
+        details: { hint: "WSL is only available on Windows" },
+      });
+    }
+    try {
+      return c.json(await wslRuntime.repair());
+    } catch (err) {
+      throw serviceHttpError(err, {
+        fallback: "wsl_repair_failed",
+        code: "wsl_repair_failed",
+      });
     }
   });
 
@@ -1983,7 +2036,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     const kind: NodeKind =
       body.kind ??
       (existing[0]?.kind as NodeKind | undefined) ??
-      (body.nodeId === LOCAL_NODE_ID ? "local" : "lan");
+      (body.nodeId === LOCAL_NODE_ID || body.nodeId === LOCAL_WSL_NODE_ID ? "local" : "lan");
     if (existing[0]) {
       const keepName =
         existing[0].name &&
