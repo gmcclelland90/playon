@@ -76,13 +76,13 @@ function extractArchive(archivePath: string, destDir: string): string {
           "-Command",
           `Expand-Archive -Path '${archivePath.replace(/'/g, "''")}' -DestinationPath '${destDir.replace(/'/g, "''")}' -Force`,
         ],
-        { stdio: "pipe", timeout: 10000 },
+        { stdio: "pipe", timeout: 60000 },
       );
     } else {
-      execFileSync("unzip", ["-q", archivePath, "-d", destDir], { stdio: "pipe", timeout: 10000 });
+      execFileSync("unzip", ["-q", archivePath, "-d", destDir], { stdio: "pipe", timeout: 60000 });
     }
   } else {
-    execFileSync("tar", ["-xzf", archivePath, "-C", destDir], { stdio: "pipe", timeout: 10000 });
+    execFileSync("tar", ["-xzf", archivePath, "-C", destDir], { stdio: "pipe", timeout: 60000 });
   }
   for (const name of ["playon-node", "playon"]) {
     const candidate = path.join(destDir, name);

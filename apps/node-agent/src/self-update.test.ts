@@ -146,7 +146,7 @@ describe("performNodeSelfUpdate", () => {
           "-Command",
           `Compress-Archive -Path '${playonNode.replace(/'/g, "''")}' -DestinationPath '${archive.replace(/'/g, "''")}' -Force`,
         ],
-        { stdio: "pipe", timeout: 10000 },
+        { stdio: "pipe", timeout: 60000 },
       );
       const bytes = fs.readFileSync(archive);
       const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
@@ -172,5 +172,5 @@ describe("performNodeSelfUpdate", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
-  }, { timeout: 20000 });
+  }, { timeout: 90000 });
 });
