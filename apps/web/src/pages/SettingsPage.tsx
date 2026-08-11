@@ -162,6 +162,9 @@ export function SettingsPage({ user }: { user: PublicUser }) {
   const [lastOllamaJobAt, setLastOllamaJobAt] = useState<string | null>(null);
   const [wslNotice, setWslNotice] = useState<string | null>(null);
   const [wslError, setWslError] = useState<string | null>(null);
+  const [wslPanelNodeId, setWslPanelNodeId] = useState<string | null>(null);
+  const [wslOneLiner, setWslOneLiner] = useState<string | null>(null);
+  const [wslWaitingId, setWslWaitingId] = useState<string | null>(null);
 
   const backupTarget = useQuery({
     queryKey: ["backup-target"],
@@ -180,38 +183,42 @@ export function SettingsPage({ user }: { user: PublicUser }) {
     refetchInterval: 10_000,
   });
 
-  const wslStatus = useQuery({
-    queryKey: ["wsl-status"],
-    queryFn: api.wslStatus,
-    enabled: can(user.role, "settings.llm"),
-    refetchInterval: 10_000,
-  });
-
   const wslEnableMut = useMutation({
-    mutationFn: api.wslEnable,
-    onSuccess: async (res) => {
-      if (res.ok) {
+    mutationFn: (windowsNodeId: string) => api.wslEnable(windowsNodeId),
+    onSuccess: async (res, windowsNodeId) => {
+      setWslPanelNodeId(windowsNodeId);
+      if (res.oneLiner) {
+        setWslOneLiner(res.oneLiner);
+        setWslNotice(
+          "Run the elevated PowerShell one-liner on the Windows host, then wait for the WSL node heartbeat.",
+        );
+        setWslWaitingId(windowsNodeId);
+      } else if (res.ok) {
         setWslNotice("Linux runtime enabled — waiting for heartbeat...");
+        setWslWaitingId(windowsNodeId);
       } else if (res.error === "wsl_reboot_required") {
         setWslNotice("WSL2 features enabled. Reboot Windows, then run Enable again.");
       } else {
         setWslError(res.message || "Enable failed");
       }
-      await qc.invalidateQueries({ queryKey: ["wsl-status"] });
       await qc.invalidateQueries({ queryKey: ["nodes"] });
     },
     onError: (err: Error) => setWslError(err.message),
   });
 
   const wslRepairMut = useMutation({
-    mutationFn: api.wslRepair,
-    onSuccess: async (res) => {
-      if (res.ok) {
+    mutationFn: (windowsNodeId: string) => api.wslRepair(windowsNodeId),
+    onSuccess: async (res, windowsNodeId) => {
+      setWslPanelNodeId(windowsNodeId);
+      if (res.oneLiner) {
+        setWslOneLiner(res.oneLiner);
+        setWslNotice("Run the elevated PowerShell one-liner on the Windows host to repair WSL.");
+        setWslWaitingId(windowsNodeId);
+      } else if (res.ok) {
         setWslNotice("Linux runtime repaired.");
       } else {
         setWslError(res.message || "Repair failed");
       }
-      await qc.invalidateQueries({ queryKey: ["wsl-status"] });
       await qc.invalidateQueries({ queryKey: ["nodes"] });
     },
     onError: (err: Error) => setWslError(err.message),
@@ -751,75 +758,6 @@ export function SettingsPage({ user }: { user: PublicUser }) {
           </p>
         ) : null}
 
-        {!dockerInstallNodeId && wslStatus.data && wslStatus.data.status !== "error" && (
-          <div className="stack tight" style={{ marginTop: "0.75rem", marginBottom: "0.5rem" }}>
-            <h4 className="section-label">Linux runtime (WSL)</h4>
-            {wslStatus.data.status === "ready" && wslStatus.data.nodeOnline ? (
-              <p className="ok status-inline">
-                Linux runtime is healthy (local-wsl node online).
-              </p>
-            ) : wslStatus.data.status === "ready" ? (
-              <p className="muted status-inline">
-                Linux runtime installed — waiting for heartbeat...
-              </p>
-            ) : wslStatus.data.status === "reboot_required" ? (
-              <p className="muted status-inline">
-                WSL2 features enabled. Reboot Windows, then click Enable again.
-              </p>
-            ) : wslStatus.data.status === "not_installed" ? (
-              <p className="muted status-inline">
-                Enable a Linux runtime via WSL2 to run Linux-only skills on this Windows host.
-              </p>
-            ) : wslStatus.data.status === "distro_missing" ? (
-              <p className="muted status-inline">
-                WSL2 is ready but the playon-linux distro is not installed. Click Enable to create it.
-              </p>
-            ) : wslStatus.data.status === "docker_missing" ? (
-              <p className="muted status-inline">
-                playon-linux distro exists but Docker is not ready. Click Repair.
-              </p>
-            ) : wslStatus.data.status === "agent_missing" ? (
-              <p className="muted status-inline">
-                Docker is ready but the node-agent is not running. Click Repair.
-              </p>
-            ) : null}
-            <div className="btn-row">
-              {wslStatus.data.status !== "ready" ? (
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={wslEnableMut.isPending}
-                  onClick={() => {
-                    setWslNotice(null);
-                    setWslError(null);
-                    wslEnableMut.mutate();
-                  }}
-                >
-                  {wslEnableMut.isPending ? "Enabling..." : "Enable Linux runtime"}
-                </button>
-              ) : null}
-              {wslStatus.data.status === "docker_missing" ||
-               wslStatus.data.status === "agent_missing" ||
-               (wslStatus.data.status === "ready" && !wslStatus.data.nodeOnline) ? (
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={wslRepairMut.isPending}
-                  onClick={() => {
-                    setWslNotice(null);
-                    setWslError(null);
-                    wslRepairMut.mutate();
-                  }}
-                >
-                  {wslRepairMut.isPending ? "Repairing..." : "Repair"}
-                </button>
-              ) : null}
-            </div>
-            {wslNotice ? <p className="ok">{wslNotice}</p> : null}
-            {wslError ? <p className="error">{wslError}</p> : null}
-          </div>
-        )}
-
         {nodesList.data?.nodes?.length ? (
           <ul className="list compact-list">
             {nodesList.data.nodes
@@ -828,6 +766,14 @@ export function SettingsPage({ user }: { user: PublicUser }) {
               const needsDocker = !n.docker;
               const isWindows = n.os === "windows";
               const panelOpen = dockerInstallNodeId === n.id;
+              const wslSiblingId = n.id === "local" ? "local-wsl" : `${n.id}-wsl`;
+              const wslSibling = nodesList.data?.nodes?.find((x) => x.id === wslSiblingId);
+              const wslOnline =
+                wslSibling &&
+                (wslSibling.status === "online" ||
+                  String(wslSibling.status).toLowerCase().includes("online"));
+              const wslPending = Boolean(wslSibling && !wslOnline);
+              const wslPanelOpen = wslPanelNodeId === n.id;
               const nodeUpdate = updates.data?.nodes?.find((u) => u.nodeId === n.id);
               const needsAgentUpdate = Boolean(nodeUpdate?.updateAvailable);
               const homeBlocksNodeUpdate =
@@ -874,6 +820,12 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                       {dockerWaitingId === n.id ? (
                         <span className="status-chip warn">Waiting for Docker…</span>
                       ) : null}
+                      {isWindows && wslOnline ? (
+                        <span className="status-chip live">Linux (WSL)</span>
+                      ) : null}
+                      {isWindows && (wslWaitingId === n.id || wslPending) && !wslOnline ? (
+                        <span className="status-chip warn">Waiting for WSL…</span>
+                      ) : null}
                     </div>
                     {presenceHint ? (
                       <p className="muted status-inline">{presenceHint}</p>
@@ -893,6 +845,45 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                         }}
                       >
                         {panelOpen ? "Cancel" : "Install Docker"}
+                      </button>
+                    ) : null}
+                    {isWindows && !pendingSetup && !wslOnline ? (
+                      <button
+                        className="btn btn-primary"
+                        type="button"
+                        disabled={wslEnableMut.isPending}
+                        onClick={() => {
+                          setWslError(null);
+                          setWslNotice(null);
+                          setWslOneLiner(null);
+                          setWslPanelNodeId(wslPanelOpen ? null : n.id);
+                          if (!wslPanelOpen) {
+                            wslEnableMut.mutate(n.id);
+                          }
+                        }}
+                      >
+                        {wslEnableMut.isPending && wslPanelNodeId === n.id
+                          ? "Enabling…"
+                          : wslPanelOpen
+                            ? "Cancel"
+                            : "Enable Linux runtime"}
+                      </button>
+                    ) : null}
+                    {isWindows && wslPending && !wslOnline ? (
+                      <button
+                        className="btn"
+                        type="button"
+                        disabled={wslRepairMut.isPending}
+                        onClick={() => {
+                          setWslError(null);
+                          setWslNotice(null);
+                          setWslOneLiner(null);
+                          wslRepairMut.mutate(n.id);
+                        }}
+                      >
+                        {wslRepairMut.isPending && wslPanelNodeId === n.id
+                          ? "Repairing…"
+                          : "Repair WSL"}
                       </button>
                     ) : null}
                     {n.id !== "local" && user.role === "owner" && needsAgentUpdate ? (
@@ -964,18 +955,32 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                     Update PlayOn Home first, then update this node.
                   </p>
                 ) : null}
-                {needsDocker && isWindows ? (
+                {needsDocker && isWindows && wslOnline ? (
                   <p className="muted status-inline">
-                    Install{" "}
-                    <a
-                      href="https://docs.docker.com/desktop/setup/install/windows-install/"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Docker Desktop
-                    </a>
-                    , then wait for the next heartbeat (or refresh this page).
+                    Linux skills can use the WSL sibling ({wslSiblingId}). Windows-native Docker
+                    Desktop is optional for this host.
                   </p>
+                ) : null}
+                {isWindows && wslPanelOpen ? (
+                  <div className="stack tight" style={{ marginTop: "0.5rem" }}>
+                    <p className="muted status-inline">
+                      Enable a sibling Linux node via WSL2 on this Windows host (id{" "}
+                      <code>{wslSiblingId}</code>). Home may be on another machine — run the
+                      elevated one-liner on Windows when shown.
+                    </p>
+                    {wslOneLiner ? (
+                      <label className="field">
+                        <span>Elevated PowerShell (run on the Windows host)</span>
+                        <textarea readOnly rows={4} value={wslOneLiner} />
+                      </label>
+                    ) : null}
+                    {wslNotice && wslPanelNodeId === n.id ? (
+                      <p className="ok">{wslNotice}</p>
+                    ) : null}
+                    {wslError && wslPanelNodeId === n.id ? (
+                      <p className="error">{wslError}</p>
+                    ) : null}
+                  </div>
                 ) : null}
                 {panelOpen && needsDocker && !isWindows ? (
                   <div className="stack tight" style={{ marginTop: "0.5rem" }}>

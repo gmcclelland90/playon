@@ -7,7 +7,7 @@ import { nanoid } from "nanoid";
 import {
   CLOUD_OVERLAY_HOME_IP,
   LOCAL_NODE_ID,
-  LOCAL_WSL_NODE_ID,
+  isWslNodeId,
   type NodeKind,
 } from "@playon/shared";
 import type { AppConfig } from "../../config.js";
@@ -363,7 +363,7 @@ export class AddNodeService {
   }): Promise<{ token: string; nodeId: string; oneLiner: string; expiresAt: string }> {
     if (!this.config.nodeToken) throw new Error("node_token_unset");
     const nodeId = opts.nodeId?.trim() || `node-${nanoid(8)}`;
-    if (nodeId === LOCAL_NODE_ID || nodeId === LOCAL_WSL_NODE_ID) {
+    if (nodeId === LOCAL_NODE_ID || isWslNodeId(nodeId)) {
       throw new Error("node_id_reserved");
     }
     if (opts.kind === "cloud" && !opts.endpointHost?.trim()) {
@@ -432,7 +432,7 @@ export class AddNodeService {
     if (!this.config.nodeToken) throw new Error("node_token_unset");
 
     const nodeId = args.nodeId?.trim() || `node-${nanoid(8)}`;
-    if (nodeId === LOCAL_NODE_ID || nodeId === LOCAL_WSL_NODE_ID) {
+    if (nodeId === LOCAL_NODE_ID || isWslNodeId(nodeId)) {
       throw new Error("node_id_reserved");
     }
     const name = args.nodeName?.trim() || nodeId;

@@ -108,34 +108,40 @@ Still run a **host-native** `playon-node` (or install-node against `http://127.0
 3. Install `wireguard-tools` (Linux) or WireGuard for Windows on Home before adding cloud nodes.
 4. Vendor Connect (Vultr OAuth, etc.) is **deferred** — scaffold remains under `apps/api/src/services/cloud/` but is not the product path.
 
-## Linux runtime (WSL) — Windows only
+## Linux runtime (WSL) — Windows nodes
 
-Windows Home can run Linux-only skills via a WSL2-backed compute node. This avoids needing a second physical machine for Linux skills.
+Any **Windows node** can host a sibling Linux compute node via WSL2. Home may run on Linux or Windows — WSL setup always runs on the Windows host.
 
-**Enable (Settings → Nodes → Enable Linux runtime):**
+**Enable (Settings → Nodes → Windows node row → Enable Linux runtime):**
 
-1. Click **Enable Linux runtime**. If WSL2 features are not enabled, PlayOn enables them and asks for a reboot.
-2. After reboot, click **Enable** again. PlayOn creates the `playon-linux` distro, installs Docker Engine inside it, and starts the `local-wsl` node-agent.
-3. Once the node heartbeats, placement considers `local-wsl` for `os: [linux]` skills.
+1. Click **Enable Linux runtime** on the Windows node.
+2. If Home is on that same Windows PC (`local`), PlayOn may prompt UAC and run setup locally.
+3. If Home is elsewhere (e.g. Linux lab), PlayOn shows an **elevated PowerShell one-liner** — run it on the Windows host.
+4. After reboot (if prompted), run Enable / the one-liner again. PlayOn creates the `playon-linux` distro, installs Docker Engine inside it, and starts the sibling node-agent.
+5. Once the sibling heartbeats, placement considers it for `os: [linux]` skills.
+
+**Sibling node ids:** `local` → `local-wsl`; any other Windows node `N` → `N-wsl`.
 
 **Technical details:**
 
 - Distro: `playon-linux` (Ubuntu-based, imported via `wsl --import`)
-- Node ID: `local-wsl`, kind: `local`, badge: `Local · Linux (WSL)`
 - Runtime: Docker Engine inside WSL (not Docker Desktop)
-- Node-agent uses the job queue (same as LAN nodes, not `isLocalNodeId`)
+- Sibling agent heartbeats to the same Home as the Windows node (`-ApiUrl` / `-NodeToken` / `-NodeId`)
+- APIs: `/api/nodes/:nodeId/wsl/{status,enable,repair,token}` (legacy `/api/wsl/*` targets `local`)
 
 **Manual / CLI:**
 
 ```powershell
 # Check status
-.\deploy\windows\ensure-wsl-runtime.ps1 -StatusOnly
+.\deploy\windows\ensure-wsl-runtime.ps1 -StatusOnly -NodeId local-wsl
 
-# Enable (requires elevation)
-Start-Process powershell -Verb RunAs -ArgumentList '-File', '.\deploy\windows\ensure-wsl-runtime.ps1'
+# Enable against a remote Home (requires elevation)
+Start-Process powershell -Verb RunAs -ArgumentList '-File', '.\deploy\windows\ensure-wsl-runtime.ps1',
+  '-ApiUrl', 'http://HOME:8787', '-NodeToken', '<token>', '-NodeId', 'win-1-wsl'
 
-# Repair (re-runs setup)
-Start-Process powershell -Verb RunAs -ArgumentList '-File', '.\deploy\windows\ensure-wsl-runtime.ps1', '-Repair'
+# Repair
+Start-Process powershell -Verb RunAs -ArgumentList '-File', '.\deploy\windows\ensure-wsl-runtime.ps1',
+  '-ApiUrl', 'http://HOME:8787', '-NodeToken', '<token>', '-NodeId', 'win-1-wsl', '-Repair'
 ```
 
 **Errors:**

@@ -1,11 +1,12 @@
-# PlayOn — Enable Linux runtime via WSL2.
-# Idempotent: run to install or repair the local-wsl node.
+# PlayOn — Enable Linux runtime via WSL2 on a Windows host.
+# Idempotent: run to install or repair the WSL sibling node (local-wsl or {nodeId}-wsl).
+# Home may be local or remote — pass -ApiUrl / -NodeToken / -NodeId when not using a local Home env file.
 #
 # Phases:
 #   1. Ensure WSL2 feature enabled (may require reboot)
 #   2. Create/verify playon-linux distro
 #   3. Install Docker Engine inside the distro
-#   4. Install node-agent with PLAYON_NODE_ID=local-wsl
+#   4. Install node-agent with PLAYON_NODE_ID=<NodeId>
 #
 # Exit codes / error tags:
 #   0   = success or already present
@@ -20,11 +21,14 @@
 param(
   [string]$ApiUrl = "",
   [string]$NodeToken = "",
+  [string]$NodeId = "local-wsl",
   [string]$DistroName = "playon-linux",
   [string]$InstallRoot = "",
   [switch]$StatusOnly,
   [switch]$Repair
 )
+
+if (-not $NodeId) { $NodeId = "local-wsl" }
 
 $ErrorActionPreference = "Stop"
 
@@ -69,7 +73,7 @@ function Write-Status {
     message = $Message
     code = $Code
     distro = $DistroName
-    nodeId = "local-wsl"
+    nodeId = $NodeId
   }
   ConvertTo-Json $obj -Compress
 }
@@ -272,6 +276,8 @@ set -euo pipefail
 
 API_URL="$1"
 NODE_TOKEN="$2"
+NODE_ID="${3:-local-wsl}"
+NODE_NAME="${4:-Linux (WSL)}"
 
 # Update and install prerequisites
 export DEBIAN_FRONTEND=noninteractive
@@ -370,8 +376,8 @@ sudo -u playon pnpm install --prod --frozen-lockfile=false || pnpm install --pro
 cat >/etc/playon/node.env <<EOF
 PLAYON_API_URL=${API_URL}
 PLAYON_NODE_TOKEN=${NODE_TOKEN}
-PLAYON_NODE_ID=local-wsl
-PLAYON_NODE_NAME=Linux (WSL)
+PLAYON_NODE_ID=${NODE_ID}
+PLAYON_NODE_NAME=${NODE_NAME}
 PLAYON_DATA_ROOT=${PLAYON_DATA}
 PLAYON_RUNTIME=docker
 PLAYON_INSTALL_ROOT=${PLAYON_ROOT}
@@ -412,19 +418,21 @@ systemctl daemon-reload
 systemctl enable playon-node-agent.service
 systemctl start playon-node-agent.service
 
-echo "==> local-wsl node ready"
+echo "==> ${NODE_ID} node ready"
 '@
 
 # Run setup inside WSL
-Write-Host "==> Configuring Docker and node-agent inside $DistroName..."
+Write-Host "==> Configuring Docker and node-agent inside $DistroName (nodeId=$NodeId)..."
 $scriptPath = Join-Path ([System.IO.Path]::GetTempPath()) "playon-wsl-setup.sh"
 $setupScript | Set-Content -Path $scriptPath -Encoding UTF8 -NoNewline
 
 # Convert Windows path to WSL path
 $wslScriptPath = wsl.exe -d $DistroName -- wslpath -u ($scriptPath -replace '\\', '/')
 
+$nodeName = if ($NodeId -eq "local-wsl") { "Linux (WSL)" } else { "Linux (WSL) · $NodeId" }
+
 # Run the setup script
-$result = wsl.exe -d $DistroName -u root -- bash $wslScriptPath "$ApiUrl" "$NodeToken" 2>&1
+$result = wsl.exe -d $DistroName -u root -- bash $wslScriptPath "$ApiUrl" "$NodeToken" "$NodeId" "$nodeName" 2>&1
 $exitCode = $LASTEXITCODE
 
 Remove-Item $scriptPath -Force -ErrorAction SilentlyContinue
@@ -446,5 +454,5 @@ if (-not (Test-AgentInDistro)) {
   exit 15
 }
 
-Write-Status "ready" "local-wsl node is ready" 0
+Write-Status "ready" "$NodeId node is ready" 0
 exit 0
