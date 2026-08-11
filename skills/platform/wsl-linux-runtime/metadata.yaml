@@ -1,0 +1,13 @@
+name: platform.wsl-linux-runtime
+version: 0.1.0
+description: Enable Linux runtime via WSL2 on Windows Home for PlayOn game servers.
+tags:
+  - platform
+  - wsl
+  - windows
+  - linux
+containerSupport: none
+requiredTools: []
+os:
+  - windows
+ports: []
