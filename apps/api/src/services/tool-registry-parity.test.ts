@@ -73,6 +73,9 @@ const ALL_TOOLS = [
   "watchers_enable",
   "watchers_run_now",
   "watchers_runs_list",
+  "wsl_status",
+  "wsl_enable",
+  "wsl_repair",
 ];
 
 /** Server-scoped entries the invoke path must resolve before the handler sees them. */
@@ -247,6 +250,14 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(surface.confirmAction("fetch_url")).toBe("download a file into the server folder");
     expect(surface.skill("fetch_url")).toBe("modder");
     expect(surface.activityVerb("fetch_url")).toBe("fetch");
+    expect(surface.skill("wsl_status")).toBe("installer");
+    expect(surface.activityVerb("wsl_status")).toBe("search");
+    expect(surface.confirmAction("wsl_enable")).toBe(
+      "enable WSL Linux runtime on this Windows machine",
+    );
+    expect(surface.confirmAction("wsl_repair")).toBe(
+      "repair WSL Linux runtime on this Windows machine",
+    );
   });
 
   it("declares server scope for lifecycle tools that act on one server", () => {
@@ -263,6 +274,12 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(byName.get("skill_list")?.workspacePolicy).toBe("none");
     // Node-pool tools are keyed by nodeId or skill name; the workspace binding never applies.
     for (const name of ["placement_suggest", "nodes_add", "nodes_remove"]) {
+      expect(byName.get(name)?.workspacePolicy, `${name} should not be server-scoped`).toBe(
+        "none",
+      );
+    }
+    // WSL tools operate on the local Windows host; workspace binding never applies.
+    for (const name of ["wsl_status", "wsl_enable", "wsl_repair"]) {
       expect(byName.get(name)?.workspacePolicy, `${name} should not be server-scoped`).toBe(
         "none",
       );
