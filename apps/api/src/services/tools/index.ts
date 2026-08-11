@@ -10,6 +10,7 @@ import { skillsToolModule } from "./skills.js";
 import { snapshotsToolModule } from "./snapshots.js";
 import type { PlayOnToolEntry, ToolContext, ToolModule } from "./types.js";
 import { watchersToolModule } from "./watchers.js";
+import { wslToolModule } from "./wsl.js";
 import {
   resolveOptionalWorkspaceServerId,
   resolveWorkspaceServerId,
@@ -32,6 +33,7 @@ export const TOOL_MODULES: readonly ToolModule[] = [
   skillsToolModule,
   snapshotsToolModule,
   watchersToolModule,
+  wslToolModule,
 ];
 
 /** Enforce the declared workspace scope, then hand the handler a resolved scope. */
