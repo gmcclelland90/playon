@@ -56,7 +56,7 @@ Cutover metadata lives on each fingerprint’s optional `manage:` block in `skil
 | `pnpm test:contract` | Schema/protocol contracts |
 | `pnpm --filter @playon/api test:int` | API + SQLite integration |
 | `pnpm --filter @playon/agent-core test:agent` | Agent replay (when present) |
-| `pnpm test:e2e` | Playwright UI smoke (opt-in; run `pnpm test:e2e:install` once) |
+| `pnpm test:e2e` | Playwright UI smoke (opt-in; run `pnpm build && pnpm test:e2e:install` once) |
 
 LAN / MVP exit: [lan-install.md](lan-install.md), [mvp-exit-checklist.md](mvp-exit-checklist.md), [ollama-offline.md](ollama-offline.md).
 
