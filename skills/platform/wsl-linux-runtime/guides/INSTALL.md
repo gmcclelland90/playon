@@ -12,7 +12,7 @@ Enable Linux game servers on a **Windows node** using Windows Subsystem for Linu
 
 - Windows 10 version 2004+ or Windows 11
 - Virtualization enabled in BIOS/UEFI
-- Administrator access for initial setup (UAC or elevated one-liner)
+- Windows node agent installed elevated as an **admin user** (not SYSTEM — WSL rejects LocalSystem). Existing nodes: run `elevate-node-agent.ps1` once as Administrator while logged into the host.
 
 ## Agent tools
 
@@ -36,8 +36,8 @@ Pass `nodeId` for the Windows node. Sibling ids: `local` → `local-wsl`, otherw
    - `error` — Check the `error` field for details
 
 2. **Enable**: Run `wsl_enable` (requires confirmation).
-   - On Windows Home targeting `local`, UAC may run setup on that machine.
-   - From Linux Home (or any remote Home), the tool returns an elevated PowerShell `oneLiner` — run it on the Windows host.
+   - With an elevated (SYSTEM) Windows node agent, setup runs on that host with no UAC.
+   - Fallback: elevated PowerShell `oneLiner`, or run `elevate-node-agent.ps1` once.
    - Setup installs WSL2, creates the PlayOn Ubuntu distro, installs Docker Engine, and starts the sibling node agent against Home.
 
 3. **Verify**: The sibling (`local-wsl` or `{nodeId}-wsl`) appears in **Settings → Nodes** and becomes eligible for Linux skills.
@@ -48,7 +48,7 @@ Pass `nodeId` for the Windows node. Sibling ids: `local` → `local-wsl`, otherw
 |------------|---------|------------|
 | `wsl_reboot_required` | WSL kernel installed, reboot pending | Reboot Windows, then retry |
 | `wsl_virt_disabled` | Hardware virtualization off | Enable VT-x/AMD-V in BIOS |
-| `wsl_user_cancelled_uac` | User declined elevation prompt | Re-run and approve the UAC dialog |
+| `wsl_user_cancelled_uac` | Agent not elevated / UAC declined | Run `elevate-node-agent.ps1`, or approve UAC / one-liner |
 | `wsl_distro_failed` | Distro import failed | Run `wsl_repair` |
 | `wsl_docker_failed` | Docker install failed inside distro | Run `wsl_repair` |
 | `wsl_agent_failed` | Node agent failed to start | Run `wsl_repair` |

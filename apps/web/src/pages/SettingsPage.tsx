@@ -165,6 +165,34 @@ export function SettingsPage({ user }: { user: PublicUser }) {
   const [wslPanelNodeId, setWslPanelNodeId] = useState<string | null>(null);
   const [wslOneLiner, setWslOneLiner] = useState<string | null>(null);
   const [wslWaitingId, setWslWaitingId] = useState<string | null>(null);
+  const [wslJobId, setWslJobId] = useState<string | null>(() =>
+    sessionStorage.getItem("playon.wslJobId"),
+  );
+  const [wslJobNodeId, setWslJobNodeId] = useState<string | null>(() =>
+    sessionStorage.getItem("playon.wslJobNodeId"),
+  );
+  const [wslJobStartedAt, setWslJobStartedAt] = useState<number | null>(() => {
+    const raw = sessionStorage.getItem("playon.wslJobStartedAt");
+    const n = raw ? Number(raw) : NaN;
+    return Number.isFinite(n) ? n : null;
+  });
+  const [wslJobTick, setWslJobTick] = useState(0);
+
+  useEffect(() => {
+    if (wslJobId && wslJobNodeId) {
+      sessionStorage.setItem("playon.wslJobId", wslJobId);
+      sessionStorage.setItem("playon.wslJobNodeId", wslJobNodeId);
+      if (wslJobStartedAt != null) {
+        sessionStorage.setItem("playon.wslJobStartedAt", String(wslJobStartedAt));
+      }
+      setWslPanelNodeId(wslJobNodeId);
+      setWslWaitingId(wslJobNodeId);
+    } else {
+      sessionStorage.removeItem("playon.wslJobId");
+      sessionStorage.removeItem("playon.wslJobNodeId");
+      sessionStorage.removeItem("playon.wslJobStartedAt");
+    }
+  }, [wslJobId, wslJobNodeId, wslJobStartedAt]);
 
   const backupTarget = useQuery({
     queryKey: ["backup-target"],
@@ -187,7 +215,16 @@ export function SettingsPage({ user }: { user: PublicUser }) {
     mutationFn: (windowsNodeId: string) => api.wslEnable(windowsNodeId),
     onSuccess: async (res, windowsNodeId) => {
       setWslPanelNodeId(windowsNodeId);
-      if (res.mode === "token" && res.oneLiner) {
+      if (res.mode === "node_job" && res.jobId) {
+        setWslOneLiner(null);
+        setWslError(null);
+        setWslJobId(res.jobId);
+        setWslJobNodeId(windowsNodeId);
+        setWslJobStartedAt(Date.now());
+        setWslNotice(res.message || "Linux runtime setup started…");
+        setWslWaitingId(windowsNodeId);
+      } else if (res.mode === "token" && res.oneLiner) {
+        setWslJobId(null);
         setWslOneLiner(res.oneLiner);
         setWslNotice(
           res.message ||
@@ -195,17 +232,23 @@ export function SettingsPage({ user }: { user: PublicUser }) {
         );
         setWslWaitingId(windowsNodeId);
       } else if (res.error === "wsl_reboot_required" || res.status === "reboot_required") {
+        setWslJobId(null);
         setWslOneLiner(null);
         setWslNotice("WSL2 features enabled. Reboot Windows, then click Enable again.");
         setWslWaitingId(windowsNodeId);
-      } else if (res.ok || res.mode === "node_job") {
+      } else if (res.ok || res.status === "ready") {
+        setWslJobId(null);
         setWslOneLiner(null);
         setWslNotice(
-          res.message || "Linux runtime setup running via the Windows node — waiting for heartbeat…",
+          res.message || "Linux runtime setup finished — waiting for WSL node heartbeat…",
         );
         setWslWaitingId(windowsNodeId);
       } else {
-        setWslError(res.message || "Enable failed");
+        setWslJobId(null);
+        setWslError(
+          res.message ||
+            "Enable did not finish — stay logged into Windows so the UAC prompt can appear, then try again",
+        );
       }
       await qc.invalidateQueries({ queryKey: ["nodes"] });
     },
@@ -216,24 +259,96 @@ export function SettingsPage({ user }: { user: PublicUser }) {
     mutationFn: (windowsNodeId: string) => api.wslRepair(windowsNodeId),
     onSuccess: async (res, windowsNodeId) => {
       setWslPanelNodeId(windowsNodeId);
-      if (res.mode === "token" && res.oneLiner) {
+      if (res.mode === "node_job" && res.jobId) {
+        setWslOneLiner(null);
+        setWslError(null);
+        setWslJobId(res.jobId);
+        setWslJobNodeId(windowsNodeId);
+        setWslJobStartedAt(Date.now());
+        setWslNotice(res.message || "Linux runtime repair started…");
+        setWslWaitingId(windowsNodeId);
+      } else if (res.mode === "token" && res.oneLiner) {
+        setWslJobId(null);
         setWslOneLiner(res.oneLiner);
         setWslNotice(
           res.message ||
             "Automatic repair was unavailable — run this elevated PowerShell on the Windows host.",
         );
         setWslWaitingId(windowsNodeId);
-      } else if (res.ok || res.mode === "node_job") {
+      } else if (res.ok || res.status === "ready") {
+        setWslJobId(null);
         setWslOneLiner(null);
-        setWslNotice(res.message || "Linux runtime repair finished via the Windows node.");
+        setWslNotice(res.message || "Linux runtime repair finished — waiting for WSL node heartbeat…");
         setWslWaitingId(windowsNodeId);
       } else {
-        setWslError(res.message || "Repair failed");
+        setWslJobId(null);
+        setWslError(
+          res.message ||
+            "Repair did not finish — stay logged into Windows so the UAC prompt can appear, then try again",
+        );
       }
       await qc.invalidateQueries({ queryKey: ["nodes"] });
     },
     onError: (err: Error) => setWslError(err.message),
   });
+
+  const wslJob = useQuery({
+    queryKey: ["wsl-job", wslJobNodeId, wslJobId],
+    queryFn: () => api.nodeJob(wslJobNodeId!, wslJobId!),
+    enabled: Boolean(wslJobId && wslJobNodeId),
+    refetchInterval: 1500,
+  });
+
+  useEffect(() => {
+    if (!wslJobId || !wslJobStartedAt) return;
+    const id = window.setInterval(() => setWslJobTick((t) => t + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [wslJobId, wslJobStartedAt]);
+
+  useEffect(() => {
+    const job = wslJob.data?.job;
+    if (!job || !wslJobNodeId) return;
+    if (job.status === "queued" || job.status === "running") {
+      if (job.progress) setWslNotice(job.progress);
+      return;
+    }
+    // Terminal
+    setWslJobId(null);
+    setWslJobNodeId(null);
+    setWslJobStartedAt(null);
+    if (job.status === "failed") {
+      setWslError(job.error || "WSL setup failed");
+      setWslNotice(null);
+      return;
+    }
+    const result = job.result as
+      | { status?: string; message?: string; code?: number }
+      | undefined;
+    const status = result?.status;
+    if (status === "reboot_required") {
+      setWslNotice(result?.message || "Reboot Windows, then click Enable again.");
+      setWslWaitingId(wslJobNodeId);
+    } else if (status === "ready") {
+      setWslNotice(result?.message || "Linux runtime ready — waiting for WSL node heartbeat…");
+      setWslWaitingId(wslJobNodeId);
+    } else if (status && status !== "error") {
+      setWslNotice(result?.message || `WSL setup: ${status}`);
+      setWslWaitingId(wslJobNodeId);
+    } else {
+      setWslError(result?.message || job.error || "WSL setup failed");
+      setWslNotice(null);
+    }
+    void qc.invalidateQueries({ queryKey: ["nodes"] });
+  }, [wslJob.data, wslJobNodeId, qc]);
+
+  const wslElapsedLabel = (() => {
+    if (!wslJobStartedAt || !wslJobId) return null;
+    void wslJobTick;
+    const sec = Math.max(0, Math.floor((Date.now() - wslJobStartedAt) / 1000));
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${String(s).padStart(2, "0")}`;
+  })();
 
   const serversList = useQuery({
     queryKey: ["servers"],
@@ -337,6 +452,24 @@ export function SettingsPage({ user }: { user: PublicUser }) {
       window.setTimeout(() => setNodeNotice(null), 4000);
     }
   }, [dockerWaitingId, nodesList.data?.nodes]);
+
+  useEffect(() => {
+    if (!wslWaitingId || !nodesList.data?.nodes) return;
+    const siblingId = wslWaitingId === "local" ? "local-wsl" : `${wslWaitingId}-wsl`;
+    const sibling = nodesList.data.nodes.find((x) => x.id === siblingId);
+    const online =
+      sibling &&
+      (sibling.status === "online" || String(sibling.status).toLowerCase().includes("online"));
+    const installed =
+      sibling && sibling.agentVersion && sibling.agentVersion !== "pending";
+    if (online || installed) {
+      setWslWaitingId(null);
+      if (online) {
+        setWslNotice(`${siblingId} node is ready`);
+        window.setTimeout(() => setWslNotice(null), 4000);
+      }
+    }
+  }, [wslWaitingId, nodesList.data?.nodes]);
 
   const ollamaStatus = useQuery({
     queryKey: ["ollama-status", baseUrl],
@@ -783,7 +916,16 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                 wslSibling &&
                 (wslSibling.status === "online" ||
                   String(wslSibling.status).toLowerCase().includes("online"));
-              const wslPending = Boolean(wslSibling && !wslOnline);
+              // Sibling record with a real agent = installed (even if briefly stale/offline).
+              const wslInstalled = Boolean(
+                wslSibling &&
+                  wslSibling.agentVersion &&
+                  wslSibling.agentVersion !== "pending",
+              );
+              const wslPendingSetup = Boolean(
+                wslSibling && (!wslSibling.agentVersion || wslSibling.agentVersion === "pending"),
+              );
+              const wslOfflineInstalled = wslInstalled && !wslOnline;
               const wslPanelOpen = wslPanelNodeId === n.id;
               const nodeUpdate = updates.data?.nodes?.find((u) => u.nodeId === n.id);
               const needsAgentUpdate = Boolean(nodeUpdate?.updateAvailable);
@@ -834,8 +976,18 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                       {isWindows && wslOnline ? (
                         <span className="status-chip live">Linux (WSL)</span>
                       ) : null}
-                      {isWindows && (wslWaitingId === n.id || wslPending) && !wslOnline ? (
-                        <span className="status-chip warn">Waiting for WSL…</span>
+                      {isWindows && wslOfflineInstalled ? (
+                        <span className="status-chip warn">Linux (WSL) offline</span>
+                      ) : null}
+                      {isWindows &&
+                      (wslJobId && wslJobNodeId === n.id
+                        ? true
+                        : (wslWaitingId === n.id || wslPendingSetup) && !wslOnline && !wslInstalled) ? (
+                        <span className="status-chip warn">
+                          {wslJobId && wslJobNodeId === n.id
+                            ? `WSL setup…${wslElapsedLabel ? ` ${wslElapsedLabel}` : ""}`
+                            : "Waiting for WSL…"}
+                        </span>
                       ) : null}
                     </div>
                     {presenceHint ? (
@@ -858,11 +1010,13 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                         {panelOpen ? "Cancel" : "Install Docker"}
                       </button>
                     ) : null}
-                    {isWindows && !pendingSetup && !wslOnline ? (
+                    {isWindows && !pendingSetup && !wslInstalled && !wslOnline ? (
                       <button
                         className="btn btn-primary"
                         type="button"
-                        disabled={wslEnableMut.isPending}
+                        disabled={
+                          wslEnableMut.isPending || Boolean(wslJobId && wslJobNodeId === n.id)
+                        }
                         onClick={() => {
                           setWslError(null);
                           setWslNotice(null);
@@ -874,13 +1028,15 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                         }}
                       >
                         {wslEnableMut.isPending && wslPanelNodeId === n.id
-                          ? "Enabling…"
-                          : wslPanelOpen
-                            ? "Cancel"
-                            : "Enable Linux runtime"}
+                          ? "Starting…"
+                          : wslJobId && wslJobNodeId === n.id
+                            ? "Setting up…"
+                            : wslPanelOpen
+                              ? "Cancel"
+                              : "Enable Linux runtime"}
                       </button>
                     ) : null}
-                    {isWindows && wslPending && !wslOnline ? (
+                    {isWindows && (wslPendingSetup || wslOfflineInstalled) ? (
                       <button
                         className="btn"
                         type="button"
@@ -889,6 +1045,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                           setWslError(null);
                           setWslNotice(null);
                           setWslOneLiner(null);
+                          setWslPanelNodeId(n.id);
                           wslRepairMut.mutate(n.id);
                         }}
                       >
@@ -966,10 +1123,13 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                     Update PlayOn Home first, then update this node.
                   </p>
                 ) : null}
-                {needsDocker && isWindows && wslOnline ? (
+                {needsDocker && isWindows && wslInstalled ? (
                   <p className="muted status-inline">
                     Linux skills can use the WSL sibling ({wslSiblingId}). Windows-native Docker
                     Desktop is optional for this host.
+                    {wslOfflineInstalled
+                      ? " Sibling is offline — the Windows agent will wake WSL automatically, or use Repair."
+                      : ""}
                   </p>
                 ) : null}
                 {isWindows && wslPanelOpen ? (
@@ -984,6 +1144,13 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                         <span>Fallback — elevated PowerShell (run on the Windows host)</span>
                         <textarea readOnly rows={4} value={wslOneLiner} />
                       </label>
+                    ) : null}
+                    {wslJobId && wslJobNodeId === n.id ? (
+                      <p className="muted status-inline">
+                        In progress{wslElapsedLabel ? ` (${wslElapsedLabel})` : ""}
+                        {wslJob.data?.job?.status === "queued" ? " — queued on node" : ""}
+                        . Large downloads can take several minutes.
+                      </p>
                     ) : null}
                     {wslNotice && wslPanelNodeId === n.id ? (
                       <p className="ok">{wslNotice}</p>

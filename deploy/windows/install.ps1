@@ -111,11 +111,31 @@ cd /d `"$InstallRoot`"
 `"$nodeExe`" apps\node-agent\dist\index.js
 "@ | Set-Content -Path $nodeCmd -Encoding ASCII
 
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+  [Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+  throw "Run install.ps1 from an elevated PowerShell (Run as administrator)."
+}
+
 $actionApi = New-ScheduledTaskAction -Execute $apiCmd
 $actionNode = New-ScheduledTaskAction -Execute $nodeCmd
 $trigger = New-ScheduledTaskTrigger -AtStartup
-Register-ScheduledTask -TaskName "PlayOnControlPlane" -Action $actionApi -Trigger $trigger -Force | Out-Null
-Register-ScheduledTask -TaskName "PlayOnLocalNode" -Action $actionNode -Trigger $trigger -Force | Out-Null
+$settings = New-ScheduledTaskSettingsSet `
+  -AllowStartIfOnBatteries `
+  -DontStopIfGoingOnBatteries `
+  -ExecutionTimeLimit ([TimeSpan]::Zero)
+# Control plane can be SYSTEM; Local node agent must be a real user - WSL rejects LocalSystem.
+$userId = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$systemPrincipal = New-ScheduledTaskPrincipal `
+  -UserId "NT AUTHORITY\SYSTEM" `
+  -LogonType ServiceAccount `
+  -RunLevel Highest
+$nodePrincipal = New-ScheduledTaskPrincipal `
+  -UserId $userId `
+  -LogonType S4U `
+  -RunLevel Highest
+Register-ScheduledTask -TaskName "PlayOnControlPlane" -Action $actionApi -Trigger $trigger -Settings $settings -Principal $systemPrincipal -Force | Out-Null
+Register-ScheduledTask -TaskName "PlayOnLocalNode" -Action $actionNode -Trigger $trigger -Settings $settings -Principal $nodePrincipal -Force | Out-Null
 Start-ScheduledTask -TaskName "PlayOnControlPlane"
 Start-ScheduledTask -TaskName "PlayOnLocalNode"
 

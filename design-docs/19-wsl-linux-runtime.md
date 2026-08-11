@@ -65,8 +65,8 @@ Badge: `Local · Linux (WSL)` for local placement; `Remote · Linux (WSL)` when 
 | Surface | Behavior |
 |---------|----------|
 | Settings → Nodes | **Enable Linux runtime** on each eligible Windows node row (not a Home-global control) |
-| Remote Windows / Linux Home | Issue elevated PowerShell one-liner (token) to run on that host; wait for sibling heartbeat |
-| Windows Home + `local` | May still spawn UAC locally when the API process is on that machine |
+| Remote Windows / Linux Home | Prefer `wsl_ensure` on an elevated (SYSTEM) Windows node agent; token one-liner only as fallback |
+| Windows Home + `local` | Local UAC only if the Local node agent is not already elevated |
 | Progress | not installed → reboot/UAC needed → installing → waiting heartbeat → ready |
 | Agent | `wsl_status` / `wsl_enable` / `wsl_repair` with optional `nodeId` (Windows node); on `no_eligible_node` / `os_mismatch` offer enable before remote `nodes_add` |
 

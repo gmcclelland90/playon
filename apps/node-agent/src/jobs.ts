@@ -202,13 +202,44 @@ export async function reportJobResult(
   }
 }
 
+export async function reportJobProgress(
+  apiBase: string,
+  nodeId: string,
+  jobId: string,
+  message: string,
+  token?: string,
+): Promise<void> {
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (token?.trim()) headers.authorization = `Bearer ${token.trim()}`;
+  const res = await fetch(
+    `${apiBase.replace(/\/$/, "")}/api/nodes/${encodeURIComponent(nodeId)}/jobs/${encodeURIComponent(jobId)}/progress`,
+    {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ message }),
+    },
+  );
+  if (!res.ok) {
+    // Progress is best-effort — do not fail the job if Home is briefly unreachable.
+    console.warn(`[node-agent] job progress failed: ${res.status}`);
+  }
+}
+
+export type ExecuteJobContext = {
+  onProgress?: (message: string) => void | Promise<void>;
+};
+
 /**
  * Execute a claimed job locally with path jail under dataRoot.
  *
  * Every kind is validated on receive and again before the result is reported, so
  * a control plane on another version fails loudly instead of half-executing.
  */
-export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unknown> {
+export async function executeJob(
+  job: RemoteJob,
+  dataRoot: string,
+  ctx: ExecuteJobContext = {},
+): Promise<unknown> {
   if (!SUPPORTED_JOB_KIND_SET.has(job.kind)) {
     throw new NodeJobError("unsupported_job_kind", {
       kind: String((job as { kind: string }).kind),
@@ -626,7 +657,7 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
   }
 
   if (job.kind === "wsl_ensure") {
-    return executeWslEnsureJob(job.args);
+    return executeWslEnsureJob(job.args, ctx.onProgress);
   }
 
   throw new NodeJobError("unsupported_job_kind", {

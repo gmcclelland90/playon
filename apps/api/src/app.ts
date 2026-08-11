@@ -1789,7 +1789,9 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   app.post("/api/nodes/:nodeId/wsl/enable", async (c) => {
     requireCan(c, "servers.manage");
     try {
-      return c.json(await wslRuntime.enable(c.req.param("nodeId")));
+      const body = await c.req.json().catch(() => ({} as { wait?: boolean }));
+      // HTTP defaults to async (UI polls job progress). Agent tools call the service with wait:true.
+      return c.json(await wslRuntime.enable(c.req.param("nodeId"), { wait: body.wait === true }));
     } catch (err) {
       throw serviceHttpError(err, { ...wslNodeError, fallback: "wsl_enable_failed", code: "wsl_enable_failed" });
     }
@@ -1798,7 +1800,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   app.post("/api/nodes/:nodeId/wsl/repair", async (c) => {
     requireCan(c, "servers.manage");
     try {
-      return c.json(await wslRuntime.repair(c.req.param("nodeId")));
+      const body = await c.req.json().catch(() => ({} as { wait?: boolean }));
+      return c.json(await wslRuntime.repair(c.req.param("nodeId"), { wait: body.wait === true }));
     } catch (err) {
       throw serviceHttpError(err, { ...wslNodeError, fallback: "wsl_repair_failed", code: "wsl_repair_failed" });
     }
@@ -2235,6 +2238,19 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       status: updated.status,
       error: updated.error,
     });
+  });
+
+  app.post("/api/nodes/:nodeId/jobs/:jobId/progress", async (c) => {
+    requireNodeToken(c, config.nodeToken);
+    const nodeId = c.req.param("nodeId");
+    const jobId = c.req.param("jobId");
+    const existing = nodeJobService.get(jobId);
+    if (!existing || existing.nodeId !== nodeId) {
+      throw HttpError.notFound("job_not_found", { code: "job_not_found" });
+    }
+    const body = await jsonBody(c, z.object({ message: z.string().min(1).max(500) }));
+    const updated = nodeJobService.setProgress(jobId, body.message);
+    return c.json({ id: updated.id, progress: updated.progress, updatedAt: updated.updatedAt });
   });
 
   app.post("/api/nodes/:nodeId/jobs", async (c) => {

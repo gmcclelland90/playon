@@ -69,6 +69,8 @@ export type WslEnableResult = {
   /** Elevated PowerShell one-liner when enable must run on a remote Windows host. */
   oneLiner?: string;
   mode?: "local_uac" | "node_job" | "token";
+  /** When mode is node_job and wait=false, poll GET /api/nodes/:id/jobs/:jobId for progress. */
+  jobId?: string;
 };
 
 export type WslTokenRecord = {
@@ -410,7 +412,10 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
    * Prefer: local UAC (Windows Home + local) → node job on online Windows agent →
    * elevated one-liner only when the agent cannot run/elevate.
    */
-  async enable(windowsNodeId: string = LOCAL_NODE_ID): Promise<WslEnableResult> {
+  async enable(
+    windowsNodeId: string = LOCAL_NODE_ID,
+    opts: { wait?: boolean } = {},
+  ): Promise<WslEnableResult> {
     const win = await this.requireWindowsNode(windowsNodeId);
     const wslId = wslSiblingNodeId(win.id);
     await this.upsertPlaceholder(win.id, win.kind);
@@ -419,7 +424,9 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       return this.spawnElevated(win.id, wslId, false);
     }
 
-    const viaJob = await this.runViaNodeJob(win.id, wslId, "enable");
+    const viaJob = await this.runViaNodeJob(win.id, wslId, "enable", {
+      wait: opts.wait !== false,
+    });
     if (viaJob) return viaJob;
 
     const tok = await this.createToken(win.id, { repair: false });
@@ -435,7 +442,10 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     };
   }
 
-  async repair(windowsNodeId: string = LOCAL_NODE_ID): Promise<WslEnableResult> {
+  async repair(
+    windowsNodeId: string = LOCAL_NODE_ID,
+    opts: { wait?: boolean } = {},
+  ): Promise<WslEnableResult> {
     const win = await this.requireWindowsNode(windowsNodeId);
     const wslId = wslSiblingNodeId(win.id);
     await this.upsertPlaceholder(win.id, win.kind);
@@ -444,7 +454,9 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       return this.spawnElevated(win.id, wslId, true);
     }
 
-    const viaJob = await this.runViaNodeJob(win.id, wslId, "repair");
+    const viaJob = await this.runViaNodeJob(win.id, wslId, "repair", {
+      wait: opts.wait !== false,
+    });
     if (viaJob) return viaJob;
 
     const tok = await this.createToken(win.id, { repair: true });
@@ -465,6 +477,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     windowsNodeId: string,
     wslId: string,
     action: "enable" | "repair" | "status",
+    opts: { wait?: boolean } = {},
   ): Promise<WslEnableResult | null> {
     if (!this.config.nodeToken?.trim()) return null;
     // Require an explicit advertisement — pre-protocol / old agents fall back to one-liner.
@@ -477,6 +490,25 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     if (!scriptPath) return null;
     const scriptBase64 = fs.readFileSync(scriptPath).toString("base64");
     const timeoutMs = action === "status" ? 90_000 : 15 * 60_000;
+    const wait = opts.wait !== false;
+
+    // Reuse in-flight enable/repair so refresh + second click don't stack behind a busy agent.
+    if (!wait && action !== "status") {
+      const existing = nodeJobService.findActive(windowsNodeId, "wsl_ensure");
+      if (existing) {
+        return {
+          ok: true,
+          status: "not_installed",
+          message:
+            existing.progress ||
+            "Linux runtime setup already running on the Windows node — this can take several minutes",
+          nodeId: wslId,
+          windowsNodeId,
+          mode: "node_job",
+          jobId: existing.id,
+        };
+      }
+    }
 
     let jobId: string;
     try {
@@ -488,11 +520,27 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         scriptBase64,
       });
       jobId = job.id;
+      nodeJobService.setProgress(
+        jobId,
+        action === "status" ? "Checking WSL status…" : "Queued — waiting for Windows node agent…",
+      );
     } catch (err) {
       if (err instanceof NodeJobError && err.code === "unsupported_job_kind") {
         return null;
       }
       throw err;
+    }
+
+    if (!wait && action !== "status") {
+      return {
+        ok: true,
+        status: "not_installed",
+        message: "Linux runtime setup started on the Windows node — this can take several minutes",
+        nodeId: wslId,
+        windowsNodeId,
+        mode: "node_job",
+        jobId,
+      };
     }
 
     try {
@@ -510,10 +558,16 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
         };
       }
       const result = done.result as WslEnsureResult;
-      if (result.needsElevation) {
-        return null; // caller issues one-liner
-      }
       const status = (result.status as WslRuntimeStatus) || "error";
+      // Elevation miss / still not installed after enable → one-liner fallback for the host.
+      if (
+        result.needsElevation ||
+        (action !== "status" &&
+          (status === "not_installed" || status === "error") &&
+          result.code === 12)
+      ) {
+        return null;
+      }
       return {
         ok: status === "ready" || status === "reboot_required",
         status,

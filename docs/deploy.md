@@ -75,7 +75,12 @@ sudo bash deploy/install-node.sh \
   --token "$PLAYON_NODE_TOKEN"
 ```
 
-Windows: `.\deploy\windows\install-node.ps1 -ApiUrl http://... -Token ...`
+Windows (elevated PowerShell): `.\deploy\windows\install-node.ps1 -ApiUrl http://... -Token ...`
+
+The Windows node agent registers as the **installing admin user** with RunLevel Highest and LogonType **S4U** (`PlayOnNodeAgent`, at-startup). That stays up without a desktop session, avoids a second UAC for **Enable Linux runtime**, and can own that user’s WSL distros. Do **not** run the agent as SYSTEM — WSL returns `WSL_E_LOCAL_SYSTEM_NOT_SUPPORTED`.
+
+Existing non-elevated / SYSTEM / Interactive-only Windows nodes: run once (elevated)  
+`.\deploy\windows\elevate-node-agent.ps1`
 
 The node heartbeats capabilities (`docker`, `native`, `steamcmd`). Runtime jobs (process / container / SteamCMD / FS) execute on that host.
 
@@ -114,10 +119,10 @@ Any **Windows node** can host a sibling Linux compute node via WSL2. Home may ru
 
 **Enable (Settings → Nodes → Windows node row → Enable Linux runtime):**
 
-1. Click **Enable Linux runtime** on the Windows node.
-2. If Home is on that same Windows PC (`local`), PlayOn may prompt UAC and run setup locally.
-3. If Home is elsewhere (e.g. Linux lab), PlayOn shows an **elevated PowerShell one-liner** — run it on the Windows host.
-4. After reboot (if prompted), run Enable / the one-liner again. PlayOn creates the `playon-linux` distro, installs Docker Engine inside it, and starts the sibling node-agent.
+1. Click **Enable Linux runtime** on the Windows node (agent must be elevated — default after `install-node.ps1`).
+2. PlayOn runs `wsl_ensure` on that node with no UAC when the agent is an elevated admin user (default after `install-node.ps1`).
+3. Fallback: if the agent is still non-elevated, Home shows an elevated PowerShell one-liner (or run `elevate-node-agent.ps1` once).
+4. After reboot (if prompted), click Enable again. PlayOn creates the `playon-linux` distro, installs Docker Engine inside it, and starts the sibling node-agent.
 5. Once the sibling heartbeats, placement considers it for `os: [linux]` skills.
 
 **Sibling node ids:** `local` → `local-wsl`; any other Windows node `N` → `N-wsl`.
@@ -126,6 +131,7 @@ Any **Windows node** can host a sibling Linux compute node via WSL2. Home may ru
 
 - Distro: `playon-linux` (Ubuntu-based, imported via `wsl --import`)
 - Runtime: Docker Engine inside WSL (not Docker Desktop)
+- Durability: ensure writes `%UserProfile%\.wslconfig` with `vmIdleTimeout=-1`. The Windows parent node-agent holds an open `wsl` session and restarts the sibling agent every 15s (`PLAYON_WSL_KEEPALIVE=0` to disable).
 - Sibling agent heartbeats to the same Home as the Windows node (`-ApiUrl` / `-NodeToken` / `-NodeId`)
 - APIs: `/api/nodes/:nodeId/wsl/{status,enable,repair,token}` (legacy `/api/wsl/*` targets `local`)
 
@@ -150,7 +156,7 @@ Start-Process powershell -Verb RunAs -ArgumentList '-File', '.\deploy\windows\en
 |------|-------|--------|
 | 10 | `wsl_reboot_required` | Reboot Windows, then run Enable again |
 | 11 | `wsl_virt_disabled` | Enable Intel VT-x / AMD-V in BIOS |
-| 12 | `wsl_user_cancelled_uac` | Accept the elevation prompt |
+| 12 | `wsl_user_cancelled_uac` | Elevate the node agent (`elevate-node-agent.ps1`) or accept UAC / one-liner |
 | 13 | `wsl_distro_failed` | Check disk space; remove stale WSL distro manually |
 | 14 | `wsl_docker_failed` | Run Repair; check WSL distro logs |
 | 15 | `wsl_agent_failed` | Run Repair; verify PLAYON_NODE_TOKEN matches Home |

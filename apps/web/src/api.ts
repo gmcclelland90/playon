@@ -461,6 +461,7 @@ export const api = {
       error?: string;
       oneLiner?: string;
       mode?: "local_uac" | "node_job" | "token";
+      jobId?: string;
     }>(`/api/nodes/${encodeURIComponent(windowsNodeId)}/wsl/enable`, {
       method: "POST",
       body: JSON.stringify({}),
@@ -475,10 +476,25 @@ export const api = {
       error?: string;
       oneLiner?: string;
       mode?: "local_uac" | "node_job" | "token";
+      jobId?: string;
     }>(`/api/nodes/${encodeURIComponent(windowsNodeId)}/wsl/repair`, {
       method: "POST",
       body: JSON.stringify({}),
     }),
+  nodeJob: (nodeId: string, jobId: string) =>
+    request<{
+      job: {
+        id: string;
+        nodeId: string;
+        kind: string;
+        status: "queued" | "running" | "done" | "failed";
+        progress?: string;
+        result?: unknown;
+        error?: string;
+        createdAt: string;
+        updatedAt: string;
+      };
+    }>(`/api/nodes/${encodeURIComponent(nodeId)}/jobs/${encodeURIComponent(jobId)}`),
   updatesStatus: (force?: boolean) =>
     request<{
       currentVersion: string;

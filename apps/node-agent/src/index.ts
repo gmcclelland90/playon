@@ -2,8 +2,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildHeartbeat, postHeartbeat } from "./heartbeat.js";
-import { claimNextJob, executeJob, reportJobResult } from "./jobs.js";
+import { claimNextJob, executeJob, reportJobProgress, reportJobResult } from "./jobs.js";
 import { readAgentVersion } from "./version.js";
+import { startWslKeepalive } from "./wsl-keepalive.js";
 
 const apiBase = process.env.PLAYON_API_URL ?? "http://127.0.0.1:8787";
 const nodeId = process.env.PLAYON_NODE_ID ?? "local";
@@ -34,7 +35,11 @@ async function tickJobs() {
     if (!job) return;
     console.log(`[node-agent] job claim id=${job.id} kind=${job.kind}`);
     try {
-      const result = await executeJob(job, dataRoot);
+      const result = await executeJob(job, dataRoot, {
+        onProgress: async (message) => {
+          await reportJobProgress(apiBase, nodeId, job.id, message, nodeToken);
+        },
+      });
       await reportJobResult(apiBase, nodeId, job.id, { ok: true, result }, nodeToken);
       console.log(`[node-agent] job done id=${job.id}`);
       if (job.kind === "node_self_update") {
@@ -82,3 +87,5 @@ setInterval(() => {
 }, jobPollMs);
 // Immediate job poll so int tests don't wait a full interval.
 void tickJobsGuarded();
+// Windows parent agent: keep playon-linux awake so the sibling keeps heartbeating.
+startWslKeepalive({ nodeId });
