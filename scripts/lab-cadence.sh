@@ -17,7 +17,11 @@ export PLAYON_LAB_FILE_ISSUES="${PLAYON_LAB_FILE_ISSUES:-1}"
 export PLAYON_LLM_MODE="${PLAYON_LLM_MODE:-openai_compatible}"
 export PLAYON_RUNTIME="${PLAYON_RUNTIME:-docker}"
 
-git pull --ff-only
+# Lab tree is often dirtied by agent scp / experiments — never block the daily tick.
+git fetch origin
+git checkout -f main
+git reset --hard origin/main
+git clean -fd --exclude=tmp --exclude=node_modules --exclude=data --exclude=apps/*/data
 pnpm install --frozen-lockfile || pnpm install
 
 # Merge bar first (fire rule). On red, issues are filed; stop before matrix.
