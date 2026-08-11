@@ -3,10 +3,27 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+// Mock child_process for Windows test only
+let mockExecFileSync: any = null;
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    execFileSync: (cmd: string, args?: readonly string[], options?: any) => {
+      if (mockExecFileSync) {
+        return mockExecFileSync(cmd, args, options);
+      }
+      return actual.execFileSync(cmd as any, args as any, options);
+    },
+  };
+});
+
 import { performNodeSelfUpdate, swapInstallTree } from "./self-update.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  mockExecFileSync = null;
 });
 
 describe("swapInstallTree", () => {
@@ -129,13 +146,24 @@ describe("performNodeSelfUpdate", () => {
       const installRoot = path.join(root, "install");
       fs.mkdirSync(path.join(installRoot, "data"), { recursive: true });
 
-      const extracted = path.join(root, "extracted", "playon-node");
-      fs.mkdirSync(path.join(extracted, "apps", "node-agent", "dist"), { recursive: true });
-      fs.writeFileSync(
-        path.join(extracted, "package.json"),
-        JSON.stringify({ name: "playon-node", version: "0.2.0" }),
-      );
-      fs.writeFileSync(path.join(extracted, "apps", "node-agent", "dist", "index.js"), "// agent");
+      mockExecFileSync = (cmd: string, args?: readonly string[], options?: any) => {
+        if (cmd === "powershell.exe" && args && args.some((a) => a.includes("Expand-Archive"))) {
+          const cmdStr = args.join(" ");
+          const destMatch = cmdStr.match(/-DestinationPath\s+'([^']+)'/);
+          if (destMatch) {
+            const destDir = destMatch[1];
+            const extractedRoot = path.join(destDir, "playon-node");
+            fs.mkdirSync(path.join(extractedRoot, "apps", "node-agent", "dist"), { recursive: true });
+            fs.writeFileSync(
+              path.join(extractedRoot, "package.json"),
+              JSON.stringify({ name: "playon-node", version: "0.2.0" }),
+            );
+            fs.writeFileSync(path.join(extractedRoot, "apps", "node-agent", "dist", "index.js"), "// agent");
+            return;
+          }
+        }
+        throw new Error(`Unexpected command: ${cmd}`);
+      };
 
       const fakeArchiveBytes = Buffer.from("fake-zip-content");
       const sha256 = crypto.createHash("sha256").update(fakeArchiveBytes).digest("hex");
@@ -151,9 +179,6 @@ describe("performNodeSelfUpdate", () => {
             ),
         })),
       );
-
-      const selfUpdate = await import("./self-update.js");
-      vi.spyOn(selfUpdate, "extractArchive").mockReturnValue(extracted);
 
       await expect(
         performNodeSelfUpdate({
