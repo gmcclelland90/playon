@@ -12,6 +12,7 @@ import {
   WSL_DISTRO_NAME,
   wslSiblingNodeId,
 } from "@playon/shared";
+import { nodeJobService } from "../node-jobs.js";
 import {
   clearWslStateForTests,
   resolveEnsureWslScriptPath,
@@ -88,7 +89,7 @@ describe("wsl-runtime", () => {
     }
   });
 
-  it("issues token one-liner for remote Windows nodes (any Home OS)", async () => {
+  it("issues token one-liner when Windows node lacks wsl_ensure job support", async () => {
     const { config, dbPath } = tempConfig();
     const { db, sqlite } = createDb(dbPath);
     try {
@@ -105,6 +106,8 @@ describe("wsl-runtime", () => {
         kind: "lan",
         tunnelStatus: "none",
       });
+      // Old agent advertisement without wsl_ensure → token fallback (no 15m job wait).
+      nodeJobService.advertiseJobKinds("win-1", ["ping", "runtime_caps"]);
       const svc = new WslRuntimeService(db, config);
       const status = await svc.status("win-1");
       expect(status.windowsNodeId).toBe("win-1");

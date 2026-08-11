@@ -58,6 +58,7 @@ export const NodeJobKindSchema = z.enum([
   "manage_pack_read",
   "manage_seed",
   "manage_cutover",
+  "wsl_ensure",
 ]);
 
 /** Runtime capabilities advertised by a node (Local / Remote / Cloud). */

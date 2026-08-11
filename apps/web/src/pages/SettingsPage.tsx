@@ -187,17 +187,23 @@ export function SettingsPage({ user }: { user: PublicUser }) {
     mutationFn: (windowsNodeId: string) => api.wslEnable(windowsNodeId),
     onSuccess: async (res, windowsNodeId) => {
       setWslPanelNodeId(windowsNodeId);
-      if (res.oneLiner) {
+      if (res.mode === "token" && res.oneLiner) {
         setWslOneLiner(res.oneLiner);
         setWslNotice(
-          "Run the elevated PowerShell one-liner on the Windows host, then wait for the WSL node heartbeat.",
+          res.message ||
+            "Automatic setup was unavailable — run this elevated PowerShell on the Windows host.",
         );
         setWslWaitingId(windowsNodeId);
-      } else if (res.ok) {
-        setWslNotice("Linux runtime enabled — waiting for heartbeat...");
+      } else if (res.error === "wsl_reboot_required" || res.status === "reboot_required") {
+        setWslOneLiner(null);
+        setWslNotice("WSL2 features enabled. Reboot Windows, then click Enable again.");
         setWslWaitingId(windowsNodeId);
-      } else if (res.error === "wsl_reboot_required") {
-        setWslNotice("WSL2 features enabled. Reboot Windows, then run Enable again.");
+      } else if (res.ok || res.mode === "node_job") {
+        setWslOneLiner(null);
+        setWslNotice(
+          res.message || "Linux runtime setup running via the Windows node — waiting for heartbeat…",
+        );
+        setWslWaitingId(windowsNodeId);
       } else {
         setWslError(res.message || "Enable failed");
       }
@@ -210,12 +216,17 @@ export function SettingsPage({ user }: { user: PublicUser }) {
     mutationFn: (windowsNodeId: string) => api.wslRepair(windowsNodeId),
     onSuccess: async (res, windowsNodeId) => {
       setWslPanelNodeId(windowsNodeId);
-      if (res.oneLiner) {
+      if (res.mode === "token" && res.oneLiner) {
         setWslOneLiner(res.oneLiner);
-        setWslNotice("Run the elevated PowerShell one-liner on the Windows host to repair WSL.");
+        setWslNotice(
+          res.message ||
+            "Automatic repair was unavailable — run this elevated PowerShell on the Windows host.",
+        );
         setWslWaitingId(windowsNodeId);
-      } else if (res.ok) {
-        setWslNotice("Linux runtime repaired.");
+      } else if (res.ok || res.mode === "node_job") {
+        setWslOneLiner(null);
+        setWslNotice(res.message || "Linux runtime repair finished via the Windows node.");
+        setWslWaitingId(windowsNodeId);
       } else {
         setWslError(res.message || "Repair failed");
       }
@@ -965,12 +976,12 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                   <div className="stack tight" style={{ marginTop: "0.5rem" }}>
                     <p className="muted status-inline">
                       Enable a sibling Linux node via WSL2 on this Windows host (id{" "}
-                      <code>{wslSiblingId}</code>). Home may be on another machine — run the
-                      elevated one-liner on Windows when shown.
+                      <code>{wslSiblingId}</code>). PlayOn runs setup through the node agent when
+                      possible; an elevated one-liner appears only if that fails.
                     </p>
                     {wslOneLiner ? (
                       <label className="field">
-                        <span>Elevated PowerShell (run on the Windows host)</span>
+                        <span>Fallback — elevated PowerShell (run on the Windows host)</span>
                         <textarea readOnly rows={4} value={wslOneLiner} />
                       </label>
                     ) : null}

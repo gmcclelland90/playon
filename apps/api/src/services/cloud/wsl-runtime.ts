@@ -1,6 +1,6 @@
 /**
  * Enable Linux runtime via WSL2 on a Windows node (Home may be any OS).
- * Local UAC when API runs on that Windows host; otherwise token + elevated one-liner.
+ * Prefer node job on the Windows agent; local UAC on Windows Home; one-liner last resort.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -10,14 +10,17 @@ import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   LOCAL_NODE_ID,
+  NodeJobError,
   WSL_DISTRO_NAME,
   isWslNodeId,
   wslSiblingNodeId,
   type NodeKind,
+  type WslEnsureResult,
 } from "@playon/shared";
 import { findRepoRoot, type AppConfig } from "../../config.js";
 import type { Db } from "../../db/client.js";
 import { nodes } from "../../db/schema.js";
+import { nodeJobService } from "../node-jobs.js";
 
 export type WslRuntimeStatus =
   | "not_installed"
@@ -65,7 +68,7 @@ export type WslEnableResult = {
   error?: WslRuntimeError;
   /** Elevated PowerShell one-liner when enable must run on a remote Windows host. */
   oneLiner?: string;
-  mode?: "local_uac" | "token";
+  mode?: "local_uac" | "node_job" | "token";
 };
 
 export type WslTokenRecord = {
@@ -404,29 +407,32 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
   /**
    * Enable WSL for a Windows node.
-   * Local Windows Home (`local`): elevated UAC spawn.
-   * Otherwise: issue token one-liner (caller shows it / agent returns it).
+   * Prefer: local UAC (Windows Home + local) → node job on online Windows agent →
+   * elevated one-liner only when the agent cannot run/elevate.
    */
   async enable(windowsNodeId: string = LOCAL_NODE_ID): Promise<WslEnableResult> {
     const win = await this.requireWindowsNode(windowsNodeId);
     const wslId = wslSiblingNodeId(win.id);
     await this.upsertPlaceholder(win.id, win.kind);
 
-    if (!this.canRunLocallyFor(win.id)) {
-      const tok = await this.createToken(win.id, { repair: false });
-      return {
-        ok: true,
-        status: "not_installed",
-        message:
-          "Run this elevated PowerShell one-liner on the Windows host, then wait for the WSL node heartbeat",
-        nodeId: wslId,
-        windowsNodeId: win.id,
-        oneLiner: tok.oneLiner,
-        mode: "token",
-      };
+    if (this.canRunLocallyFor(win.id)) {
+      return this.spawnElevated(win.id, wslId, false);
     }
 
-    return this.spawnElevated(win.id, wslId, false);
+    const viaJob = await this.runViaNodeJob(win.id, wslId, "enable");
+    if (viaJob) return viaJob;
+
+    const tok = await this.createToken(win.id, { repair: false });
+    return {
+      ok: true,
+      status: "not_installed",
+      message:
+        "Could not run setup via the node agent automatically — run this elevated PowerShell on the Windows host, then wait for the WSL heartbeat",
+      nodeId: wslId,
+      windowsNodeId: win.id,
+      oneLiner: tok.oneLiner,
+      mode: "token",
+    };
   }
 
   async repair(windowsNodeId: string = LOCAL_NODE_ID): Promise<WslEnableResult> {
@@ -434,21 +440,102 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     const wslId = wslSiblingNodeId(win.id);
     await this.upsertPlaceholder(win.id, win.kind);
 
-    if (!this.canRunLocallyFor(win.id)) {
-      const tok = await this.createToken(win.id, { repair: true });
-      return {
-        ok: true,
-        status: "agent_missing",
-        message:
-          "Run this elevated PowerShell one-liner on the Windows host to repair the WSL runtime",
-        nodeId: wslId,
-        windowsNodeId: win.id,
-        oneLiner: tok.oneLiner,
-        mode: "token",
-      };
+    if (this.canRunLocallyFor(win.id)) {
+      return this.spawnElevated(win.id, wslId, true);
     }
 
-    return this.spawnElevated(win.id, wslId, true);
+    const viaJob = await this.runViaNodeJob(win.id, wslId, "repair");
+    if (viaJob) return viaJob;
+
+    const tok = await this.createToken(win.id, { repair: true });
+    return {
+      ok: true,
+      status: "agent_missing",
+      message:
+        "Could not repair via the node agent automatically — run this elevated PowerShell on the Windows host",
+      nodeId: wslId,
+      windowsNodeId: win.id,
+      oneLiner: tok.oneLiner,
+      mode: "token",
+    };
+  }
+
+  /** Enqueue wsl_ensure on the Windows node; null means fall back to one-liner. */
+  private async runViaNodeJob(
+    windowsNodeId: string,
+    wslId: string,
+    action: "enable" | "repair" | "status",
+  ): Promise<WslEnableResult | null> {
+    if (!this.config.nodeToken?.trim()) return null;
+    // Require an explicit advertisement — pre-protocol / old agents fall back to one-liner.
+    const advertised = nodeJobService.advertisedJobKinds(windowsNodeId);
+    if (!advertised?.includes("wsl_ensure")) {
+      return null;
+    }
+
+    const scriptPath = resolveEnsureWslScriptPath();
+    if (!scriptPath) return null;
+    const scriptBase64 = fs.readFileSync(scriptPath).toString("base64");
+    const timeoutMs = action === "status" ? 90_000 : 15 * 60_000;
+
+    let jobId: string;
+    try {
+      const job = nodeJobService.enqueue(windowsNodeId, "wsl_ensure", {
+        action,
+        wslNodeId: wslId,
+        apiUrl: this.apiBase(),
+        nodeToken: this.config.nodeToken,
+        scriptBase64,
+      });
+      jobId = job.id;
+    } catch (err) {
+      if (err instanceof NodeJobError && err.code === "unsupported_job_kind") {
+        return null;
+      }
+      throw err;
+    }
+
+    try {
+      const done = await nodeJobService.waitFor(jobId, { timeoutMs, intervalMs: 500 });
+      if (done.status === "failed") {
+        const errMsg = done.error ?? "wsl_ensure_failed";
+        if (/unsupported_job_kind/i.test(errMsg)) return null;
+        return {
+          ok: false,
+          status: "error",
+          message: errMsg,
+          nodeId: wslId,
+          windowsNodeId,
+          mode: "node_job",
+        };
+      }
+      const result = done.result as WslEnsureResult;
+      if (result.needsElevation) {
+        return null; // caller issues one-liner
+      }
+      const status = (result.status as WslRuntimeStatus) || "error";
+      return {
+        ok: status === "ready" || status === "reboot_required",
+        status,
+        message: result.message,
+        nodeId: wslId,
+        windowsNodeId,
+        error: codeToError(result.code),
+        mode: "node_job",
+      };
+    } catch (err) {
+      if (err instanceof NodeJobError && err.code === "timeout") {
+        return {
+          ok: false,
+          status: "error",
+          message: `WSL ${action} timed out waiting for the Windows node — check the node agent is online`,
+          nodeId: wslId,
+          windowsNodeId,
+          mode: "node_job",
+        };
+      }
+      throw err;
+    }
   }
 
   private spawnElevated(

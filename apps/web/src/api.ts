@@ -460,7 +460,7 @@ export const api = {
       windowsNodeId: string;
       error?: string;
       oneLiner?: string;
-      mode?: "local_uac" | "token";
+      mode?: "local_uac" | "node_job" | "token";
     }>(`/api/nodes/${encodeURIComponent(windowsNodeId)}/wsl/enable`, {
       method: "POST",
       body: JSON.stringify({}),
@@ -474,7 +474,7 @@ export const api = {
       windowsNodeId: string;
       error?: string;
       oneLiner?: string;
-      mode?: "local_uac" | "token";
+      mode?: "local_uac" | "node_job" | "token";
     }>(`/api/nodes/${encodeURIComponent(windowsNodeId)}/wsl/repair`, {
       method: "POST",
       body: JSON.stringify({}),

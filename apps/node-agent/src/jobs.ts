@@ -23,6 +23,7 @@ import {
 import { assertPackPathAllowed, runImportProbe } from "./import-probe.js";
 import { runManageCutover } from "./manage-cutover.js";
 import { probeCapabilities } from "./capabilities.js";
+import { executeWslEnsureJob } from "./wsl-ensure.js";
 import {
   beginContainerLogFollow,
   beginFileLogFollow,
@@ -126,6 +127,7 @@ export const SUPPORTED_JOB_KINDS: readonly NodeJobKind[] = [
   "manage_pack_read",
   "manage_seed",
   "manage_cutover",
+  "wsl_ensure",
 ];
 
 const SUPPORTED_JOB_KIND_SET: ReadonlySet<string> = new Set(SUPPORTED_JOB_KINDS);
@@ -621,6 +623,10 @@ export async function executeJob(job: RemoteJob, dataRoot: string): Promise<unkn
   if (job.kind === "manage_cutover") {
     const args = parseNodeJobArgs("manage_cutover", job.args);
     return parseNodeJobResult("manage_cutover", await runManageCutover(args, dataRoot));
+  }
+
+  if (job.kind === "wsl_ensure") {
+    return executeWslEnsureJob(job.args);
   }
 
   throw new NodeJobError("unsupported_job_kind", {

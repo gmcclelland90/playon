@@ -59,6 +59,21 @@ describe("parseNodeJobArgs", () => {
     expect(parseNodeJobArgs("ping", {})).toEqual({});
     expect(parseNodeJobArgs("runtime_caps")).toEqual({});
     expect(
+      parseNodeJobArgs("wsl_ensure", {
+        action: "enable",
+        wslNodeId: "win-1-wsl",
+        apiUrl: "http://172.16.0.156:8787",
+        nodeToken: "tok",
+        scriptBase64: "YWJj",
+      }),
+    ).toEqual({
+      action: "enable",
+      wslNodeId: "win-1-wsl",
+      apiUrl: "http://172.16.0.156:8787",
+      nodeToken: "tok",
+      scriptBase64: "YWJj",
+    });
+    expect(
       parseNodeJobArgs("node_self_update", {
         downloadUrl: "https://example.com/playon-node-0.1.11-linux-x64.tar.gz",
         sha256: "a".repeat(64),
