@@ -134,6 +134,16 @@ export async function performNodeSelfUpdate(args: {
     }
     fs.writeFileSync(archivePath, buf);
     const extracted = extractArchive(archivePath, path.join(staging, "extracted"));
+
+    if (process.platform === "win32" && !args.skipExit) {
+      return performWindowsSelfUpdate({
+        installRoot,
+        extracted,
+        preserve,
+        version: args.version,
+      });
+    }
+
     const { preserved } = swapInstallTree({
       target: installRoot,
       source: extracted,
@@ -147,7 +157,57 @@ export async function performNodeSelfUpdate(args: {
       restartRequired: args.skipExit ? false : true,
     };
   } finally {
-    // Staging dir holds the downloaded archive; safe to remove after swap.
-    fs.rmSync(staging, { recursive: true, force: true });
+    if (process.platform !== "win32" || args.skipExit) {
+      fs.rmSync(staging, { recursive: true, force: true });
+    }
   }
+}
+
+function performWindowsSelfUpdate(opts: {
+  installRoot: string;
+  extracted: string;
+  preserve: string[];
+  version: string;
+}): {
+  version: string;
+  installRoot: string;
+  preserved: string[];
+  restartRequired: boolean;
+} {
+  const helperScript = path.join(opts.extracted, "deploy", "windows", "apply-self-update.ps1");
+  if (!fs.existsSync(helperScript)) {
+    throw new Error(
+      "update_helper_missing: deploy/windows/apply-self-update.ps1 not found in release package",
+    );
+  }
+
+  const preserveArgs = opts.preserve.flatMap((name) => ["-Preserve", name]);
+  const args = [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    helperScript,
+    "-SourceDir",
+    opts.extracted,
+    "-TargetDir",
+    opts.installRoot,
+    "-AgentPid",
+    String(process.pid),
+    ...preserveArgs,
+  ];
+
+  const { spawn } = require("node:child_process");
+  const child = spawn("powershell.exe", args, {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+
+  return {
+    version: opts.version,
+    installRoot: opts.installRoot,
+    preserved: opts.preserve,
+    restartRequired: true,
+  };
 }
