@@ -58,6 +58,40 @@ function removeDockerContainersForTempRoot(root: string): void {
   }
 }
 
+/** Paper/Docker may leave root-owned files under game/.cache — force-remove via a helper container. */
+function rmTempRoot(root: string): void {
+  try {
+    fs.rmSync(root, { recursive: true, force: true });
+    return;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code;
+    if (code !== "EACCES" && code !== "EPERM") throw err;
+  }
+  try {
+    execFileSync(
+      "docker",
+      [
+        "run",
+        "--rm",
+        "-v",
+        `${root}:/playon-rm`,
+        "alpine:3.20",
+        "sh",
+        "-c",
+        "rm -rf /playon-rm/* /playon-rm/.[!.]* /playon-rm/..?*",
+      ],
+      { stdio: "ignore" },
+    );
+  } catch {
+    // ignore — test already finished; leftover /tmp is preferable to a red bar
+  }
+  try {
+    fs.rmSync(root, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
+}
+
 function tempConfig(): { db: Db; config: AppConfig; root: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-"));
   const dbPath = path.join(root, "playon.db");
@@ -83,7 +117,7 @@ afterEach(() => {
   for (const entry of temps.splice(0)) {
     removeDockerContainersForTempRoot(entry.root);
     entry.sqlite.close();
-    fs.rmSync(entry.root, { recursive: true, force: true });
+    rmTempRoot(entry.root);
   }
 });
 
@@ -281,7 +315,14 @@ describe("api integration (real Venice + Docker)", () => {
       steamcmdAppUpdate({
         serverDataPath: created.dataPath,
         appId: 90,
-        env: { PATH: "", Path: "", PLAYON_STEAMCMD: "", STEAMCMD: "", STEAMCMD_PATH: "" },
+        env: {
+          PATH: "",
+          Path: "",
+          PLAYON_STEAMCMD: "",
+          STEAMCMD: "",
+          STEAMCMD_PATH: "",
+          PLAYON_STEAMCMD_AUTO: "0",
+        },
       }),
     ).rejects.toBeInstanceOf(SteamcmdNotFoundError);
   });
