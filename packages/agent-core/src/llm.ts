@@ -199,6 +199,8 @@ export class OpenAICompatibleLlmClient implements LlmClient {
         },
       }));
       body.tool_choice = "auto";
+      // Several Venice models (and some Ollama ports) reject parallel tool batches.
+      body.parallel_tool_calls = false;
     }
 
     if (this.baseUrl.includes("venice.ai")) {
