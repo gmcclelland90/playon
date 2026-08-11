@@ -13,6 +13,12 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout sibling playon-games
+        uses: actions/checkout@v4
+        with:
+          repository: gmcclelland90/playon-games
+          token: ${{ secrets.PLAYON_GAMES_PAT || github.token }}
+          path: ../playon-games
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
