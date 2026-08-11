@@ -63,7 +63,7 @@ export function swapInstallTree(opts: {
   return { preserved };
 }
 
-function extractArchive(archivePath: string, destDir: string): string {
+export function extractArchive(archivePath: string, destDir: string): string {
   fs.rmSync(destDir, { recursive: true, force: true });
   fs.mkdirSync(destDir, { recursive: true });
   const isZip = archivePath.toLowerCase().endsWith(".zip");

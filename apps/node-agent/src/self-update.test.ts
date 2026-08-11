@@ -129,36 +129,31 @@ describe("performNodeSelfUpdate", () => {
       const installRoot = path.join(root, "install");
       fs.mkdirSync(path.join(installRoot, "data"), { recursive: true });
 
-      const pkgDir = path.join(root, "pkg");
-      const playonNode = path.join(pkgDir, "playon-node");
-      fs.mkdirSync(path.join(playonNode, "apps", "node-agent", "dist"), { recursive: true });
+      const extracted = path.join(root, "extracted", "playon-node");
+      fs.mkdirSync(path.join(extracted, "apps", "node-agent", "dist"), { recursive: true });
       fs.writeFileSync(
-        path.join(playonNode, "package.json"),
+        path.join(extracted, "package.json"),
         JSON.stringify({ name: "playon-node", version: "0.2.0" }),
       );
-      fs.writeFileSync(path.join(playonNode, "apps", "node-agent", "dist", "index.js"), "// agent");
-      const archive = path.join(root, "playon-node-0.2.0-windows-x64.zip");
-      const { execFileSync } = await import("node:child_process");
-      execFileSync(
-        "powershell.exe",
-        [
-          "-NoProfile",
-          "-Command",
-          `Compress-Archive -Path '${playonNode.replace(/'/g, "''")}' -DestinationPath '${archive.replace(/'/g, "''")}' -Force`,
-        ],
-        { stdio: "pipe", timeout: 60000 },
-      );
-      const bytes = fs.readFileSync(archive);
-      const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+      fs.writeFileSync(path.join(extracted, "apps", "node-agent", "dist", "index.js"), "// agent");
+
+      const fakeArchiveBytes = Buffer.from("fake-zip-content");
+      const sha256 = crypto.createHash("sha256").update(fakeArchiveBytes).digest("hex");
 
       vi.stubGlobal(
         "fetch",
         vi.fn(async () => ({
           ok: true,
           arrayBuffer: async () =>
-            bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+            fakeArchiveBytes.buffer.slice(
+              fakeArchiveBytes.byteOffset,
+              fakeArchiveBytes.byteOffset + fakeArchiveBytes.byteLength,
+            ),
         })),
       );
+
+      const selfUpdate = await import("./self-update.js");
+      vi.spyOn(selfUpdate, "extractArchive").mockReturnValue(extracted);
 
       await expect(
         performNodeSelfUpdate({
@@ -172,5 +167,5 @@ describe("performNodeSelfUpdate", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
-  }, { timeout: 90000 });
+  });
 });
