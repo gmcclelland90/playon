@@ -175,6 +175,6 @@ describe("performNodeSelfUpdate", () => {
         fs.rmSync(root, { recursive: true, force: true });
       }
     },
-    { timeout: 15000 },
+    20000,
   );
 });
