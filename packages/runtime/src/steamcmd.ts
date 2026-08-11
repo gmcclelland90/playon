@@ -258,11 +258,23 @@ export async function ensureSteamcmdBinary(opts?: {
   }
 
   const installRoot = opts?.installRoot ?? defaultInstallRoot(env);
-  const binary =
-    process.platform === "win32"
-      ? await installSteamcmdWindows({ installRoot, env })
-      : await installSteamcmdLinux({ installRoot, env });
-  return { binary, provisioned: true };
+  try {
+    const binary =
+      process.platform === "win32"
+        ? await installSteamcmdWindows({ installRoot, env })
+        : await installSteamcmdLinux({ installRoot, env });
+    return { binary, provisioned: true };
+  } catch (err) {
+    // Empty PATH / missing tar|powershell surfaces as spawn ENOENT — still "no SteamCMD".
+    const code = (err as NodeJS.ErrnoException)?.code;
+    const msg = err instanceof Error ? err.message : String(err);
+    if (code === "ENOENT" || /\bENOENT\b/i.test(msg) || /spawn\s+\S+\s+ENOENT/i.test(msg)) {
+      throw new SteamcmdNotFoundError(
+        `steamcmd_not_found: auto-install failed (${msg}) — install SteamCMD or ensure extract tools are on PATH`,
+      );
+    }
+    throw err;
+  }
 }
 
 /**
