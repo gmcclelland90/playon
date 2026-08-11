@@ -29,4 +29,9 @@ describe("placement helpers", () => {
     expect(placementBadge({ kind: "lan", name: "basement" })).toBe("Remote · basement");
     expect(placementBadge({ kind: "cloud", name: "vps-1", rttMs: 18 })).toBe("Cloud · vps-1 · 18ms");
   });
+
+  it("shows WSL badge for local-wsl node", () => {
+    expect(placementBadge({ kind: "local", nodeId: "local-wsl" })).toBe("Local · Linux (WSL)");
+    expect(placementBadge({ kind: "local", nodeId: "local" })).toBe("Local");
+  });
 });

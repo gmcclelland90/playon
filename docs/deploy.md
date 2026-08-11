@@ -108,6 +108,49 @@ Still run a **host-native** `playon-node` (or install-node against `http://127.0
 3. Install `wireguard-tools` (Linux) or WireGuard for Windows on Home before adding cloud nodes.
 4. Vendor Connect (Vultr OAuth, etc.) is **deferred** — scaffold remains under `apps/api/src/services/cloud/` but is not the product path.
 
+## Linux runtime (WSL) — Windows only
+
+Windows Home can run Linux-only skills via a WSL2-backed compute node. This avoids needing a second physical machine for Linux skills.
+
+**Enable (Settings → Nodes → Enable Linux runtime):**
+
+1. Click **Enable Linux runtime**. If WSL2 features are not enabled, PlayOn enables them and asks for a reboot.
+2. After reboot, click **Enable** again. PlayOn creates the `playon-linux` distro, installs Docker Engine inside it, and starts the `local-wsl` node-agent.
+3. Once the node heartbeats, placement considers `local-wsl` for `os: [linux]` skills.
+
+**Technical details:**
+
+- Distro: `playon-linux` (Ubuntu-based, imported via `wsl --import`)
+- Node ID: `local-wsl`, kind: `local`, badge: `Local · Linux (WSL)`
+- Runtime: Docker Engine inside WSL (not Docker Desktop)
+- Node-agent uses the job queue (same as LAN nodes, not `isLocalNodeId`)
+
+**Manual / CLI:**
+
+```powershell
+# Check status
+.\deploy\windows\ensure-wsl-runtime.ps1 -StatusOnly
+
+# Enable (requires elevation)
+Start-Process powershell -Verb RunAs -ArgumentList '-File', '.\deploy\windows\ensure-wsl-runtime.ps1'
+
+# Repair (re-runs setup)
+Start-Process powershell -Verb RunAs -ArgumentList '-File', '.\deploy\windows\ensure-wsl-runtime.ps1', '-Repair'
+```
+
+**Errors:**
+
+| Code | Error | Remedy |
+|------|-------|--------|
+| 10 | `wsl_reboot_required` | Reboot Windows, then run Enable again |
+| 11 | `wsl_virt_disabled` | Enable Intel VT-x / AMD-V in BIOS |
+| 12 | `wsl_user_cancelled_uac` | Accept the elevation prompt |
+| 13 | `wsl_distro_failed` | Check disk space; remove stale WSL distro manually |
+| 14 | `wsl_docker_failed` | Run Repair; check WSL distro logs |
+| 15 | `wsl_agent_failed` | Run Repair; verify PLAYON_NODE_TOKEN matches Home |
+
+**Related:** [design-docs/19](../design-docs/19-wsl-linux-runtime.md)
+
 ## Lab / us
 
 Prefer the same Home tarball customers get (`pnpm package:home`). Tag `v*` builds attach Windows + Linux artifacts via `.github/workflows/release-home.yml`, then sync OTA + deploy playon.games — see **[release.md](release.md)** for the standard CI/CD pipeline. After changing bootstrap scripts only, run `node scripts/sync-install-scripts.mjs` and push playon-games. Dev remains `pnpm dev` + `pnpm loop:verify`.

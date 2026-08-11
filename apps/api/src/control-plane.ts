@@ -7,6 +7,7 @@ import { AddNodeService } from "./services/cloud/add-node.js";
 import { LanGateway } from "./services/cloud/gateway.js";
 import { InstallDockerService } from "./services/cloud/install-docker.js";
 import { TunnelService } from "./services/cloud/tunnel.js";
+import { WslRuntimeService } from "./services/cloud/wsl-runtime.js";
 import { ConfirmService } from "./services/confirm.js";
 import { EventHub } from "./services/event-hub.js";
 import { ServerFsService } from "./services/fs-tools.js";
@@ -60,6 +61,7 @@ export type ControlPlane = {
   gateway: LanGateway;
   addNode: AddNodeService;
   installDocker: InstallDockerService;
+  wslRuntime: WslRuntimeService;
   updates: UpdateService;
   watchers: WatcherService;
   watcherEngine: WatcherEngine;
@@ -72,6 +74,7 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
   const gateway = new LanGateway(config);
   const addNode = new AddNodeService(db, config, tunnel);
   const installDocker = new InstallDockerService(db, config);
+  const wslRuntime = new WslRuntimeService(db, config);
   const servers = new ServerService(db, config, eventHub, gateway);
   const snapshots = new SnapshotService(db, config, servers);
   const adoption = new ServerAdoptionService(db, config, servers, snapshots);
@@ -124,6 +127,7 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
     gateway,
     addNode,
     installDocker,
+    wslRuntime,
     updates,
     watchers,
     watcherEngine: null as unknown as WatcherEngine,
