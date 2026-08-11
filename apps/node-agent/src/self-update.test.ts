@@ -122,52 +122,59 @@ describe("performNodeSelfUpdate", () => {
     }
   });
 
-  it("throws if Windows update helper script is missing", async () => {
-    if (process.platform !== "win32") return;
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-win-"));
-    try {
-      const installRoot = path.join(root, "install");
-      fs.mkdirSync(path.join(installRoot, "data"), { recursive: true });
+  it(
+    "throws if Windows update helper script is missing",
+    async () => {
+      if (process.platform !== "win32") return;
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-win-"));
+      try {
+        const installRoot = path.join(root, "install");
+        fs.mkdirSync(path.join(installRoot, "data"), { recursive: true });
 
-      const pkgDir = path.join(root, "pkg");
-      const playonNode = path.join(pkgDir, "playon-node");
-      fs.mkdirSync(path.join(playonNode, "apps", "node-agent", "dist"), { recursive: true });
-      fs.writeFileSync(path.join(playonNode, "package.json"), JSON.stringify({ name: "playon-node", version: "0.2.0" }));
-      fs.writeFileSync(path.join(playonNode, "apps", "node-agent", "dist", "index.js"), "// agent");
-      const archive = path.join(root, "playon-node-0.2.0-windows-x64.zip");
-      const { execFileSync } = await import("node:child_process");
-      execFileSync(
-        "powershell.exe",
-        [
-          "-NoProfile",
-          "-Command",
-          `Compress-Archive -Path '${playonNode.replace(/'/g, "''")}' -DestinationPath '${archive.replace(/'/g, "''")}' -Force`,
-        ],
-        { stdio: "pipe" },
-      );
-      const bytes = fs.readFileSync(archive);
-      const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+        const pkgDir = path.join(root, "pkg");
+        const playonNode = path.join(pkgDir, "playon-node");
+        fs.mkdirSync(path.join(playonNode, "apps", "node-agent", "dist"), { recursive: true });
+        fs.writeFileSync(
+          path.join(playonNode, "package.json"),
+          JSON.stringify({ name: "playon-node", version: "0.2.0" }),
+        );
+        fs.writeFileSync(path.join(playonNode, "apps", "node-agent", "dist", "index.js"), "// agent");
+        const archive = path.join(root, "playon-node-0.2.0-windows-x64.zip");
+        const { execFileSync } = await import("node:child_process");
+        execFileSync(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-Command",
+            `Compress-Archive -Path '${playonNode.replace(/'/g, "''")}' -DestinationPath '${archive.replace(/'/g, "''")}' -Force`,
+          ],
+          { stdio: "pipe" },
+        );
+        const bytes = fs.readFileSync(archive);
+        const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
 
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async () => ({
-          ok: true,
-          arrayBuffer: async () =>
-            bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
-        })),
-      );
+        vi.stubGlobal(
+          "fetch",
+          vi.fn(async () => ({
+            ok: true,
+            arrayBuffer: async () =>
+              bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+          })),
+        );
 
-      await expect(
-        performNodeSelfUpdate({
-          downloadUrl: "https://playon.games/home/packages/playon-node-0.2.0-windows-x64.zip",
-          sha256,
-          version: "0.2.0",
-          installRoot,
-          skipExit: false,
-        }),
-      ).rejects.toThrow("update_helper_missing");
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
+        await expect(
+          performNodeSelfUpdate({
+            downloadUrl: "https://playon.games/home/packages/playon-node-0.2.0-windows-x64.zip",
+            sha256,
+            version: "0.2.0",
+            installRoot,
+            skipExit: false,
+          }),
+        ).rejects.toThrow("update_helper_missing");
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+    { timeout: 15000 },
+  );
 });

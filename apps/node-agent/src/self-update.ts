@@ -118,6 +118,7 @@ export async function performNodeSelfUpdate(args: {
     args.preserve ?? ["data", "env", "node.env", "node.env.cmd"];
 
   const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-update-"));
+  let windowsHelperSpawned = false;
   try {
     const archivePath = path.join(
       staging,
@@ -136,12 +137,14 @@ export async function performNodeSelfUpdate(args: {
     const extracted = extractArchive(archivePath, path.join(staging, "extracted"));
 
     if (process.platform === "win32" && !args.skipExit) {
-      return performWindowsSelfUpdate({
+      const result = performWindowsSelfUpdate({
         installRoot,
         extracted,
         preserve,
         version: args.version,
       });
+      windowsHelperSpawned = true;
+      return result;
     }
 
     const { preserved } = swapInstallTree({
@@ -157,7 +160,7 @@ export async function performNodeSelfUpdate(args: {
       restartRequired: args.skipExit ? false : true,
     };
   } finally {
-    if (process.platform !== "win32" || args.skipExit) {
+    if (process.platform !== "win32" || args.skipExit || !windowsHelperSpawned) {
       fs.rmSync(staging, { recursive: true, force: true });
     }
   }
