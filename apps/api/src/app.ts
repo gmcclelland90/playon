@@ -1771,50 +1771,108 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     }
   });
 
+  const wslNodeError = {
+    fallback: "wsl_failed",
+    code: "wsl_failed",
+    notFoundPrefixes: ["wsl_unknown_node", "unknown_node"],
+  } as const;
+
+  app.get("/api/nodes/:nodeId/wsl/status", async (c) => {
+    requireCan(c, "settings.llm");
+    try {
+      return c.json(await wslRuntime.status(c.req.param("nodeId")));
+    } catch (err) {
+      throw serviceHttpError(err, { ...wslNodeError, fallback: "wsl_status_failed", code: "wsl_status_failed" });
+    }
+  });
+
+  app.post("/api/nodes/:nodeId/wsl/enable", async (c) => {
+    requireCan(c, "servers.manage");
+    try {
+      const body = await c.req.json().catch(() => ({} as { wait?: boolean }));
+      // HTTP defaults to async (UI polls job progress). Agent tools call the service with wait:true.
+      return c.json(await wslRuntime.enable(c.req.param("nodeId"), { wait: body.wait === true }));
+    } catch (err) {
+      throw serviceHttpError(err, { ...wslNodeError, fallback: "wsl_enable_failed", code: "wsl_enable_failed" });
+    }
+  });
+
+  app.post("/api/nodes/:nodeId/wsl/repair", async (c) => {
+    requireCan(c, "servers.manage");
+    try {
+      const body = await c.req.json().catch(() => ({} as { wait?: boolean }));
+      return c.json(await wslRuntime.repair(c.req.param("nodeId"), { wait: body.wait === true }));
+    } catch (err) {
+      throw serviceHttpError(err, { ...wslNodeError, fallback: "wsl_repair_failed", code: "wsl_repair_failed" });
+    }
+  });
+
+  app.post("/api/nodes/:nodeId/wsl/token", async (c) => {
+    requireCan(c, "servers.manage");
+    const repair = c.req.query("repair") === "1" || c.req.query("repair") === "true";
+    try {
+      return c.json(await wslRuntime.createToken(c.req.param("nodeId"), { repair }));
+    } catch (err) {
+      throw serviceHttpError(err, {
+        ...wslNodeError,
+        fallback: "wsl_token_failed",
+        code: "wsl_token_failed",
+      });
+    }
+  });
+
+  app.get("/api/nodes/:nodeId/wsl/:token", async (c) => {
+    try {
+      const script = await wslRuntime.scriptForToken(
+        c.req.param("nodeId"),
+        c.req.param("token"),
+      );
+      return c.text(script, 200, {
+        "content-type": "text/plain; charset=utf-8",
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "wsl_failed";
+      const safe = message.replace(/'/g, "''");
+      return c.text(`# error: ${message}\nthrow '${safe}'\n`, 400);
+    }
+  });
+
+  // Legacy Home-global routes → Windows `local` (backward compatible).
   app.get("/api/wsl/status", async (c) => {
     requireCan(c, "settings.llm");
     try {
-      return c.json(await wslRuntime.status());
+      return c.json(await wslRuntime.status(LOCAL_NODE_ID));
     } catch (err) {
       throw serviceHttpError(err, {
         fallback: "wsl_status_failed",
         code: "wsl_status_failed",
+        notFoundPrefixes: ["wsl_unknown_node"],
       });
     }
   });
 
   app.post("/api/wsl/enable", async (c) => {
     requireCan(c, "servers.manage");
-    if (!wslRuntime.isAvailable()) {
-      throw HttpError.badRequest("wsl_not_available", {
-        code: "wsl_not_available",
-        details: { hint: "WSL is only available on Windows" },
-      });
-    }
     try {
-      return c.json(await wslRuntime.enable());
+      return c.json(await wslRuntime.enable(LOCAL_NODE_ID));
     } catch (err) {
       throw serviceHttpError(err, {
         fallback: "wsl_enable_failed",
         code: "wsl_enable_failed",
+        notFoundPrefixes: ["wsl_unknown_node"],
       });
     }
   });
 
   app.post("/api/wsl/repair", async (c) => {
     requireCan(c, "servers.manage");
-    if (!wslRuntime.isAvailable()) {
-      throw HttpError.badRequest("wsl_not_available", {
-        code: "wsl_not_available",
-        details: { hint: "WSL is only available on Windows" },
-      });
-    }
     try {
-      return c.json(await wslRuntime.repair());
+      return c.json(await wslRuntime.repair(LOCAL_NODE_ID));
     } catch (err) {
       throw serviceHttpError(err, {
         fallback: "wsl_repair_failed",
         code: "wsl_repair_failed",
+        notFoundPrefixes: ["wsl_unknown_node"],
       });
     }
   });
@@ -2180,6 +2238,19 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       status: updated.status,
       error: updated.error,
     });
+  });
+
+  app.post("/api/nodes/:nodeId/jobs/:jobId/progress", async (c) => {
+    requireNodeToken(c, config.nodeToken);
+    const nodeId = c.req.param("nodeId");
+    const jobId = c.req.param("jobId");
+    const existing = nodeJobService.get(jobId);
+    if (!existing || existing.nodeId !== nodeId) {
+      throw HttpError.notFound("job_not_found", { code: "job_not_found" });
+    }
+    const body = await jsonBody(c, z.object({ message: z.string().min(1).max(500) }));
+    const updated = nodeJobService.setProgress(jobId, body.message);
+    return c.json({ id: updated.id, progress: updated.progress, updatedAt: updated.updatedAt });
   });
 
   app.post("/api/nodes/:nodeId/jobs", async (c) => {

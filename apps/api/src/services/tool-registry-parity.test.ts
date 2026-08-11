@@ -253,10 +253,10 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(surface.skill("wsl_status")).toBe("installer");
     expect(surface.activityVerb("wsl_status")).toBe("search");
     expect(surface.confirmAction("wsl_enable")).toBe(
-      "enable WSL Linux runtime on this Windows machine",
+      "enable WSL Linux runtime on this Windows node",
     );
     expect(surface.confirmAction("wsl_repair")).toBe(
-      "repair WSL Linux runtime on this Windows machine",
+      "repair WSL Linux runtime on this Windows node",
     );
   });
 
@@ -278,7 +278,7 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
         "none",
       );
     }
-    // WSL tools operate on the local Windows host; workspace binding never applies.
+    // WSL tools target a Windows node; workspace binding never applies.
     for (const name of ["wsl_status", "wsl_enable", "wsl_repair"]) {
       expect(byName.get(name)?.workspacePolicy, `${name} should not be server-scoped`).toBe(
         "none",

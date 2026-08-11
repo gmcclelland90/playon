@@ -16,6 +16,8 @@ export interface NodeJob {
   status: "queued" | "running" | "done" | "failed";
   result?: unknown;
   error?: string;
+  /** Latest human-readable progress line from the agent (long-running jobs). */
+  progress?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -89,15 +91,38 @@ export class NodeJobService {
     return job ? { ...job } : null;
   }
 
+  /** Newest queued/running job of a kind for a node (for UI reconnect / dedupe). */
+  findActive(nodeId: string, kind: NodeJobKind): NodeJob | null {
+    const active = [...this.jobs.values()]
+      .filter(
+        (j) =>
+          j.nodeId === nodeId &&
+          j.kind === kind &&
+          (j.status === "queued" || j.status === "running"),
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    return active[0] ? { ...active[0] } : null;
+  }
+
   /** Claim the oldest queued job for this node (or null). */
   claimNext(nodeId: string): NodeJob | null {
+    // Agent runs one job at a time; a new claim means any prior "running" was abandoned
+    // (process crash / restart) and must not block UI reconnect forever.
+    const now = new Date().toISOString();
+    for (const j of this.jobs.values()) {
+      if (j.nodeId === nodeId && j.status === "running") {
+        j.status = "failed";
+        j.error = "abandoned: agent reclaimed without completing";
+        j.updatedAt = now;
+      }
+    }
     const queued = [...this.jobs.values()]
       .filter((j) => j.nodeId === nodeId && j.status === "queued")
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const job = queued[0];
     if (!job) return null;
     job.status = "running";
-    job.updatedAt = new Date().toISOString();
+    job.updatedAt = now;
     return { ...job };
   }
 
@@ -116,6 +141,15 @@ export class NodeJobService {
     if (!job) throw new NodeJobError("unknown_job", { detail: jobId });
     job.status = "failed";
     job.error = error;
+    job.updatedAt = new Date().toISOString();
+    return { ...job };
+  }
+
+  /** Update progress for a running (or queued) job without completing it. */
+  setProgress(jobId: string, progress: string): NodeJob {
+    const job = this.jobs.get(jobId);
+    if (!job) throw new NodeJobError("unknown_job", { detail: jobId });
+    job.progress = progress.slice(0, 500);
     job.updatedAt = new Date().toISOString();
     return { ...job };
   }

@@ -1,45 +1,46 @@
 # WSL Linux Runtime (PlayOn)
 
-Enable Linux game servers on Windows Home using Windows Subsystem for Linux 2 (WSL2).
+Enable Linux game servers on a **Windows node** using Windows Subsystem for Linux 2 (WSL2). Home may be on Linux or Windows — enabling WSL adds a **sibling** Linux agent on the same Windows machine.
 
 ## When to use
 
-- Windows Home edition (no Hyper-V / Docker Desktop)
 - A skill requires `os: linux` but only a Windows machine is available
-- You want to run Linux-only game servers locally without a separate Linux box
+- Lab topology: Linux Home + Windows node — enable WSL on that Windows node
+- One-box Windows Home — enable WSL on `local` to get `local-wsl`
 
 ## Requirements
 
 - Windows 10 version 2004+ or Windows 11
 - Virtualization enabled in BIOS/UEFI
-- Administrator access for initial setup
+- Windows node agent installed elevated as an **admin user** (not SYSTEM — WSL rejects LocalSystem). Existing nodes: run `elevate-node-agent.ps1` once as Administrator while logged into the host.
 
 ## Agent tools
 
 | Tool | Purpose |
 |------|---------|
-| `wsl_status` | Check current WSL installation state |
-| `wsl_enable` | Install WSL2 + PlayOn distro + Docker + agent (requires confirmation) |
-| `wsl_repair` | Fix broken installations (requires confirmation) |
+| `wsl_status` | Check WSL state for a Windows `nodeId` (default `local`) |
+| `wsl_enable` | Install WSL2 + PlayOn distro + Docker + sibling agent (confirm); may return `oneLiner` |
+| `wsl_repair` | Fix broken installations (confirm); may return `oneLiner` |
+
+Pass `nodeId` for the Windows node. Sibling ids: `local` → `local-wsl`, otherwise `{nodeId}-wsl`.
 
 ## Setup flow
 
-1. **Check status**: `wsl_status` returns one of:
-   - `not_installed` — WSL not present
+1. **Check status**: `wsl_status` with the Windows node id returns one of:
+   - `not_installed` — WSL not present / not enrolled
    - `reboot_required` — WSL installed, reboot needed
    - `distro_missing` — WSL present but PlayOn distro not set up
    - `docker_missing` — Distro present but Docker not installed
-   - `agent_missing` — Docker present but node agent not running
-   - `ready` — Fully operational
+   - `agent_missing` — Docker present but node agent not running / waiting
+   - `ready` — Sibling node online (or local script reports ready)
    - `error` — Check the `error` field for details
 
-2. **Enable**: Run `wsl_enable` (requires host confirmation via UAC). This:
-   - Installs WSL2 if missing
-   - Creates the PlayOn Ubuntu distro
-   - Installs Docker Engine inside the distro
-   - Starts the node agent connecting back to the control plane
+2. **Enable**: Run `wsl_enable` (requires confirmation).
+   - With an elevated (SYSTEM) Windows node agent, setup runs on that host with no UAC.
+   - Fallback: elevated PowerShell `oneLiner`, or run `elevate-node-agent.ps1` once.
+   - Setup installs WSL2, creates the PlayOn Ubuntu distro, installs Docker Engine, and starts the sibling node agent against Home.
 
-3. **Verify**: After enable completes, the `local-wsl` node appears in **Settings → Nodes** and becomes eligible for Linux skills.
+3. **Verify**: The sibling (`local-wsl` or `{nodeId}-wsl`) appears in **Settings → Nodes** and becomes eligible for Linux skills.
 
 ## Common errors
 
@@ -47,7 +48,7 @@ Enable Linux game servers on Windows Home using Windows Subsystem for Linux 2 (W
 |------------|---------|------------|
 | `wsl_reboot_required` | WSL kernel installed, reboot pending | Reboot Windows, then retry |
 | `wsl_virt_disabled` | Hardware virtualization off | Enable VT-x/AMD-V in BIOS |
-| `wsl_user_cancelled_uac` | User declined elevation prompt | Re-run and approve the UAC dialog |
+| `wsl_user_cancelled_uac` | Agent not elevated / UAC declined | Run `elevate-node-agent.ps1`, or approve UAC / one-liner |
 | `wsl_distro_failed` | Distro import failed | Run `wsl_repair` |
 | `wsl_docker_failed` | Docker install failed inside distro | Run `wsl_repair` |
 | `wsl_agent_failed` | Node agent failed to start | Run `wsl_repair` |
@@ -56,10 +57,14 @@ Enable Linux game servers on Windows Home using Windows Subsystem for Linux 2 (W
 
 If automated setup fails repeatedly:
 
-1. Open PowerShell as Administrator
-2. Run: `wsl --install -d Ubuntu`
-3. Reboot if prompted
-4. Inside the new Ubuntu terminal, run the one-liner from **Settings → Nodes → Add Node**
+```powershell
+.\deploy\windows\ensure-wsl-runtime.ps1 `
+  -ApiUrl 'http://HOME:8787' `
+  -NodeToken '<PLAYON_NODE_TOKEN>' `
+  -NodeId 'win-1-wsl'
+```
+
+Run elevated. Or use the one-liner from **Settings → Nodes → Enable Linux runtime**.
 
 ## Networking notes
 
@@ -70,6 +75,7 @@ The WSL Linux runtime uses NAT networking by default. Servers bind to WSL's inte
 - **Node shows offline**: Check that the WSL distro is running (`wsl -l -v` in PowerShell)
 - **Docker errors**: Inside WSL, run `sudo systemctl status docker`
 - **Port conflicts**: Ensure no Windows service is using the same port
+- **Wrong Home**: Confirm `-ApiUrl` / `-NodeToken` match the Home this Windows node already joins
 
 ## See also
 

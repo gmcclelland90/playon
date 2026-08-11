@@ -11,6 +11,13 @@ param(
 $ErrorActionPreference = "Stop"
 $ManifestUrl = if ($env:PLAYON_UPDATE_MANIFEST_URL) { $env:PLAYON_UPDATE_MANIFEST_URL } else { "https://playon.games/home/latest.json" }
 
+# Node agent must stay elevated so host work (WSL feature enable, etc.) needs no second UAC.
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+  [Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $isAdmin) {
+  throw "Run install-node.ps1 from an elevated PowerShell (Run as administrator). Privilege is captured once at install so Enable Linux runtime can run without a UAC prompt."
+}
+
 # deploy/windows → package root is two levels up when inside a tree
 $Candidate = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $BundleRoot = $null
@@ -50,6 +57,37 @@ function Get-NodeBundleFromManifest {
   }
   if (-not $extracted) { throw "Extracted node package missing apps/node-agent/dist/index.js" }
   return $extracted
+}
+
+function Register-PlayOnNodeAgentTask {
+  param(
+    [Parameter(Mandatory = $true)][string]$StartCmd,
+    [Parameter(Mandatory = $true)][string]$WorkingDirectory
+  )
+  $action = New-ScheduledTaskAction -Execute $StartCmd -WorkingDirectory $WorkingDirectory
+  # WSL cannot run as LocalSystem (WSL_E_LOCAL_SYSTEM_NOT_SUPPORTED). Use the installing
+  # admin user with Highest + S4U so the agent stays up without a desktop session and
+  # Enable Linux runtime needs no second UAC.
+  $userId = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+  $trigger = New-ScheduledTaskTrigger -AtStartup
+  $settings = New-ScheduledTaskSettingsSet `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
+    -RestartCount 5 `
+    -RestartInterval (New-TimeSpan -Minutes 1) `
+    -ExecutionTimeLimit ([TimeSpan]::Zero) `
+    -StartWhenAvailable
+  $principal = New-ScheduledTaskPrincipal `
+    -UserId $userId `
+    -LogonType S4U `
+    -RunLevel Highest
+  Register-ScheduledTask `
+    -TaskName "PlayOnNodeAgent" `
+    -Action $action `
+    -Trigger $trigger `
+    -Settings $settings `
+    -Principal $principal `
+    -Force | Out-Null
 }
 
 if (-not $BundleRoot) {
@@ -123,9 +161,7 @@ pnpm --filter @playon/node-agent start >> `"$logFile`" 2>&1
 "@ | Set-Content -Path $start -Encoding ASCII
 }
 
-$action = New-ScheduledTaskAction -Execute $start -WorkingDirectory $InstallRoot
-$trigger = New-ScheduledTaskTrigger -AtStartup
-$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-Register-ScheduledTask -TaskName "PlayOnNodeAgent" -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null
+Register-PlayOnNodeAgentTask -StartCmd $start -WorkingDirectory $InstallRoot
 Start-ScheduledTask -TaskName "PlayOnNodeAgent"
-Write-Host "Node $NodeId joining $ApiUrl"
+$userId = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+Write-Host "Node $NodeId joining $ApiUrl (agent runs as $userId, elevated - not SYSTEM; WSL requires a user session)"

@@ -12,11 +12,36 @@ export type NodeTunnelStatus = "none" | "unconfigured" | "pending" | "up" | "dow
 /** Durable id for the control-plane host’s local node. */
 export const LOCAL_NODE_ID = "local";
 
-/** Durable id for the WSL-backed Linux node on Windows Home. */
+/** Durable id for the WSL-backed Linux sibling of Windows `local`. */
 export const LOCAL_WSL_NODE_ID = "local-wsl";
 
 /** WSL distro name for the Linux runtime on Windows. */
 export const WSL_DISTRO_NAME = "playon-linux";
+
+/**
+ * Sibling Linux node id for a Windows node's WSL runtime.
+ * `local` → `local-wsl`; any other Windows node `N` → `N-wsl`.
+ */
+export function wslSiblingNodeId(windowsNodeId: string): string {
+  const id = windowsNodeId.trim() || LOCAL_NODE_ID;
+  if (id === LOCAL_NODE_ID) return LOCAL_WSL_NODE_ID;
+  return `${id}-wsl`;
+}
+
+/** True when this node id is a WSL Linux sibling (`local-wsl` or `*-wsl`). */
+export function isWslNodeId(nodeId: string | null | undefined): boolean {
+  if (!nodeId) return false;
+  return nodeId === LOCAL_WSL_NODE_ID || nodeId.endsWith("-wsl");
+}
+
+/** Parent Windows node id for a WSL sibling, or null if not a WSL id. */
+export function wslParentNodeId(wslNodeId: string): string | null {
+  if (wslNodeId === LOCAL_WSL_NODE_ID) return LOCAL_NODE_ID;
+  if (wslNodeId.endsWith("-wsl") && wslNodeId.length > 4) {
+    return wslNodeId.slice(0, -4);
+  }
+  return null;
+}
 
 /**
  * Home-side marker in a server's data dir: the game files live on the node, so
@@ -50,10 +75,14 @@ export function placementBadge(opts: {
   name?: string | null;
   tunnelStatus?: NodeTunnelStatus | string | null;
   rttMs?: number | null;
-  /** Node id for special badges like local-wsl. */
+  /** Node id for special badges like local-wsl / {nodeId}-wsl. */
   nodeId?: string | null;
 }): string {
-  if (opts.nodeId === LOCAL_WSL_NODE_ID) return "Local · Linux (WSL)";
+  if (isWslNodeId(opts.nodeId)) {
+    const placement = placementFromNodeKind(opts.kind);
+    if (placement === "local") return "Local · Linux (WSL)";
+    return "Remote · Linux (WSL)";
+  }
   const placement = placementFromNodeKind(opts.kind);
   if (placement === "local") return "Local";
   if (placement === "cloud") {

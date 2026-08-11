@@ -440,31 +440,61 @@ export const api = {
       method: "POST",
       body: JSON.stringify({}),
     }),
-  wslStatus: () =>
+  wslStatus: (windowsNodeId: string) =>
     request<{
       status: "not_installed" | "reboot_required" | "distro_missing" | "docker_missing" | "agent_missing" | "ready" | "error";
       message: string;
       distro: string;
       nodeId: string;
+      windowsNodeId: string;
       error?: string;
       nodeOnline?: boolean;
-    }>("/api/wsl/status"),
-  wslEnable: () =>
+      canRunLocally?: boolean;
+    }>(`/api/nodes/${encodeURIComponent(windowsNodeId)}/wsl/status`),
+  wslEnable: (windowsNodeId: string) =>
     request<{
       ok: boolean;
       status: string;
       message: string;
       nodeId: string;
+      windowsNodeId: string;
       error?: string;
-    }>("/api/wsl/enable", { method: "POST", body: JSON.stringify({}) }),
-  wslRepair: () =>
+      oneLiner?: string;
+      mode?: "local_uac" | "node_job" | "token";
+      jobId?: string;
+    }>(`/api/nodes/${encodeURIComponent(windowsNodeId)}/wsl/enable`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  wslRepair: (windowsNodeId: string) =>
     request<{
       ok: boolean;
       status: string;
       message: string;
       nodeId: string;
+      windowsNodeId: string;
       error?: string;
-    }>("/api/wsl/repair", { method: "POST", body: JSON.stringify({}) }),
+      oneLiner?: string;
+      mode?: "local_uac" | "node_job" | "token";
+      jobId?: string;
+    }>(`/api/nodes/${encodeURIComponent(windowsNodeId)}/wsl/repair`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  nodeJob: (nodeId: string, jobId: string) =>
+    request<{
+      job: {
+        id: string;
+        nodeId: string;
+        kind: string;
+        status: "queued" | "running" | "done" | "failed";
+        progress?: string;
+        result?: unknown;
+        error?: string;
+        createdAt: string;
+        updatedAt: string;
+      };
+    }>(`/api/nodes/${encodeURIComponent(nodeId)}/jobs/${encodeURIComponent(jobId)}`),
   updatesStatus: (force?: boolean) =>
     request<{
       currentVersion: string;

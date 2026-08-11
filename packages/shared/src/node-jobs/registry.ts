@@ -8,6 +8,7 @@ import { MANAGE_NODE_JOB_CONTRACTS } from "./manage.js";
 import { META_NODE_JOB_CONTRACTS } from "./meta.js";
 import { PROCESS_NODE_JOB_CONTRACTS } from "./process.js";
 import { STEAMCMD_NODE_JOB_CONTRACTS } from "./steamcmd.js";
+import { WSL_NODE_JOB_CONTRACTS } from "./wsl.js";
 
 /**
  * Every job kind's wire contract, composed from the family modules. The
@@ -21,6 +22,7 @@ export const NODE_JOB_CONTRACTS = {
   ...PROCESS_NODE_JOB_CONTRACTS,
   ...STEAMCMD_NODE_JOB_CONTRACTS,
   ...MANAGE_NODE_JOB_CONTRACTS,
+  ...WSL_NODE_JOB_CONTRACTS,
 } as const satisfies CompleteNodeJobContractMap;
 
 export type NodeJobContracts = typeof NODE_JOB_CONTRACTS;

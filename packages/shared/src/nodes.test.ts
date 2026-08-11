@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { deriveNodePresence, placementBadge, placementFromNodeKind } from "./nodes.js";
+import {
+  deriveNodePresence,
+  isWslNodeId,
+  placementBadge,
+  placementFromNodeKind,
+  wslParentNodeId,
+  wslSiblingNodeId,
+} from "./nodes.js";
 
 describe("deriveNodePresence", () => {
   const now = 1_000_000;
@@ -30,8 +37,21 @@ describe("placement helpers", () => {
     expect(placementBadge({ kind: "cloud", name: "vps-1", rttMs: 18 })).toBe("Cloud · vps-1 · 18ms");
   });
 
-  it("shows WSL badge for local-wsl node", () => {
+  it("shows WSL badge for local-wsl and remote sibling ids", () => {
     expect(placementBadge({ kind: "local", nodeId: "local-wsl" })).toBe("Local · Linux (WSL)");
+    expect(placementBadge({ kind: "lan", nodeId: "win-1-wsl" })).toBe("Remote · Linux (WSL)");
     expect(placementBadge({ kind: "local", nodeId: "local" })).toBe("Local");
+  });
+});
+
+describe("wsl sibling ids", () => {
+  it("maps local and remote Windows nodes", () => {
+    expect(wslSiblingNodeId("local")).toBe("local-wsl");
+    expect(wslSiblingNodeId("win-1")).toBe("win-1-wsl");
+    expect(isWslNodeId("local-wsl")).toBe(true);
+    expect(isWslNodeId("win-1-wsl")).toBe(true);
+    expect(isWslNodeId("win-1")).toBe(false);
+    expect(wslParentNodeId("local-wsl")).toBe("local");
+    expect(wslParentNodeId("win-1-wsl")).toBe("win-1");
   });
 });

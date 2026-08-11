@@ -1,66 +1,91 @@
+import { LOCAL_NODE_ID } from "@playon/shared";
 import { globalTool, type ToolModule } from "./types.js";
 
 /**
- * WSL Linux runtime tools for Windows Home hosts.
- * Enable, status, and repair of the local-wsl node via ensure-wsl-runtime.ps1.
+ * WSL Linux runtime tools — target a Windows node (Home may be any OS).
+ * Enable/status/repair via ensure-wsl-runtime.ps1 (local UAC or elevated one-liner).
  */
 export const wslToolModule: ToolModule = ({ plane }) => {
   const { wslRuntime } = plane;
+
+  const nodeIdProp = {
+    type: "string" as const,
+    description:
+      "Windows node id to enable WSL on (default: local). Sibling Linux node will be local-wsl or {nodeId}-wsl.",
+  };
 
   return [
     globalTool({
       def: {
         name: "wsl_status",
         description:
-          "Check WSL Linux runtime status on Windows Home. Returns installation state, distro name, and node availability. Only works on Windows.",
+          "Check WSL Linux runtime status on a Windows node. Returns installation state, sibling node id, and whether a one-liner is needed. Works from any Home OS.",
         parameters: {
           type: "object",
-          properties: {},
+          properties: { nodeId: nodeIdProp },
           required: [],
         },
       },
       surface: { skill: "installer", activityVerb: "search" },
-      handler: async () => wslRuntime.status(),
+      handler: async (args) => {
+        const nodeId =
+          typeof args.nodeId === "string" && args.nodeId.trim()
+            ? args.nodeId.trim()
+            : LOCAL_NODE_ID;
+        return wslRuntime.status(nodeId);
+      },
     }),
 
     globalTool({
       def: {
         name: "wsl_enable",
         description:
-          "Enable WSL Linux runtime on Windows Home. Installs WSL2, sets up the PlayOn distro, Docker, and the node agent. Requires UAC elevation. Only works on Windows.",
+          "Enable WSL Linux runtime on a Windows node. On Windows Home local, prompts UAC; otherwise returns an elevated PowerShell one-liner to run on that host. Creates sibling local-wsl or {nodeId}-wsl.",
         requiresConfirm: true,
         parameters: {
           type: "object",
-          properties: {},
+          properties: { nodeId: nodeIdProp },
           required: [],
         },
       },
       surface: {
         skill: "installer",
-        confirmAction: "enable WSL Linux runtime on this Windows machine",
+        confirmAction: "enable WSL Linux runtime on this Windows node",
         activityVerb: "run",
       },
-      handler: async () => wslRuntime.enable(),
+      handler: async (args) => {
+        const nodeId =
+          typeof args.nodeId === "string" && args.nodeId.trim()
+            ? args.nodeId.trim()
+            : LOCAL_NODE_ID;
+        return wslRuntime.enable(nodeId);
+      },
     }),
 
     globalTool({
       def: {
         name: "wsl_repair",
         description:
-          "Repair WSL Linux runtime on Windows Home. Re-runs setup with the -Repair flag to fix broken installations. Requires UAC elevation. Only works on Windows.",
+          "Repair WSL Linux runtime on a Windows node. Re-runs setup with -Repair (local UAC or elevated one-liner).",
         requiresConfirm: true,
         parameters: {
           type: "object",
-          properties: {},
+          properties: { nodeId: nodeIdProp },
           required: [],
         },
       },
       surface: {
         skill: "installer",
-        confirmAction: "repair WSL Linux runtime on this Windows machine",
+        confirmAction: "repair WSL Linux runtime on this Windows node",
         activityVerb: "run",
       },
-      handler: async () => wslRuntime.repair(),
+      handler: async (args) => {
+        const nodeId =
+          typeof args.nodeId === "string" && args.nodeId.trim()
+            ? args.nodeId.trim()
+            : LOCAL_NODE_ID;
+        return wslRuntime.repair(nodeId);
+      },
     }),
   ];
 };
