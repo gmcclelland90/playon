@@ -153,11 +153,11 @@ describe("HealthService", () => {
     expect(created.status).toBe("stopped");
 
     // Unit bar must not wait on a live Docker Paper start (hangs/times out under CI load).
-    const restart = vi.spyOn(servers, "restart").mockImplementation(async (id) => {
-      await db.update(serversTable).set({ status: "running" }).where(eq(serversTable.id, id));
-      const row = await servers.get(id);
-      if (!row) throw new Error(`unknown_server: ${id}`);
-      return row;
+    // Return a synthetic running record; do not persist "running" then call get() —
+    // reconcileStatus would see a missing container and flip the row back to stopped.
+    const restart = vi.spyOn(servers, "restart").mockResolvedValue({
+      ...created,
+      status: "running",
     });
 
     const report = await health.checkServer(created.id, { remediate: true });
@@ -165,8 +165,6 @@ describe("HealthService", () => {
     expect(restart).toHaveBeenCalledWith(created.id);
     expect(report.checks.some((c) => c.remediated === "restart")).toBe(true);
     expect(report.escalations.some((e) => e.startsWith("restart_failed:"))).toBe(false);
-    const after = await servers.get(created.id);
-    expect(after?.status).toBe("running");
     restart.mockRestore();
   });
 
