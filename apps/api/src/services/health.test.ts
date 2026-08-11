@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type Database from "better-sqlite3";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { createDb } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
@@ -152,15 +152,42 @@ describe("HealthService", () => {
     });
     expect(created.status).toBe("stopped");
 
+    // Unit bar must not wait on a live Docker Paper start (hangs/times out under CI load).
+    const restart = vi.spyOn(servers, "restart").mockImplementation(async (id) => {
+      await db.update(serversTable).set({ status: "running" }).where(eq(serversTable.id, id));
+      const row = await servers.get(id);
+      if (!row) throw new Error(`unknown_server: ${id}`);
+      return row;
+    });
+
     const report = await health.checkServer(created.id, { remediate: true });
     expect(report.checks.some((c) => c.id === "process" && !c.ok)).toBe(true);
-    const remediated = report.checks.some((c) => c.remediated === "restart");
-    const restartAttempted = report.escalations.some((e) => e.startsWith("restart_failed:"));
-    // Docker-capable hosts remediates to running; others still prove the restart path ran.
-    expect(remediated || restartAttempted).toBe(true);
-    if (remediated) {
-      const after = await servers.get(created.id);
-      expect(after?.status).toBe("running");
-    }
+    expect(restart).toHaveBeenCalledWith(created.id);
+    expect(report.checks.some((c) => c.remediated === "restart")).toBe(true);
+    expect(report.escalations.some((e) => e.startsWith("restart_failed:"))).toBe(false);
+    const after = await servers.get(created.id);
+    expect(after?.status).toBe("running");
+    restart.mockRestore();
+  });
+
+  it("records restart_failed when remediation restart throws", async () => {
+    const { db, config } = tempConfig();
+    const servers = new ServerService(db, config);
+    const net = new NetToolsService(servers);
+    const health = new HealthService(servers, net, config);
+
+    const created = await servers.createFromSkill({
+      skillName: LAB_DOCKER_SKILL,
+      serverName: "Health Paper Fail",
+    });
+    expect(created.status).toBe("stopped");
+
+    const restart = vi.spyOn(servers, "restart").mockRejectedValue(new Error("docker_unavailable"));
+    const report = await health.checkServer(created.id, { remediate: true });
+    expect(report.checks.some((c) => c.id === "process" && !c.ok)).toBe(true);
+    expect(restart).toHaveBeenCalledWith(created.id);
+    expect(report.escalations.some((e) => e === "restart_failed:docker_unavailable")).toBe(true);
+    expect(report.checks.every((c) => c.remediated !== "restart")).toBe(true);
+    restart.mockRestore();
   });
 });
