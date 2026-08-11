@@ -2,6 +2,23 @@
 
 All notable changes to PlayOn Home (root `package.json` version) are listed here.
 
+## [0.2.2] — 2026-08-11
+
+### Added
+
+- **WSL Linux runtime on Windows nodes** — Settings → Nodes → **Enable Linux runtime** enrolls a sibling `local-wsl` / `{nodeId}-wsl` agent (Docker Engine inside `playon-linux`). Works when Home is on Linux; setup runs on the Windows host via the elevated node agent (no second UAC after `install-node.ps1`).
+
+### Fixed
+
+- WSL re-Enable no longer fights a running agent binary (`Text file busy`) or mislabels that failure as Docker.
+- Windows parent agent keeps the WSL sibling awake (hold session + idle-timeout config) so refresh does not show a false “Enable” again.
+- Int merge bar: SteamCMD auto-install spawn `ENOENT` maps to `SteamcmdNotFoundError`; Docker Paper tests clean up root-owned `game/.cache` (#779).
+
+### Notes
+
+- Update Home via OTA. Update Windows nodes so the agent includes WSL keepalive / ensure script improvements.
+- First Enable may still reboot once for WSL platform features; then click Enable again.
+
 ## [0.2.1] — 2026-08-09
 
 ### Fixed
