@@ -368,6 +368,38 @@ describe("executeJob", () => {
     fs.rmSync(root, { recursive: true, force: true });
   });
 
+  it("reports a bound UDP port via net_udp_listen", async () => {
+    const dgram = await import("node:dgram");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-udp-"));
+    const socket = dgram.createSocket("udp4");
+    try {
+      const port = await new Promise<number>((resolve, reject) => {
+        socket.once("error", reject);
+        socket.bind(0, "127.0.0.1", () => {
+          const addr = socket.address();
+          resolve(typeof addr === "string" ? 0 : addr.port);
+        });
+      });
+      const bound = (await executeJob(
+        { id: "udp-1", nodeId: "n1", kind: "net_udp_listen", args: { port } },
+        root,
+      )) as { port: number; listening: boolean; probe: string };
+      expect(bound.port).toBe(port);
+      expect(bound.listening).toBe(true);
+      expect(bound.probe).toMatch(/^(ss|netstat)$/);
+
+      await expect(
+        executeJob(
+          { id: "udp-bad", nodeId: "n1", kind: "net_udp_listen", args: { port: 0 } },
+          root,
+        ),
+      ).rejects.toMatchObject({ code: "validation_failed", kind: "net_udp_listen" });
+    } finally {
+      await new Promise<void>((resolve) => socket.close(() => resolve()));
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("manage_probe finds allowlisted trees and manage_pack rejects escapes", async () => {
     const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-"));
     const scan = fs.mkdtempSync(path.join(os.tmpdir(), "playon-scan-"));

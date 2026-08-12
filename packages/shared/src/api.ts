@@ -52,6 +52,7 @@ export const NodeJobKindSchema = z.enum([
   "process_status",
   "steamcmd_app_update",
   "runtime_caps",
+  "net_udp_listen",
   "node_self_update",
   "manage_probe",
   "manage_pack",

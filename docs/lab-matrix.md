@@ -44,7 +44,13 @@ pnpm lab:publish-status --force --history-comment
 | `tmp/lab-matrix-status.json` | Resume cursor + per-skill phases |
 | `tmp/lab-matrix-issues.jsonl` | Failure log for fix subagents |
 
-A skill is `ok` only when `port_open` passes (TCP listen, or UDP + process/query). Static green alone is not enough.
+A skill is `ok` only when `port_open` passes:
+
+- **TCP:** connect succeeds (Linux loopback / Windows `net_port_check` against `join_host`)
+- **Linux UDP:** `ss -uln` shows the required bind (query port only when `queryPortName` is set — Steam-networking exception). `status=running` is not enough.
+- **Windows UDP / no-TCP:** node-side listen (`net_port_check protocol=udp` → `net_udp_listen` job, Windows `netstat`) **or** query-online. Home `status=running` is not enough. Old agents that do not advertise `net_udp_listen` fall back to query; no dialect + no listen → `udp_listen_unproven`.
+
+Static green alone is not enough. Do not loosen Linux to match Windows. Regression: `windowsUdpPortOpenVerdict` unit tests in `@playon/shared` plus a real UDP bind via `probeUdpListen` / `net_udp_listen` (no friend servers).
 
 Linux `port_open` still probes **loopback** (`127.0.0.1`). That is intentional and must not be relaxed to shrink the skill queue. The published join path (`resolveJoinAddress` / `nodes.join_host`) is a **separate** fixture canary:
 

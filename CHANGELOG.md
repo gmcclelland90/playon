@@ -8,6 +8,10 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 - **Join-path canary** — `pnpm lab:join-path-canary` probes published `joinHost:gamePort` from `resolveJoinAddress` / `nodes.join_host` (not `127.0.0.1`). Fails if loopback is open but join host is not. Linux `fixtures.lab-docker-server` in CI/unit; WSL sibling + Windows PE live TCP documented as lab-only. Does not relax matrix `port_open` (`#843`).
 
+### Fixed
+
+- **Windows UDP `port_open`** — lab-matrix no longer treats Home `status=running` as a listen. Windows UDP/no-TCP requires query-online or a node-side `net_udp_listen` check (`ss`/`netstat`). Linux `ss` path is unchanged (`#846`).
+
 ## [0.2.3] — 2026-08-12
 
 ### Added

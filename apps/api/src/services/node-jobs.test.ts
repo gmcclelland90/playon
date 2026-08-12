@@ -121,6 +121,12 @@ describe("NodeJobService", () => {
     expect(() => svc.enqueue("node-a", "ping")).not.toThrow();
   });
 
+  it("validates net_udp_listen before queueing", () => {
+    const svc = new NodeJobService();
+    expect(svc.enqueue("node-a", "net_udp_listen", { port: 27015 }).args).toEqual({ port: 27015 });
+    expect(() => svc.enqueue("node-a", "net_udp_listen", { port: 0 })).toThrow(/validation_failed/);
+  });
+
   it("stays optimistic for agents that advertise nothing", () => {
     const svc = new NodeJobService();
     svc.advertiseJobKinds("legacy-node", undefined);

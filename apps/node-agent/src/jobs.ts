@@ -9,6 +9,7 @@ import {
   createRuntime,
   resolveInJail,
   steamcmdAppUpdate,
+  probeUdpListen,
   type DockerAdapter,
   type ProcessSupervisor,
 } from "@playon/runtime";
@@ -101,6 +102,7 @@ export type RemoteJobKind = NodeJobKind;
 export const SUPPORTED_JOB_KINDS: readonly NodeJobKind[] = [
   "ping",
   "runtime_caps",
+  "net_udp_listen",
   "node_self_update",
   "fs_list",
   "fs_ensure_dir",
@@ -262,6 +264,11 @@ export async function executeJob(
       ...probeCapabilities(dataRoot),
       jobKinds: [...SUPPORTED_JOB_KINDS],
     });
+  }
+
+  if (job.kind === "net_udp_listen") {
+    const { port } = parseNodeJobArgs("net_udp_listen", job.args);
+    return parseNodeJobResult("net_udp_listen", probeUdpListen(port));
   }
 
   if (job.kind === "node_self_update") {

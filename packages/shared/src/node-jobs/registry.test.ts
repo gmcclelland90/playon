@@ -105,6 +105,14 @@ describe("parseNodeJobArgs", () => {
     expect(() => parseNodeJobArgs("ping", { path: "/etc" })).toThrow(/validation_failed/);
   });
 
+  it("validates net_udp_listen args", () => {
+    expect(parseNodeJobArgs("net_udp_listen", { port: 27015 })).toEqual({ port: 27015 });
+    expect(() => parseNodeJobArgs("net_udp_listen", { port: 0 })).toThrow(/validation_failed/);
+    expect(() => parseNodeJobArgs("net_udp_listen", { port: 27015, extra: true })).toThrow(
+      /validation_failed/,
+    );
+  });
+
   it("applies fs defaults so both shores see the same args", () => {
     expect(parseNodeJobArgs("fs_list", {})).toEqual({ path: "." });
     expect(parseNodeJobArgs("fs_read_text", { path: "servers/a/log.txt" })).toEqual({
@@ -487,6 +495,19 @@ describe("parseNodeJobResult", () => {
     expect(parseNodeJobResult("fs_copy", { from: "a", to: "b" }).to).toBe("b");
     expect(parseNodeJobResult("fs_put_archive", { path: "servers/a", ok: true }).ok).toBe(true);
     expect(parseNodeJobResult("fs_get_archive", { archiveBase64: "" }).archiveBase64).toBe("");
+  });
+
+  it("accepts a net_udp_listen payload", () => {
+    expect(
+      parseNodeJobResult("net_udp_listen", {
+        port: 27015,
+        listening: true,
+        probe: "netstat",
+      }),
+    ).toEqual({ port: 27015, listening: true, probe: "netstat" });
+    expect(() =>
+      parseNodeJobResult("net_udp_listen", { port: 27015, listening: true, probe: "lsof" }),
+    ).toThrow(NodeJobError);
   });
 
   it("accepts the container payloads shipped agents already send", () => {
