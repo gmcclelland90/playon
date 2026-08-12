@@ -8,15 +8,17 @@ The in-process service graph shared by HTTP routes, agent tools, and background 
 
 ## Server
 
-A managed game-server instance with its own data directory, skill marker (`skill.json`), runtime handle, and player panel blocks.
+A managed game-server instance with its own data directory, package marker (`skill.json`), runtime handle, and player panel blocks.
 
-## Skill (game skill)
+## Game / Platform package
 
-Versioned game/platform knowledge package (metadata, guides, optional query connector). Installed servers pin a Skill via the Skill Marker. Distinct from **agent skills** (fun XP tracks: Install, Monitor, Config, Fix, Backup, Panel, Mod, Lead).
+Versioned knowledge package (metadata, guides, optional query connector) identified by `games.*` or `platform.*`. **Games** (e.g. `games.minecraft-paper`) are player-facing; **Platform packages** (e.g. `platform.docker-basics`) provide common host capabilities. Installed servers pin a package via the Package Marker. Together, these share the **Package** umbrella (same `.skill.zip` format, marker, and import/export protocol).
 
-## Skill Marker
+Distinct from **agent skills** — XP tracks like Install, Monitor, Config, Fix, Backup, Panel, Mod, Lead that classify tool surfaces, not installable packages.
 
-Per-server `skill.json` under the server data path. Single read/write/validate contract (`apps/api/src/services/skill-marker.ts`) for provision, import, panel join, query dialect, and runtime start. Create and import both write the full marker from skill metadata; import may add `importedFrom` / `importedAt`.
+## Package Marker
+
+Per-server `skill.json` under the server data path. Single read/write/validate contract (`apps/api/src/services/skill-marker.ts`) for provision, import, panel join, query dialect, and runtime start. Create and import both write the full marker from package metadata; import may add `importedFrom` / `importedAt`.
 
 ## Player Panel
 
@@ -28,7 +30,7 @@ Canonical catalog of agent tools. A **Tool Entry** colocates the LLM definition,
 
 ## Query Dialect
 
-Read-only live discovery protocol for a Skill (`minecraft_status`, `a2s`, `skill_module`, …). Owned by the Connector registry (`DialectDescriptor` + `builtInDialectIds`); distinct from admin/RCON dialects. Built-ins carry `portPreference` (`game` | `query`); `none` and `skill_module` stay outside the built-in set.
+Read-only live discovery protocol for a Game or Platform package (`minecraft_status`, `a2s`, `skill_module`, …). Owned by the Connector registry (`DialectDescriptor` + `builtInDialectIds`); distinct from admin/RCON dialects. Built-ins carry `portPreference` (`game` | `query`); `none` and `skill_module` stay outside the built-in set.
 
 ## Live Server State
 
@@ -36,10 +38,10 @@ Uniform result of a Query Dialect connector (online, players, map, …). Project
 
 ## Runtime Selection
 
-How a Server starts: Docker container vs OS process. Host `PLAYON_RUNTIME` (`docker` | `native`) is authoritative for adapter construction and mode labels — native hosts never pretend to be Docker. Skill `containerSupport` is colocated with that host capability:
+How a Server starts: Docker container vs OS process. Host `PLAYON_RUNTIME` (`docker` | `native`) is authoritative for adapter construction and mode labels — native hosts never pretend to be Docker. Package `containerSupport` is colocated with that host capability:
 
 - `containerSupport=none` → process supervisor
 - `containerSupport=full` (or `partial`) → Docker when the host is in docker mode
-- Host `PLAYON_RUNTIME=native` → always process, even for container-capable skills
+- Host `PLAYON_RUNTIME=native` → always process, even for container-capable packages
 
 See [docs/adr/0002-real-runtime-and-llm.md](docs/adr/0002-real-runtime-and-llm.md).
