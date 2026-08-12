@@ -256,8 +256,8 @@ copyFile(
 );
 
 copyTree(
-  path.join(root, "skills", "platform"),
-  path.join(stage, "skills", "platform"),
+  path.join(root, "catalog", "platform"),
+  path.join(stage, "catalog", "platform"),
   (name) => name !== "node_modules",
 );
 copyFile(
