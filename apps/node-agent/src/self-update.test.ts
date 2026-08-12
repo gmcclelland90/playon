@@ -193,4 +193,53 @@ describe("performNodeSelfUpdate", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("swapInstallTree does not delete sibling processes under data tree (#837 regression)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-sibling-"));
+    try {
+      const target = path.join(root, "target");
+      const source = path.join(root, "source");
+
+      // Simulate a game server executable under data/ (like Moria, VRising, etc.)
+      fs.mkdirSync(path.join(target, "data", "servers", "vrising"), { recursive: true });
+      fs.writeFileSync(path.join(target, "data", "servers", "vrising", "server.exe"), "fake PE");
+      fs.writeFileSync(path.join(target, "data", "servers", "vrising", "world.db"), "save data");
+
+      // Other data that should be preserved
+      fs.writeFileSync(path.join(target, "data", "state.db"), "agent state");
+
+      // Old package files that should be replaced
+      fs.writeFileSync(path.join(target, "old-package.json"), "{}");
+      fs.mkdirSync(path.join(target, "apps"), { recursive: true });
+      fs.writeFileSync(path.join(target, "apps", "old-agent.js"), "old");
+
+      // New package files
+      fs.mkdirSync(path.join(source, "apps", "node-agent", "dist"), { recursive: true });
+      fs.writeFileSync(path.join(source, "package.json"), JSON.stringify({ version: "0.2.3" }));
+      fs.writeFileSync(path.join(source, "apps", "node-agent", "dist", "index.js"), "new agent");
+
+      const result = swapInstallTree({
+        target,
+        source,
+        preserve: ["data", "env"],
+      });
+
+      expect(result.preserved).toContain("data");
+
+      // Data tree and all sibling game server files must survive the swap
+      expect(fs.existsSync(path.join(target, "data", "servers", "vrising", "server.exe"))).toBe(true);
+      expect(fs.readFileSync(path.join(target, "data", "servers", "vrising", "server.exe"), "utf8")).toBe("fake PE");
+      expect(fs.existsSync(path.join(target, "data", "servers", "vrising", "world.db"))).toBe(true);
+      expect(fs.existsSync(path.join(target, "data", "state.db"))).toBe(true);
+
+      // New package files should be in place
+      expect(fs.existsSync(path.join(target, "apps", "node-agent", "dist", "index.js"))).toBe(true);
+      expect(fs.readFileSync(path.join(target, "package.json"), "utf8")).toContain("0.2.3");
+
+      // Old files not in source should be gone
+      expect(fs.existsSync(path.join(target, "old-package.json"))).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
