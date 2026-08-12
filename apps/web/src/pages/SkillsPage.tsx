@@ -830,11 +830,11 @@ function CatalogDetail({
             <dt>Catalog</dt>
             <dd>
               <a
-                href={`https://playon.games/skills/${encodeURIComponent(skill.name)}`}
+                href={`https://playon.games/packages/${encodeURIComponent(skill.name)}`}
                 target="_blank"
                 rel="noreferrer"
               >
-                playon.games/skills/{skill.name}
+                playon.games/packages/{skill.name}
               </a>
             </dd>
           </div>

@@ -17,7 +17,7 @@ describe("skills catalog", () => {
         {
           name: "games.minecraft-paper",
           version: "0.1.0",
-          downloadUrl: "https://playon.games/skills/packages/games.minecraft-paper-0.1.0.skill.zip",
+          downloadUrl: "https://playon.games/packages/games.minecraft-paper-0.1.0.skill.zip",
           tags: ["minecraft"],
         },
       ],
@@ -53,7 +53,7 @@ describe("skills catalog", () => {
     );
     expect(resolveSkillsCatalogUrl(undefined, "https://stored")).toBe("https://stored");
     expect(resolveSkillsCatalogUrl(undefined, undefined)).toBe(
-      "https://playon.games/skills/index.json",
+      "https://playon.games/packages/index.json",
     );
   });
 
@@ -63,13 +63,13 @@ describe("skills catalog", () => {
         {
           name: "games.rust",
           version: "0.1.0",
-          downloadUrl: "https://playon.games/skills/packages/games.rust-0.1.0.skill.zip",
+          downloadUrl: "https://playon.games/packages/games.rust-0.1.0.skill.zip",
           tags: ["rust"],
         },
         {
           name: "games.minecraft-paper",
           version: "0.1.0",
-          downloadUrl: "https://playon.games/skills/packages/games.minecraft-paper-0.1.0.skill.zip",
+          downloadUrl: "https://playon.games/packages/games.minecraft-paper-0.1.0.skill.zip",
           tags: ["minecraft"],
         },
       ],
@@ -78,7 +78,7 @@ describe("skills catalog", () => {
     expect(findCatalogSkill(skills, { name: "minecraft" })?.name).toBe("games.minecraft-paper");
     expect(
       findCatalogSkill(skills, {
-        downloadUrl: "https://playon.games/skills/packages/games.rust-0.1.0.skill.zip",
+        downloadUrl: "https://playon.games/packages/games.rust-0.1.0.skill.zip",
       })?.name,
     ).toBe("games.rust");
   });
@@ -94,13 +94,13 @@ describe("skills catalog", () => {
       })) as typeof fetch;
     try {
       const { bytes, sha256 } = await downloadCatalogSkillZip(
-        "https://playon.games/skills/packages/demo.skill.zip",
+        "https://playon.games/packages/demo.skill.zip",
         expected,
       );
       expect(bytes).toEqual(payload);
       expect(sha256).toBe(expected);
       await expect(
-        downloadCatalogSkillZip("https://playon.games/skills/packages/demo.skill.zip", "deadbeef"),
+        downloadCatalogSkillZip("https://playon.games/packages/demo.skill.zip", "deadbeef"),
       ).rejects.toThrow(/sha256_mismatch/);
     } finally {
       globalThis.fetch = originalFetch;
@@ -120,13 +120,13 @@ describe("skills catalog", () => {
         {
           name: "games.good",
           version: "0.1.0",
-          downloadUrl: "https://playon.games/skills/packages/games.good-0.1.0.skill.zip",
+          downloadUrl: "https://playon.games/packages/games.good-0.1.0.skill.zip",
           containerSupport: "full",
         },
         {
           name: "games.bad",
           version: "0.1.0",
-          downloadUrl: "https://playon.games/skills/packages/games.bad-0.1.0.skill.zip",
+          downloadUrl: "https://playon.games/packages/games.bad-0.1.0.skill.zip",
           containerSupport: "optional",
         },
       ],

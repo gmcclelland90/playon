@@ -25,8 +25,8 @@ The control plane already speaks `.skill.zip` (export/import). The site hosts an
 ## Catalog model
 
 ```text
-https://playon.games/skills/index.json
-https://playon.games/skills/packages/{name}-{version}.skill.zip
+https://playon.games/packages/index.json
+https://playon.games/packages/{name}-{version}.skill.zip
 ```
 
 Suggested `index.json` entry shape:
@@ -44,7 +44,7 @@ Suggested `index.json` entry shape:
       "dependencies": ["platform.docker-basics", "platform.networking-lan"],
       "containerSupport": "full",
       "minRamMb": 2048,
-      "downloadUrl": "https://playon.games/skills/packages/games.minecraft-paper-0.1.0.skill.zip",
+      "downloadUrl": "https://playon.games/packages/games.minecraft-paper-0.1.0.skill.zip",
       "sha256": "…",
       "official": true
     }
@@ -77,7 +77,7 @@ Keep the first viewport brand-led (see frontend design rules). Library pages are
 
 ### Phase B — wire PlayOn agents
 
-- `skill_search` / `skill_install_url` in the API against `PLAYON_SKILLS_CATALOG_URL` (default `https://playon.games/skills/index.json`)
+- `skill_search` / `skill_install_url` in the API against `PLAYON_SKILLS_CATALOG_URL` (default `https://playon.games/packages/index.json`)
 - Agent install workflow: local → catalog → draft
 - Settings UI: “Browse package library”
 

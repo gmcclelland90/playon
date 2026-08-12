@@ -21,7 +21,7 @@ describe("classifySkillSource", () => {
   it("classifies platform, installed, draft, and fixture paths", () => {
     expect(
       classifySkillSource(
-        entry("platform.docker-basics", path.join("/opt/playon/skills/platform/docker-basics")),
+        entry("platform.docker-basics", path.join("/opt/playon/catalog/platform/docker-basics")),
         dataRoot,
       ),
     ).toBe("platform");
@@ -42,7 +42,7 @@ describe("classifySkillSource", () => {
 
     expect(
       classifySkillSource(
-        entry("fixtures.lab-docker-server", path.join("/opt/playon/skills/fixtures/lab")),
+        entry("fixtures.lab-docker-server", path.join("/opt/playon/catalog/fixtures/lab")),
         dataRoot,
       ),
     ).toBe("fixture");

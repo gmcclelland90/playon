@@ -101,8 +101,8 @@ Still run a **host-native** `playon-node` (or install-node against `http://127.0
 - Install games individually on demand:
   - **Chat** — ask to install / create a server (agent uses the playon.games catalog)
   - **Skills → Catalog → Install** — one click per skill
-- Catalog URL defaults to `https://playon.games/skills/index.json` (`PLAYON_SKILLS_CATALOG_URL`). Hosts never download zip files by hand.
-- Curated `games.*` live only in the sibling **playon-games** repo (`skills-src/` → `pnpm catalog` → `public/skills/`). Never present in Home or monorepo `skills/`.
+- Catalog URL defaults to `https://playon.games/packages/index.json` (`PLAYON_SKILLS_CATALOG_URL`). Hosts never download zip files by hand.
+- Curated `games.*` live only in the sibling **playon-games** repo (`packages-src/` → `pnpm catalog` → `public/packages/`). Never present in Home or monorepo `packages/`.
 
 ## Nodes (LAN + cloud BYO)
 

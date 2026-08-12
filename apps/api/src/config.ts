@@ -189,18 +189,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
         : production && (host === "0.0.0.0" || host === "::");
   const extraCors = parseCorsExtra(env.PLAYON_CORS_ORIGINS);
   /**
-   * `minimal` = platform skills only (Home / production shape).
-   * `dev` (default) also mounts repo test fixtures under skills/fixtures.
-   * Curated games.* skills are never bundled — install from the playon.games catalog
+   * `minimal` = platform packages only (Home / production shape).
+   * `dev` (default) also mounts repo test fixtures under catalog/fixtures.
+   * Curated games.* packages are never bundled — install from the playon.games catalog
    * into dataRoot/skills.
    */
   const skillsProfile = (env.PLAYON_SKILLS_PROFILE?.trim() || "dev").toLowerCase();
   /**
-   * Optional baked/install skills root (Home tarball / container).
+   * Optional baked/install catalog root (Home tarball / container).
    * Semicolon-separated absolute paths (also `:` on non-Windows). Each may contain
-   * platform|fixtures subdirs or be a single skill category directory.
+   * platform|fixtures subdirs or be a single catalog category directory.
+   * Env var names: PLAYON_CATALOG_ROOT (preferred), PLAYON_PACKAGES_ROOT, PLAYON_SKILLS_ROOT (legacy compat).
    */
-  const bakedSkillsRoot = env.PLAYON_SKILLS_ROOT?.trim();
+  const bakedSkillsRoot = env.PLAYON_CATALOG_ROOT?.trim() || env.PLAYON_PACKAGES_ROOT?.trim() || env.PLAYON_SKILLS_ROOT?.trim();
   const skillsRoots: string[] = [];
   if (bakedSkillsRoot) {
     const parts = splitSkillsRootPaths(bakedSkillsRoot);
@@ -216,9 +217,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       }
     }
   } else {
-    skillsRoots.push(path.join(repoRoot, "skills", "platform"));
+    // Phase 4: catalog/platform + catalog/fixtures (with legacy skills/* fallback)
+    const platformPath = path.join(repoRoot, "catalog", "platform");
+    const legacyPlatformPath = path.join(repoRoot, "skills", "platform");
+    skillsRoots.push(fs.existsSync(platformPath) ? platformPath : legacyPlatformPath);
     if (skillsProfile !== "minimal") {
-      skillsRoots.push(path.join(repoRoot, "skills", "fixtures"));
+      const fixturesPath = path.join(repoRoot, "catalog", "fixtures");
+      const legacyFixturesPath = path.join(repoRoot, "skills", "fixtures");
+      skillsRoots.push(fs.existsSync(fixturesPath) ? fixturesPath : legacyFixturesPath);
     }
   }
   skillsRoots.push(path.join(dataRoot, "skills"));

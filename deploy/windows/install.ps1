@@ -87,7 +87,7 @@ set PLAYON_DATA_ROOT=$DataRoot
 set PLAYON_RUNTIME=$Runtime
 set PLAYON_LLM_MODE=openai_compatible
 set PLAYON_NODE_TOKEN=$nodeToken
-set PLAYON_SKILLS_ROOT=$InstallRoot\skills
+set PLAYON_CATALOG_ROOT=$InstallRoot\catalog
 set PLAYON_SKILLS_PROFILE=minimal
 set PLAYON_WEB_DIST=$InstallRoot\apps\web\dist
 "@ | Set-Content -Path $envFile -Encoding ASCII
