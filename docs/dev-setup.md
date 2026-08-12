@@ -47,6 +47,10 @@ Blank-machine imaging: [`infra/blank-node/README.md`](../infra/blank-node/README
 
 Cutover metadata lives on each fingerprint’s optional `manage:` block in `skills/import-hints.yaml` (userdata home dirs, `serverNameArg`, `adminPasswordArg`, `worldSubdirs`).
 
+### Managed server environment
+
+Managed/node-authoritative servers store `managedFrom` in their `skill.json` marker (the absolute path to the original install on the node). The control plane passes this as `PLAYON_MANAGED_FROM` in the process environment so catalog `start.sh` scripts can fall back to binaries in the original install location when the game jail overlay doesn't contain them.
+
 ## Test layers
 
 | Command | Purpose |
