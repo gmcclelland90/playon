@@ -11,6 +11,10 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 - Docs: `docs/workshop-watcher.md` (notify-only default; schedule reboot rather than auto-restart).
 - Smoke checklist: `docs/wsl-phase2-smoke-checklist.md`.
 
+### Fixed
+
+- **Managed native launches** — pass `PLAYON_MANAGED_FROM` from the skill marker into the process env so overlay `start.sh` can find binaries outside the jail (`#832`). Companion skill fix is playon-games#28.
+
 ### Notes
 
 - Intended for hosts like NewZombieLand3 crowbar mod (workshop id `3579640010`).
