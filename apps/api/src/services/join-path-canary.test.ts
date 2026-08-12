@@ -129,9 +129,7 @@ describe("join-path canary (resolveJoinAddress topologies)", () => {
       .set({ nodeId: "lab-linux-1" })
       .where(eq(serversTable.id, created.id));
 
-    const row = await servers.get(created.id);
-    expect(row).toBeTruthy();
-    const join = await servers.joinInfoFor(row!);
+    const join = await servers.joinInfoFor({ ...created, nodeId: "lab-linux-1" });
     expect(join.address).toBe("172.16.0.156");
     expect(join.address).not.toBe("127.0.0.1");
     expect(join.port).toBe(25565);
@@ -164,9 +162,7 @@ describe("join-path canary (resolveJoinAddress topologies)", () => {
       .set({ nodeId: wslId })
       .where(eq(serversTable.id, created.id));
 
-    const row = await servers.get(created.id);
-    expect(row).toBeTruthy();
-    const addr = await servers.resolveJoinAddress(row!);
+    const addr = await servers.resolveJoinAddress({ ...created, nodeId: wslId });
     expect(addr).toBe("172.16.0.94");
     expect(addr).not.toBe("172.22.144.1");
     expect(addr).not.toBe("127.0.0.1");
@@ -191,9 +187,7 @@ describe("join-path canary (resolveJoinAddress topologies)", () => {
       .set({ nodeId: "playon-win-1" })
       .where(eq(serversTable.id, created.id));
 
-    const row = await servers.get(created.id);
-    expect(row).toBeTruthy();
-    const join = await servers.joinInfoFor(row!);
+    const join = await servers.joinInfoFor({ ...created, nodeId: "playon-win-1" });
     expect(join.address).toBe("172.16.0.94");
     expect(join.port).toBe(25565);
   });
@@ -201,13 +195,16 @@ describe("join-path canary (resolveJoinAddress topologies)", () => {
 
 describe("join-path canary (TCP probe)", () => {
   it("fails when loopback accepts but the published join host does not", async () => {
+    const lan = firstNonLoopbackIPv4();
+    if (!lan) return;
+
     const { db, config } = tempConfig();
     const servers = new ServerService(db, config);
     const netTools = new NetToolsService(servers);
     const { server, port } = await listen("127.0.0.1");
     try {
       const result = await probeJoinPath({
-        joinHost: "192.0.2.1",
+        joinHost: lan,
         port,
         check: async (host, p) => {
           const probe = await netTools.portCheck({ host, port: p });

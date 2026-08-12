@@ -185,7 +185,7 @@ try {
   const loopbackOnly = await listen("127.0.0.1");
   try {
     const split = await probeJoinPath({
-      joinHost: "192.0.2.1",
+      joinHost: lan,
       port: loopbackOnly.port,
       check,
     });
