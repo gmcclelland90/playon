@@ -14,7 +14,7 @@ describe("skill route request contracts", () => {
     });
     expect(
       InstallSkillFromCatalogRequestSchema.parse({
-        downloadUrl: "https://playon.games/skills/paper.zip",
+        downloadUrl: "https://playon.games/packages/paper.zip",
         overwrite: true,
       }).overwrite,
     ).toBe(true);

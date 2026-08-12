@@ -36,7 +36,7 @@ function catalogEntry(name: string, deps: string[] = []): CatalogSkill {
     version: "1.0.0",
     tags: [],
     dependencies: deps,
-    downloadUrl: `https://playon.games/skills/packages/${name}-1.0.0.skill.zip`,
+    downloadUrl: `https://playon.games/packages/${name}-1.0.0.skill.zip`,
     sha256: undefined,
     official: true,
   };
@@ -70,7 +70,7 @@ describe("installSkillFromCatalog", () => {
     const result = await installSkillFromCatalog({
       config,
       skillPackages: pkg,
-      catalogUrl: "https://playon.games/skills/index.json",
+      catalogUrl: "https://playon.games/packages/index.json",
       name: "games.demo",
       fetchCatalog: async () => [catalogEntry("games.demo", ["platform.steamcmd"])],
       downloadZip: async () => ({
@@ -99,7 +99,7 @@ describe("installSkillFromCatalog", () => {
       installSkillFromCatalog({
         config,
         skillPackages: pkg,
-        catalogUrl: "https://playon.games/skills/index.json",
+        catalogUrl: "https://playon.games/packages/index.json",
         name: "games.demo",
         fetchCatalog: async () => [catalogEntry("games.demo")],
         downloadZip: async () => {

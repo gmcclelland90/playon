@@ -111,7 +111,7 @@ export type VultrCloudSettings = {
 };
 
 export type SkillsCatalogSettings = {
-  /** Default https://playon.games/skills/index.json */
+  /** Default https://playon.games/packages/index.json */
   catalogUrl: string;
 };
 

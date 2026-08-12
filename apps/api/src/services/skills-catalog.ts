@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { z } from "zod";
 
-export const DEFAULT_SKILLS_CATALOG_URL = "https://playon.games/skills/index.json";
+export const DEFAULT_SKILLS_CATALOG_URL = "https://playon.games/packages/index.json";
 
 export const CatalogSkillSchema = z.object({
   name: z.string(),
