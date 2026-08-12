@@ -397,4 +397,34 @@ describe("native-launch", () => {
       fs.rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it("resolves scripts in priority order: .bat before .ps1 on Windows", () => {
+    if (process.platform !== "win32") return;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-win-order-"));
+    const gameDir = path.join(root, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+    
+    // Test 1: start.bat preferred over start.ps1
+    fs.writeFileSync(path.join(gameDir, "start.bat"), "@echo off\n");
+    fs.writeFileSync(path.join(gameDir, "start.ps1"), "Write-Host 'PS'\n");
+    try {
+      const launch1 = resolveNativeLaunch({ skillName: "test.game", gameDir });
+      expect(launch1?.command.toLowerCase()).toMatch(/cmd\.exe$/);
+      expect(launch1?.args.some((a) => a.includes("start.bat"))).toBe(true);
+    } finally {
+      fs.unlinkSync(path.join(gameDir, "start.bat"));
+      fs.unlinkSync(path.join(gameDir, "start.ps1"));
+    }
+
+    // Test 2: run.bat preferred over run.ps1
+    fs.writeFileSync(path.join(gameDir, "run.bat"), "@echo off\n");
+    fs.writeFileSync(path.join(gameDir, "run.ps1"), "Write-Host 'PS'\n");
+    try {
+      const launch2 = resolveNativeLaunch({ skillName: "test.game", gameDir });
+      expect(launch2?.command.toLowerCase()).toMatch(/cmd\.exe$/);
+      expect(launch2?.args.some((a) => a.includes("run.bat"))).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
