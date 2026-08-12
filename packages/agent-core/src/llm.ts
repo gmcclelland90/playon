@@ -21,6 +21,8 @@ export interface LlmCompletion {
 
 export type LlmCompleteOptions = {
   signal?: AbortSignal;
+  /** Internal: set to true to skip retry nudge (prevents infinite loops). */
+  _skipRetryNudge?: boolean;
 };
 
 export interface LlmClient {
@@ -66,16 +68,44 @@ function asArgObject(value: unknown): Record<string, unknown> {
 }
 
 /**
- * Recover tool calls when a model emits OpenAI/Hermes-style JSON in content
- * instead of native `tool_calls` (common intermittent Venice behavior).
+ * Check if content looks like it might contain tool call attempts
+ * (keywords, JSON-like structures, common patterns).
+ */
+function looksLikeToolContent(content: string): boolean {
+  const trimmed = content.trim();
+  if (!trimmed) return false;
+  
+  // Check for common tool call indicators
+  const indicators = [
+    /\{[^}]*"name"\s*:/i,
+    /\{[^}]*"function"\s*:/i,
+    /\{[^}]*"type"\s*:\s*"function"/i,
+    /<start_function_call>/i,
+    /```\s*tool/i,
+    /\w+\([^)]*=/, // Python-style function(param=value)
+  ];
+  
+  return indicators.some(pattern => pattern.test(trimmed));
+}
+
+/**
+ * Recover tool calls when a model emits text-based tool formats
+ * instead of native `tool_calls` (Gemma, weaker models, intermittent Venice).
+ * Supports: OpenAI/Hermes JSON, Python-style calls, XML tags, fenced blocks.
  */
 export function extractToolCallsFromContent(content: string): LlmToolCall[] {
   const trimmed = content.trim();
   if (!trimmed) return [];
 
   const candidates: string[] = [trimmed];
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  if (fenced?.[1]) candidates.push(fenced[1].trim());
+  
+  // Extract fenced blocks: ```json, ```tool_code, ```tool
+  const fencedMatches = [
+    ...trimmed.matchAll(/```(?:json|tool_code|tool)?\s*([\s\S]*?)```/gi),
+  ];
+  for (const match of fencedMatches) {
+    if (match[1]) candidates.push(match[1].trim());
+  }
 
   const calls: LlmToolCall[] = [];
   const push = (name: unknown, args: unknown, idHint: string) => {
@@ -87,6 +117,7 @@ export function extractToolCallsFromContent(content: string): LlmToolCall[] {
     });
   };
 
+  // Try parsing each candidate as JSON
   for (const candidate of candidates) {
     try {
       const parsed = JSON.parse(candidate) as unknown;
@@ -118,11 +149,93 @@ export function extractToolCallsFromContent(content: string): LlmToolCall[] {
     if (calls.length) return calls;
   }
 
-  // Loose scan for {"type":"function","function":{...}} blobs in prose.
-  const blobRe =
-    /\{\s*"type"\s*:\s*"function"\s*,\s*"function"\s*:\s*\{[\s\S]*?\}\s*\}/g;
+  // Scan for Python-style function calls: func_name(param1=value1, param2="value2")
+  // Common in Gemma ```tool_code``` blocks
+  const pythonCallRe = /(\w+)\s*\(\s*([^)]*)\s*\)/g;
   let match: RegExpExecArray | null;
   let idx = 0;
+  while ((match = pythonCallRe.exec(trimmed)) !== null) {
+    const funcName = match[1];
+    const argsStr = match[2];
+    if (!funcName || !argsStr?.includes("=")) continue;
+    
+    try {
+      const args: Record<string, unknown> = {};
+      // Parse key=value pairs, handling quoted strings and numbers
+      const argMatches = [
+        ...argsStr.matchAll(/(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([\d.]+)|(\w+))/g),
+      ];
+      for (const argMatch of argMatches) {
+        const key = argMatch[1];
+        const value = argMatch[2] ?? argMatch[3] ?? argMatch[4] ?? argMatch[5];
+        if (key && value !== undefined) {
+          // Try to parse as number or boolean
+          if (/^\d+\.?\d*$/.test(value)) {
+            args[key] = parseFloat(value);
+          } else if (value === "true") {
+            args[key] = true;
+          } else if (value === "false") {
+            args[key] = false;
+          } else {
+            args[key] = value;
+          }
+        }
+      }
+      if (Object.keys(args).length > 0) {
+        push(funcName, args, `python-${idx++}`);
+      }
+    } catch {
+      // ignore malformed python calls
+    }
+  }
+  if (calls.length) return calls;
+
+  // Scan for XML-style function calls: <start_function_call>call:func_name{param:value}<end_function_call>
+  // Used by FunctionGemma and some Gemma variants
+  const xmlCallRe = /<start_function_call>call:(\w+)\{([^}]+)\}<end_function_call>/g;
+  idx = 0;
+  while ((match = xmlCallRe.exec(trimmed)) !== null) {
+    const funcName = match[1];
+    const argsStr = match[2];
+    if (!funcName) continue;
+    
+    try {
+      const args: Record<string, unknown> = {};
+      // Parse key:value pairs. Need to handle commas in values carefully.
+      // Strategy: find first colon, that splits key from value. Then find next key by looking for pattern "word:"
+      const keyValueRe = /(\w+):\s*([^,]*?)(?=,\s*\w+:|$)/g;
+      let kvMatch: RegExpExecArray | null;
+      while ((kvMatch = keyValueRe.exec(argsStr)) !== null) {
+        const key = kvMatch[1];
+        const value = kvMatch[2]?.trim();
+        if (key && value) {
+          args[key] = value;
+        }
+      }
+      
+      // Fallback: if regex didn't work, try simple split
+      if (Object.keys(args).length === 0) {
+        const colonIdx = argsStr.indexOf(":");
+        if (colonIdx > 0) {
+          const key = argsStr.slice(0, colonIdx).trim();
+          const value = argsStr.slice(colonIdx + 1).trim();
+          if (key) args[key] = value;
+        }
+      }
+      
+      if (Object.keys(args).length > 0) {
+        push(funcName, args, `xml-${idx++}`);
+      }
+    } catch {
+      // ignore malformed XML calls
+    }
+  }
+  if (calls.length) return calls;
+
+  // Scan for loose JSON blobs in prose: {"type":"function","function":{...}}
+  const blobRe =
+    /\{\s*"type"\s*:\s*"function"\s*,\s*"function"\s*:\s*\{[\s\S]*?\}\s*\}/g;
+  idx = 0;
   while ((match = blobRe.exec(trimmed)) !== null) {
     try {
       const parsed = JSON.parse(match[0]) as {
@@ -131,12 +244,33 @@ export function extractToolCallsFromContent(content: string): LlmToolCall[] {
       push(
         parsed.function?.name,
         parsed.function?.parameters ?? parsed.function?.arguments,
-        `content-scan-${idx++}`,
+        `blob-${idx++}`,
       );
     } catch {
       // ignore partial matches
     }
   }
+  
+  // Scan for simpler JSON blobs: {"name":"func","parameters":{...}} or {"name":"func","arguments":{...}}
+  const simpleJsonRe = /\{\s*"name"\s*:\s*"(\w+)"\s*,\s*"(?:parameters|arguments)"\s*:\s*\{[^}]*\}\s*\}/g;
+  idx = 0;
+  while ((match = simpleJsonRe.exec(trimmed)) !== null) {
+    try {
+      const parsed = JSON.parse(match[0]) as {
+        name?: string;
+        parameters?: unknown;
+        arguments?: unknown;
+      };
+      push(
+        parsed.name,
+        parsed.parameters ?? parsed.arguments,
+        `simple-json-${idx++}`,
+      );
+    } catch {
+      // ignore partial matches
+    }
+  }
+
   return calls;
 }
 
@@ -238,6 +372,21 @@ export class OpenAICompatibleLlmClient implements LlmClient {
       const recovered = extractToolCallsFromContent(content);
       if (recovered.length) {
         toolCalls = recovered;
+      } else if (
+        !opts?._skipRetryNudge &&
+        looksLikeToolContent(content)
+      ) {
+        // Content looks tool-shaped but recovery failed. Try once with a nudge.
+        const nudgeMessage: LlmMessage = {
+          role: "system",
+          content:
+            "Use native tool_calls (not printed JSON or prose). Emit tool calls properly formatted for the API.",
+        };
+        const retryMessages = [...messages, nudgeMessage];
+        return this.complete(retryMessages, tools, {
+          ...opts,
+          _skipRetryNudge: true,
+        });
       }
     }
 

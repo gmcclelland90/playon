@@ -2,26 +2,243 @@ import { describe, expect, it } from "vitest";
 import { extractToolCallsFromContent } from "./llm.js";
 
 describe("extractToolCallsFromContent", () => {
-  it("parses Venice text function JSON", () => {
-    const content =
-      '{"type": "function", "function": {"name": "servers_create_from_skill", "parameters": {"skillName": "games.minecraft-paper", "serverName": "Venice Paper"}}}';
-    const calls = extractToolCallsFromContent(content);
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.name).toBe("servers_create_from_skill");
-    expect(calls[0]?.arguments).toEqual({
-      skillName: "games.minecraft-paper",
-      serverName: "Venice Paper",
+  describe("OpenAI/Hermes JSON formats", () => {
+    it("parses Venice text function JSON", () => {
+      const content =
+        '{"type": "function", "function": {"name": "servers_create_from_skill", "parameters": {"skillName": "games.minecraft-paper", "serverName": "Venice Paper"}}}';
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.name).toBe("servers_create_from_skill");
+      expect(calls[0]?.arguments).toEqual({
+        skillName: "games.minecraft-paper",
+        serverName: "Venice Paper",
+      });
+    });
+
+    it("parses simple JSON with name and parameters", () => {
+      const content =
+        '{"name": "skill_read", "parameters": {"skillName": "games.valheim"}}';
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.name).toBe("skill_read");
+      expect(calls[0]?.arguments).toEqual({ skillName: "games.valheim" });
+    });
+
+    it("parses simple JSON with name and arguments", () => {
+      const content =
+        '{"name": "servers_start", "arguments": {"serverId": "test-123"}}';
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.name).toBe("servers_start");
+      expect(calls[0]?.arguments).toEqual({ serverId: "test-123" });
+    });
+
+    it("parses array of function objects", () => {
+      const content = `[
+        {"type": "function", "function": {"name": "skill_list", "parameters": {}}},
+        {"type": "function", "function": {"name": "servers_list", "parameters": {}}}
+      ]`;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(2);
+      expect(calls[0]?.name).toBe("skill_list");
+      expect(calls[1]?.name).toBe("servers_list");
+    });
+
+    it("parses array of simple name/parameters objects", () => {
+      const content = `[
+        {"name": "snapshot_create", "parameters": {"serverId": "abc"}},
+        {"name": "servers_restart", "arguments": {"serverId": "abc"}}
+      ]`;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(2);
+      expect(calls[0]?.name).toBe("snapshot_create");
+      expect(calls[1]?.name).toBe("servers_restart");
+    });
+
+    it("parses JSON blob embedded in prose", () => {
+      const content = `I will create the server. {"type": "function", "function": {"name": "servers_create_from_skill", "parameters": {"skillName": "games.minecraft-paper"}}} This should work.`;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.name).toBe("servers_create_from_skill");
+    });
+
+    it("parses simple JSON blob embedded in prose", () => {
+      const content = `Let me check that. {"name": "servers_status", "parameters": {"serverId": "test"}} for you.`;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.name).toBe("servers_status");
     });
   });
 
-  it("parses fenced JSON tool blobs", () => {
-    const content = `Sure.\n\`\`\`json\n{"name":"panel_publish","arguments":{"serverId":"abc"}}\n\`\`\``;
-    const calls = extractToolCallsFromContent(content);
-    expect(calls[0]?.name).toBe("panel_publish");
-    expect(calls[0]?.arguments).toEqual({ serverId: "abc" });
+  describe("Fenced code block formats", () => {
+    it("parses fenced JSON tool blobs", () => {
+      const content = `Sure.\n\`\`\`json\n{"name":"panel_publish","arguments":{"serverId":"abc"}}\n\`\`\``;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls[0]?.name).toBe("panel_publish");
+      expect(calls[0]?.arguments).toEqual({ serverId: "abc" });
+    });
+
+    it("parses tool_code fenced blocks", () => {
+      const content = `I'll help with that.\n\`\`\`tool_code\n{"name":"skill_read","parameters":{"skillName":"games.terraria"}}\n\`\`\``;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.name).toBe("skill_read");
+      expect(calls[0]?.arguments).toEqual({ skillName: "games.terraria" });
+    });
+
+    it("parses tool fenced blocks", () => {
+      const content = `\`\`\`tool\n{"name":"servers_list","parameters":{}}\n\`\`\``;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.name).toBe("servers_list");
+    });
   });
 
-  it("returns empty for normal prose", () => {
-    expect(extractToolCallsFromContent("I can help set that up.")).toEqual([]);
+  describe("Gemma Python-style function calls", () => {
+    it("parses Python-style function call with string parameters", () => {
+      const content = `\`\`\`tool_code\nservers_create_from_skill(skillName="games.minecraft-paper", serverName="Test Server")\n\`\`\``;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.name).toBe("servers_create_from_skill");
+      expect(calls[0]?.arguments).toEqual({
+        skillName: "games.minecraft-paper",
+        serverName: "Test Server",
+      });
+    });
+
+    it("parses Python-style function call with mixed parameters", () => {
+      const content = `skill_read(skillName="games.valheim", verbose=true, maxDepth=3)`;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.name).toBe("skill_read");
+      expect(calls[0]?.arguments).toEqual({
+        skillName: "games.valheim",
+        verbose: true,
+        maxDepth: 3,
+      });
+    });
+
+    it("parses Python-style function call with single quotes", () => {
+      const content = `panel_publish(serverId='test-123', theme='grass')`;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.name).toBe("panel_publish");
+      expect(calls[0]?.arguments).toEqual({
+        serverId: "test-123",
+        theme: "grass",
+      });
+    });
+
+    it("parses Python-style function call with numeric parameters", () => {
+      const content = `convert(amount=200000.0, currency="USD", new_currency="EUR")`;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.name).toBe("convert");
+      expect(calls[0]?.arguments).toEqual({
+        amount: 200000.0,
+        currency: "USD",
+        new_currency: "EUR",
+      });
+    });
+
+    it("ignores Python calls without named parameters", () => {
+      const content = `some_function(arg1, arg2, arg3)`;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(0);
+    });
+  });
+
+  describe("FunctionGemma XML-style formats", () => {
+    it("parses XML function call with simple parameters", () => {
+      const content = `<start_function_call>call:get_current_weather{location:Tokyo, Japan}<end_function_call>`;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.name).toBe("get_current_weather");
+      expect(calls[0]?.arguments).toEqual({ location: "Tokyo, Japan" });
+    });
+
+    it("parses XML function call with multiple parameters", () => {
+      const content = `<start_function_call>call:servers_create_from_skill{skillName:games.minecraft-paper,serverName:Test Server}<end_function_call>`;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.name).toBe("servers_create_from_skill");
+      expect(calls[0]?.arguments).toEqual({
+        skillName: "games.minecraft-paper",
+        serverName: "Test Server",
+      });
+    });
+  });
+
+  describe("Edge cases and validation", () => {
+    it("returns empty for normal prose", () => {
+      expect(extractToolCallsFromContent("I can help set that up.")).toEqual(
+        [],
+      );
+    });
+
+    it("returns empty for empty string", () => {
+      expect(extractToolCallsFromContent("")).toEqual([]);
+    });
+
+    it("returns empty for whitespace only", () => {
+      expect(extractToolCallsFromContent("   \n\t  ")).toEqual([]);
+    });
+
+    it("handles malformed JSON gracefully", () => {
+      const content = `{"name": "servers_list", "parameters": {incomplete`;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(0);
+    });
+
+    it("prioritizes first valid format found", () => {
+      const content = `{"name": "first_call", "parameters": {}}`;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.name).toBe("first_call");
+    });
+
+    it("handles missing function name gracefully", () => {
+      const content = `{"type": "function", "function": {"parameters": {"test": "value"}}}`;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(0);
+    });
+
+    it("handles invalid arguments as _raw", () => {
+      const content = `{"type": "function", "function": {"name": "test", "parameters": "not-a-json-object"}}`;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.name).toBe("test");
+      expect(calls[0]?.arguments).toEqual({ _raw: "not-a-json-object" });
+    });
+  });
+
+  describe("Realistic Gemma-style examples", () => {
+    it("parses Gemma tool_code block with prose", () => {
+      const content = `Okay, I need to convert $200,000 to EUR. I will use the \`convert\` function for this.
+\`\`\`tool_code
+convert(amount=200000.0, currency="USD", new_currency="EUR")
+\`\`\``;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.name).toBe("convert");
+      expect(calls[0]?.arguments).toEqual({
+        amount: 200000.0,
+        currency: "USD",
+        new_currency: "EUR",
+      });
+    });
+
+    it("parses Gemma JSON style with explanatory prose", () => {
+      const content = `I will create a Minecraft server for you.
+{"name": "servers_create_from_skill", "parameters": {"skillName": "games.minecraft-paper", "serverName": "My Paper Server"}}
+This will set up your server.`;
+      const calls = extractToolCallsFromContent(content);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.name).toBe("servers_create_from_skill");
+      expect(calls[0]?.arguments).toEqual({
+        skillName: "games.minecraft-paper",
+        serverName: "My Paper Server",
+      });
+    });
   });
 });
