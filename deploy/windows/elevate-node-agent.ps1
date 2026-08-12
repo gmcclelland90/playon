@@ -24,7 +24,7 @@ $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $userId = $identity.Name
 Write-Host "==> Stopping existing agent processes under $InstallRoot"
 Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
-  Where-Object { $_.CommandLine -like "*$InstallRoot*" } |
+  Where-Object { $_.CommandLine -like "*apps\node-agent\dist\index.js*" } |
   ForEach-Object {
     Write-Host "Stopping PID $($_.ProcessId)"
     Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue

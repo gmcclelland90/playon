@@ -590,7 +590,8 @@ fi
 
 # Stop agent before replacing binaries (otherwise: Text file busy on runtime/node/bin/node)
 systemctl stop playon-node-agent.service 2>/dev/null || true
-pkill -u playon -f 'node-agent|playon-node' 2>/dev/null || true
+# Only kill the node-agent process itself, not arbitrary executables under /opt/playon-node
+pkill -u playon -f '/apps/node-agent/dist/index\.js' 2>/dev/null || true
 sleep 1
 
 mkdir -p "$PLAYON_ROOT"
