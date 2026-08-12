@@ -83,11 +83,15 @@ describe("llm presets", () => {
   });
 
   it("keeps curated suggestions aligned with known-good current ids", () => {
+    expect(LLM_PRESETS.venice.defaultModel).toBe("grok-4-5");
     expect(LLM_PRESETS.venice.suggestedModels).toEqual([
+      "grok-4-5",
       "llama-3.3-70b",
       "qwen3-235b-a22b-instruct-2507",
       "venice-uncensored-1-2",
     ]);
+    expect(LLM_PRESETS.venice.suggestedModels[0]).toBe(LLM_PRESETS.venice.defaultModel);
+    expect(LLM_PRESETS.venice.suggestedModels).toContain("llama-3.3-70b");
     expect(LLM_PRESETS.anthropic.defaultModel).toBe("claude-sonnet-5");
     expect(LLM_PRESETS.groq.defaultModel).toBe("openai/gpt-oss-120b");
     expect(LLM_PRESETS.nvidia.suggestedModels).toContain(

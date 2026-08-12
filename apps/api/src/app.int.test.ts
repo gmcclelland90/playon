@@ -4,6 +4,7 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { getRequestListener } from "@hono/node-server";
+import { LLM_PRESETS } from "@playon/shared";
 import type Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { createApp } from "./app.js";
@@ -136,7 +137,8 @@ async function seedVenice(db: Db, config: AppConfig) {
   await setSetting(db, LLM_SETTINGS_KEY, {
     provider: "openai_compatible",
     baseUrl: process.env.PLAYON_VENICE_BASE_URL?.trim() || "https://api.venice.ai/api/v1",
-    model: process.env.PLAYON_VENICE_MODEL?.trim() || "llama-3.3-70b",
+    // PLAYON_VENICE_MODEL overrides; otherwise Settings Venice default (grok-4-5).
+    model: process.env.PLAYON_VENICE_MODEL?.trim() || LLM_PRESETS.venice.defaultModel,
     apiKeyEncrypted: encryptSecret(config.sessionSecret, apiKey),
   });
 }
