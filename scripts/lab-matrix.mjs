@@ -140,13 +140,14 @@ function ensureDist() {
 }
 
 function resolveGamesRoot() {
-  // playon-games rename: check packages-src first, fall back to skills-src, then env override
+  // Env wins when set (operator points at specific tree)
+  const fromEnv = process.env.PLAYON_GAMES_SKILLS_ROOT?.trim();
+  if (fromEnv && fs.existsSync(fromEnv)) return path.resolve(fromEnv);
+  // playon-games rename: check packages-src first, fall back to skills-src
   const newPath = path.join(repoRoot, "..", "playon-games", "packages-src", "games");
   if (fs.existsSync(newPath)) return newPath;
   const legacyPath = path.join(repoRoot, "..", "playon-games", "skills-src", "games");
   if (fs.existsSync(legacyPath)) return legacyPath;
-  const fromEnv = process.env.PLAYON_GAMES_SKILLS_ROOT?.trim();
-  if (fromEnv && fs.existsSync(fromEnv)) return path.resolve(fromEnv);
   return null;
 }
 
