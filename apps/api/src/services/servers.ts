@@ -930,8 +930,26 @@ export class ServerService {
       };
     }
 
-    // Linux remote: start.sh is the default contract; binary is the opt-out.
-    const useBinary = native?.preferStartScript === false && !!binary;
+    // Linux remote: check skill overlay for start.sh when preferStartScript is not false.
+    const preferScript = native?.preferStartScript !== false;
+    const overlaySh =
+      preferScript && skillEntry?.path
+        ? listSkillGameOverlayFiles(skillEntry.path).find(
+            (f) => f.relPath === "start.sh",
+          )?.relPath
+        : undefined;
+    if (overlaySh) {
+      return {
+        command: "/bin/bash",
+        args: [overlaySh],
+        env: { PLAYON_SERVER_ID: server.id, ...(native?.env ?? {}) },
+        logFile: this.consoleLogRel(server.id),
+        keepStdin,
+      };
+    }
+    // Fallback: if preferStartScript is false and binary exists, use binary;
+    // otherwise assume start.sh exists in game/ root (may fail at runtime if missing).
+    const useBinary = !preferScript && !!binary;
     return {
       command: useBinary ? binary! : "/bin/bash",
       args: useBinary ? nativeArgs : ["start.sh"],

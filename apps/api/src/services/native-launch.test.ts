@@ -226,7 +226,7 @@ describe("native-launch", () => {
       steamAppId: 237410,
       native: {
         binary: "srcds_run",
-        preferStartScript: false,
+        preferStartScript: true,
         args: ["-game", "insurgency"],
       },
     });
@@ -240,6 +240,39 @@ describe("native-launch", () => {
     const body = fs.readFileSync(path.join(gameDir, "srcds_run"), "utf8");
     expect(body).not.toContain("\r");
     expect(body.startsWith("#!/bin/sh\n")).toBe(true);
+
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it("prefers start.sh over binary when preferStartScript: true", () => {
+    if (process.platform === "win32") return;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-prefer-script-"));
+    const gameDir = path.join(root, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+    fs.writeFileSync(path.join(gameDir, "srcds_run"), "#!/bin/sh\necho binary\n", {
+      mode: 0o755,
+    });
+    fs.writeFileSync(path.join(gameDir, "start.sh"), "#!/bin/bash\n./srcds_run -game insurgency\n");
+
+    const meta = SkillMetadataSchema.parse({
+      name: "games.insurgency",
+      version: "0.1.2",
+      containerSupport: "none",
+      steamAppId: 237410,
+      native: {
+        binary: "srcds_run",
+        preferStartScript: true,
+        args: ["-game", "insurgency"],
+      },
+    });
+    const launch = resolveNativeLaunch({
+      skillName: "games.insurgency",
+      gameDir,
+      metadata: meta,
+    });
+    expect(launch?.kind).toBe("script");
+    expect(launch?.command).toBe("/bin/bash");
+    expect(launch?.args).toEqual([path.join(gameDir, "start.sh")]);
 
     fs.rmSync(root, { recursive: true, force: true });
   });
