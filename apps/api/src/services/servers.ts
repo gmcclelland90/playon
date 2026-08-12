@@ -895,7 +895,7 @@ export class ServerService {
       args: [...(native?.args ?? [])],
       skillName,
     });
-    // Windows nodes have no /bin/bash start.sh contract — PE binary, or skill start.bat.
+    // Windows nodes have no /bin/bash start.sh contract — PE binary, or skill start.bat / start.ps1.
     if (nodeOs === "windows") {
       const preferScript = native?.preferStartScript !== false;
       const overlayBat =
@@ -916,9 +916,26 @@ export class ServerService {
           keepStdin,
         };
       }
+      const overlayPs1 =
+        preferScript && skillEntry?.path
+          ? listSkillGameOverlayFiles(skillEntry.path).find(
+              (f) => f.relPath === "start.ps1" || f.relPath === "run.ps1",
+            )?.relPath
+          : undefined;
+      if (overlayPs1) {
+        // PowerShell scripts with absolute path to avoid spawn ENOENT on playon-win-1.
+        // Standard Windows PowerShell 5.1 location; cwd is the game jail so script resolves.
+        return {
+          command: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", overlayPs1],
+          env: { PLAYON_SERVER_ID: server.id, ...(native?.env ?? {}) },
+          logFile: this.consoleLogRel(server.id),
+          keepStdin,
+        };
+      }
       if (!binary) {
         throw new Error(
-          `native_binaries_missing: skill "${skillName}" has no Windows native.binary for remote node`,
+          `native_binaries_missing: skill "${skillName}" has no Windows native.binary or start script for remote node`,
         );
       }
       return {
