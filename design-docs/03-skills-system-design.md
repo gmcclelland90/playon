@@ -1,12 +1,12 @@
-# 03 – Skills System Design
+# 03 – Game & Platform Package Design
 
 ## Purpose
 
-Skills are the encoded knowledge and capabilities that let agents manage specific games and common hosting tasks reliably.
+**Game** and **Platform packages** are the encoded knowledge and capabilities that let agents manage specific games and common hosting tasks reliably. Player-facing catalog entries are **Games** (`games.*`); shared host capabilities are **Platform packages** (`platform.*`).
 
 ## Two Tiers
 
-### Global Skills
+### Platform Packages
 Shared across the installation:
 - General server lifecycle management
 - Container patterns and best practices
@@ -15,8 +15,8 @@ Shared across the installation:
 - Backup/snapshot orchestration helpers
 - Cross-game utilities
 
-### Server / Game-Specific Skills
-Live inside the individual server folder (or a dedicated skills subfolder):
+### Game Packages
+Live inside the individual server folder (or a dedicated package directory):
 - Exact install & update procedures for that game
 - Preferred runtime (Docker image, compose file, systemd unit, etc.)
 - Config templates and validation rules
@@ -25,9 +25,9 @@ Live inside the individual server folder (or a dedicated skills subfolder):
 - RCON / admin command reference
 - Templates for player-facing content
 
-## Skill Package Structure (Draft)
+## Package Structure (Draft)
 
-A skill is a directory/package containing:
+A Game or Platform package is a directory containing:
 
 1. **metadata.yaml** (or .json)  
    - name, version, game, supported versions, os/arch requirements  
@@ -49,25 +49,25 @@ A skill is a directory/package containing:
    Simple validation steps the agent can run after making changes.
 
 6. **tools.md** or equivalent  
-   Declares which tools this skill expects the agent to have available.
+   Declares which tools this package expects the agent to have available.
 
 ## Lifecycle
 
-- Install / update skill (global or per-server)
-- Override global skill behaviour at server level
-- Promote a well-tested server skill to global
-- Versioning and basic dependency declaration between skills
+- Install / update package (global or per-server)
+- Override global Platform package behaviour at server level
+- Promote a well-tested per-server Game to global
+- Versioning and basic dependency declaration between packages
 
 ## Auto-Drafting Policy
 
-Agents *can* research and draft new skills when a game is missing.  
+Agents *can* research and draft new Game packages when a title is missing.  
 This capability should **not** be overly aggressive:
 
-- Prefer explicit user trigger (“research and draft a skill for Game X”)
+- Prefer explicit user trigger (“research and draft a package for Game X”)
 - Drafts are clearly marked and require human review before becoming permanent
 - Drafts can be used immediately in a temporary capacity with clear warnings
 
-## Design Goals for Skills
+## Design Goals
 
 - Readable by both humans and agents
 - Mix of declarative metadata + procedural knowledge + executable scripts

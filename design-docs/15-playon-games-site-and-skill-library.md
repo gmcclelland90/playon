@@ -1,4 +1,4 @@
-# 15 – playon.games site & skill library
+# 15 – playon.games site & package library
 
 ## Status
 
@@ -11,7 +11,7 @@ playon.games should cover three jobs:
 
 1. **Get PlayOn** — download / install paths (Linux party box, Docker, source)
 2. **How to use** — short host + player docs, LAN party happy path
-3. **Skill library** — browse / search / download official (and later community) `.skill.zip` packages
+3. **Package library** — browse / search / download official (and later community) `.skill.zip` packages
 
 The control plane already speaks `.skill.zip` (export/import). The site hosts and discovers those artifacts; agents later call marketplace search/install against the same catalog.
 
@@ -52,7 +52,7 @@ Suggested `index.json` entry shape:
 }
 ```
 
-Package format = existing PlayOn skill zip (`metadata.yaml` at root + `guides/` …). No second format.
+Package format = existing PlayOn package zip (`metadata.yaml` at root + `guides/` …). No second format.
 
 ## Site IA (first ship)
 
@@ -72,14 +72,14 @@ Keep the first viewport brand-led (see frontend design rules). Library pages are
 
 - Astro site on playon.games (`playon-games` repo)
 - Author trees only in sibling `skills-src/`; publish via `pnpm catalog` → `public/skills/`
-- Seeded catalog skills: Paper, Rust, UT99, Valheim, Terraria, Factorio
+- Seeded catalog Games: Paper, Rust, UT99, Valheim, Terraria, Factorio
 - Monorepo has no `games.*`; Home remains platform-only (`PLAYON_SKILLS_PROFILE=minimal`)
 
 ### Phase B — wire PlayOn agents
 
 - `skill_search` / `skill_install_url` in the API against `PLAYON_SKILLS_CATALOG_URL` (default `https://playon.games/skills/index.json`)
 - Agent install workflow: local → catalog → draft
-- Settings UI: “Browse skill library”
+- Settings UI: “Browse package library”
 
 ### Phase C — community
 
@@ -91,7 +91,7 @@ Keep the first viewport brand-led (see frontend design rules). Library pages are
 
 | In monorepo | In sibling `playon-games` / playon.games |
 |-------------|------------------------------------------|
-| Platform skills (Home bundle) | Site UI + LAN hub |
+| Platform packages (Home bundle) | Site UI + LAN hub |
 | No curated `games.*` sources | `skills-src/` + `public/skills/` catalog |
 | Runtime install into `dataRoot/skills` | Hosted `index.json` + `.skill.zip` |
 | `.skill.zip` import/API | Cloudflare Pages/Workers deploy |
@@ -104,4 +104,4 @@ Keep the first viewport brand-led (see frontend design rules). Library pages are
 
 ## Success metric
 
-A fresh PlayOn install with `minimal` profile can install `games.minecraft-paper` from the library URL and reach a joinable LAN server without any game skill being bundled in the binary.
+A fresh PlayOn install with `minimal` profile can install `games.minecraft-paper` from the library URL and reach a joinable LAN server without any Game package being bundled in the binary.

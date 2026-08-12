@@ -240,7 +240,7 @@ export function SkillsPage({ user }: { user: PublicUser }) {
       <div className="page stack">
         <header className="page-header">
           <h1>Skills</h1>
-          <p className="muted">Operators and admins can browse the skill library.</p>
+          <p className="muted">Operators and admins can browse the package library.</p>
         </header>
       </div>
     );
@@ -252,18 +252,18 @@ export function SkillsPage({ user }: { user: PublicUser }) {
   return (
     <div className="page stack skills-page">
       <header className="page-header">
-        <h1>Skills</h1>
+        <h1>Games & Platform Packages</h1>
         <p className="lede">
           Teach this host how to run a game — install from the catalog, then create the server on the
           Map.
         </p>
       </header>
 
-      <div className="skills-tabs" role="tablist" aria-label="Skill library">
+      <div className="skills-tabs" role="tablist" aria-label="Package library">
         {(
           [
             ["installed", "Installed", installedSkills.length],
-            ["catalog", "Catalog", catalog.data?.skills?.length],
+            ["catalog", "Games", catalog.data?.skills?.length],
             ["platform", "Platform", platformSkills.length],
             ["drafts", "Drafts", drafts.data?.drafts?.length],
           ] as const
@@ -397,8 +397,8 @@ export function SkillsPage({ user }: { user: PublicUser }) {
                 <details className="confirm-always-details">
                   <summary>Advanced — offline / custom package</summary>
                   <p className="muted status-inline">
-                    Air-gapped hosts can import a local `.skill.zip`. Normal installs use the catalog
-                    or chat.
+                    Air-gapped hosts can import a local `.skill.zip`. Normal installs use the Games
+                    tab or chat.
                   </p>
                   <label className="field">
                     <span>Import package file</span>
@@ -455,8 +455,8 @@ export function SkillsPage({ user }: { user: PublicUser }) {
               </ul>
             ) : (
               <p className="muted status-inline">
-                No drafts yet. Agents create drafts when inventing a new skill; promote them here
-                when ready.
+                No drafts yet. Agents create drafts when inventing a new Game or Platform package;
+                promote them here when ready.
               </p>
             )
           ) : null}
@@ -495,10 +495,10 @@ export function SkillsPage({ user }: { user: PublicUser }) {
               </ul>
             ) : (
               <div className="empty-hint">
-                <strong>{tab === "platform" ? "No platform skills" : "Nothing installed yet"}</strong>
+                <strong>{tab === "platform" ? "No platform packages" : "Nothing installed yet"}</strong>
                 <p className="muted status-inline">
                   {tab === "platform" ? (
-                    "Platform skills ship with Home and appear here when the host is ready."
+                    "Platform packages ship with Home and appear here when the host is ready."
                   ) : (
                     <>
                       Open the{" "}
@@ -510,9 +510,9 @@ export function SkillsPage({ user }: { user: PublicUser }) {
                           setSelection(null);
                         }}
                       >
-                        Catalog
+                        Games
                       </button>{" "}
-                      or ask on the Map to install a game skill.
+                      or ask on the Map to install a Game package.
                     </>
                   )}
                 </p>
@@ -532,19 +532,19 @@ export function SkillsPage({ user }: { user: PublicUser }) {
                 {tab === "catalog"
                   ? "Find tonight’s game"
                   : tab === "installed"
-                    ? "Pick a skill"
+                    ? "Pick a package"
                     : tab === "drafts"
                       ? "Review a draft"
-                      : "Platform skills"}
+                      : "Platform packages"}
               </strong>
               <p className="muted status-inline">
                 {tab === "catalog"
                   ? "Search or select a game on the left. Install puts it on this host; create the server on the Map."
                   : tab === "installed"
-                    ? "Installed skills power servers on this host. Add more from the Catalog."
+                    ? "Installed packages power servers on this host. Add more from the Games tab."
                     : tab === "drafts"
-                      ? "Agent-invented skills land here until you promote them."
-                      : "Built-in Home skills. They cannot be uninstalled."}
+                      ? "Agent-invented packages land here until you promote them."
+                      : "Built-in Home platform packages. They cannot be uninstalled."}
               </p>
               {tab === "installed" ? (
                 <button
@@ -555,7 +555,7 @@ export function SkillsPage({ user }: { user: PublicUser }) {
                     setSelection(null);
                   }}
                 >
-                  Browse catalog
+                  Browse games
                 </button>
               ) : null}
             </div>
@@ -803,13 +803,13 @@ function CatalogDetail({
           )}
         </div>
       ) : (
-        <p className="muted status-inline">Admins can install catalog skills on this host.</p>
+        <p className="muted status-inline">Admins can install catalog packages on this host.</p>
       )}
       <details className="skills-advanced-meta">
-        <summary className="muted small">More about this skill</summary>
+        <summary className="muted small">More about this package</summary>
         <dl className="skills-meta">
           <div>
-            <dt>Skill id</dt>
+            <dt>Package id</dt>
             <dd>
               <code>{skill.name}</code>
             </dd>
@@ -865,17 +865,17 @@ function LocalDetail({
       {m.description ? <p>{m.description}</p> : null}
       {actions}
       {skill.source === "platform" || skill.source === "fixture" ? (
-        <p className="muted status-inline">Built-in — cannot be uninstalled from this host.</p>
+        <p className="muted status-inline">Built-in platform package — cannot be uninstalled from this host.</p>
       ) : null}
       <details className="skills-advanced-meta">
-        <summary className="muted small">More about this skill</summary>
+        <summary className="muted small">More about this package</summary>
         <dl className="skills-meta">
           <div>
             <dt>Source</dt>
             <dd>{sourceLabel(skill.source)}</dd>
           </div>
           <div>
-            <dt>Skill id</dt>
+            <dt>Package id</dt>
             <dd>
               <code>{m.name}</code>
             </dd>
