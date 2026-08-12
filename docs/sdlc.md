@@ -66,7 +66,9 @@ Agents stop and set `blocked-human` for:
 
 ## WIP limits
 
-- Max **3** `in-progress` issues across agents
+- Max **10** `in-progress` issues across agents (matches PlayOn Ops)
+- Concurrent **skill** work stays clustered: at most **1–2 engine families** at a time (e.g. Source query port, Steam networking UDP, PE install layout). Do not fill the cap with unclustered `port_open` / lifecycle agents — that produces duplicate PRs for one engine bug
+- Remaining WIP budget is for **platform P1s** (OTA, join-path, LLM/runtime, lab integrity), not more skill titles
 - Max **1** release prep at a time
 - User-facing behavior or spend changes stay `needs-human` until approved
 
