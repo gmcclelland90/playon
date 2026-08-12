@@ -10,6 +10,10 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 - **LLM canary v2** — `pnpm lab:llm-canary` asserts a two-step tool trace on a disposable `lab-*` fixture (Venice required; Ollama `llama3.2` / `qwen2.5` when reachable). Missing Ollama is `reachable=false` and does not fail the Venice path (`#845`).
 - Canvas **degraded-mode** note when a model prints tool-shaped text instead of calling tools; MCP and manual Start/Stop still work. Gemma is not blocklisted.
 
+### Fixed
+
+- **Windows UDP `port_open`** — lab-matrix no longer treats Home `status=running` as a listen. Windows UDP/no-TCP requires query-online or a node-side `net_udp_listen` check (`ss`/`netstat`). Linux `ss` path is unchanged (`#846`).
+
 ## [0.2.3] — 2026-08-12
 
 ### Added

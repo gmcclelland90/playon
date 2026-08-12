@@ -6,6 +6,7 @@ import { NodeJobError } from "./errors.js";
 import { FS_NODE_JOB_CONTRACTS } from "./fs.js";
 import { MANAGE_NODE_JOB_CONTRACTS } from "./manage.js";
 import { META_NODE_JOB_CONTRACTS } from "./meta.js";
+import { NET_NODE_JOB_CONTRACTS } from "./net.js";
 import { PROCESS_NODE_JOB_CONTRACTS } from "./process.js";
 import { STEAMCMD_NODE_JOB_CONTRACTS } from "./steamcmd.js";
 import { WSL_NODE_JOB_CONTRACTS } from "./wsl.js";
@@ -17,6 +18,7 @@ import { WSL_NODE_JOB_CONTRACTS } from "./wsl.js";
  */
 export const NODE_JOB_CONTRACTS = {
   ...META_NODE_JOB_CONTRACTS,
+  ...NET_NODE_JOB_CONTRACTS,
   ...FS_NODE_JOB_CONTRACTS,
   ...CONTAINER_NODE_JOB_CONTRACTS,
   ...PROCESS_NODE_JOB_CONTRACTS,

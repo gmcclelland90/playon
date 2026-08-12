@@ -31,7 +31,7 @@ import { listSkills, loadSkillMetadata } from "../apps/api/dist/services/skills.
 import { steamcmdAppUpdate } from "../apps/api/dist/services/steamcmd.js";
 import { execConsoleCommand } from "../apps/api/dist/services/server-console.js";
 import { createRuntimeAdapters } from "../packages/runtime/dist/factory.js";
-import { LOCAL_NODE_ID } from "../packages/shared/dist/index.js";
+import { LOCAL_NODE_ID, requiredUdpListenEvidence, windowsUdpPortOpenVerdict } from "../packages/shared/dist/index.js";
 import {
   HomeClient,
   loadHomeAuth,
@@ -334,6 +334,50 @@ function udpOnlyGame(meta) {
   const ports = gamePorts(meta);
   if (!ports.length) return false;
   return ports.every((p) => p.protocol === "udp");
+}
+
+/**
+ * UDP ports the matrix must prove listening (Linux ss / Windows node job).
+ * When a query dialect is declared, only the queryPortName bind is required —
+ * Steam-networking game ports (Avorion) often never show in ss/netstat.
+ */
+function udpListenTargets(meta) {
+  const udpGame = gamePorts(meta).filter((p) => p.protocol === "udp");
+  const queryName = typeof meta.queryPortName === "string" ? meta.queryPortName.trim() : "";
+  const requireQueryOnly =
+    !!queryName && meta.queryDialect && meta.queryDialect !== "none";
+  const mustListen = requireQueryOnly
+    ? udpGame.filter((p) => p.name === queryName)
+    : udpGame;
+  return { udpGame, listenTargets: mustListen.length ? mustListen : udpGame };
+}
+
+function unwrapUdpListen(res) {
+  if (!res || typeof res !== "object") return null;
+  if (res.probe === "unavailable") return null;
+  if (res.state === "open" || res.listening === true) return true;
+  if (res.state === "closed" || res.listening === false) return false;
+  const inner = res.result;
+  if (inner && typeof inner === "object") {
+    if (inner.probe === "unavailable") return null;
+    if (inner.listening === true) return true;
+    if (inner.listening === false) return false;
+  }
+  return null;
+}
+
+/** Node-side UDP listen (Windows netstat / Linux ss). null = probe unavailable. */
+async function homeUdpListening(home, winNodeId, port) {
+  try {
+    const res = await home.tool("net_port_check", {
+      port,
+      protocol: "udp",
+      nodeId: winNodeId,
+    });
+    return unwrapUdpListen(res);
+  } catch {
+    return null;
+  }
 }
 
 /** Disposable Home name — unique per attempt so parallel cleanups cannot target "the" slug. */
@@ -727,8 +771,8 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
       }
       notes.ports = opens;
       phases.port_open = "ok";
-    } else if (udpOnlyGame(meta) || meta.queryDialect !== "none") {
-      // Remote UDP listen isn't visible via Home ss; require running + query when dialect set.
+    } else {
+      // UDP / no-TCP: query-online OR node-side listen. Never status=running alone.
       let running = false;
       for (let i = 0; i < 40; i++) {
         const status = await homeServerStatus(home, serverId);
@@ -737,11 +781,77 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
         await sleep(3000);
       }
       if (!running) throw new Error("udp_process_not_running");
-      phases.port_open = "ok";
-    } else {
-      const status = await homeServerStatus(home, serverId);
-      if (status !== "running") throw new Error("running_without_ports_failed");
-      phases.port_open = "ok";
+
+      const { udpGame, listenTargets } = udpListenTargets(meta);
+      const hasQuery = meta.queryDialect !== "none";
+      if (!udpGame.length && !hasQuery) {
+        throw new Error("udp_listen_unproven");
+      }
+
+      let lastProbes = [];
+      let lastQuery = null;
+      const attempts = Math.max(tcpWait.attempts, hasQuery ? queryWait.attempts : tcpWait.attempts);
+      for (let i = 0; i < attempts; i++) {
+        const probes = [];
+        for (const p of udpGame) {
+          const listening = await homeUdpListening(home, winNodeId, p.default);
+          const required = listenTargets.some(
+            (t) => t.name === p.name && t.default === p.default,
+          );
+          probes.push({ name: p.name, port: p.default, listening, required });
+        }
+        lastProbes = probes;
+
+        let queryOnline = null;
+        if (hasQuery) {
+          lastQuery = await home.tool("servers_query", { serverId });
+          queryOnline = Boolean(lastQuery?.online);
+        }
+
+        const verdict = windowsUdpPortOpenVerdict({
+          running: true,
+          listening: requiredUdpListenEvidence(probes),
+          queryOnline,
+        });
+        if (verdict.ok) {
+          notes.ports = probes;
+          notes.portOpenVia = verdict.via;
+          phases.port_open = "ok";
+          if (verdict.via === "query") {
+            notes.query = {
+              online: lastQuery?.online,
+              error: lastQuery?.error,
+              name: lastQuery?.name,
+            };
+            phases.query = "ok";
+          }
+          break;
+        }
+        await sleep(tcpWait.delayMs);
+      }
+
+      if (phases.port_open !== "ok") {
+        notes.ports = lastProbes;
+        if (lastQuery) {
+          notes.query = {
+            online: lastQuery?.online,
+            error: lastQuery?.error,
+            name: lastQuery?.name,
+          };
+        }
+        if (hasQuery && lastQuery && !lastQuery.online) {
+          throw new Error(`query_offline: ${lastQuery?.error ?? "unknown"}`);
+        }
+        const required = lastProbes.filter((p) => p.required);
+        if (required.length && required.every((p) => p.listening === null)) {
+          throw new Error("udp_listen_unproven");
+        }
+        const missing = required
+          .filter((p) => p.listening !== true)
+          .map((p) => `${p.name}:${p.port}`)
+          .join(",");
+        throw new Error(missing ? `udp_port_not_listening: ${missing}` : "udp_listen_unproven");
+      }
     }
 
     try {
@@ -1036,7 +1146,8 @@ async function runLifecycle(cp, skill, { runTools, windows }) {
       notes.ports = opens;
       phases.port_open = "ok";
     } else if (udpOnlyGame(meta)) {
-      // UDP cannot use TCP connect; prove listen via ss, then query when available.
+      // UDP cannot use TCP connect; prove listen via ss. Do not treat
+      // status=running as port_open (that Windows fallback is query-or-listen).
       let running = false;
       for (let i = 0; i < 40; i++) {
         running = (await servers.get(serverId))?.status === "running";
@@ -1044,17 +1155,7 @@ async function runLifecycle(cp, skill, { runTools, windows }) {
         await sleep(3000);
       }
       if (!running) throw new Error("udp_process_not_running");
-      const udpGame = gamePorts(meta).filter((p) => p.protocol === "udp");
-      // When a query dialect is declared, hard-require the queryPortName listen
-      // only. Games like Avorion (Steam networking) advertise a UDP game port
-      // that never shows in `ss -uln`, while A2S answers on steam-query.
-      const queryName = typeof meta.queryPortName === "string" ? meta.queryPortName.trim() : "";
-      const requireQueryOnly =
-        !!queryName && meta.queryDialect && meta.queryDialect !== "none";
-      const mustListen = requireQueryOnly
-        ? udpGame.filter((p) => p.name === queryName)
-        : udpGame;
-      const listenTargets = mustListen.length ? mustListen : udpGame;
+      const { udpGame, listenTargets } = udpListenTargets(meta);
       const udpProbes = [];
       for (const p of udpGame) {
         const listening = await waitForUdpListening(p.default, tcpWait);
