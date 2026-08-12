@@ -1,6 +1,6 @@
 import { AGENT_SYSTEM_PROMPT } from "./agent-prompt.js";
 import { runToolInvocation, type ConfirmPolicy, type ToolEntry } from "./invoke-tool.js";
-import type { LlmClient, LlmMessage } from "./llm.js";
+import { looksLikeToolShapedContent, type LlmClient, type LlmMessage } from "./llm.js";
 import { toLlmToolDefinition, type ToolDefinition, type ToolHandler } from "./tools.js";
 
 export { confirmActionLabel, confirmSummary } from "./confirm-summary.js";
@@ -15,6 +15,11 @@ export interface ToolTraceEntry {
 export interface OrchestratorResult {
   content: string;
   toolTrace: ToolTraceEntry[];
+  /**
+   * Tools were offered, none ran, and the reply looks like a failed tool call.
+   * UI may say so; MCP and manual controls still work. Not a model blocklist.
+   */
+  degradedMode?: boolean;
 }
 
 export interface ConfirmRequest {
@@ -226,7 +231,15 @@ export class Orchestrator {
 
       if (!completion.toolCalls?.length) {
         emitContentTokens(stream, completion.content);
-        return { content: completion.content, toolTrace };
+        const degradedMode =
+          toolTrace.length === 0 &&
+          Boolean(toolDefs.length) &&
+          looksLikeToolShapedContent(completion.content);
+        return {
+          content: completion.content,
+          toolTrace,
+          ...(degradedMode ? { degradedMode: true } : {}),
+        };
       }
 
       // Do not stream interim "thinking" text that accompanies tool calls — models often

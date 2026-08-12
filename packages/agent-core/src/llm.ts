@@ -68,14 +68,22 @@ function asArgObject(value: unknown): Record<string, unknown> {
 }
 
 /**
- * Check if content looks like it might contain tool call attempts
- * (keywords, JSON-like structures, common patterns).
+ * True when assistant text looks like a printed/failed tool call rather than
+ * normal prose. Single helper for Gemma retry nudge (#840) and degraded-mode (#845).
  */
-function looksLikeToolContent(content: string): boolean {
+export function looksLikeToolShapedContent(content: string): boolean {
   const trimmed = content.trim();
   if (!trimmed) return false;
-  
-  // Check for common tool call indicators
+  if (/```(?:json|tool|tool_code)\b/i.test(trimmed)) return true;
+  if (/<\s*(?:function|tool_call|call)\b/i.test(trimmed)) return true;
+  if (/\btool_code\b/i.test(trimmed)) return true;
+  if (/"type"\s*:\s*"function"/i.test(trimmed)) return true;
+  if (
+    /"name"\s*:\s*"[a-zA-Z0-9_-]+"/.test(trimmed) &&
+    /"(?:arguments|parameters)"\s*:/.test(trimmed)
+  ) {
+    return true;
+  }
   const indicators = [
     /\{[^}]*"name"\s*:/i,
     /\{[^}]*"function"\s*:/i,
@@ -84,8 +92,7 @@ function looksLikeToolContent(content: string): boolean {
     /```\s*tool/i,
     /\w+\([^)]*=/, // Python-style function(param=value)
   ];
-  
-  return indicators.some(pattern => pattern.test(trimmed));
+  return indicators.some((pattern) => pattern.test(trimmed));
 }
 
 /**
@@ -374,7 +381,7 @@ export class OpenAICompatibleLlmClient implements LlmClient {
         toolCalls = recovered;
       } else if (
         !opts?._skipRetryNudge &&
-        looksLikeToolContent(content)
+        looksLikeToolShapedContent(content)
       ) {
         // Content looks tool-shaped but recovery failed. Try once with a nudge.
         const nudgeMessage: LlmMessage = {

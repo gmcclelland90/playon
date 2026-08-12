@@ -1932,6 +1932,15 @@ a.btn {
   color: var(--muted);
 }
 
+.degraded-mode-note {
+  margin-top: 0.55rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid oklch(0.82 0.14 85 / 0.45);
+  border-radius: var(--radius);
+  background: oklch(0.82 0.14 85 / 0.1);
+  font-size: 0.85rem;
+}
+
 .tool-trace code {
   color: var(--accent);
   font-size: 0.8rem;

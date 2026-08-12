@@ -37,4 +37,38 @@ describe("Orchestrator tool exposure", () => {
     );
     await expect(orch.handle("hello")).rejects.toBeInstanceOf(ChatAbortedError);
   });
+
+  it("sets degradedMode when tools were offered but the reply looks like a failed tool call", async () => {
+    const orch = new Orchestrator({
+      mode: "openai_compatible",
+      async complete() {
+        return {
+          content:
+            '```json\n{"name":"servers_list","arguments":{}}\n``` I printed the tool instead of calling it.',
+        };
+      },
+    });
+    orch.registerTool(
+      { name: "servers_list", description: "list", parameters: {} },
+      async () => ({ servers: [] }),
+    );
+    const result = await orch.handle("List servers.");
+    expect(result.toolTrace).toEqual([]);
+    expect(result.degradedMode).toBe(true);
+  });
+
+  it("does not set degradedMode for a normal prose reply", async () => {
+    const orch = new Orchestrator({
+      mode: "openai_compatible",
+      async complete() {
+        return { content: "Hello — what should we install?" };
+      },
+    });
+    orch.registerTool(
+      { name: "servers_list", description: "list", parameters: {} },
+      async () => ({ servers: [] }),
+    );
+    const result = await orch.handle("hi");
+    expect(result.degradedMode).toBeUndefined();
+  });
 });

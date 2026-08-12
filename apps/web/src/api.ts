@@ -258,6 +258,7 @@ export const api = {
       reply: string;
       llmMode: string;
       toolTrace?: ToolTrace[];
+      degradedMode?: boolean;
       agentProgress?: {
         skill: string;
         xp: number;
