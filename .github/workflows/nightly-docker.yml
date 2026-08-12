@@ -13,6 +13,12 @@ jobs:
       issues: write
     steps:
       - uses: actions/checkout@v4
+      - name: Checkout playon-games for skills
+        uses: actions/checkout@v4
+        with:
+          repository: gmcclelland90/playon-games
+          token: ${{ secrets.PLAYON_GAMES_PAT || github.token }}
+          path: playon-games
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -33,6 +39,7 @@ jobs:
         run: pnpm loop:verify:runtime
         env:
           PLAYON_RUNTIME: docker
+          PLAYON_GAMES_SKILLS_ROOT: ${{ github.workspace }}/playon-games/skills-src/games
           PLAYON_LAB_FILE_ISSUES: "0"
           PLAYON_LAB_PUBLISH_STATUS: "0"
           PLAYON_VENICE_API_KEY: ${{ secrets.PLAYON_VENICE_API_KEY }}
