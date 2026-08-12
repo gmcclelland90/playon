@@ -521,6 +521,23 @@ describe("local native lifecycle through ServerRuntimeHandle", () => {
     expect(fake.calls).toEqual([]);
   });
 
+  it("passes PLAYON_MANAGED_FROM to the process env when skill marker has managedFrom", async () => {
+    const { servers, id } = await nativeServer();
+    const { writeSkillMarker, readSkillMarker } = await import("./skill-marker.js");
+    const server = (await servers.get(id))!;
+    const marker = readSkillMarker(server.dataPath);
+    if (!marker) throw new Error("skill marker missing");
+    // Simulate a managed server by adding managedFrom to the skill marker.
+    writeSkillMarker(server.dataPath, { ...marker, managedFrom: "/opt/pzserver" } as never);
+
+    const started = await servers.start(id);
+
+    expect(started.status).toBe("running");
+    const spec = host.specs[0]!;
+    expect(spec.env?.PLAYON_SERVER_ID).toBe(id);
+    expect(spec.env?.PLAYON_MANAGED_FROM).toBe("/opt/pzserver");
+  });
+
   it("start refuses a game dir with nothing to launch, and reports the error", async () => {
     const { servers, id } = await nativeServer({ startable: false });
 
@@ -741,6 +758,30 @@ describe("remote native lifecycle through ServerRuntimeHandle", () => {
       serverId: id,
       // keepStdin omitted when false — older agents reject unrecognized keys.
       // Jail-relative, so the node writes the console under its own data root.
+      logRel: `servers/${id}/logs/console.log`,
+    });
+  });
+
+  it("passes PLAYON_MANAGED_FROM to the process env when skill marker has managedFrom", async () => {
+    const { servers, id, procName, cwd } = await remoteNativeServer();
+    const { writeSkillMarker, readSkillMarker } = await import("./skill-marker.js");
+    const server = (await servers.get(id))!;
+    const marker = readSkillMarker(server.dataPath);
+    if (!marker) throw new Error("skill marker missing");
+    // Simulate a managed server by adding managedFrom to the skill marker.
+    writeSkillMarker(server.dataPath, { ...marker, managedFrom: "/opt/pzserver" } as never);
+
+    const started = await servers.start(id);
+
+    expect(started.status).toBe("running");
+    const startArgs = node.jobs.find((j) => j.kind === "process_start")!.args;
+    expect(startArgs).toEqual({
+      name: procName,
+      command: "/bin/bash",
+      args: ["start.sh"],
+      cwd,
+      env: { PLAYON_SERVER_ID: id, PLAYON_MANAGED_FROM: "/opt/pzserver" },
+      serverId: id,
       logRel: `servers/${id}/logs/console.log`,
     });
   });

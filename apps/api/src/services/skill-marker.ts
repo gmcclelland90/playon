@@ -37,6 +37,9 @@ export type SkillMarker = {
   dependencies?: string[];
   minRamMb?: number;
   nodeId: string | null;
+  managedFrom?: string;
+  managedAt?: string;
+  nodeAuthoritative?: boolean;
 };
 
 export const SkillMarkerSchema = z.object({
@@ -60,6 +63,9 @@ export const SkillMarkerSchema = z.object({
   dependencies: z.array(z.string()).optional(),
   minRamMb: z.number().int().positive().optional(),
   nodeId: z.string().nullable(),
+  managedFrom: z.string().min(1).optional(),
+  managedAt: z.string().min(1).optional(),
+  nodeAuthoritative: z.boolean().optional(),
 });
 
 const skillJsonPath = (dataPath: string) => path.join(dataPath, "skill.json");

@@ -85,4 +85,30 @@ describe("SkillMarker", () => {
     temps.push(root);
     expect(readSkillMarker(root)).toBeNull();
   });
+
+  it("preserves managedFrom and nodeAuthoritative extras", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-skill-marker-"));
+    temps.push(root);
+    const dataPath = path.join(root, "managed");
+    const skill = fixtureSkill();
+    const runtimeMode = "docker";
+    const nodeId = "node-managed";
+
+    writeSkillMarkerFromSkill(dataPath, skill, runtimeMode, nodeId, {
+      managedFrom: "/opt/pzserver",
+      managedAt: "2026-08-12T00:00:00.000Z",
+      nodeAuthoritative: true,
+    });
+
+    const read = readSkillMarker(dataPath) as Record<string, unknown>;
+    expect(read).not.toBeNull();
+    expect(read.managedFrom).toBe("/opt/pzserver");
+    expect(read.managedAt).toBe("2026-08-12T00:00:00.000Z");
+    expect(read.nodeAuthoritative).toBe(true);
+
+    const validated = validateSkillMarker(read);
+    expect(validated.managedFrom).toBe("/opt/pzserver");
+    expect(validated.managedAt).toBe("2026-08-12T00:00:00.000Z");
+    expect(validated.nodeAuthoritative).toBe(true);
+  });
 });
