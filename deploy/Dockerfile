@@ -7,6 +7,7 @@ WORKDIR /src
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml tsconfig.base.json ./
 COPY apps ./apps
 COPY packages ./packages
+COPY catalog ./catalog
 COPY skills ./skills
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter @playon/shared --filter @playon/runtime --filter @playon/agent-core --filter @playon/server-query --filter @playon/api --filter @playon/web build
@@ -21,7 +22,7 @@ ENV PLAYON_ENV=production \
     PLAYON_HOST=0.0.0.0 \
     PLAYON_PORT=8787 \
     PLAYON_RUNTIME=native \
-    PLAYON_PACKAGES_ROOT=/opt/playon/packages \
+    PLAYON_CATALOG_ROOT=/opt/playon/catalog \
     PLAYON_SKILLS_PROFILE=minimal \
     PLAYON_WEB_DIST=/opt/playon/apps/web/dist \
     PLAYON_DATA_ROOT=/var/lib/playon

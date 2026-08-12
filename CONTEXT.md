@@ -18,6 +18,8 @@ Distinct from **agent skills** — XP tracks like Install, Monitor, Config, Fix,
 
 **HTTP API routes**: Both `/api/skills/*` (legacy) and `/api/packages/*` (player-facing alias) serve the same handlers. `/api/games/*` filters to `games.*` packages only. All three route families remain supported for backward compatibility.
 
+**Repository layout**: Platform packages and test fixtures live under `catalog/` (not `packages/` — that's the pnpm workspace glob for npm libs).
+
 ## Package Marker
 
 Per-server `skill.json` under the server data path. Single read/write/validate contract (`apps/api/src/services/skill-marker.ts`) for provision, import, panel join, query dialect, and runtime start. Create and import both write the full marker from package metadata; import may add `importedFrom` / `importedAt`.

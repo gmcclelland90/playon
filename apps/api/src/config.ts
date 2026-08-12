@@ -190,18 +190,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const extraCors = parseCorsExtra(env.PLAYON_CORS_ORIGINS);
   /**
    * `minimal` = platform packages only (Home / production shape).
-   * `dev` (default) also mounts repo test fixtures under packages/fixtures.
+   * `dev` (default) also mounts repo test fixtures under catalog/fixtures.
    * Curated games.* packages are never bundled — install from the playon.games catalog
    * into dataRoot/skills.
    */
   const skillsProfile = (env.PLAYON_SKILLS_PROFILE?.trim() || "dev").toLowerCase();
   /**
-   * Optional baked/install package root (Home tarball / container).
+   * Optional baked/install catalog root (Home tarball / container).
    * Semicolon-separated absolute paths (also `:` on non-Windows). Each may contain
-   * platform|fixtures subdirs or be a single package category directory.
-   * Env var names: PLAYON_PACKAGES_ROOT (preferred), PLAYON_SKILLS_ROOT (legacy compat).
+   * platform|fixtures subdirs or be a single catalog category directory.
+   * Env var names: PLAYON_CATALOG_ROOT (preferred), PLAYON_PACKAGES_ROOT, PLAYON_SKILLS_ROOT (legacy compat).
    */
-  const bakedSkillsRoot = env.PLAYON_PACKAGES_ROOT?.trim() || env.PLAYON_SKILLS_ROOT?.trim();
+  const bakedSkillsRoot = env.PLAYON_CATALOG_ROOT?.trim() || env.PLAYON_PACKAGES_ROOT?.trim() || env.PLAYON_SKILLS_ROOT?.trim();
   const skillsRoots: string[] = [];
   if (bakedSkillsRoot) {
     const parts = splitSkillsRootPaths(bakedSkillsRoot);
@@ -217,12 +217,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       }
     }
   } else {
-    // Phase 4: packages/platform + packages/fixtures (with legacy skills/* fallback)
-    const platformPath = path.join(repoRoot, "packages", "platform");
+    // Phase 4: catalog/platform + catalog/fixtures (with legacy skills/* fallback)
+    const platformPath = path.join(repoRoot, "catalog", "platform");
     const legacyPlatformPath = path.join(repoRoot, "skills", "platform");
     skillsRoots.push(fs.existsSync(platformPath) ? platformPath : legacyPlatformPath);
     if (skillsProfile !== "minimal") {
-      const fixturesPath = path.join(repoRoot, "packages", "fixtures");
+      const fixturesPath = path.join(repoRoot, "catalog", "fixtures");
       const legacyFixturesPath = path.join(repoRoot, "skills", "fixtures");
       skillsRoots.push(fs.existsSync(fixturesPath) ? fixturesPath : legacyFixturesPath);
     }

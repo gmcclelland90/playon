@@ -25,7 +25,7 @@ services:
       PLAYON_RUNTIME: native
       PLAYON_LLM_MODE: openai_compatible
       PLAYON_NODE_TOKEN: ${PLAYON_NODE_TOKEN:-}
-      PLAYON_PACKAGES_ROOT: /opt/playon/packages
+      PLAYON_CATALOG_ROOT: /opt/playon/catalog
       PLAYON_SKILLS_PROFILE: minimal
       PLAYON_WEB_DIST: /opt/playon/apps/web/dist
       PLAYON_VENICE_API_KEY: ${PLAYON_VENICE_API_KEY:-}
