@@ -103,4 +103,35 @@ describe("Watcher schemas", () => {
       }).type,
     ).toBe("panel.input");
   });
+
+  it("accepts workshop_update trigger", () => {
+    const trigger = WatcherTriggerSchema.parse({
+      kind: "workshop_update",
+      workshopIds: ["2169330869", "2260789317"],
+    });
+    expect(trigger.kind).toBe("workshop_update");
+    if (trigger.kind === "workshop_update") {
+      expect(trigger.workshopIds).toHaveLength(2);
+    }
+    const action = WatcherActionSchema.parse({
+      kind: "tools",
+      steps: [{ tool: "panel_publish", args: { message: "Workshop mod updated" } }],
+    });
+    const watcher = CreateWatcherSchema.parse({
+      serverId: "s1",
+      name: "Workshop update notifier",
+      trigger,
+      action,
+    });
+    expect(watcher.trigger.kind).toBe("workshop_update");
+  });
+
+  it("rejects workshop_update trigger with empty workshopIds", () => {
+    expect(() =>
+      WatcherTriggerSchema.parse({
+        kind: "workshop_update",
+        workshopIds: [],
+      }),
+    ).toThrow();
+  });
 });

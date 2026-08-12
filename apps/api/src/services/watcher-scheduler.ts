@@ -34,6 +34,7 @@ export class WatcherScheduler {
     try {
       await this.engine.tickSchedule();
       await this.engine.tickHealthAndQuery();
+      await this.engine.tickWorkshop();
     } catch {
       // keep scheduler alive
     } finally {
