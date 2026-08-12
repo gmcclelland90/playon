@@ -56,7 +56,7 @@ Protocol: if `agent-loop-status.json` has `ok=false`, fix that layer before new 
 
 ## Lab → GitHub loop
 
-On failure, `scripts/lab-file-github-issues.mjs` opens or updates Issues labeled `needs-triage` + `source:lab` (deduped by fingerprint). PlayOn Ops auto-adds them; the triage automation classifies to `ready` / `blocked-human`.
+On failure, `scripts/lab-file-github-issues.mjs` opens or updates Issues labeled `needs-triage` + `source:lab` (deduped by fingerprint: **one matrix issue per skill**; phase transitions comment on that issue). PlayOn Ops auto-adds them; the triage automation classifies to `ready` / `blocked-human`.
 
 | Source | When filed |
 |--------|------------|
@@ -65,7 +65,7 @@ On failure, `scripts/lab-file-github-issues.mjs` opens or updates Issues labeled
 | Lab cadence timer | Daily on playon-dev — verify then matrix ([infra/lab](../infra/lab/README.md)) |
 | Weekly e2e | `e2e-weekly.yml` on failure |
 
-Disable: `PLAYON_LAB_FILE_ISSUES=0`. Manual: `pnpm lab:file-issues`.
+Disable: `PLAYON_LAB_FILE_ISSUES=0`. Manual: `pnpm lab:file-issues`. Matrix clones from the old phase-keyed fingerprint: `pnpm lab:file-issues --close-clones` (dry-run) then `--close-clones --apply`.
 
 ## Flake policy
 

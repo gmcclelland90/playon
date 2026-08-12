@@ -66,6 +66,9 @@ Align with [lab-matrix.md](lab-matrix.md) classification:
 |-------|----------------|
 | `skill_bug` | `skill` + area `skills`; usually `safe-auto` |
 | `platform_bug` | `bug` + area (`api` / `runtime` / …); usually `safe-auto` |
+| `steamcmd_timeout` | `bug` + `runtime` + `P1`; SteamCMD exceeded timeout (not a skill P2) |
+| `steamcmd_empty_depot` | `chore` + `runtime` + `P3`; publisher-empty depot (often already an allowed skip) |
+| `steamcmd_no_subscription` | `chore` + `runtime` + `P3`; anonymous SteamCMD has no entitlement (often already an allowed skip) |
 | `platform_unsupported` | `chore` or `skill`; often `needs-human` if product should document/skip |
 | `allowed_skip` | No issue (or close as won't fix with reason) |
 | `flake` | `chore` + `test-debt`; quarantine only with issue link |

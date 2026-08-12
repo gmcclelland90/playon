@@ -38,6 +38,7 @@ import {
   wantsWindowsPlacement,
   windowsPlacementConfig,
 } from "./lab-matrix-home-client.mjs";
+import { classifyMatrixErrorClass } from "./lab-file-github-issues.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.chdir(repoRoot);
@@ -1433,12 +1434,17 @@ async function runMatrixBody({ dataRoot, db, sqlite, skillsRoots, gamesRoot }) {
           durationMs: 0,
           tail: err instanceof Error ? err.message : String(err),
         };
+        result.errorClass = classifyMatrixErrorClass({
+          phase: "static",
+          tail: result.tail,
+          errorClass: "skill_bug",
+        });
         results.push(result);
         failedSkill = name;
         appendIssue({
           skill: name,
           phase: "static",
-          errorClass: "skill_bug",
+          errorClass: result.errorClass,
           tail: result.tail,
         });
         writeStatus({
@@ -1488,13 +1494,25 @@ async function runMatrixBody({ dataRoot, db, sqlite, skillsRoots, gamesRoot }) {
     };
     // ok at top level is "run finished without hard failure so far"
     status.ok = results.every((r) => r.ok);
+    const failedPhase =
+      Object.entries(result.phases || {}).find(([, v]) => v === "fail")?.[0] ??
+      "unknown";
+    // Classify tails for filing / status JSON. Does not change ok / skipped.
+    if (!result.ok || result.skipped) {
+      result.errorClass = classifyMatrixErrorClass({
+        phase: failedPhase,
+        tail: result.tail,
+        skipReason: result.skipReason,
+        errorClass: result.errorClass,
+      });
+    }
     if (!result.ok) {
       status.failedSkill = name;
       failedSkill = name;
       appendIssue({
         skill: name,
-        phase: Object.entries(result.phases).find(([, v]) => v === "fail")?.[0] ?? "unknown",
-        errorClass: "lifecycle_fail",
+        phase: failedPhase,
+        errorClass: result.errorClass || "lifecycle_fail",
         tail: result.tail,
       });
     }
