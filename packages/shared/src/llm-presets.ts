@@ -40,8 +40,12 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPreset> = {
     label: "Venice",
     transport: "openai_compatible",
     baseUrl: "https://api.venice.ai/api/v1",
-    defaultModel: "llama-3.3-70b",
+    // Lab-proven tool-calling default (#836). llama-3.3-70b stays suggested
+    // (soft-fail on servers_query) but is not the silent Settings default.
+    // Lab merge-bar / agent tests still honor PLAYON_VENICE_MODEL when set.
+    defaultModel: "grok-4-5",
     suggestedModels: [
+      "grok-4-5",
       "llama-3.3-70b",
       "qwen3-235b-a22b-instruct-2507",
       "venice-uncensored-1-2",
@@ -49,6 +53,7 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPreset> = {
     requiresApiKey: true,
     apiKeyLabel: "Venice API key",
     baseUrlEditable: false,
+    docsHint: "Default grok-4-5 is lab-proven for tool calling; llama-3.3-70b remains available.",
     docsPath: "/docs/providers/venice",
   },
   openai: {

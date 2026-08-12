@@ -1,3 +1,4 @@
+import { LLM_PRESETS } from "@playon/shared";
 import { describe, expect, it } from "vitest";
 import { OpenAICompatibleLlmClient } from "./llm.js";
 import { Orchestrator } from "./orchestrator.js";
@@ -5,6 +6,7 @@ import { Orchestrator } from "./orchestrator.js";
 /**
  * Live Venice tool-calling smoke. Requires PLAYON_VENICE_API_KEY or VENICE_API_KEY.
  * Runs on the Linux lab host as part of the agent verify layer.
+ * Model: PLAYON_VENICE_MODEL, else LLM_PRESETS.venice.defaultModel (grok-4-5).
  */
 describe("agent live Venice tool loop", () => {
   it("calls Venice and can request a Paper create tool", async () => {
@@ -19,7 +21,7 @@ describe("agent live Venice tool loop", () => {
     const llm = new OpenAICompatibleLlmClient(
       process.env.PLAYON_VENICE_BASE_URL?.trim() || "https://api.venice.ai/api/v1",
       apiKey,
-      process.env.PLAYON_VENICE_MODEL?.trim() || "llama-3.3-70b",
+      process.env.PLAYON_VENICE_MODEL?.trim() || LLM_PRESETS.venice.defaultModel,
       "openai_compatible",
     );
 
