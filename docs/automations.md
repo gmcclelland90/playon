@@ -20,8 +20,8 @@ Mirror later for `gmcclelland90/playon-games` with the thinner label set.
 |-------|--------|
 | Name | PlayOn ready executor |
 | Trigger | Issue labeled `ready` **or** weekday evening / weekend cron |
-| Goal | Pick highest-priority `ready` under WIP limit (max 3 `in-progress`), implement, verify per `docs/testing-plan.md`, open PR with `Fixes #N` |
-| Instructions | Obey fire-first rule in `docs/sdlc.md`. Keep cockpit updates per `docs/observability.md` (progress comments, Project Status → `In progress` / `Done`). Stop and set `blocked-human` + `@gmcclelland90` on human gates. Lab verify on Linux host when merge bar required. |
+| Goal | Pick highest-priority `ready` under WIP limit (max 10 `in-progress`; skill work clustered to 1–2 engine families, rest of budget for platform P1s), implement, verify per `docs/testing-plan.md`, open PR with `Fixes #N` |
+| Instructions | Obey fire-first rule and WIP clustering in `docs/sdlc.md`. Keep cockpit updates per `docs/observability.md` (progress comments, Project Status → `In progress` / `Done`). Stop and set `blocked-human` + `@gmcclelland90` on human gates. Lab verify on Linux host when merge bar required. |
 | Tools | GitHub + repo checkout; PlayOn Ops project; lab access as configured |
 
 ## Deferred funnels
