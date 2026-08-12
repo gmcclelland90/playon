@@ -231,21 +231,52 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     if (!target || target === "/") return;
 
     const pids = listPidsWithCwdUnder(target);
-    for (const pid of pids) {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {
-        // already gone
-      }
-    }
     // Fallback: pkill -f for start scripts under this game dir (covers races
     // where /proc/cwd is unreadable to the agent user).
-    try {
-      execFileSync("pkill", ["-TERM", "-f", target], { stdio: "ignore" });
-    } catch {
-      // exit 1 = no match
+    let pkillFoundAny = false;
+    if (pids.length === 0) {
+      try {
+        execFileSync("pkill", ["-TERM", "-f", target], { stdio: "ignore" });
+        pkillFoundAny = true;
+      } catch {
+        // exit 1 = no match, nothing to kill
+        return;
+      }
+    } else {
+      for (const pid of pids) {
+        try {
+          process.kill(pid, "SIGTERM");
+        } catch {
+          // already gone
+        }
+      }
+      try {
+        execFileSync("pkill", ["-TERM", "-f", target], { stdio: "ignore" });
+      } catch {
+        // exit 1 = no match
+      }
     }
-    await sleep(1500);
+
+    // Brief poll: if nothing survived SIGTERM, skip the long sleep.
+    await sleep(100);
+    const surviving = listPidsWithCwdUnder(target);
+    const pkillStillMatches = pkillFoundAny
+      ? (() => {
+          try {
+            execFileSync("pgrep", ["-f", target], { stdio: "ignore" });
+            return true;
+          } catch {
+            return false;
+          }
+        })()
+      : false;
+
+    if (surviving.length === 0 && !pkillStillMatches) {
+      return;
+    }
+
+    // Stubborn survivors: wait longer then SIGKILL.
+    await sleep(1400);
     for (const pid of listPidsWithCwdUnder(target)) {
       try {
         process.kill(pid, "SIGKILL");
