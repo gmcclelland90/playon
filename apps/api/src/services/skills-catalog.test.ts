@@ -78,7 +78,7 @@ describe("skills catalog", () => {
     expect(findCatalogSkill(skills, { name: "minecraft" })?.name).toBe("games.minecraft-paper");
     expect(
       findCatalogSkill(skills, {
-        downloadUrl: "https://playon.games/skills/packages/games.rust-0.1.0.skill.zip",
+        downloadUrl: "https://playon.games/packages/games.rust-0.1.0.skill.zip",
       })?.name,
     ).toBe("games.rust");
   });
@@ -100,7 +100,7 @@ describe("skills catalog", () => {
       expect(bytes).toEqual(payload);
       expect(sha256).toBe(expected);
       await expect(
-        downloadCatalogSkillZip("https://playon.games/skills/packages/demo.skill.zip", "deadbeef"),
+        downloadCatalogSkillZip("https://playon.games/packages/demo.skill.zip", "deadbeef"),
       ).rejects.toThrow(/sha256_mismatch/);
     } finally {
       globalThis.fetch = originalFetch;
