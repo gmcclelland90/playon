@@ -257,6 +257,13 @@ $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 & (Join-Path $Root "runtime\\node\\node.exe") (Join-Path $Root "apps\\node-agent\\dist\\index.js")
 `,
 );
+fs.writeFileSync(
+  path.join(stage, "start-node.cmd"),
+  `@echo off
+cd /d "%~dp0"
+"%~dp0runtime\\node\\node.exe" "%~dp0apps\\node-agent\\dist\\index.js"
+`,
+);
 if (!isWin) {
   try {
     fs.chmodSync(path.join(stage, "start-node.sh"), 0o755);

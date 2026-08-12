@@ -63,7 +63,7 @@ export function swapInstallTree(opts: {
   return { preserved };
 }
 
-function extractArchive(archivePath: string, destDir: string): string {
+export function extractArchive(archivePath: string, destDir: string): string {
   fs.rmSync(destDir, { recursive: true, force: true });
   fs.mkdirSync(destDir, { recursive: true });
   const isZip = archivePath.toLowerCase().endsWith(".zip");
@@ -76,13 +76,13 @@ function extractArchive(archivePath: string, destDir: string): string {
           "-Command",
           `Expand-Archive -Path '${archivePath.replace(/'/g, "''")}' -DestinationPath '${destDir.replace(/'/g, "''")}' -Force`,
         ],
-        { stdio: "pipe" },
+        { stdio: "pipe", timeout: 60000 },
       );
     } else {
-      execFileSync("unzip", ["-q", archivePath, "-d", destDir], { stdio: "pipe" });
+      execFileSync("unzip", ["-q", archivePath, "-d", destDir], { stdio: "pipe", timeout: 60000 });
     }
   } else {
-    execFileSync("tar", ["-xzf", archivePath, "-C", destDir], { stdio: "pipe" });
+    execFileSync("tar", ["-xzf", archivePath, "-C", destDir], { stdio: "pipe", timeout: 60000 });
   }
   for (const name of ["playon-node", "playon"]) {
     const candidate = path.join(destDir, name);
@@ -118,6 +118,7 @@ export async function performNodeSelfUpdate(args: {
     args.preserve ?? ["data", "env", "node.env", "node.env.cmd"];
 
   const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-update-"));
+  let windowsHelperSpawned = false;
   try {
     const archivePath = path.join(
       staging,
@@ -134,6 +135,18 @@ export async function performNodeSelfUpdate(args: {
     }
     fs.writeFileSync(archivePath, buf);
     const extracted = extractArchive(archivePath, path.join(staging, "extracted"));
+
+    if (process.platform === "win32" && !args.skipExit) {
+      const result = performWindowsSelfUpdate({
+        installRoot,
+        extracted,
+        preserve,
+        version: args.version,
+      });
+      windowsHelperSpawned = true;
+      return result;
+    }
+
     const { preserved } = swapInstallTree({
       target: installRoot,
       source: extracted,
@@ -147,7 +160,57 @@ export async function performNodeSelfUpdate(args: {
       restartRequired: args.skipExit ? false : true,
     };
   } finally {
-    // Staging dir holds the downloaded archive; safe to remove after swap.
-    fs.rmSync(staging, { recursive: true, force: true });
+    if (process.platform !== "win32" || args.skipExit || !windowsHelperSpawned) {
+      fs.rmSync(staging, { recursive: true, force: true });
+    }
   }
+}
+
+function performWindowsSelfUpdate(opts: {
+  installRoot: string;
+  extracted: string;
+  preserve: string[];
+  version: string;
+}): {
+  version: string;
+  installRoot: string;
+  preserved: string[];
+  restartRequired: boolean;
+} {
+  const helperScript = path.join(opts.extracted, "deploy", "windows", "apply-self-update.ps1");
+  if (!fs.existsSync(helperScript)) {
+    throw new Error(
+      "update_helper_missing: deploy/windows/apply-self-update.ps1 not found in release package",
+    );
+  }
+
+  const preserveArgs = opts.preserve.flatMap((name) => ["-Preserve", name]);
+  const args = [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    helperScript,
+    "-SourceDir",
+    opts.extracted,
+    "-TargetDir",
+    opts.installRoot,
+    "-AgentPid",
+    String(process.pid),
+    ...preserveArgs,
+  ];
+
+  const { spawn } = require("node:child_process");
+  const child = spawn("powershell.exe", args, {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+
+  return {
+    version: opts.version,
+    installRoot: opts.installRoot,
+    preserved: opts.preserve,
+    restartRequired: true,
+  };
 }

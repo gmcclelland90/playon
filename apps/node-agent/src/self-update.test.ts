@@ -3,10 +3,27 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+
+// Mock child_process for Windows test only
+let mockExecFileSync: any = null;
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    execFileSync: (cmd: string, args?: readonly string[], options?: any) => {
+      if (mockExecFileSync) {
+        return mockExecFileSync(cmd, args, options);
+      }
+      return actual.execFileSync(cmd as any, args as any, options);
+    },
+  };
+});
+
 import { performNodeSelfUpdate, swapInstallTree } from "./self-update.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  mockExecFileSync = null;
 });
 
 describe("swapInstallTree", () => {
@@ -85,6 +102,93 @@ describe("performNodeSelfUpdate", () => {
       expect(fs.existsSync(path.join(installRoot, "apps", "node-agent", "dist", "index.js"))).toBe(
         true,
       );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves node.env and node.env.cmd by default", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-preserve-"));
+    try {
+      const target = path.join(root, "target");
+      const source = path.join(root, "source");
+      fs.mkdirSync(target, { recursive: true });
+      fs.writeFileSync(path.join(target, "node.env"), "VAR=old");
+      fs.writeFileSync(path.join(target, "node.env.cmd"), "set VAR=old");
+      fs.mkdirSync(path.join(target, "data"), { recursive: true });
+      fs.writeFileSync(path.join(target, "data", "keep.txt"), "keep");
+
+      fs.mkdirSync(source, { recursive: true });
+      fs.writeFileSync(path.join(source, "package.json"), "{}");
+      fs.writeFileSync(path.join(source, "node.env"), "VAR=new");
+      fs.writeFileSync(path.join(source, "node.env.cmd"), "set VAR=new");
+
+      const result = swapInstallTree({
+        target,
+        source,
+        preserve: ["data", "env", "node.env", "node.env.cmd"],
+      });
+      expect(result.preserved).toContain("data");
+      expect(result.preserved).toContain("node.env");
+      expect(result.preserved).toContain("node.env.cmd");
+      expect(fs.readFileSync(path.join(target, "node.env"), "utf8")).toBe("VAR=old");
+      expect(fs.readFileSync(path.join(target, "node.env.cmd"), "utf8")).toBe("set VAR=old");
+      expect(fs.readFileSync(path.join(target, "data", "keep.txt"), "utf8")).toBe("keep");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("throws if Windows update helper script is missing", async () => {
+    if (process.platform !== "win32") return;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-win-"));
+    try {
+      const installRoot = path.join(root, "install");
+      fs.mkdirSync(path.join(installRoot, "data"), { recursive: true });
+
+      mockExecFileSync = (cmd: string, args?: readonly string[], options?: any) => {
+        if (cmd === "powershell.exe" && args && args.some((a) => a.includes("Expand-Archive"))) {
+          const cmdStr = args.join(" ");
+          const destMatch = cmdStr.match(/-DestinationPath\s+'([^']+)'/);
+          if (destMatch) {
+            const destDir = destMatch[1];
+            const extractedRoot = path.join(destDir, "playon-node");
+            fs.mkdirSync(path.join(extractedRoot, "apps", "node-agent", "dist"), { recursive: true });
+            fs.writeFileSync(
+              path.join(extractedRoot, "package.json"),
+              JSON.stringify({ name: "playon-node", version: "0.2.0" }),
+            );
+            fs.writeFileSync(path.join(extractedRoot, "apps", "node-agent", "dist", "index.js"), "// agent");
+            return;
+          }
+        }
+        throw new Error(`Unexpected command: ${cmd}`);
+      };
+
+      const fakeArchiveBytes = Buffer.from("fake-zip-content");
+      const sha256 = crypto.createHash("sha256").update(fakeArchiveBytes).digest("hex");
+
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({
+          ok: true,
+          arrayBuffer: async () =>
+            fakeArchiveBytes.buffer.slice(
+              fakeArchiveBytes.byteOffset,
+              fakeArchiveBytes.byteOffset + fakeArchiveBytes.byteLength,
+            ),
+        })),
+      );
+
+      await expect(
+        performNodeSelfUpdate({
+          downloadUrl: "https://playon.games/home/packages/playon-node-0.2.0-windows-x64.zip",
+          sha256,
+          version: "0.2.0",
+          installRoot,
+          skipExit: false,
+        }),
+      ).rejects.toThrow("update_helper_missing");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
