@@ -89,7 +89,7 @@ function ensureEnv() {
     PLAYON_RUNTIME: runtime,
     PLAYON_LLM_MODE: existing.PLAYON_LLM_MODE || "openai_compatible",
     PLAYON_NODE_TOKEN: nodeToken,
-    PLAYON_SKILLS_ROOT: path.join(root, "skills"),
+    PLAYON_PACKAGES_ROOT: path.join(root, "packages"),
     PLAYON_SKILLS_PROFILE: "minimal",
     PLAYON_WEB_DIST: path.join(root, "apps", "web", "dist"),
   };

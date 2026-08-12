@@ -119,10 +119,10 @@ describe("PLAYON_SKILLS_ROOT", () => {
       PLAYON_SKILLS_ROOT: skills,
       PLAYON_SKILLS_PROFILE: "minimal",
     });
-    expect(cfg.skillsRoots.some((p) => p.replace(/\\/g, "/").endsWith("/skills/platform"))).toBe(
+    expect(cfg.skillsRoots.some((p) => p.replace(/\\/g, "/").endsWith("/platform"))).toBe(
       true,
     );
-    expect(cfg.skillsRoots.some((p) => p.replace(/\\/g, "/").endsWith("/skills/fixtures"))).toBe(
+    expect(cfg.skillsRoots.some((p) => p.replace(/\\/g, "/").endsWith("/fixtures"))).toBe(
       false,
     );
   });

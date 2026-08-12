@@ -1148,6 +1148,260 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     }
   });
 
+  // ============================================================================
+  // Phase 3 — Package / Game aliases (delegate to /skills handlers)
+  // Player-facing routes for browsing/managing Game and Platform packages.
+  // Existing /skills routes remain for backward compatibility.
+  // ============================================================================
+
+  app.get("/api/packages/catalog", async (c) => {
+    requireRole(c, "operator");
+    const stored = await getSetting<SkillsCatalogSettings>(db, SKILLS_CATALOG_KEY);
+    const catalogUrl = resolveSkillsCatalogUrl(
+      process.env.PLAYON_SKILLS_CATALOG_URL,
+      stored?.catalogUrl,
+    );
+    const q = c.req.query("q")?.trim() || "";
+    try {
+      const fetched = await fetchSkillsCatalogDetailed(catalogUrl);
+      const skills = annotateCatalogInstalled(
+        searchCatalog(fetched.skills, q),
+        config.skillsRoots,
+      );
+      return c.json({
+        catalogUrl,
+        skills,
+        warnings: fetched.warnings,
+        updatedAt: fetched.updatedAt,
+      });
+    } catch (err) {
+      throw HttpError.badGateway(messageFromError(err, "catalog_unavailable"), {
+        code: "skills_catalog_unavailable",
+        details: { catalogUrl },
+        cause: err,
+      });
+    }
+  });
+
+  app.post("/api/packages/install-from-catalog", async (c) => {
+    requireCan(c, "skills.package");
+    const body = await jsonBody(c, InstallSkillFromCatalogRequestSchema);
+    if (!body.name && !body.downloadUrl) {
+      throw HttpError.badRequest("name_or_downloadUrl_required", {
+        code: "name_or_downloadUrl_required",
+      });
+    }
+    try {
+      const stored = await getSetting<SkillsCatalogSettings>(db, SKILLS_CATALOG_KEY);
+      const catalogUrl = resolveSkillsCatalogUrl(
+        process.env.PLAYON_SKILLS_CATALOG_URL,
+        stored?.catalogUrl,
+      );
+      const result = await installSkillFromCatalog({
+        config,
+        skillPackages,
+        catalogUrl,
+        name: body.name,
+        downloadUrl: body.downloadUrl,
+        overwrite: body.overwrite,
+      });
+      return c.json({
+        skill: {
+          skillName: result.skillName,
+          path: result.path,
+          version: result.version,
+        },
+        catalogUrl: result.catalogUrl,
+        downloadUrl: result.downloadUrl,
+        sha256: result.sha256,
+        installed: result.installed,
+        skippedDeps: result.skippedDeps,
+      });
+    } catch (err) {
+      throw serviceHttpError(err, {
+        fallback: "catalog_install_failed",
+        code: "skill_catalog_install_failed",
+        statusPrefixes: {
+          404: ["catalog_skill_not_found"],
+          409: ["skill_exists"],
+          502: ["skills_catalog_fetch"],
+        },
+      });
+    }
+  });
+
+  app.get("/api/packages", async (c) => {
+    requireRole(c, "operator");
+    const serverId = c.req.query("serverId") || undefined;
+    if (serverId) {
+      const server = await serverService.get(serverId);
+      if (!server) throw HttpError.notFound("server_not_found", { code: "server_not_found" });
+    }
+    const roots = skillsRootsForWorkspace(config.skillsRoots, config.dataRoot, serverId);
+    const skills = listSkills(roots).map((s) => {
+      const source = classifySkillSource(s, config.dataRoot, serverId);
+      return {
+        id: s.id,
+        name: s.metadata.name,
+        version: s.metadata.version,
+        game: s.metadata.game,
+        description: s.metadata.description,
+        tags: s.metadata.tags,
+        theme: s.metadata.theme ?? null,
+        containerSupport: s.metadata.containerSupport,
+        dependencies: s.metadata.dependencies,
+        minRamMb: s.metadata.minRamMb,
+        source,
+        scope: source === "server" ? ("server" as const) : ("global" as const),
+      };
+    });
+    return c.json({ skills });
+  });
+
+  app.get("/api/packages/:name", async (c) => {
+    requireRole(c, "operator");
+    const name = decodeURIComponent(c.req.param("name"));
+    const entry = loadSkillMetadata(config.skillsRoots, name);
+    if (!entry) throw HttpError.notFound("unknown_skill", { code: "unknown_skill" });
+    const source = classifySkillSource(entry, config.dataRoot);
+    const localNames = new Set(listSkills(config.skillsRoots).map((s) => s.metadata.name));
+    const dependencies = (entry.metadata.dependencies ?? []).map((dep) => ({
+      name: dep,
+      present: localNames.has(dep),
+    }));
+    return c.json({
+      skill: {
+        id: entry.id,
+        path: entry.path,
+        source,
+        metadata: entry.metadata,
+        dependencies,
+      },
+    });
+  });
+
+  app.delete("/api/packages/:name", async (c) => {
+    requireCan(c, "skills.package");
+    const name = decodeURIComponent(c.req.param("name"));
+    const force =
+      c.req.query("force") === "1" ||
+      c.req.query("force") === "true";
+    try {
+      const servers = await serverService.list();
+      const inUse = servers
+        .filter((s) => readSkillMarker(s.dataPath)?.skillName === name)
+        .map((s) => ({ id: s.id, name: s.name }));
+      if (inUse.length && !force) {
+        throw HttpError.conflict("skill_in_use", {
+          code: "skill_in_use",
+          details: { servers: inUse } satisfies SkillInUseDetails,
+        });
+      }
+      const removed = skillPackages.uninstall(name);
+      return c.json({ ok: true, skill: removed, servers: inUse });
+    } catch (err) {
+      throw serviceHttpError(err, {
+        fallback: "uninstall_failed",
+        code: "skill_uninstall_failed",
+        notFoundPrefixes: ["unknown_skill"],
+      });
+    }
+  });
+
+  app.post("/api/packages/import", async (c) => {
+    requireCan(c, "skills.package");
+    try {
+      const contentType = c.req.header("content-type") ?? "";
+      let bytes: Uint8Array;
+      let overwrite = false;
+      if (contentType.includes("multipart/form-data")) {
+        const body = await c.req.parseBody();
+        const file = body.file;
+        if (!(file instanceof File)) {
+          throw HttpError.badRequest("file_required", { code: "file_required" });
+        }
+        bytes = new Uint8Array(await file.arrayBuffer());
+        overwrite = body.overwrite === "true" || body.overwrite === "1";
+      } else {
+        const body = await jsonBody(c, ImportSkillZipRequestSchema);
+        bytes = Uint8Array.from(Buffer.from(body.zipBase64, "base64"));
+        overwrite = body.overwrite ?? false;
+      }
+      const imported = skillPackages.importZip(bytes, { overwrite });
+      return c.json({ skill: imported });
+    } catch (err) {
+      throw serviceHttpError(err, {
+        fallback: "import_failed",
+        code: "skill_import_failed",
+        statusPrefixes: { 409: ["skill_exists"] },
+      });
+    }
+  });
+
+  app.get("/api/games/catalog", async (c) => {
+    requireRole(c, "operator");
+    const stored = await getSetting<SkillsCatalogSettings>(db, SKILLS_CATALOG_KEY);
+    const catalogUrl = resolveSkillsCatalogUrl(
+      process.env.PLAYON_SKILLS_CATALOG_URL,
+      stored?.catalogUrl,
+    );
+    const q = c.req.query("q")?.trim() || "";
+    try {
+      const fetched = await fetchSkillsCatalogDetailed(catalogUrl);
+      const allSkills = searchCatalog(fetched.skills, q);
+      // Filter to games.* packages only
+      const gameSkills = allSkills.filter((s) => s.name.startsWith("games."));
+      const skills = annotateCatalogInstalled(gameSkills, config.skillsRoots);
+      return c.json({
+        catalogUrl,
+        skills,
+        warnings: fetched.warnings,
+        updatedAt: fetched.updatedAt,
+      });
+    } catch (err) {
+      throw HttpError.badGateway(messageFromError(err, "catalog_unavailable"), {
+        code: "skills_catalog_unavailable",
+        details: { catalogUrl },
+        cause: err,
+      });
+    }
+  });
+
+  app.get("/api/games", async (c) => {
+    requireRole(c, "operator");
+    const serverId = c.req.query("serverId") || undefined;
+    if (serverId) {
+      const server = await serverService.get(serverId);
+      if (!server) throw HttpError.notFound("server_not_found", { code: "server_not_found" });
+    }
+    const roots = skillsRootsForWorkspace(config.skillsRoots, config.dataRoot, serverId);
+    const allSkills = listSkills(roots);
+    // Filter to games.* packages only
+    const gameSkills = allSkills.filter((s) => s.metadata.name.startsWith("games."));
+    const skills = gameSkills.map((s) => {
+      const source = classifySkillSource(s, config.dataRoot, serverId);
+      return {
+        id: s.id,
+        name: s.metadata.name,
+        version: s.metadata.version,
+        game: s.metadata.game,
+        description: s.metadata.description,
+        tags: s.metadata.tags,
+        theme: s.metadata.theme ?? null,
+        containerSupport: s.metadata.containerSupport,
+        dependencies: s.metadata.dependencies,
+        minRamMb: s.metadata.minRamMb,
+        source,
+        scope: source === "server" ? ("server" as const) : ("global" as const),
+      };
+    });
+    return c.json({ skills });
+  });
+
+  // ============================================================================
+  // End package / game aliases
+  // ============================================================================
+
   app.get("/api/servers", async (c) => {
     requireRole(c, "operator");
     const list = await serverService.list();

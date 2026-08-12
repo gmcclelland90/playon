@@ -18,7 +18,10 @@ export function resolveCatalogGamesRoot(repoRoot: string): string | null {
 
 /** Always-available fixture root for unit/int tests (not curated games.*). */
 export function resolveFixturesRoot(repoRoot: string): string {
-  return path.join(repoRoot, "skills", "fixtures");
+  // Phase 4: packages/fixtures (with legacy skills/fixtures fallback)
+  const newPath = path.join(repoRoot, "packages", "fixtures");
+  const legacyPath = path.join(repoRoot, "skills", "fixtures");
+  return fs.existsSync(newPath) ? newPath : legacyPath;
 }
 
 export const LAB_DOCKER_SKILL = "fixtures.lab-docker-server";
