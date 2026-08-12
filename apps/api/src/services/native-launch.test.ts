@@ -320,4 +320,81 @@ describe("native-launch", () => {
       else process.env.PLAYON_BANNERLORD_AUTH_TOKEN = prev;
     }
   });
+
+  it("resolves Windows batch scripts via ComSpec cmd.exe", () => {
+    if (process.platform !== "win32") return;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-win-bat-"));
+    const gameDir = path.join(root, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+    fs.writeFileSync(path.join(gameDir, "start.bat"), "@echo off\necho hi\n");
+
+    try {
+      const launch = resolveNativeLaunch({ skillName: "test.game", gameDir });
+      expect(launch?.kind).toBe("script");
+      expect(launch?.command).toBeTruthy();
+      expect(launch?.command.toLowerCase()).toMatch(/cmd\.exe$/);
+      expect(launch?.args).toContain("/c");
+      expect(launch?.args.some((a) => a.includes("start.bat"))).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves Windows PowerShell scripts with proper args", () => {
+    if (process.platform !== "win32") return;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-win-ps1-"));
+    const gameDir = path.join(root, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+    fs.writeFileSync(path.join(gameDir, "start.ps1"), "Write-Host 'Server starting'\n");
+
+    try {
+      const launch = resolveNativeLaunch({ skillName: "test.game", gameDir });
+      expect(launch?.kind).toBe("script");
+      expect(launch?.command).toBeTruthy();
+      expect(launch?.command.toLowerCase()).toMatch(/p(ower)?s(hell)?\.exe$/);
+      expect(launch?.args).toContain("-NoProfile");
+      expect(launch?.args).toContain("-ExecutionPolicy");
+      expect(launch?.args).toContain("Bypass");
+      expect(launch?.args).toContain("-File");
+      expect(launch?.args.some((a) => a.includes("start.ps1"))).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers batch over PowerShell on Windows", () => {
+    if (process.platform !== "win32") return;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-win-both-"));
+    const gameDir = path.join(root, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+    fs.writeFileSync(path.join(gameDir, "start.bat"), "@echo off\n");
+    fs.writeFileSync(path.join(gameDir, "start.ps1"), "Write-Host 'PS'\n");
+
+    try {
+      const launch = resolveNativeLaunch({ skillName: "test.game", gameDir });
+      expect(launch?.kind).toBe("script");
+      expect(launch?.command.toLowerCase()).toMatch(/cmd\.exe$/);
+      expect(launch?.args.some((a) => a.includes("start.bat"))).toBe(true);
+      expect(launch?.args.some((a) => a.includes("start.ps1"))).toBe(false);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to PowerShell when only .ps1 exists on Windows", () => {
+    if (process.platform !== "win32") return;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-win-ps1only-"));
+    const gameDir = path.join(root, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+    fs.writeFileSync(path.join(gameDir, "run.ps1"), "# PowerShell only\n");
+
+    try {
+      const launch = resolveNativeLaunch({ skillName: "test.game", gameDir });
+      expect(launch?.kind).toBe("script");
+      expect(launch?.command.toLowerCase()).toMatch(/p(ower)?s(hell)?\.exe$/);
+      expect(launch?.args.some((a) => a.includes("run.ps1"))).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

@@ -11,6 +11,38 @@ export interface NativeLaunch {
 }
 
 /**
+ * Resolve cmd.exe on Windows using ComSpec or fallback to absolute path.
+ * Prevents spawn ENOENT on hosts where cmd.exe is not in PATH.
+ */
+function resolveWindowsCmd(): string {
+  if (process.env.ComSpec) return process.env.ComSpec;
+  const systemRoot = process.env.SystemRoot || "C:\\Windows";
+  return path.join(systemRoot, "System32", "cmd.exe");
+}
+
+/**
+ * Resolve PowerShell executable on Windows.
+ * Tries pwsh (cross-platform PowerShell 7+) first, then powershell.exe (Windows PowerShell 5.1).
+ * Falls back to "powershell.exe" in PATH if absolute paths don't exist.
+ */
+function resolveWindowsPowerShell(): string {
+  const systemRoot = process.env.SystemRoot || "C:\\Windows";
+  const candidates = [
+    path.join(systemRoot, "System32", "pwsh.exe"),
+    path.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
+    path.join(systemRoot, "System32", "powershell.exe"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {
+      /* ignore stat failures */
+    }
+  }
+  return "powershell.exe";
+}
+
+/**
  * GoldSrc HLDS and Source SRCDS load `~/.steam/sdk32/steamclient.so` for
  * SteamAPI/breakpad. When missing or pointing at a cleaned-up tmp install,
  * the process may bind UDP then hang/segfault during Steam GameServer init
@@ -139,8 +171,20 @@ function resolveScriptLaunch(gameDir: string): NativeLaunch | null {
       if (fs.existsSync(full)) {
         return {
           kind: "script",
-          command: "cmd.exe",
+          command: resolveWindowsCmd(),
           args: ["/c", full],
+          env: { PLAYON_GAME: "native" },
+        };
+      }
+    }
+    for (const name of ["start.ps1", "run.ps1"]) {
+      const full = path.join(gameDir, name);
+      if (fs.existsSync(full)) {
+        const pwsh = resolveWindowsPowerShell();
+        return {
+          kind: "script",
+          command: pwsh,
+          args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", full],
           env: { PLAYON_GAME: "native" },
         };
       }
