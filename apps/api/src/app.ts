@@ -2626,6 +2626,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         llmMode: result.llmMode,
         toolTrace: result.toolTrace,
         aborted: result.aborted,
+        degradedMode: result.degradedMode,
         agentProgress: result.agentProgress,
         celebrations: result.celebrations,
       });

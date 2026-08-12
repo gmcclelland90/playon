@@ -39,6 +39,7 @@ type ChatLine = {
   role: "user" | "assistant";
   content: string;
   tools?: ToolTrace[];
+  degradedMode?: boolean;
 };
 
 type DockTab = "chat" | "ops";
@@ -513,6 +514,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
             // Prefer the HTTP final reply; streamed interim text must not win if reply is empty.
             content: typeof data.reply === "string" ? data.reply : last.content,
             tools: data.toolTrace?.length ? data.toolTrace : last.tools,
+            degradedMode: data.degradedMode,
           };
         }
         return next;
@@ -1056,6 +1058,11 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                           ))}
                         </ul>
                       </details>
+                    ) : null}
+                    {line.degradedMode ? (
+                      <p className="degraded-mode-note" role="status">
+                        This model did not use tools. Manual Start/Stop and MCP still work.
+                      </p>
                     ) : null}
                   </div>
                 );

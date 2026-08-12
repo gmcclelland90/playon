@@ -92,6 +92,8 @@ export type AgentTurnResult = {
   toolTrace: ToolTraceEntry[];
   aborted?: boolean;
   llmMode?: string;
+  /** Tools were offered but the model printed tool-shaped text instead of calling them. */
+  degradedMode?: boolean;
   agentProgress?: {
     skill: string;
     xp: number;
@@ -349,6 +351,7 @@ export class AgentTurn {
         serverId: workspaceServerId,
         reply: result.content,
         toolTrace: result.toolTrace,
+        degradedMode: result.degradedMode,
       };
     } catch (err) {
       const aborted =
@@ -601,6 +604,7 @@ export class AgentTurn {
       reply: safeReply,
       llmMode: stored?.provider ?? this.plane.config.llmMode,
       toolTrace: result.toolTrace,
+      degradedMode: result.degradedMode,
       agentProgress: lastAward
         ? {
             skill: lastAward.progress.skill,

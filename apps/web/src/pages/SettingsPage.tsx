@@ -1248,6 +1248,10 @@ export function SettingsPage({ user }: { user: PublicUser }) {
         hidden={!showSection("llm")}
       >
         <h3 className="section-title">In-app agents (LLM provider)</h3>
+        <p className="muted status-inline">
+          Weaker or local models may not tool-call. If that happens, the canvas says so — MCP and
+          Start/Stop still work.
+        </p>
         {llm.isLoading ? (
           <div className="skeleton" aria-hidden>
             <div className="skeleton-row" />

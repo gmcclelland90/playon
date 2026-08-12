@@ -11,6 +11,7 @@
  * Usage:
  *   node scripts/lab-file-github-issues.mjs --from verify
  *   node scripts/lab-file-github-issues.mjs --from matrix
+ *   node scripts/lab-file-github-issues.mjs --from llm-canary
  *   node scripts/lab-file-github-issues.mjs --from verify --from matrix
  *   node scripts/lab-file-github-issues.mjs --dry-run
  *   node scripts/lab-file-github-issues.mjs --close-clones
@@ -53,12 +54,17 @@ function fromFlags() {
 const from = fromFlags();
 const sources =
   closeClones && from.length === 0
-    ? { verify: false, matrix: false }
+    ? { verify: false, matrix: false, llmCanary: false }
     : from.length === 0
-      ? { verify: true, matrix: true }
-      : { verify: from.includes("verify"), matrix: from.includes("matrix") };
+      ? { verify: true, matrix: true, llmCanary: false }
+      : {
+          verify: from.includes("verify"),
+          matrix: from.includes("matrix"),
+          llmCanary: from.includes("llm-canary") || from.includes("canary"),
+        };
 
 const statusVerify = join(root, "tmp", "agent-loop-status.json");
+const statusLlmCanary = join(root, "tmp", "lab-llm-canary-status.json");
 const statusMatrix = process.env.PLAYON_LAB_MATRIX_STATUS
   ? process.env.PLAYON_LAB_MATRIX_STATUS
   : join(root, "tmp", "lab-matrix-status.json");
@@ -650,6 +656,69 @@ function closeSkillCloneIssues({ apply }) {
   return { groups: groups.length, close: closeN };
 }
 
+function fileLlmCanaryFailures() {
+  if (!existsSync(statusLlmCanary)) {
+    console.log("skip llm-canary: no tmp/lab-llm-canary-status.json");
+    return [];
+  }
+  let status;
+  try {
+    status = JSON.parse(readFileSync(statusLlmCanary, "utf8"));
+  } catch (err) {
+    console.warn(`llm-canary status unreadable: ${err instanceof Error ? err.message : err}`);
+    return [];
+  }
+
+  const out = [];
+  if (status.ollama && status.ollama.reachable === false) {
+    console.log("llm-canary ollama reachable=false (not filed)");
+  }
+
+  for (const row of status.models || []) {
+    if (row.skipped) continue;
+    if (row.ok) continue;
+    const provider = row.provider || "unknown";
+    const model = row.model || "unknown";
+    const reason = row.reason || (row.degraded ? "degraded" : "tool_trace_fail");
+    const fp = `llm-canary:${provider}:${model}:${reason}`;
+    const title = `[lab] LLM canary: ${model} two-step tool trace failed`;
+    const body = [
+      "## Summary",
+      `LLM canary v2 two-step tool trace failed for \`${provider}/${model}\`.`,
+      "",
+      "## Classification",
+      `- provider: \`${provider}\``,
+      `- model: \`${model}\``,
+      `- reason: \`${reason}\``,
+      `- degraded: \`${Boolean(row.degraded)}\``,
+      `- tools: \`${(row.names || []).join(" → ") || "(none)"}\``,
+      "",
+      "## Evidence",
+      "```",
+      truncate(JSON.stringify(row, null, 2)),
+      "```",
+      "",
+      "## Done when",
+      "- [ ] `pnpm lab:llm-canary` two-step trace green for this model",
+      "- [ ] Do **not** blocklist Gemma; recover text-tool emission instead (#838 / #840)",
+      "",
+      "See docs/testing-plan.md (LLM canary) and #845 / #836.",
+    ].join("\n");
+    const labels = [
+      "bug",
+      "needs-triage",
+      "source:lab",
+      "lab",
+      "agent-core",
+      "api",
+      provider === "venice" ? "P1" : "P2",
+    ];
+    const result = createOrUpdate({ fingerprint: fp, title, body, labels });
+    if (result) out.push({ fingerprint: fp, ...result });
+  }
+  return out;
+}
+
 function main() {
   if (!enabled()) {
     console.log("PLAYON_LAB_FILE_ISSUES disabled; skip");
@@ -671,6 +740,7 @@ function main() {
   const filed = [];
   if (sources.verify) filed.push(...fileVerifyFailure());
   if (sources.matrix) filed.push(...fileMatrixFailures(ledger));
+  if (sources.llmCanary) filed.push(...fileLlmCanaryFailures());
 
   for (const f of filed) {
     if (!f.fingerprint || !f.number) continue;

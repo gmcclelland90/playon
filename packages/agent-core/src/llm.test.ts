@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractToolCallsFromContent } from "./llm.js";
+import { extractToolCallsFromContent, looksLikeToolShapedContent } from "./llm.js";
 
 describe("extractToolCallsFromContent", () => {
   describe("OpenAI/Hermes JSON formats", () => {
@@ -240,5 +240,37 @@ This will set up your server.`;
         serverName: "My Paper Server",
       });
     });
+  });
+});
+
+describe("looksLikeToolShapedContent", () => {
+  it("detects fake tool JSON and fenced tool blocks", () => {
+    expect(
+      looksLikeToolShapedContent(
+        '{"type": "function", "function": {"name": "servers_list", "parameters": {}}}',
+      ),
+    ).toBe(true);
+    expect(looksLikeToolShapedContent("```tool_code\nservers_list()\n```")).toBe(true);
+    expect(looksLikeToolShapedContent('{"name":"servers_get","arguments":{"serverId":"x"}}')).toBe(
+      true,
+    );
+  });
+
+  it("detects Gemma Python and FunctionGemma XML shapes", () => {
+    expect(
+      looksLikeToolShapedContent(
+        'servers_create_from_skill(skillName="games.minecraft-paper", serverName="Test")',
+      ),
+    ).toBe(true);
+    expect(
+      looksLikeToolShapedContent(
+        "<start_function_call>call:servers_list{}<end_function_call>",
+      ),
+    ).toBe(true);
+  });
+
+  it("ignores ordinary assistant prose", () => {
+    expect(looksLikeToolShapedContent("Hello — what should we install?")).toBe(false);
+    expect(looksLikeToolShapedContent("")).toBe(false);
   });
 });

@@ -31,8 +31,10 @@ Cursor workflow `playon-polish-canary` ([#835](https://github.com/gmcclelland90/
 | Canary | Command / notes |
 |--------|-----------------|
 | Join-path (`resolveJoinAddress`, not `127.0.0.1`) | `pnpm build && pnpm lab:join-path-canary` ([#843](https://github.com/gmcclelland90/playon/issues/843)). Optional `--live-docker` on the lab host. WSL sibling + Windows PE live TCP stay lab-only (see [lab-matrix.md](lab-matrix.md)). Do **not** change matrix `port_open`. |
+| LLM model (`llm-model-compat`) | `pnpm lab:llm-canary` ([#845](https://github.com/gmcclelland90/playon/issues/845)). Two-step `servers_list` → `servers_get` on disposable `lab-llm-canary`. Ollama `reachable=false` does not fail Venice. Do not blocklist Gemma. File Venice FAILs with `pnpm lab:file-issues --from llm-canary`. |
 | Soak / managed-install / OTA+nodes / site-catalog / WSL Phase 2 | Existing Ops routines on `playon-polish-canary` |
 
 ## Deferred funnels
 
 Discord and in-app “Report a problem” should only **create Issues** (same templates/labels, plus `source:discord` / `source:host`). Reuse automation 1 for triage — do not add a second backlog.
+

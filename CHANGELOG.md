@@ -7,6 +7,8 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 ### Added
 
 - **Join-path canary** — `pnpm lab:join-path-canary` probes published `joinHost:gamePort` from `resolveJoinAddress` / `nodes.join_host` (not `127.0.0.1`). Fails if loopback is open but join host is not. Linux `fixtures.lab-docker-server` in CI/unit; WSL sibling + Windows PE live TCP documented as lab-only. Does not relax matrix `port_open` (`#843`).
+- **LLM canary v2** — `pnpm lab:llm-canary` asserts a two-step tool trace on a disposable `lab-*` fixture (Venice required; Ollama `llama3.2` / `qwen2.5` when reachable). Missing Ollama is `reachable=false` and does not fail the Venice path (`#845`).
+- Canvas **degraded-mode** note when a model prints tool-shaped text instead of calling tools; MCP and manual Start/Stop still work. Gemma is not blocklisted.
 
 ## [0.2.3] — 2026-08-12
 
