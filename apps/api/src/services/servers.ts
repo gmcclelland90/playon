@@ -828,10 +828,15 @@ export class ServerService {
       );
     }
     this.ensureRconConfig(server, skillName);
+    const env: Record<string, string> = { PLAYON_SERVER_ID: server.id, ...launch.env };
+    const marker = readSkillMarker(server.dataPath);
+    if (marker?.managedFrom) {
+      env.PLAYON_MANAGED_FROM = marker.managedFrom;
+    }
     return {
       command: launch.command,
       args: launch.args,
-      env: { PLAYON_SERVER_ID: server.id, ...launch.env },
+      env,
       logFile: this.consoleLogAbs(server.dataPath),
       keepStdin: skillEntry?.metadata.adminDialect === "stdin",
     };
@@ -896,6 +901,14 @@ export class ServerService {
       args: [...(native?.args ?? [])],
       skillName,
     });
+    
+    // Read managedFrom from skill marker (may be node-authoritative)
+    const marker = readSkillMarker(server.dataPath);
+    const baseEnv: Record<string, string> = { PLAYON_SERVER_ID: server.id, ...(native?.env ?? {}) };
+    if (marker?.managedFrom) {
+      baseEnv.PLAYON_MANAGED_FROM = marker.managedFrom;
+    }
+    
     // Windows nodes have no /bin/bash start.sh contract — PE binary, or skill start.bat / start.ps1.
     if (nodeOs === "windows") {
       const preferScript = native?.preferStartScript !== false;
@@ -912,7 +925,7 @@ export class ServerService {
         return {
           command: "C:\\Windows\\System32\\cmd.exe",
           args: ["/c", overlayBat],
-          env: { PLAYON_SERVER_ID: server.id, ...(native?.env ?? {}) },
+          env: baseEnv,
           logFile: this.consoleLogRel(server.id),
           keepStdin,
         };
@@ -929,7 +942,7 @@ export class ServerService {
         return {
           command: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
           args: ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", overlayPs1],
-          env: { PLAYON_SERVER_ID: server.id, ...(native?.env ?? {}) },
+          env: baseEnv,
           logFile: this.consoleLogRel(server.id),
           keepStdin,
         };
@@ -942,7 +955,7 @@ export class ServerService {
       return {
         command: binary,
         args: nativeArgs,
-        env: { PLAYON_SERVER_ID: server.id, ...(native?.env ?? {}) },
+        env: baseEnv,
         logFile: this.consoleLogRel(server.id),
         keepStdin,
       };
@@ -953,7 +966,7 @@ export class ServerService {
     return {
       command: useBinary ? binary! : "/bin/bash",
       args: useBinary ? nativeArgs : ["start.sh"],
-      env: { PLAYON_SERVER_ID: server.id, ...(native?.env ?? {}) },
+      env: baseEnv,
       logFile: this.consoleLogRel(server.id),
       keepStdin,
     };
