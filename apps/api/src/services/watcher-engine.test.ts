@@ -2,6 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import type { Watcher } from "@playon/shared";
 import { WatcherEngine } from "./watcher-engine.js";
 import type { ControlPlane } from "../control-plane.js";
+import { getSetting, setSetting } from "./settings.js";
+import type { Db } from "../db/client.js";
+
+vi.mock("./settings.js", () => ({
+  getSetting: vi.fn(),
+  setSetting: vi.fn(),
+}));
 
 function baseWatcher(over: Partial<Watcher> = {}): Watcher {
   const now = Date.now();
@@ -99,5 +106,92 @@ describe("WatcherEngine matching", () => {
     expect(createRun).toHaveBeenCalled();
     expect(markFired).toHaveBeenCalled();
     engine.stop();
+  });
+
+  it("detects workshop updates and persists state", async () => {
+    const w = baseWatcher({
+      trigger: { kind: "workshop_update", workshopIds: ["123", "456"] },
+      cooldownMs: 0,
+    });
+
+    const createRun = vi.fn(async () => ({
+      id: "r1",
+      watcherId: w.id,
+      serverId: w.serverId,
+      status: "running",
+      triggerPayload: {},
+      startedAt: Date.now(),
+    }));
+    const finishRun = vi.fn();
+    const markFired = vi.fn();
+    const get = vi.fn(async () => w);
+    const listEnabled = vi.fn(async () => [w]);
+    
+    // Mock empty initial state
+    vi.mocked(getSetting).mockResolvedValue({});
+    vi.mocked(setSetting).mockResolvedValue(undefined);
+
+    // Mock Steam API by providing fetchWorkshopItems result directly
+    vi.spyOn(await import("./steam-workshop.js"), "fetchWorkshopItems").mockResolvedValue([
+      { workshopId: "123", title: "Mod A", timeUpdated: 1000 },
+      { workshopId: "456", title: "Mod B", timeUpdated: 2000 },
+    ]);
+
+    const plane = {
+      watchers: { get, createRun, finishRun, markFired, listEnabled },
+      eventHub: { subscribe: () => () => undefined, publish: vi.fn() },
+      db: {} as Db,
+    } as unknown as ControlPlane;
+
+    const engine = new WatcherEngine(plane);
+    await engine.tickWorkshop();
+
+    // Should detect both as new updates (no prior state)
+    expect(createRun).toHaveBeenCalled();
+    expect(markFired).toHaveBeenCalled();
+
+    // Should persist state
+    expect(setSetting).toHaveBeenCalledWith(
+      expect.anything(),
+      "watcher.workshop_state",
+      expect.objectContaining({
+        s1: {
+          "123": { lastSeen: 1000 },
+          "456": { lastSeen: 2000 },
+        },
+      }),
+    );
+  });
+
+  it("skips workshop fire when no updates", async () => {
+    const w = baseWatcher({
+      trigger: { kind: "workshop_update", workshopIds: ["123"] },
+      cooldownMs: 0,
+    });
+
+    const createRun = vi.fn();
+    const listEnabled = vi.fn(async () => [w]);
+
+    // State already has this timeUpdated
+    vi.mocked(getSetting).mockResolvedValue({
+      s1: { "123": { lastSeen: 1000 } },
+    });
+    vi.mocked(setSetting).mockResolvedValue(undefined);
+
+    vi.spyOn(await import("./steam-workshop.js"), "fetchWorkshopItems").mockResolvedValue([
+      { workshopId: "123", title: "Mod A", timeUpdated: 1000 },
+    ]);
+
+    const plane = {
+      watchers: { listEnabled, createRun },
+      eventHub: { subscribe: () => () => undefined, publish: vi.fn() },
+      db: {} as Db,
+    } as unknown as ControlPlane;
+
+    const engine = new WatcherEngine(plane);
+    await engine.tickWorkshop();
+
+    // Should not create a run (no update detected)
+    expect(createRun).not.toHaveBeenCalled();
   });
 });

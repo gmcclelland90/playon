@@ -70,6 +70,12 @@ export const WatcherPanelInputTriggerSchema = z.object({
   inputType: z.enum(["vote", "readiness"]),
 });
 
+export const WatcherWorkshopUpdateTriggerSchema = z.object({
+  kind: z.literal("workshop_update"),
+  /** Steam Workshop / publishedfile IDs to monitor. */
+  workshopIds: z.array(z.string().min(1)).min(1),
+});
+
 export const WatcherTriggerSchema = z.discriminatedUnion("kind", [
   WatcherScheduleTriggerSchema,
   WatcherServerStatusTriggerSchema,
@@ -77,6 +83,7 @@ export const WatcherTriggerSchema = z.discriminatedUnion("kind", [
   WatcherHealthTriggerSchema,
   WatcherQueryTriggerSchema,
   WatcherPanelInputTriggerSchema,
+  WatcherWorkshopUpdateTriggerSchema,
 ]);
 
 export type WatcherTrigger = z.infer<typeof WatcherTriggerSchema>;

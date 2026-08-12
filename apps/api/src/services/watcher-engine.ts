@@ -4,6 +4,12 @@ import type { ControlPlane } from "../control-plane.js";
 import { runWatcherAction } from "./watcher-actions.js";
 import { WatcherLogBuffer } from "./watcher-context.js";
 import type { ServerHealthReport } from "./health.js";
+import {
+  fetchWorkshopItems,
+  WORKSHOP_WATCHER_STATE_KEY,
+  type WorkshopWatcherState,
+} from "./steam-workshop.js";
+import { getSetting, setSetting } from "./settings.js";
 
 const GLOBAL_AGENT_CAP = 3;
 
@@ -114,6 +120,77 @@ export class WatcherEngine {
         }
       }
     }
+  }
+
+  async tickWorkshop(): Promise<void> {
+    const enabled = await this.plane.watchers.listEnabled();
+    const workshopWatchers = enabled.filter((w) => w.trigger.kind === "workshop_update");
+    if (!workshopWatchers.length) return;
+
+    // Load state from settings
+    const state: WorkshopWatcherState =
+      (await getSetting<WorkshopWatcherState>(this.plane.db, WORKSHOP_WATCHER_STATE_KEY)) ?? {};
+
+    // Group watchers by server and collect all unique workshop IDs
+    const byServer = new Map<string, Watcher[]>();
+    const allWorkshopIds = new Set<string>();
+    for (const w of workshopWatchers) {
+      if (w.trigger.kind !== "workshop_update") continue;
+      const list = byServer.get(w.serverId) ?? [];
+      list.push(w);
+      byServer.set(w.serverId, list);
+      for (const id of w.trigger.workshopIds) {
+        allWorkshopIds.add(id);
+      }
+    }
+
+    // Fetch all workshop items in one batch
+    let workshopItems: Awaited<ReturnType<typeof fetchWorkshopItems>> = [];
+    try {
+      workshopItems = await fetchWorkshopItems(Array.from(allWorkshopIds));
+    } catch (err) {
+      console.warn("workshop tick failed:", err instanceof Error ? err.message : err);
+      return;
+    }
+
+    const workshopMap = new Map(workshopItems.map((item) => [item.workshopId, item]));
+
+    // Check each watcher for updates
+    for (const [serverId, list] of byServer) {
+      for (const w of list) {
+        if (w.trigger.kind !== "workshop_update") continue;
+
+        const serverState = state[serverId] ?? {};
+        const updated: Array<{ workshopId: string; title: string; timeUpdated: number }> = [];
+
+        for (const workshopId of w.trigger.workshopIds) {
+          const item = workshopMap.get(workshopId);
+          if (!item) continue;
+
+          const lastSeen = serverState[workshopId]?.lastSeen ?? 0;
+          if (item.timeUpdated > lastSeen) {
+            updated.push(item);
+            // Update state
+            if (!state[serverId]) state[serverId] = {};
+            state[serverId]![workshopId] = { lastSeen: item.timeUpdated };
+          }
+        }
+
+        if (updated.length) {
+          await this.enqueue(w, {
+            kind: "workshop_update",
+            updated: updated.map((u) => ({
+              workshopId: u.workshopId,
+              title: u.title,
+              timeUpdated: u.timeUpdated,
+            })),
+          });
+        }
+      }
+    }
+
+    // Persist state
+    await setSetting(this.plane.db, WORKSHOP_WATCHER_STATE_KEY, state);
   }
 
   private async onEvent(event: WsEvent): Promise<void> {
