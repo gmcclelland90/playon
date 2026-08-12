@@ -107,6 +107,10 @@ If networking mode is NAT and the LAN join failed:
 - Port forwarding rules may need to be added/removed per game port in NAT mode
 - WSL VM restart (e.g., `wsl --shutdown`) clears portproxy rules; consider making them persistent or documenting per-skill setup
 
+## Automated join-path canary
+
+Address resolution (Linux fixture, WSL parent `join_host`, Windows node `join_host`) plus a TCP “loopback open / join host closed” fail is covered by `pnpm lab:join-path-canary` ([#843](https://github.com/gmcclelland90/playon/issues/843)). Full client join from another LAN device remains this checklist. Never use friend servers as the canary.
+
 ## Additional Resources
 
 - [WSL networking documentation](https://learn.microsoft.com/en-us/windows/wsl/networking)

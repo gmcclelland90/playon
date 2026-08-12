@@ -2,6 +2,12 @@
 
 All notable changes to PlayOn Home (root `package.json` version) are listed here.
 
+## Unreleased
+
+### Added
+
+- **Join-path canary** — `pnpm lab:join-path-canary` probes published `joinHost:gamePort` from `resolveJoinAddress` / `nodes.join_host` (not `127.0.0.1`). Fails if loopback is open but join host is not. Linux `fixtures.lab-docker-server` in CI/unit; WSL sibling + Windows PE live TCP documented as lab-only. Does not relax matrix `port_open` (`#843`).
+
 ## [0.2.3] — 2026-08-12
 
 ### Added

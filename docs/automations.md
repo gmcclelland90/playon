@@ -24,6 +24,15 @@ Mirror later for `gmcclelland90/playon-games` with the thinner label set.
 | Instructions | Obey fire-first rule in `docs/sdlc.md`. Keep cockpit updates per `docs/observability.md` (progress comments, Project Status → `In progress` / `Done`). Stop and set `blocked-human` + `@gmcclelland90` on human gates. Lab verify on Linux host when merge bar required. |
 | Tools | GitHub + repo checkout; PlayOn Ops project; lab access as configured |
 
+## 3. Polish canaries (Playon Ops)
+
+Cursor workflow `playon-polish-canary` ([#835](https://github.com/gmcclelland90/playon/issues/835)). Fixture-only — never friend servers / NZL.
+
+| Canary | Command / notes |
+|--------|-----------------|
+| Join-path (`resolveJoinAddress`, not `127.0.0.1`) | `pnpm build && pnpm lab:join-path-canary` ([#843](https://github.com/gmcclelland90/playon/issues/843)). Optional `--live-docker` on the lab host. WSL sibling + Windows PE live TCP stay lab-only (see [lab-matrix.md](lab-matrix.md)). Do **not** change matrix `port_open`. |
+| Soak / managed-install / OTA+nodes / site-catalog / WSL Phase 2 | Existing Ops routines on `playon-polish-canary` |
+
 ## Deferred funnels
 
 Discord and in-app “Report a problem” should only **create Issues** (same templates/labels, plus `source:discord` / `source:host`). Reuse automation 1 for triage — do not add a second backlog.

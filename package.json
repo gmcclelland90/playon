@@ -33,6 +33,7 @@
     "sync:llm-presets": "pnpm --filter @playon/shared build && node scripts/sync-llm-presets.mjs",
     "smoke:venice": "pnpm --filter @playon/api smoke:venice",
     "smoke:paper-docker": "node scripts/paper-docker-smoke.mjs",
+    "lab:join-path-canary": "node scripts/join-path-canary.mjs",
     "lab:matrix": "node scripts/lab-matrix.mjs",
     "lab:matrix-cleanup": "node scripts/lab-matrix-cleanup.mjs",
     "lab:file-issues": "node scripts/lab-file-github-issues.mjs",
