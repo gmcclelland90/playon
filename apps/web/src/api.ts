@@ -450,6 +450,7 @@ export const api = {
       error?: string;
       nodeOnline?: boolean;
       canRunLocally?: boolean;
+      networkingMode?: "mirrored" | "nat" | "unknown";
     }>(`/api/nodes/${encodeURIComponent(windowsNodeId)}/wsl/status`),
   wslEnable: (windowsNodeId: string) =>
     request<{

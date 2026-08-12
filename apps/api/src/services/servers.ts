@@ -76,6 +76,7 @@ import {
   deriveNodePresence,
   isLocalNodeId,
   NODE_AUTHORITATIVE_MARKER,
+  wslParentNodeId,
   type AdminDialect,
   type SkillMetadata,
 } from "@playon/shared";
@@ -984,6 +985,7 @@ export class ServerService {
    * Join/probe host for a server:
    * - cloud → Home advertiseHost (LAN gateway)
    * - lan/local with nodes.joinHost → that host
+   * - WSL sibling → parent Windows node's joinHost (or advertiseHost)
    * - else → advertiseHost
    */
   async resolveJoinAddress(server: ServerRecord): Promise<string> {
@@ -993,6 +995,19 @@ export class ServerService {
     const node = await this.nodeRow(server.nodeId);
     if (!node) return this.config.advertiseHost;
     if (node.kind === "cloud") return this.config.advertiseHost;
+
+    // WSL sibling: resolve parent Windows node's joinHost
+    const parentNodeId = wslParentNodeId(server.nodeId);
+    if (parentNodeId) {
+      const parentNode = await this.nodeRow(parentNodeId);
+      if (parentNode) {
+        const parentJoinHost = parentNode.joinHost?.trim();
+        if (parentJoinHost) return parentJoinHost;
+      }
+      // Fall back to advertise host if parent has no joinHost
+      return this.config.advertiseHost;
+    }
+
     const joinHost = node.joinHost?.trim();
     if (joinHost) return joinHost;
     return this.config.advertiseHost;

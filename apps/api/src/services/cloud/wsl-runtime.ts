@@ -57,6 +57,8 @@ export type WslStatusResult = {
   nodeOnline?: boolean;
   /** True when this API process can run ensure-wsl-runtime.ps1 locally (Windows + local node). */
   canRunLocally?: boolean;
+  /** WSL networking mode (mirrored or nat). */
+  networkingMode?: "mirrored" | "nat" | "unknown";
 };
 
 export type WslEnableResult = {
@@ -109,7 +111,12 @@ function isWindows(): boolean {
   return process.platform === "win32";
 }
 
-function parseWslScriptOutput(output: string): { status: WslRuntimeStatus; message: string; code: number } {
+function parseWslScriptOutput(output: string): {
+  status: WslRuntimeStatus;
+  message: string;
+  code: number;
+  networkingMode?: "mirrored" | "nat" | "unknown";
+} {
   try {
     const lines = output.trim().split("\n");
     for (const line of lines.reverse()) {
@@ -118,11 +125,16 @@ function parseWslScriptOutput(output: string): { status: WslRuntimeStatus; messa
           status: string;
           message: string;
           code: number;
+          networkingMode?: string;
         };
         return {
           status: parsed.status as WslRuntimeStatus,
           message: parsed.message,
           code: parsed.code,
+          networkingMode:
+            parsed.networkingMode === "mirrored" || parsed.networkingMode === "nat"
+              ? parsed.networkingMode
+              : "unknown",
         };
       }
     }
@@ -322,6 +334,7 @@ export class WslRuntimeService {
           error,
           nodeOnline,
           canRunLocally: true,
+          networkingMode: parsed.networkingMode,
         });
       });
 

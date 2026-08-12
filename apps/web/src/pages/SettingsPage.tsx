@@ -1139,6 +1139,11 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                       <code>{wslSiblingId}</code>). PlayOn runs setup through the node agent when
                       possible; an elevated one-liner appears only if that fails.
                     </p>
+                    {wslInstalled && wslOnline ? (
+                      <p className="muted status-inline">
+                        <strong>Networking:</strong> WSL LAN join uses the Windows host's IP. On Win11 22H2+, mirrored networking exposes WSL ports directly; older NAT mode may require manual portproxy setup for some games.
+                      </p>
+                    ) : null}
                     {wslOneLiner ? (
                       <label className="field">
                         <span>Fallback — elevated PowerShell (run on the Windows host)</span>

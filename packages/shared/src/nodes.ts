@@ -18,6 +18,9 @@ export const LOCAL_WSL_NODE_ID = "local-wsl";
 /** WSL distro name for the Linux runtime on Windows. */
 export const WSL_DISTRO_NAME = "playon-linux";
 
+/** WSL networking mode (Win11 mirrored or default NAT). */
+export type WslNetworkingMode = "mirrored" | "nat" | "unknown";
+
 /**
  * Sibling Linux node id for a Windows node's WSL runtime.
  * `local` → `local-wsl`; any other Windows node `N` → `N-wsl`.

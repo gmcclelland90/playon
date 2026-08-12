@@ -24,6 +24,8 @@ export const WslEnsureResultSchema = z.object({
   wslNodeId: z.string().min(1),
   /** True when elevation/UAC is required but was not available — Home should offer a one-liner. */
   needsElevation: z.boolean().optional(),
+  /** WSL networking mode: mirrored (Win11+) or nat (default). */
+  networkingMode: z.enum(["mirrored", "nat", "unknown"]).optional(),
 });
 
 export const WSL_NODE_JOB_CONTRACTS = {

@@ -75,13 +75,14 @@ if (-not $NodeToken -and (Test-Path (Join-Path $InstallRoot "env\playon.env.cmd"
 }
 
 function Write-Status {
-  param([string]$Status, [string]$Message, [int]$Code = 0)
+  param([string]$Status, [string]$Message, [int]$Code = 0, [string]$NetworkingMode = "unknown")
   $obj = @{
     status = $Status
     message = $Message
     code = $Code
     distro = $DistroName
     nodeId = $NodeId
+    networkingMode = $NetworkingMode
   }
   ConvertTo-Json $obj -Compress
 }
@@ -208,6 +209,23 @@ function Test-AgentInDistro {
   return ($r.Out.Trim() -eq "active")
 }
 
+function Get-WslNetworkingMode {
+  # Detect WSL networking mode: mirrored (Win11 22H2+) or nat (default).
+  # Mirrored mode exposes WSL ports directly to LAN; NAT requires portproxy.
+  $cfgPath = Join-Path $env:USERPROFILE ".wslconfig"
+  if (-not (Test-Path -LiteralPath $cfgPath)) {
+    return "nat"
+  }
+  $content = [System.IO.File]::ReadAllText($cfgPath)
+  # Check for [wsl2] networkingMode=mirrored
+  if ($content -match '(?im)^\s*\[wsl2\]') {
+    if ($content -match '(?im)^\s*networkingMode\s*=\s*mirrored\s*$') {
+      return "mirrored"
+    }
+  }
+  return "nat"
+}
+
 # Default WSL2 vmIdleTimeout is 60s — systemd services alone do not keep the VM up.
 # Disable idle shutdown so the sibling agent keeps heartbeating.
 function Ensure-WslVmIdleDisabled {
@@ -252,6 +270,7 @@ function Get-WslStatus {
   $distroExists = $false
   $dockerReady = $false
   $agentReady = $false
+  $networkingMode = "unknown"
 
   if ($features.WslEnabled -and $features.VmpEnabled -and -not $features.WslPending -and -not $features.VmpPending) {
     $platformOk = Test-WslPlatform
@@ -264,6 +283,11 @@ function Get-WslStatus {
     }
   }
 
+  # Detect networking mode when WSL is installed
+  if ($platformOk) {
+    $networkingMode = Get-WslNetworkingMode
+  }
+
   return @{
     WslEnabled = $features.WslEnabled
     VmpEnabled = $features.VmpEnabled
@@ -273,6 +297,7 @@ function Get-WslStatus {
     DistroExists = $distroExists
     DockerReady = $dockerReady
     AgentReady = $agentReady
+    NetworkingMode = $networkingMode
   }
 }
 
@@ -280,34 +305,34 @@ function Get-WslStatus {
 if ($StatusOnly) {
   $s = Get-WslStatus
   if (-not $s.VirtAvailable) {
-    Write-Status "error" "Virtualization is not enabled in BIOS/UEFI" 11
+    Write-Status "error" "Virtualization is not enabled in BIOS/UEFI" 11 $s.NetworkingMode
     exit 11
   }
   if (-not $s.WslEnabled -or -not $s.VmpEnabled) {
-    Write-Status "not_installed" "WSL2 features not enabled" 0
+    Write-Status "not_installed" "WSL2 features not enabled" 0 $s.NetworkingMode
     exit 0
   }
   if ($s.RebootRequired) {
-    Write-Status "reboot_required" "WSL2 features enabled but reboot required" 10
+    Write-Status "reboot_required" "WSL2 features enabled but reboot required" 10 $s.NetworkingMode
     exit 10
   }
   if (-not $s.PlatformReady) {
-    Write-Status "not_installed" "WSL optional features on but platform package missing (needs wsl --install)" 0
+    Write-Status "not_installed" "WSL optional features on but platform package missing (needs wsl --install)" 0 $s.NetworkingMode
     exit 0
   }
   if (-not $s.DistroExists) {
-    Write-Status "distro_missing" "WSL2 ready but playon-linux distro not installed" 0
+    Write-Status "distro_missing" "WSL2 ready but playon-linux distro not installed" 0 $s.NetworkingMode
     exit 0
   }
   if (-not $s.DockerReady) {
-    Write-Status "docker_missing" "playon-linux distro exists but Docker not ready" 0
+    Write-Status "docker_missing" "playon-linux distro exists but Docker not ready" 0 $s.NetworkingMode
     exit 0
   }
   if (-not $s.AgentReady) {
-    Write-Status "agent_missing" "Docker ready but node-agent not running" 0
+    Write-Status "agent_missing" "Docker ready but node-agent not running" 0 $s.NetworkingMode
     exit 0
   }
-  Write-Status "ready" "$NodeId node is healthy" 0
+  Write-Status "ready" "$NodeId node is healthy" 0 $s.NetworkingMode
   exit 0
 }
 
@@ -673,5 +698,6 @@ if (-not (Test-AgentInDistro)) {
   exit 15
 }
 
-Write-Status "ready" "$NodeId node is ready" 0
+$finalStatus = Get-WslStatus
+Write-Status "ready" "$NodeId node is ready" 0 $finalStatus.NetworkingMode
 exit 0
