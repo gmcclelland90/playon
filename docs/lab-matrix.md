@@ -46,6 +46,22 @@ pnpm lab:publish-status --force --history-comment
 
 A skill is `ok` only when `port_open` passes (TCP listen, or UDP + process/query). Static green alone is not enough.
 
+Linux `port_open` still probes **loopback** (`127.0.0.1`). That is intentional and must not be relaxed to shrink the skill queue. The published join path (`resolveJoinAddress` / `nodes.join_host`) is a **separate** fixture canary:
+
+```bash
+pnpm build
+pnpm lab:join-path-canary              # address resolution + TCP split (CI-safe)
+pnpm lab:join-path-canary --live-docker  # also start fixtures.lab-docker-server (lab)
+```
+
+| Topology | CI / unit | Lab live |
+|----------|-----------|----------|
+| Linux `fixtures.lab-docker-server` | `resolveJoinAddress` + TCP listener (fail if loopback open and join host closed) | `--live-docker` |
+| WSL sibling | parent Windows `join_host` (not WSL-internal / `127.0.0.1`) | Manual: [wsl-phase2-smoke-checklist.md](wsl-phase2-smoke-checklist.md) on `playon-win-1` |
+| Windows PE | same fixture as a TCP stand-in on `playon-win-1` `join_host` (no PE binary in this repo) | Disposable native TCP on `playon-win-1` only — never friend servers / NZL |
+
+Wire the script into Playon Ops `playon-polish-canary` ([#835](https://github.com/gmcclelland90/playon/issues/835)). See [automations.md](automations.md).
+
 ## Isolation rules
 
 - Linux path: always `mkdtemp` data root; refuse durable Home paths; `nodeId: "local"`

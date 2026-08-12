@@ -1024,6 +1024,9 @@ async function runLifecycle(cp, skill, { runTools, windows }) {
     if (tcp.length) {
       const opens = [];
       for (const p of tcp) {
+        // Loopback on Home is intentional for matrix port_open. Join-path
+        // (resolveJoinAddress / nodes.join_host) is a separate canary —
+        // scripts/join-path-canary.mjs (#843). Do not relax this probe.
         const probe = await waitForTcpOpen(net, "127.0.0.1", p.default, tcpWait);
         opens.push({ name: p.name, port: p.default, state: probe?.state });
         if (probe?.state !== "open") {

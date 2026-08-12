@@ -76,6 +76,7 @@ set -a && . /etc/playon/playon.env && set +a   # Venice key + runtime (systemd E
 pnpm loop:verify              # merge bar (real Venice + Docker)
 pnpm loop:verify:runtime      # + real Paper Docker smoke
 pnpm lab:matrix               # catalog E2E (see lab-matrix.md)
+pnpm lab:join-path-canary     # published joinHost vs loopback (see lab-matrix.md)
 pnpm lab:file-issues          # push lab failures into GitHub Issues (source:lab)
 ```
 

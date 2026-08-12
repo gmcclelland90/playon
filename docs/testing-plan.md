@@ -12,6 +12,7 @@ Companion docs: [agent-dev-loop.md](agent-dev-loop.md), [lab-matrix.md](lab-matr
 | Merge | `pnpm loop:verify` | Before merge when touching API / agent / runtime; always before release | Linux lab + [nightly-docker](../.github/workflows/nightly-docker.yml) |
 | Runtime | `pnpm loop:verify:runtime` | Docker lifecycle / Paper path changes | Lab + nightly |
 | Catalog | `pnpm lab:matrix` | Skill / catalog changes; standing lab cadence | Lab timer ([infra/lab](../infra/lab/README.md)) |
+| Join-path canary | `pnpm lab:join-path-canary` | Published `joinHost:gamePort` from `resolveJoinAddress` (not loopback) | Unit in `pnpm verify`; live Docker / WSL / Win PE lab-only ([#843](https://github.com/gmcclelland90/playon/issues/843), polish canary) |
 | UI smoke | `pnpm test:e2e` | Auth / panel / UI flows | Weekly Actions (`e2e-weekly.yml`) |
 
 CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the **fast** bar plus packaging and image smoke on ubuntu + windows. Full merge bar stays on the lab host (real Venice + Docker) — see [linux-dev-host.md](linux-dev-host.md).
@@ -27,6 +28,7 @@ CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the **fast**
 | agent | agent-core | Live Venice tool loop |
 | smoke:paper-docker | scripts + runtime | Paper create → start → port |
 | lab:matrix | skills + playon-games catalog | Per-skill E2E install/start/port |
+| lab:join-path-canary | api + shared | Probe `resolveJoinAddress` / `nodes.join_host`, not `127.0.0.1` |
 | e2e | web + api | Browser smoke (setup → login → panel) |
 
 ## Definition of done (by change type)
@@ -85,6 +87,7 @@ After each release, skim CHANGELOG **Fixed** entries and file `test-debt` for ga
 ## Known gaps
 
 - Windows PE / Steam dual-place coverage still depends on `playon-win-1` online ([#46](https://github.com/gmcclelland90/playon/issues/46))
+- Join-path live TCP on WSL sibling and Windows PE is lab-only (unit covers `resolveJoinAddress`; [lab-matrix.md](lab-matrix.md), [#843](https://github.com/gmcclelland90/playon/issues/843))
 - Weekly e2e is scheduled but not yet in every-PR CI ([#44](https://github.com/gmcclelland90/playon/issues/44))
 - Lab cadence timer must be installed once on playon-dev ([infra/lab](../infra/lab/README.md), [#45](https://github.com/gmcclelland90/playon/issues/45))
 
