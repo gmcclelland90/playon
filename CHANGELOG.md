@@ -2,11 +2,20 @@
 
 All notable changes to PlayOn Home (root `package.json` version) are listed here.
 
-## [Unreleased]
+## [0.2.3] — 2026-08-12
 
 ### Added
 
-- **WSL Phase 2: Networking & LAN join** — Detect mirrored (Win11 22H2+) vs NAT networking mode; join host resolution for WSL-placed servers uses parent Windows node's LAN IP; Settings warns when NAT requires manual portproxy; smoke checklist for `playon-win-1`.
+- **WSL Phase 2: Networking & LAN join** — Detect mirrored (Win11 22H2+) vs NAT networking mode; join host resolution for WSL-placed servers uses parent Windows node's LAN IP; Settings warns when NAT requires manual portproxy (`#297` / `#831`).
+- `workshop_update` watcher trigger — poll Steam Workshop publishedfile `time_updated` and fire when mods change (`#828` / `#829`).
+- Docs: `docs/workshop-watcher.md` (notify-only default; schedule reboot rather than auto-restart).
+- Smoke checklist: `docs/wsl-phase2-smoke-checklist.md`.
+
+### Notes
+
+- Intended for hosts like NewZombieLand3 crowbar mod (workshop id `3579640010`).
+- No automatic server restart from this trigger unless the watcher action explicitly includes restart tools.
+- WSL Phase 3 (Docker Desktop integration) deferred.
 
 ## [0.2.2] — 2026-08-11
 
