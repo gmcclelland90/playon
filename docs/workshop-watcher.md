@@ -13,19 +13,19 @@ This trigger periodically polls the Steam Web API to check if any configured wor
 ```typescript
 {
   kind: "workshop_update",
-  workshopIds: ["2169330869", "2260789317"]  // Steam publishedfile IDs
+  workshopIds: ["3579640010"]  // Steam publishedfile IDs
 }
 ```
 
-### Example Watcher
+### Example Watcher (NewZombieLand3 Config)
 
 ```json
 {
-  "name": "Mod Update Notifier",
+  "name": "Workshop Update Notifier",
   "enabled": true,
   "trigger": {
     "kind": "workshop_update",
-    "workshopIds": ["2169330869", "2260789317"]
+    "workshopIds": ["3579640010"]
   },
   "action": {
     "kind": "tools",
@@ -33,7 +33,8 @@ This trigger periodically polls the Steam Web API to check if any configured wor
       {
         "tool": "panel_publish",
         "args": {
-          "message": "Workshop mods updated. Please schedule a server restart."
+          "title": "Workshop Mod Updated",
+          "message": "ST Additions - Pry Open has been updated. Please schedule a server restart to apply changes."
         }
       }
     ]
@@ -42,6 +43,8 @@ This trigger periodically polls the Steam Web API to check if any configured wor
   "debounceMs": 60000
 }
 ```
+
+_Workshop ID 3579640010 is ST Additions - Pry Open (crowbar mod used in NewZombieLand3)._
 
 ## Behavior
 
@@ -60,8 +63,8 @@ When a workshop update is detected, the watcher fires with:
   kind: "workshop_update",
   updated: [
     {
-      workshopId: "2169330869",
-      title: "Brita's Weapon Pack",
+      workshopId: "3579640010",
+      title: "ST Additions - Pry Open",
       timeUpdated: 1723456789
     }
   ]
