@@ -2,6 +2,7 @@ import dgram from "node:dgram";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import type { AppConfig } from "../../config.js";
 import { createControlPlane } from "../../control-plane.js";
@@ -10,7 +11,7 @@ import { applyBootstrap } from "../../db/migrate.js";
 import { nodeJobService } from "../node-jobs.js";
 import { createPlayOnToolRegistry } from "../tools.js";
 
-const temps: string[] = [];
+const temps: Array<{ root: string; sqlite: Database.Database }> = [];
 
 function testConfig(dataRoot: string): AppConfig {
   return {
@@ -25,20 +26,46 @@ function testConfig(dataRoot: string): AppConfig {
   };
 }
 
-afterEach(() => {
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Close SQLite first; on Windows WAL/shm can stay locked briefly after close. */
+async function rmTempRoot(root: string): Promise<void> {
+  const attempts = process.platform === "win32" ? 8 : 1;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      rmSync(root, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code !== "EBUSY" && code !== "EPERM") throw err;
+      if (i === attempts - 1) return;
+      await sleep(25 * (i + 1));
+    }
+  }
+}
+
+afterEach(async () => {
   nodeJobService.forgetJobKinds("playon-win-1");
   while (temps.length) {
-    const root = temps.pop();
-    if (root) rmSync(root, { recursive: true, force: true });
+    const entry = temps.pop();
+    if (!entry) break;
+    try {
+      entry.sqlite.close();
+    } catch {
+      /* already closed */
+    }
+    await rmTempRoot(entry.root);
   }
 });
 
 describe("net_port_check UDP", () => {
   it("proves a local UDP bind via ss and does not invent open for a closed port", async () => {
     const dataRoot = mkdtempSync(path.join(tmpdir(), "playon-udp-check-"));
-    temps.push(dataRoot);
     applyBootstrap(path.join(dataRoot, "playon.sqlite"));
-    const { db } = createDb(path.join(dataRoot, "playon.sqlite"));
+    const { db, sqlite } = createDb(path.join(dataRoot, "playon.sqlite"));
+    temps.push({ root: dataRoot, sqlite });
     const { registry } = createPlayOnToolRegistry(
       createControlPlane(db, testConfig(dataRoot)),
       {},
@@ -75,9 +102,9 @@ describe("net_port_check UDP", () => {
 
   it("returns unavailable (not open) when the node does not advertise net_udp_listen", async () => {
     const dataRoot = mkdtempSync(path.join(tmpdir(), "playon-udp-old-node-"));
-    temps.push(dataRoot);
     applyBootstrap(path.join(dataRoot, "playon.sqlite"));
-    const { db } = createDb(path.join(dataRoot, "playon.sqlite"));
+    const { db, sqlite } = createDb(path.join(dataRoot, "playon.sqlite"));
+    temps.push({ root: dataRoot, sqlite });
     const { registry } = createPlayOnToolRegistry(
       createControlPlane(db, testConfig(dataRoot)),
       {},
