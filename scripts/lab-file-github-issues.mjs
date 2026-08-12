@@ -5,11 +5,16 @@
  * Closes the SDLC loop: lab red → needs-triage (source:lab) → PlayOn Ops auto-add
  * → triage automation → ready / blocked-human.
  *
+ * Matrix fingerprints are per skill (not phase). A later start → port_open →
+ * query failure comments on the same issue instead of opening clones.
+ *
  * Usage:
  *   node scripts/lab-file-github-issues.mjs --from verify
  *   node scripts/lab-file-github-issues.mjs --from matrix
  *   node scripts/lab-file-github-issues.mjs --from verify --from matrix
  *   node scripts/lab-file-github-issues.mjs --dry-run
+ *   node scripts/lab-file-github-issues.mjs --close-clones
+ *   node scripts/lab-file-github-issues.mjs --close-clones --apply
  *
  * Env:
  *   PLAYON_LAB_FILE_ISSUES=0   skip (also skipped when unset in --require-opt-in mode)
@@ -24,13 +29,16 @@ import {
   writeFileSync,
   appendFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import path, { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const root = process.cwd();
 const repo = process.env.PLAYON_GITHUB_REPO || "gmcclelland90/playon";
 const argv = process.argv.slice(2);
 const args = new Set(argv);
 const dryRun = args.has("--dry-run");
+const closeClones = args.has("--close-clones");
+const applyClones = args.has("--apply");
 function fromFlags() {
   const out = [];
   for (let i = 0; i < argv.length; i++) {
@@ -44,9 +52,11 @@ function fromFlags() {
 }
 const from = fromFlags();
 const sources =
-  from.length === 0
-    ? { verify: true, matrix: true }
-    : { verify: from.includes("verify"), matrix: from.includes("matrix") };
+  closeClones && from.length === 0
+    ? { verify: false, matrix: false }
+    : from.length === 0
+      ? { verify: true, matrix: true }
+      : { verify: from.includes("verify"), matrix: from.includes("matrix") };
 
 const statusVerify = join(root, "tmp", "agent-loop-status.json");
 const statusMatrix = process.env.PLAYON_LAB_MATRIX_STATUS
@@ -62,6 +72,167 @@ const refileClosed =
 function enabled() {
   const v = (process.env.PLAYON_LAB_FILE_ISSUES ?? "1").trim().toLowerCase();
   return v !== "0" && v !== "false" && v !== "off" && v !== "no";
+}
+
+export function fingerprintMarker(fp) {
+  return `<!-- playon-lab-fingerprint: ${fp} -->`;
+}
+
+/** One GitHub issue per catalog skill (phase lives in the body / comments). */
+export function matrixFingerprint(skill) {
+  return `matrix:${skill || "unknown"}`;
+}
+
+export function parseLabFingerprint(body) {
+  const m = /<!-- playon-lab-fingerprint:\s*(\S+)\s*-->/.exec(body || "");
+  return m ? m[1] : null;
+}
+
+export function skillFromMatrixFingerprint(fp) {
+  if (!fp || !String(fp).startsWith("matrix:")) return null;
+  return String(fp).slice("matrix:".length).split(":")[0] || null;
+}
+
+export function skillFromLabIssue(issue) {
+  const fromFp = skillFromMatrixFingerprint(parseLabFingerprint(issue?.body));
+  if (fromFp) return fromFp;
+  const m = /^\[skill\]\s+(\S+):/.exec(issue?.title || "");
+  return m ? m[1] : null;
+}
+
+/**
+ * Match an open lab issue to a skill without treating `games.rust` as a prefix
+ * of `games.rust-experimental`.
+ */
+export function issueMatchesSkill(issue, skill) {
+  if (!skill) return false;
+  const body = issue?.body || "";
+  const title = issue?.title || "";
+  const exact = fingerprintMarker(matrixFingerprint(skill));
+  const legacyPrefix = `<!-- playon-lab-fingerprint: matrix:${skill}:`;
+  if (body.includes(exact) || body.includes(legacyPrefix)) return true;
+  return title.startsWith(`[skill] ${skill}:`);
+}
+
+/**
+ * Classify matrix tails / skip reasons. Does not decide pass/fail — callers
+ * still skip `ok` / `skipped` / `allowed_skip` before filing.
+ */
+export function classifyMatrixErrorClass({
+  phase,
+  tail,
+  skipReason,
+  errorClass,
+} = {}) {
+  const text = `${skipReason || ""} ${errorClass || ""} ${tail || ""}`;
+  if (/steamcmd_timeout/i.test(text)) return "steamcmd_timeout";
+  if (/steamcmd_empty_depot/i.test(text)) return "steamcmd_empty_depot";
+  if (/steamcmd_no_subscription/i.test(text)) return "steamcmd_no_subscription";
+  if (
+    errorClass &&
+    errorClass !== "lifecycle_fail" &&
+    errorClass !== "unknown"
+  ) {
+    return errorClass;
+  }
+  if (phase === "static") return "skill_bug";
+  return "lifecycle_fail";
+}
+
+export function mapErrorClass(errorClass) {
+  switch (errorClass) {
+    case "skill_bug":
+      return { type: "skill", priority: "P2" };
+    case "platform_bug":
+      return { type: "bug", priority: "P1" };
+    case "lifecycle_fail":
+      return { type: "skill", priority: "P2" };
+    case "steamcmd_timeout":
+      return { type: "bug", priority: "P1", extra: ["runtime"] };
+    case "steamcmd_empty_depot":
+    case "steamcmd_no_subscription":
+      return { type: "chore", priority: "P3", extra: ["runtime"] };
+    case "flake":
+      return { type: "chore", priority: "P3", extra: ["test-debt"] };
+    case "platform_unsupported":
+      return { type: "chore", priority: "P3" };
+    default:
+      return { type: "skill", priority: "P2" };
+  }
+}
+
+export function failRowFromStatusResult(r) {
+  if (!r || r.ok || r.skipped) return null;
+  const phase =
+    Object.entries(r.phases || {}).find(([, v]) => v === "fail")?.[0] ||
+    "unknown";
+  const errorClass = classifyMatrixErrorClass({
+    phase,
+    tail: r.tail,
+    skipReason: r.skipReason,
+    errorClass: r.errorClass,
+  });
+  return {
+    skill: r.skillName || "unknown",
+    phase,
+    errorClass,
+    at: new Date().toISOString(),
+    tail: r.tail || "",
+  };
+}
+
+/** Latest jsonl row per skill (not per phase). */
+export function collectLatestMatrixRows(jsonlRows, { cutoffMs } = {}) {
+  const latest = new Map();
+  for (const row of jsonlRows || []) {
+    const at = Date.parse(row.at || "") || 0;
+    if (cutoffMs && at && at < cutoffMs) continue;
+    const skill = row.skill || "unknown";
+    const prev = latest.get(skill);
+    const prevAt = Date.parse(prev?.at || "") || 0;
+    if (!prev || at >= prevAt) {
+      latest.set(skill, {
+        ...row,
+        skill,
+        phase: row.phase || "unknown",
+        errorClass: classifyMatrixErrorClass(row),
+      });
+    }
+  }
+  return [...latest.values()];
+}
+
+/**
+ * Group open source:lab skill issues. Keep the oldest; extras are clones from
+ * the old phase-keyed fingerprint.
+ */
+export function groupSkillCloneIssues(items) {
+  const groups = new Map();
+  for (const item of items || []) {
+    const fp = parseLabFingerprint(item?.body);
+    if (fp && String(fp).startsWith("verify:")) continue;
+    const skill = skillFromLabIssue(item);
+    if (!skill) continue;
+    if (!groups.has(skill)) groups.set(skill, []);
+    groups.get(skill).push(item);
+  }
+  const clones = [];
+  for (const [skill, issues] of groups) {
+    if (issues.length < 2) continue;
+    const sorted = [...issues].sort((a, b) => a.number - b.number);
+    clones.push({ skill, keep: sorted[0], close: sorted.slice(1) });
+  }
+  return clones;
+}
+
+export function priorForMatrixSkill(filedLedger, skill) {
+  const fps = filedLedger?.fingerprints || {};
+  const exact = fps[matrixFingerprint(skill)];
+  if (exact) return exact;
+  for (const [fp, rec] of Object.entries(fps)) {
+    if (fp.startsWith(`matrix:${skill}:`)) return rec;
+  }
+  return null;
 }
 
 function gh(argv, { input } = {}) {
@@ -95,12 +266,7 @@ function saveLedger(ledger) {
   writeFileSync(ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`, "utf8");
 }
 
-function fingerprintMarker(fp) {
-  return `<!-- playon-lab-fingerprint: ${fp} -->`;
-}
-
-function findOpenByFingerprint(fp) {
-  const marker = fingerprintMarker(fp);
+function listOpenLabIssues() {
   const q = gh([
     "issue",
     "list",
@@ -115,14 +281,23 @@ function findOpenByFingerprint(fp) {
     "--json",
     "number,body,title",
   ]);
-  if (!q.ok) return null;
-  let items = [];
+  if (!q.ok) return [];
   try {
-    items = JSON.parse(q.stdout || "[]");
+    return JSON.parse(q.stdout || "[]");
   } catch {
-    return null;
+    return [];
   }
-  return items.find((i) => (i.body || "").includes(marker)) ?? null;
+}
+
+function findOpenByFingerprint(fp, { skill } = {}) {
+  const marker = fingerprintMarker(fp);
+  const items = listOpenLabIssues();
+  const exact = items.find((i) => (i.body || "").includes(marker));
+  if (exact) return exact;
+  if (!skill) return null;
+  const matches = items.filter((i) => issueMatchesSkill(i, skill));
+  matches.sort((a, b) => a.number - b.number);
+  return matches[0] ?? null;
 }
 
 function issueState(number) {
@@ -144,11 +319,36 @@ function issueState(number) {
   }
 }
 
-function createOrUpdate({ fingerprint, title, body, labels, filedLedger }) {
+function ensureFingerprintMarker(issue, fp) {
+  const marker = fingerprintMarker(fp);
+  if (!issue || (issue.body || "").includes(marker)) return;
+  if (dryRun) {
+    console.log(`dry-run: stamp fingerprint on #${issue.number} fp=${fp}`);
+    return;
+  }
+  const newBody = `${marker}\n\n${issue.body || ""}`;
+  const r = gh([
+    "issue",
+    "edit",
+    String(issue.number),
+    "--repo",
+    repo,
+    "--body",
+    newBody,
+  ]);
+  if (!r.ok) {
+    console.warn(
+      `failed to stamp fingerprint on #${issue.number}: ${r.stderr || r.stdout}`,
+    );
+  }
+}
+
+function createOrUpdate({ fingerprint, title, body, labels, filedLedger, skill }) {
   const marker = fingerprintMarker(fingerprint);
   const fullBody = `${marker}\n\n${body}`;
-  const existing = findOpenByFingerprint(fingerprint);
+  const existing = findOpenByFingerprint(fingerprint, { skill });
   if (existing) {
+    ensureFingerprintMarker(existing, fingerprint);
     const comment = `## Lab update\n\n${body}\n`;
     if (dryRun) {
       console.log(`dry-run: comment #${existing.number} fp=${fingerprint}`);
@@ -173,7 +373,9 @@ function createOrUpdate({ fingerprint, title, body, labels, filedLedger }) {
 
   // Do not reopen spam: if we already filed this fingerprint and the issue is
   // closed (or still tracked), skip unless PLAYON_LAB_REFILE=1 / --refile.
-  const prior = filedLedger?.fingerprints?.[fingerprint];
+  const prior = skill
+    ? priorForMatrixSkill(filedLedger, skill)
+    : filedLedger?.fingerprints?.[fingerprint];
   if (prior?.number && !refileClosed) {
     const st = issueState(prior.number);
     if (st?.state === "OPEN") {
@@ -208,7 +410,7 @@ function createOrUpdate({ fingerprint, title, body, labels, filedLedger }) {
     return { number: 0, action: "create" };
   }
 
-  const argv = [
+  const createArgv = [
     "issue",
     "create",
     "--repo",
@@ -219,9 +421,9 @@ function createOrUpdate({ fingerprint, title, body, labels, filedLedger }) {
     fullBody,
   ];
   for (const l of labels) {
-    argv.push("--label", l);
+    createArgv.push("--label", l);
   }
-  const r = gh(argv);
+  const r = gh(createArgv);
   if (!r.ok) {
     console.error(`failed to create issue: ${r.stderr || r.stdout}`);
     return null;
@@ -292,9 +494,9 @@ function fileVerifyFailure() {
   return result ? [{ fingerprint: fp, ...result }] : [];
 }
 
-function readJsonl(path) {
-  if (!existsSync(path)) return [];
-  return readFileSync(path, "utf8")
+function readJsonl(pathName) {
+  if (!existsSync(pathName)) return [];
+  return readFileSync(pathName, "utf8")
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean)
@@ -306,39 +508,6 @@ function readJsonl(path) {
       }
     })
     .filter(Boolean);
-}
-
-function mapErrorClass(errorClass) {
-  switch (errorClass) {
-    case "skill_bug":
-      return { type: "skill", priority: "P2" };
-    case "platform_bug":
-      return { type: "bug", priority: "P1" };
-    case "lifecycle_fail":
-      return { type: "skill", priority: "P2" };
-    case "flake":
-      return { type: "chore", priority: "P3", extra: ["test-debt"] };
-    case "platform_unsupported":
-      return { type: "chore", priority: "P3" };
-    default:
-      return { type: "skill", priority: "P2" };
-  }
-}
-
-function failRowFromStatusResult(r) {
-  if (!r || r.ok || r.skipped) return null;
-  const phase =
-    Object.entries(r.phases || {}).find(([, v]) => v === "fail")?.[0] ||
-    "unknown";
-  const errorClass =
-    phase === "static" ? "skill_bug" : r.errorClass || "lifecycle_fail";
-  return {
-    skill: r.skillName || "unknown",
-    phase,
-    errorClass,
-    at: new Date().toISOString(),
-    tail: r.tail || "",
-  };
 }
 
 function fileMatrixFailures(filedLedger) {
@@ -366,35 +535,31 @@ function fileMatrixFailures(filedLedger) {
       console.log("skip matrix: no status failures and no issues.jsonl rows");
       return [];
     }
-    // Fallback: only rows from the last 6 hours (still deduped by key).
+    // Fallback: only rows from the last 6 hours (still deduped by skill).
     const cutoff = Date.now() - 6 * 3600_000;
-    const latest = new Map();
-    for (const row of jsonlRows) {
-      const at = Date.parse(row.at || "") || 0;
-      if (at && at < cutoff) continue;
-      const skill = row.skill || "unknown";
-      const phase = row.phase || "unknown";
-      const errorClass = row.errorClass || "unknown";
-      latest.set(`${skill}|${phase}|${errorClass}`, row);
-    }
-    rows = [...latest.values()];
+    rows = collectLatestMatrixRows(jsonlRows, { cutoffMs: cutoff });
     console.log(`matrix filing from recent jsonl rows=${rows.length}`);
   } else {
     console.log(`matrix filing from status failures=${rows.length}`);
   }
 
   const out = [];
+  const seen = new Set();
   for (const row of rows) {
     const skill = row.skill || "unknown";
+    if (seen.has(skill)) continue;
+    seen.add(skill);
     const phase = row.phase || "unknown";
-    const errorClass = row.errorClass || "unknown";
+    const errorClass = classifyMatrixErrorClass(row);
     if (errorClass === "allowed_skip") continue;
     const mapped = mapErrorClass(errorClass);
-    const fp = `matrix:${skill}:${phase}:${errorClass}`;
-    const title = `[skill] ${skill}: ${phase} failed (${errorClass})`;
+    const fp = matrixFingerprint(skill);
+    const title = `[skill] ${skill}: lab matrix failed`;
     const body = [
       "## Summary",
       `Catalog lab matrix failure for \`${skill}\` at phase \`${phase}\`.`,
+      "",
+      "Fingerprint is **per skill**. Later phase changes (start / port_open / query) comment here instead of opening a clone.",
       "",
       "## Classification",
       `- errorClass: \`${errorClass}\``,
@@ -428,10 +593,61 @@ function fileMatrixFailures(filedLedger) {
       body,
       labels,
       filedLedger,
+      skill,
     });
     if (result) out.push({ fingerprint: fp, ...result });
   }
   return out;
+}
+
+function closeSkillCloneIssues({ apply }) {
+  const items = listOpenLabIssues();
+  const groups = groupSkillCloneIssues(items);
+  if (!groups.length) {
+    console.log("close-clones: no skill clone groups");
+    return { groups: 0, close: 0 };
+  }
+  let closeN = 0;
+  for (const g of groups) {
+    const closeNums = g.close.map((i) => `#${i.number}`).join(" ");
+    console.log(
+      `close-clones: ${g.skill} keep=#${g.keep.number} close=${closeNums}`,
+    );
+    for (const extra of g.close) {
+      const comment = [
+        `Duplicate of #${g.keep.number} — same skill \`${g.skill}\`.`,
+        "",
+        "Lab filing now fingerprints by skill (not phase), so start / port_open / query share one issue.",
+        "See #842.",
+      ].join("\n");
+      if (!apply) {
+        console.log(`dry-run: close #${extra.number} as duplicate of #${g.keep.number}`);
+        closeN += 1;
+        continue;
+      }
+      const r = gh([
+        "issue",
+        "close",
+        String(extra.number),
+        "--repo",
+        repo,
+        "--reason",
+        "not planned",
+        "--comment",
+        comment,
+      ]);
+      if (!r.ok) {
+        console.error(`failed to close #${extra.number}: ${r.stderr || r.stdout}`);
+        continue;
+      }
+      console.log(`closed #${extra.number} duplicate of #${g.keep.number}`);
+      closeN += 1;
+    }
+  }
+  console.log(
+    `close-clones: groups=${groups.length} close=${closeN} apply=${apply ? "yes" : "no (dry-run)"}`,
+  );
+  return { groups: groups.length, close: closeN };
 }
 
 function main() {
@@ -445,6 +661,10 @@ function main() {
     console.error("gh not authenticated; cannot file issues");
     console.error(auth.stderr || auth.stdout);
     process.exit(0); // do not fail the lab bar for missing gh
+  }
+
+  if (closeClones) {
+    closeSkillCloneIssues({ apply: applyClones && !dryRun });
   }
 
   const ledger = loadLedger();
@@ -477,4 +697,10 @@ function main() {
   );
 }
 
-main();
+const invokedAsCli =
+  process.argv[1] &&
+  path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);
+
+if (invokedAsCli) {
+  main();
+}

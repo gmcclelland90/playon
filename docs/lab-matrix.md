@@ -59,7 +59,7 @@ A skill is `ok` only when `port_open` passes (TCP listen, or UDP + process/query
 1. Read `tmp/agent-loop-status.json` — fix merge bar first if red.
 2. Read `tmp/lab-matrix-status.json` — if `ok=false`, resume that skill.
 3. On playon-dev only: `git pull --ff-only` → `pnpm install` → `pnpm build` → `pnpm lab:matrix --resume`.
-4. On failure: classify (`skill_bug` / `platform_bug` / `platform_unsupported` / `allowed_skip` / `flake`). Port-not-open is a failure.
+4. On failure: classify (`skill_bug` / `platform_bug` / `steamcmd_timeout` / `steamcmd_empty_depot` / `steamcmd_no_subscription` / `platform_unsupported` / `allowed_skip` / `flake`). Port-not-open is a failure. SteamCMD classes do not change skip vs fail.
 5. Launch a fix subagent with skill name, failed phase, ports expected vs observed, status tail. Patch → push → pull → `pnpm loop:verify` (add `:runtime` if Docker lifecycle) → `pnpm lab:matrix --skill <failed>`.
 6. Continue cursor. Do not schedule matrix work on `playon-node-1`. Windows PE skills dual-place to `playon-win-1` when that node is online.
 
@@ -83,7 +83,18 @@ Not part of `pnpm loop:verify`. Use after the merge bar is green when validating
 
 On playon-dev (24/7), install the systemd timer in [infra/lab/README.md](../infra/lab/README.md). Each tick: merge bar → `lab:matrix --continue-on-fail` → file Issues.
 
-Failures also file immediately at the end of a matrix run via `scripts/lab-file-github-issues.mjs` (`source:lab`). Filing uses the **current** status file’s failures (not the full historical `issues.jsonl`), and will not reopen a closed fingerprint unless `PLAYON_LAB_REFILE=1`. See [testing-plan.md](testing-plan.md) and [sdlc.md](sdlc.md).
+Failures also file immediately at the end of a matrix run via `scripts/lab-file-github-issues.mjs` (`source:lab`). Filing uses the **current** status file’s failures (not the full historical `issues.jsonl`), fingerprints **one issue per skill** (phase changes comment on that issue), and will not reopen a closed fingerprint unless `PLAYON_LAB_REFILE=1`. Detectable SteamCMD tails set `errorClass` to `steamcmd_timeout` / `steamcmd_empty_depot` / `steamcmd_no_subscription` (pass/fail is unchanged). See [testing-plan.md](testing-plan.md) and [sdlc.md](sdlc.md).
+
+### One-time clone cleanup
+
+Older filing keyed fingerprints by `skill:phase:errorClass`, which opened start / port_open / query clones for the same title. After fingerprint-by-skill, close extras as duplicate of the oldest open issue **only after a dry-run**:
+
+```bash
+pnpm lab:file-issues --close-clones           # print keep/close plan (no writes)
+pnpm lab:file-issues --close-clones --apply   # close extras as duplicate of the oldest
+```
+
+`--close-clones` without `--apply` is always a dry-run. `--dry-run` wins over `--apply`. Do not run `--apply` from cadence.
 
 ### Cleanup
 
