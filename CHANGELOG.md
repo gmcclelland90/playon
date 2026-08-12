@@ -2,6 +2,12 @@
 
 All notable changes to PlayOn Home (root `package.json` version) are listed here.
 
+## [Unreleased]
+
+### Added
+
+- **WSL Phase 2: Networking & LAN join** — Detect mirrored (Win11 22H2+) vs NAT networking mode; join host resolution for WSL-placed servers uses parent Windows node's LAN IP; Settings warns when NAT requires manual portproxy; smoke checklist for `playon-win-1`.
+
 ## [0.2.2] — 2026-08-11
 
 ### Added
