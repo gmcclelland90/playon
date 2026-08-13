@@ -4,15 +4,23 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+## [0.2.5] — 2026-08-13
+
 ### Changed
 
-- **Settings LLM presets** — Groq is no longer an out-of-the-box provider. Custom OpenAI-compatible endpoints still accept any base URL and key.
+- **Settings LLM presets** — Groq is no longer an out-of-the-box provider. Custom OpenAI-compatible endpoints still accept any base URL and key (`#866`).
 
 ### Fixed
 
-- **Settings → Nodes row layout** — Windows parent rows with a WSL helper no longer wrap Update/Remove under the chips. Header stays name/chips | actions; helper copy sits below. Optional Docker Desktop is not a warn-scream **No Docker** chip when an online WSL sibling already has Docker.
-- **Node Update feedback** — queued / running / failed status shows on that node’s row. `node_self_update` jobs persist across a Home restart so Update is not a silent miss; pressing Update again reuses an in-flight job or re-queues if the job is gone. Windows parent Update still targets only that node (WSL sibling keeps its own button).
-- **Windows node self-update** — `apply-self-update.ps1` disables PlayOnNodeAgent RestartCount and relaunches outside the agent Job (one-shot `PlayOnNodeAgentApplyUpdate` task, or `CREATE_BREAKAWAY_FROM_JOB`) so Task Scheduler cannot restart 0.2.3 and kill the helper before the zip lands. Home no longer marks a running `node_self_update` `abandoned` when the agent calls `jobs/next` after the swap; a matching heartbeat completes the job. Linux tarball path unchanged.
+- **Settings → Nodes row layout** — Windows parent rows with a WSL helper no longer wrap Update/Remove under the chips. Header stays name/chips | actions; helper copy sits below. Optional Docker Desktop is not a warn-scream **No Docker** chip when an online WSL sibling already has Docker (`#864`).
+- **Node Update feedback** — queued / running / failed status shows on that node’s row. `node_self_update` jobs persist across a Home restart so Update is not a silent miss; pressing Update again reuses an in-flight job or re-queues if the job is gone. Windows parent Update still targets only that node (WSL sibling keeps its own button) (`#864`).
+- **Windows node self-update** — `apply-self-update.ps1` disables PlayOnNodeAgent RestartCount and relaunches outside the agent Job (one-shot `PlayOnNodeAgentApplyUpdate` task, or `CREATE_BREAKAWAY_FROM_JOB`) so Task Scheduler cannot restart the old binary and kill the helper before the zip lands. Home no longer marks a running `node_self_update` `abandoned` when the agent calls `jobs/next` after the swap; a matching heartbeat completes the job. Linux tarball path unchanged (`#864`).
+
+### Notes
+
+- Update Home via OTA (**Settings → About / Updates → Update & restart**).
+- Update Windows nodes from **Settings → Nodes** so the self-update helper no longer dies with the old agent PID.
+- Groq remains reachable as a custom OpenAI-compatible URL; it is just not a preset.
 
 ## [0.2.4] — 2026-08-13
 
