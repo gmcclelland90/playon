@@ -20,7 +20,7 @@ import { nodes } from "../db/schema.js";
 import { findRepoRoot, type AppConfig } from "../config.js";
 import type { EventHub } from "./event-hub.js";
 import { readAppVersion } from "./app-version.js";
-import { nodeJobService } from "./node-jobs.js";
+import { nodeJobService, type NodeJob } from "./node-jobs.js";
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
@@ -33,6 +33,14 @@ export type UpdateProgressPhase =
   | "done"
   | "failed";
 
+export type NodeUpdateJobView = {
+  jobId: string;
+  status: "queued" | "running" | "done" | "failed";
+  progress?: string;
+  error?: string;
+  version?: string;
+};
+
 export type NodeUpdateStatus = {
   nodeId: string;
   name: string;
@@ -41,6 +49,7 @@ export type NodeUpdateStatus = {
   status: "online" | "stale" | "offline";
   updateAvailable: boolean;
   kind: string;
+  updateJob: NodeUpdateJobView | null;
 };
 
 export type UpdatesStatus = {
@@ -108,6 +117,18 @@ export function clearUpdateManifestCacheForTests(): void {
 
 export function platformForNodeOs(osName: string): UpdatePlatform {
   return osName === "windows" ? "windows-x64" : "linux-x64";
+}
+
+export function nodeUpdateJobView(job: NodeJob | null): NodeUpdateJobView | null {
+  if (!job) return null;
+  const version = typeof job.args.version === "string" ? job.args.version : undefined;
+  return {
+    jobId: job.id,
+    status: job.status,
+    progress: job.progress,
+    error: job.error,
+    version,
+  };
 }
 
 export function pickAsset(
@@ -356,6 +377,8 @@ export class UpdateService {
         const updateAvailable = Boolean(
           latestVersion && isNewerVersion(latestVersion, agentVersion),
         );
+        const active = nodeJobService.findActive(n.id, "node_self_update");
+        const latestJob = active ?? nodeJobService.findLatest(n.id, "node_self_update");
         return {
           nodeId: n.id,
           name: n.name,
@@ -364,6 +387,7 @@ export class UpdateService {
           status: deriveNodePresence(n.lastSeenAt, now),
           updateAvailable,
           kind: n.kind || "lan",
+          updateJob: nodeUpdateJobView(latestJob),
         };
       });
 
@@ -501,6 +525,21 @@ export class UpdateService {
     const manifest = await fetchUpdateManifest(this.manifestUrl());
     const platform = platformForNodeOs(row.os);
     const asset = pickAsset(manifest, "node", platform);
+
+    const existing = nodeJobService.findActive(nodeId, "node_self_update");
+    if (existing) {
+      this.publishProgress(
+        "node",
+        "downloading",
+        `Update already queued to ${String(existing.args.version ?? manifest.version)} for ${row.name}`,
+        nodeId,
+        0,
+      );
+      return {
+        jobId: existing.id,
+        version: String(existing.args.version ?? manifest.version),
+      };
+    }
 
     const job = nodeJobService.enqueue(nodeId, "node_self_update", {
       downloadUrl: asset.downloadUrl,

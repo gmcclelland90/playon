@@ -526,6 +526,13 @@ export const api = {
         status: "online" | "stale" | "offline";
         updateAvailable: boolean;
         kind: string;
+        updateJob?: {
+          jobId: string;
+          status: "queued" | "running" | "done" | "failed";
+          progress?: string;
+          error?: string;
+          version?: string;
+        } | null;
       }>;
     }>(`/api/updates/status${force ? "?force=1" : ""}`),
   applyHomeUpdate: () =>

@@ -4,6 +4,11 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+### Fixed
+
+- **Settings → Nodes row layout** — Windows parent rows with a WSL helper no longer wrap Update/Remove under the chips. Header stays name/chips | actions; helper copy sits below. Optional Docker Desktop is not a warn-scream **No Docker** chip when an online WSL sibling already has Docker.
+- **Node Update feedback** — queued / running / failed status shows on that node’s row. `node_self_update` jobs persist across a Home restart so Update is not a silent miss; pressing Update again reuses an in-flight job or re-queues if the job is gone. Windows parent Update still targets only that node (WSL sibling keeps its own button).
+
 ## [0.2.4] — 2026-08-13
 
 ### Added

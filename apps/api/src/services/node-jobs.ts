@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { nanoid } from "nanoid";
 import {
   NodeJobError,
@@ -22,9 +24,17 @@ export interface NodeJob {
   updatedAt: string;
 }
 
+/** Kinds that survive a Home process restart (JSON file, not sqlite). */
+const DURABLE_JOB_KINDS = new Set<NodeJobKind>(["node_self_update"]);
+
+export function nodeSelfUpdateJobsPath(dataRoot: string): string {
+  return path.join(dataRoot, "node-self-update-jobs.json");
+}
+
 /**
  * In-process job queue for node-agent remote execution.
- * Sufficient for single-control-plane LAN hosts; jobs are not durable across API restarts.
+ * Most kinds are RAM-only. `node_self_update` is also written to a JSON file when
+ * `attachPersistFile` is called so a Home restart does not silently drop a queued Update.
  */
 export class NodeJobService {
   private readonly jobs = new Map<string, NodeJob>();
@@ -32,6 +42,7 @@ export class NodeJobService {
   private readonly advertised = new Map<string, Set<NodeJobKind>>();
   /** Wake hooks for in-flight `waitFor` polls, so shutdown can release them. */
   private readonly waiters = new Set<(reason: string) => void>();
+  private persistPath: string | null = null;
 
   /**
    * Record what a node says it can execute (from heartbeat). Called with
@@ -56,6 +67,50 @@ export class NodeJobService {
   supportsKind(nodeId: string, kind: NodeJobKind): boolean {
     const kinds = this.advertised.get(nodeId);
     return !kinds || kinds.has(kind);
+  }
+
+  /** Load durable jobs from `filePath` and persist later mutations there. */
+  attachPersistFile(filePath: string): void {
+    this.persistPath = filePath;
+    this.loadPersist();
+  }
+
+  private durableJobs(): NodeJob[] {
+    return [...this.jobs.values()].filter(
+      (j) => DURABLE_JOB_KINDS.has(j.kind) && (j.status === "queued" || j.status === "running"),
+    );
+  }
+
+  private writePersist(): void {
+    if (!this.persistPath) return;
+    try {
+      fs.mkdirSync(path.dirname(this.persistPath), { recursive: true });
+      fs.writeFileSync(this.persistPath, `${JSON.stringify(this.durableJobs(), null, 2)}\n`, "utf8");
+    } catch {
+      // Disk full / permissions must not break enqueue or claim.
+    }
+  }
+
+  private loadPersist(): void {
+    if (!this.persistPath || !fs.existsSync(this.persistPath)) return;
+    try {
+      const raw = JSON.parse(fs.readFileSync(this.persistPath, "utf8")) as unknown;
+      if (!Array.isArray(raw)) return;
+      const now = new Date().toISOString();
+      for (const row of raw) {
+        if (!isPersistedDurableJob(row)) continue;
+        if (this.jobs.has(row.id)) continue;
+        const status = row.status === "running" ? "queued" : row.status;
+        this.jobs.set(row.id, {
+          ...row,
+          status,
+          error: status === "queued" ? undefined : row.error,
+          updatedAt: now,
+        });
+      }
+    } catch {
+      // Corrupt file: start empty; next write replaces it.
+    }
   }
 
   enqueue(nodeId: string, kind: NodeJobKind, args: Record<string, unknown> = {}): NodeJob {
@@ -83,6 +138,7 @@ export class NodeJobService {
       updatedAt: now,
     };
     this.jobs.set(job.id, job);
+    this.writePersist();
     return { ...job };
   }
 
@@ -104,6 +160,17 @@ export class NodeJobService {
     return active[0] ? { ...active[0] } : null;
   }
 
+  /** Newest job of a kind for a node (any status — UI failed/done surfacing). */
+  findLatest(nodeId: string, kind: NodeJobKind): NodeJob | null {
+    const matches = [...this.jobs.values()]
+      .filter((j) => j.nodeId === nodeId && j.kind === kind)
+      .sort((a, b) => {
+        const byUpdated = b.updatedAt.localeCompare(a.updatedAt);
+        return byUpdated !== 0 ? byUpdated : b.createdAt.localeCompare(a.createdAt);
+      });
+    return matches[0] ? { ...matches[0] } : null;
+  }
+
   /** Claim the oldest queued job for this node (or null). */
   claimNext(nodeId: string): NodeJob | null {
     // Agent runs one job at a time; a new claim means any prior "running" was abandoned
@@ -120,9 +187,13 @@ export class NodeJobService {
       .filter((j) => j.nodeId === nodeId && j.status === "queued")
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const job = queued[0];
-    if (!job) return null;
+    if (!job) {
+      this.writePersist();
+      return null;
+    }
     job.status = "running";
     job.updatedAt = now;
+    this.writePersist();
     return { ...job };
   }
 
@@ -133,6 +204,7 @@ export class NodeJobService {
     job.result = result;
     job.error = undefined;
     job.updatedAt = new Date().toISOString();
+    this.writePersist();
     return { ...job };
   }
 
@@ -142,6 +214,7 @@ export class NodeJobService {
     job.status = "failed";
     job.error = error;
     job.updatedAt = new Date().toISOString();
+    this.writePersist();
     return { ...job };
   }
 
@@ -151,6 +224,7 @@ export class NodeJobService {
     if (!job) throw new NodeJobError("unknown_job", { detail: jobId });
     job.progress = progress.slice(0, 500);
     job.updatedAt = new Date().toISOString();
+    this.writePersist();
     return { ...job };
   }
 
@@ -205,5 +279,26 @@ export class NodeJobService {
   }
 }
 
+function isPersistedDurableJob(raw: unknown): raw is NodeJob {
+  if (!raw || typeof raw !== "object") return false;
+  const j = raw as NodeJob;
+  return (
+    typeof j.id === "string" &&
+    j.id.length > 0 &&
+    typeof j.nodeId === "string" &&
+    j.nodeId.length > 0 &&
+    DURABLE_JOB_KINDS.has(j.kind) &&
+    (j.status === "queued" || j.status === "running") &&
+    typeof j.args === "object" &&
+    j.args !== null &&
+    typeof j.createdAt === "string" &&
+    typeof j.updatedAt === "string"
+  );
+}
+
 /** Singleton used by createApp + tools (one queue per process). */
 export const nodeJobService = new NodeJobService();
+
+export function attachNodeJobPersist(dataRoot: string): void {
+  nodeJobService.attachPersistFile(nodeSelfUpdateJobsPath(dataRoot));
+}

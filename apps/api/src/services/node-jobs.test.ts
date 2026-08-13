@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { NodeJobError } from "@playon/shared";
 import { NodeJobService } from "./node-jobs.js";
 
@@ -174,5 +177,53 @@ describe("NodeJobService", () => {
     expect(svc.get(job.id)?.status).toBe("queued");
     svc.complete(job.id, { pong: true });
     expect((await svc.waitFor(job.id, { timeoutMs: 1000 })).status).toBe("done");
+  });
+
+  it("findLatest returns failed jobs so the UI can surface them", () => {
+    const svc = new NodeJobService();
+    const job = svc.enqueue("node-a", "node_self_update", SELF_UPDATE_ARGS);
+    svc.fail(job.id, "update_sha256_mismatch");
+    expect(svc.findActive("node-a", "node_self_update")).toBeNull();
+    expect(svc.findLatest("node-a", "node_self_update")).toMatchObject({
+      id: job.id,
+      status: "failed",
+      error: "update_sha256_mismatch",
+    });
+  });
+
+  it("persists node_self_update jobs across a new service instance", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "playon-jobs-"));
+    const file = path.join(dir, "node-self-update-jobs.json");
+    try {
+      const a = new NodeJobService();
+      a.attachPersistFile(file);
+      const job = a.enqueue("win-1", "node_self_update", SELF_UPDATE_ARGS);
+      a.enqueue("win-1", "ping");
+      const dumped = JSON.parse(fs.readFileSync(file, "utf8")) as Array<{ kind: string }>;
+      expect(dumped.every((row) => row.kind === "node_self_update")).toBe(true);
+      const b = new NodeJobService();
+      b.attachPersistFile(file);
+      expect(b.get(job.id)?.status).toBe("queued");
+      expect(b.get(job.id)?.nodeId).toBe("win-1");
+      expect(b.claimNext("win-1")?.kind).toBe("node_self_update");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("requeues a running durable job after reload so Update can be picked up again", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "playon-jobs-"));
+    const file = path.join(dir, "node-self-update-jobs.json");
+    try {
+      const a = new NodeJobService();
+      a.attachPersistFile(file);
+      const job = a.enqueue("zomboid", "node_self_update", SELF_UPDATE_ARGS);
+      expect(a.claimNext("zomboid")?.id).toBe(job.id);
+      const b = new NodeJobService();
+      b.attachPersistFile(file);
+      expect(b.get(job.id)?.status).toBe("queued");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
