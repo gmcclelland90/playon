@@ -23,9 +23,10 @@ export default defineConfig({
         ...process.env,
         PLAYON_HOST: "127.0.0.1",
         PLAYON_PORT: apiPort,
-        PLAYON_LLM_MODE: "openai_compatible",
-        PLAYON_RUNTIME: "docker",
-        PLAYON_DATA_ROOT: "tmp/e2e-data",
+        // UI smoke does not exercise Venice or Docker lifecycle.
+        PLAYON_LLM_MODE: process.env.PLAYON_LLM_MODE ?? "openai_compatible",
+        PLAYON_RUNTIME: process.env.PLAYON_RUNTIME ?? "native",
+        PLAYON_DATA_ROOT: process.env.PLAYON_DATA_ROOT ?? "tmp/e2e-data",
       },
     },
     {

@@ -23,7 +23,7 @@
     "loop:verify": "node scripts/agent-dev-loop.mjs",
     "loop:verify:fast": "node scripts/agent-dev-loop.mjs --fast",
     "loop:verify:runtime": "node scripts/agent-dev-loop.mjs --runtime",
-    "test:e2e": "playwright test",
+    "test:e2e": "pnpm build && playwright test",
     "test:e2e:install": "playwright install chromium",
     "package:mvp": "node scripts/package-mvp.mjs",
     "package:home": "node scripts/package-home.mjs",

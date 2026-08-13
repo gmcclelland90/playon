@@ -20,6 +20,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install
+      # Belt-and-suspenders: workflow build plus `pnpm test:e2e` (`pnpm build && playwright test`).
       - run: pnpm build
       - run: pnpm test:e2e:install
       - name: Playwright smoke
