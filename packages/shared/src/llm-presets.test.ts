@@ -100,5 +100,8 @@ describe("llm presets", () => {
     expect(LLM_PRESETS.nvidia.suggestedModels).not.toContain(
       "nvidia/llama-3.1-nemotron-70b-instruct",
     );
+    expect(LLM_PRESETS.ollama.defaultModel).toBe("qwen2.5");
+    expect(LLM_PRESETS.ollama.suggestedModels).toEqual(["qwen2.5", "llama3.2", "mistral"]);
+    expect(LLM_PRESETS.ollama.suggestedModels[0]).toBe(LLM_PRESETS.ollama.defaultModel);
   });
 });

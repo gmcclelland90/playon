@@ -148,10 +148,23 @@ describe("createLlmClient", () => {
     await setSetting<LlmSettings>(db, LLM_SETTINGS_KEY, {
       provider: "openai_compatible",
       preset: "nvidia",
-      model: "meta/llama-3.3-70b-instruct",
+      model: "meta/llama-3.1-8b-instruct",
       apiKeyEncrypted: encryptSecret(config.sessionSecret, "nvapi-test"),
     });
     const llm = await createLlmClient(db, config);
     expect(llm.mode).toBe("openai_compatible");
+    expect(llm.maxToolCallsPerCompletion).toBe(1);
+  });
+
+  it("does not cap Venice/grok to a single tool_call per completion", async () => {
+    const { db, config } = tempEnv();
+    process.env.PLAYON_VENICE_API_KEY = "env-venice-key";
+    await setSetting<LlmSettings>(db, LLM_SETTINGS_KEY, {
+      provider: "openai_compatible",
+      preset: "venice",
+      model: "grok-4-5",
+    });
+    const llm = await createLlmClient(db, config);
+    expect(llm.maxToolCallsPerCompletion).toBeUndefined();
   });
 });

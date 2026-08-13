@@ -27,11 +27,31 @@ export type LlmCompleteOptions = {
 
 export interface LlmClient {
   readonly mode: "openai_compatible" | "ollama";
+  /**
+   * When 1, this backend only accepts a single tool-call per completion
+   * (NVIDIA llama-3.1-8b: "model only supports a single tool-call at once").
+   */
+  readonly maxToolCallsPerCompletion?: number;
   complete(
     messages: LlmMessage[],
     tools?: ToolDefinition[],
     opts?: LlmCompleteOptions,
   ): Promise<LlmCompletion>;
+}
+
+/** NVIDIA NIM 8B (and the NVIDIA preset) reject parallel tool_calls in one completion. */
+export function isSequentialToolCallingBackend(input: {
+  preset?: string | null;
+  baseUrl?: string | null;
+  model?: string | null;
+}): boolean {
+  const preset = (input.preset ?? "").toLowerCase();
+  const base = (input.baseUrl ?? "").toLowerCase();
+  const model = (input.model ?? "").toLowerCase();
+  if (preset === "nvidia") return true;
+  if (base.includes("integrate.api.nvidia.com")) return true;
+  if (model.includes("llama-3.1-8b")) return true;
+  return false;
 }
 
 interface OpenAiChatResponse {
@@ -281,17 +301,35 @@ export function extractToolCallsFromContent(content: string): LlmToolCall[] {
   return calls;
 }
 
+export type OpenAICompatibleLlmClientOptions = {
+  /**
+   * Advertise parallel tool_calls. Default false (Venice/Ollama/NVIDIA all prefer sequential).
+   * Sequential backends also cap accepted tool_calls at `maxToolCallsPerCompletion`.
+   */
+  parallelToolCalls?: boolean;
+  /** Cap native + recovered tool_calls. NVIDIA 8B must be 1. */
+  maxToolCallsPerCompletion?: number;
+  fetchImpl?: typeof fetch;
+};
+
 /** Calls POST .../chat/completions on an OpenAI-compatible endpoint (Venice, Ollama, …). */
 export class OpenAICompatibleLlmClient implements LlmClient {
   readonly mode: "openai_compatible" | "ollama";
+  readonly maxToolCallsPerCompletion?: number;
+  private readonly parallelToolCalls: boolean;
+  private readonly fetchImpl: typeof fetch;
 
   constructor(
     private readonly baseUrl: string,
     private readonly apiKey: string,
     private readonly model: string,
     mode: "openai_compatible" | "ollama" = "openai_compatible",
+    options: OpenAICompatibleLlmClientOptions = {},
   ) {
     this.mode = mode;
+    this.parallelToolCalls = options.parallelToolCalls ?? false;
+    this.maxToolCallsPerCompletion = options.maxToolCallsPerCompletion;
+    this.fetchImpl = options.fetchImpl ?? fetch;
   }
 
   async complete(
@@ -341,7 +379,8 @@ export class OpenAICompatibleLlmClient implements LlmClient {
       }));
       body.tool_choice = "auto";
       // Several Venice models (and some Ollama ports) reject parallel tool batches.
-      body.parallel_tool_calls = false;
+      // NVIDIA 8B 500s: "model only supports a single tool-call at once".
+      body.parallel_tool_calls = this.parallelToolCalls;
     }
 
     if (this.baseUrl.includes("venice.ai")) {
@@ -354,7 +393,7 @@ export class OpenAICompatibleLlmClient implements LlmClient {
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (this.apiKey) headers.authorization = `Bearer ${this.apiKey}`;
 
-    const res = await fetch(url, {
+    const res = await this.fetchImpl(url, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
@@ -397,11 +436,16 @@ export class OpenAICompatibleLlmClient implements LlmClient {
       }
     }
 
+    const capped =
+      this.maxToolCallsPerCompletion && toolCalls && toolCalls.length > this.maxToolCallsPerCompletion
+        ? toolCalls.slice(0, this.maxToolCallsPerCompletion)
+        : toolCalls;
+
     return {
       // When we recovered tool calls from content, clear content so the orchestrator
       // doesn't surface raw function JSON as the user-visible reply.
-      content: toolCalls?.length && !message?.tool_calls?.length ? "" : content,
-      toolCalls: toolCalls?.length ? toolCalls : undefined,
+      content: capped?.length && !message?.tool_calls?.length ? "" : content,
+      toolCalls: capped?.length ? capped : undefined,
     };
   }
 }

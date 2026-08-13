@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { extractToolCallsFromContent, looksLikeToolShapedContent } from "./llm.js";
+import {
+  extractToolCallsFromContent,
+  isSequentialToolCallingBackend,
+  looksLikeToolShapedContent,
+  OpenAICompatibleLlmClient,
+} from "./llm.js";
 
 describe("extractToolCallsFromContent", () => {
   describe("OpenAI/Hermes JSON formats", () => {
@@ -274,3 +279,111 @@ describe("looksLikeToolShapedContent", () => {
     expect(looksLikeToolShapedContent("")).toBe(false);
   });
 });
+
+describe("NVIDIA-shaped sequential tool calling", () => {
+  it("detects NVIDIA preset, host, and 8B model ids", () => {
+    expect(isSequentialToolCallingBackend({ preset: "nvidia" })).toBe(true);
+    expect(
+      isSequentialToolCallingBackend({
+        baseUrl: "https://integrate.api.nvidia.com/v1",
+      }),
+    ).toBe(true);
+    expect(
+      isSequentialToolCallingBackend({ model: "meta/llama-3.1-8b-instruct" }),
+    ).toBe(true);
+    expect(isSequentialToolCallingBackend({ preset: "venice", model: "grok-4-5" })).toBe(
+      false,
+    );
+  });
+
+  it("sends parallel_tool_calls=false and keeps a single tool_call", async () => {
+    let posted: Record<string, unknown> | undefined;
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      posted = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: "",
+                tool_calls: [
+                  {
+                    id: "1",
+                    function: { name: "servers_list", arguments: "{}" },
+                  },
+                  {
+                    id: "2",
+                    function: {
+                      name: "snapshot_create",
+                      arguments: '{"serverId":"live-friend"}',
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    const client = new OpenAICompatibleLlmClient(
+      "https://integrate.api.nvidia.com/v1",
+      "nvapi-test",
+      "meta/llama-3.1-8b-instruct",
+      "openai_compatible",
+      {
+        parallelToolCalls: false,
+        maxToolCallsPerCompletion: 1,
+        fetchImpl,
+      },
+    );
+
+    const result = await client.complete(
+      [{ role: "user", content: "spin up" }],
+      [
+        { name: "servers_list", description: "list", parameters: {} },
+        { name: "snapshot_create", description: "snap", parameters: {} },
+      ],
+    );
+
+    expect(posted?.parallel_tool_calls).toBe(false);
+    expect(posted?.tool_choice).toBe("auto");
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls?.[0]?.name).toBe("servers_list");
+  });
+
+  it("leaves Venice completions with multiple tool_calls intact when uncapped", async () => {
+    const fetchImpl: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: "",
+                tool_calls: [
+                  { id: "1", function: { name: "servers_list", arguments: "{}" } },
+                  { id: "2", function: { name: "skill_list", arguments: "{}" } },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    const client = new OpenAICompatibleLlmClient(
+      "https://api.venice.ai/api/v1",
+      "key",
+      "grok-4-5",
+      "openai_compatible",
+      { fetchImpl },
+    );
+    const result = await client.complete(
+      [{ role: "user", content: "list" }],
+      [{ name: "servers_list", description: "l", parameters: {} }],
+    );
+    expect(result.toolCalls).toHaveLength(2);
+  });
+});
+

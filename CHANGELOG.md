@@ -10,6 +10,13 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 - **LLM canary v2** — `pnpm lab:llm-canary` asserts a two-step tool trace on a disposable `lab-*` fixture (Venice required; Ollama `llama3.2` / `qwen2.5` when reachable). Missing Ollama is `reachable=false` and does not fail the Venice path (`#845`).
 - Canvas **degraded-mode** note when a model prints tool-shaped text instead of calling tools; MCP and manual Start/Stop still work. Gemma is not blocklisted.
 
+### Changed
+
+- **Scoped in-app tool catalog** — chat turns send an install/maintain subset instead of all ~64 tool defs (~25k tokens). A spin-up turn keeps create/start/health/stop/list/placement/panel; rcon, WSL, snapshots, watcher-delete, and skill promote stay off that surface. MCP and watcher scripts still get the full catalog.
+- **NVIDIA sequential tool calls** — NVIDIA / llama-3.1-8b backends set `parallel_tool_calls=false` and accept only one `tool_call` per completion; the orchestrator still loops. Venice/grok remain uncapped if the model emits a batch.
+- **In-session stop** — `servers_stop` of a server this chat created (inverse of `servers_create_from_skill` this turn/session) auto-approves. `watchers_delete` stays confirm-gated. Friend/live inventory is not a valid target just because `servers_list` returned it.
+- **Ollama Settings default** — suggested/default tag is `qwen2.5` (`llama3.2` has no native tools). Gemini model ids unchanged.
+
 ### Fixed
 
 - **Windows UDP `port_open`** — lab-matrix no longer treats Home `status=running` as a listen. Windows UDP/no-TCP requires query-online or a node-side `net_udp_listen` check (`ss`/`netstat`). Linux `ss` path is unchanged (`#846`).

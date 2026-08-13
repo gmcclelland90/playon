@@ -1,4 +1,5 @@
 import type { ToolEntry, ToolSurfaceEntry } from "@playon/agent-core";
+import { toolNamesForCatalog } from "@playon/agent-core";
 import { contentToolModule } from "./content.js";
 import { fsToolModule } from "./fs.js";
 import { metaToolModule } from "./meta.js";
@@ -38,16 +39,29 @@ export const TOOL_MODULES: readonly ToolModule[] = [
 
 /** Enforce the declared workspace scope, then hand the handler a resolved scope. */
 function bindEntry(entry: PlayOnToolEntry, workspace: WorkspaceBinding): ToolEntry {
+  const restrict = { restrictTargets: Boolean(workspace.restrictTargets) };
+
+  const resolveScope = (
+    args: Record<string, unknown>,
+  ):
+    | { ok: true; serverId: string | undefined }
+    | { ok: false; error: Record<string, unknown> } => {
+    if (entry.workspacePolicy === "none") return { ok: true, serverId: undefined };
+    return entry.workspacePolicy === "server_required"
+      ? resolveWorkspaceServerId(args, workspace.serverId, restrict)
+      : resolveOptionalWorkspaceServerId(args, workspace.serverId, restrict);
+  };
+
   return {
     def: entry.def,
     surface: entry.surface,
     workspacePolicy: entry.workspacePolicy,
+    preflight: (args) => {
+      const resolved = resolveScope(args);
+      return resolved.ok ? null : resolved.error;
+    },
     handler: async (args) => {
-      if (entry.workspacePolicy === "none") return entry.handler(args, { serverId: undefined });
-      const resolved =
-        entry.workspacePolicy === "server_required"
-          ? resolveWorkspaceServerId(args, workspace.serverId)
-          : resolveOptionalWorkspaceServerId(args, workspace.serverId);
+      const resolved = resolveScope(args);
       if (!resolved.ok) return resolved.error;
       return entry.handler(args, { serverId: resolved.serverId });
     },
@@ -58,7 +72,10 @@ export function composeToolEntries(
   ctx: ToolContext,
   modules: readonly ToolModule[] = TOOL_MODULES,
 ): ToolEntry[] {
-  return modules.flatMap((module) => module(ctx)).map((entry) => bindEntry(entry, ctx.workspace));
+  const entries = modules.flatMap((module) => module(ctx)).map((entry) => bindEntry(entry, ctx.workspace));
+  const allow = toolNamesForCatalog(ctx.catalog ?? "full");
+  if (!allow) return entries;
+  return entries.filter((entry) => allow.has(entry.def.name));
 }
 
 /** Catalog projection for one composed registry: definition merged with its own metadata. */
