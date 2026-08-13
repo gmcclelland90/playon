@@ -216,7 +216,7 @@ describe("WatcherService", () => {
         id: c.id,
         name: "Managed",
         game: "zomboid",
-        nodeId: "node-z",
+        nodeId: null,
         runtimeMode: "native",
         status: "stopped",
         dataPath,
