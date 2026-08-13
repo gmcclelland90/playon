@@ -168,6 +168,72 @@ export const SkillWatcherTemplateSchema = z.object({
 
 export type SkillWatcherTemplate = z.infer<typeof SkillWatcherTemplateSchema>;
 
+/** Facts used to decide whether skill templates may seed `action.kind=agent`. */
+export type WatcherSeedTargetFacts = {
+  managedFrom?: string | null;
+  nodeAuthoritative?: boolean | null;
+  hasNodeAuthoritativeMarker?: boolean | null;
+};
+
+export function isManagedOrNodeAuthoritativeSeedTarget(
+  facts: WatcherSeedTargetFacts,
+): boolean {
+  return Boolean(
+    (typeof facts.managedFrom === "string" && facts.managedFrom.length > 0) ||
+      facts.nodeAuthoritative === true ||
+      facts.hasNodeAuthoritativeMarker === true,
+  );
+}
+
+const MANAGED_WATCHER_NOTIFY_MESSAGE =
+  "A watcher fired on this managed server. Schedule a reboot when convenient — PlayOn will not auto-restart.";
+
+const WORKSHOP_WATCHER_NOTIFY_MESSAGE =
+  "One or more workshop mods have been updated. Schedule a server restart to apply changes — PlayOn will not auto-restart.";
+
+/** Deterministic tools + notify action used when agent templates cannot be seeded. */
+export function skillWatcherNotifyAction(
+  templateName: string,
+  trigger?: WatcherTrigger,
+): Extract<WatcherAction, { kind: "tools" }> {
+  const message =
+    trigger?.kind === "workshop_update"
+      ? WORKSHOP_WATCHER_NOTIFY_MESSAGE
+      : MANAGED_WATCHER_NOTIFY_MESSAGE;
+  return {
+    kind: "tools",
+    continueOnError: false,
+    steps: [
+      {
+        tool: "panel_publish",
+        args: {
+          title: templateName,
+          message,
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * Skill templates may declare `action.kind=agent` for lab / unmanaged servers.
+ * Managed and node-authoritative hosts get tools + notify only — never an
+ * auto-approved agent turn that can restart or mutate a live world.
+ */
+export function sanitizeSkillWatcherTemplatesForSeed(
+  templates: SkillWatcherTemplate[],
+  facts: WatcherSeedTargetFacts,
+): SkillWatcherTemplate[] {
+  if (!isManagedOrNodeAuthoritativeSeedTarget(facts)) return templates;
+  return templates.map((template) => {
+    if (template.action.kind !== "agent") return template;
+    return {
+      ...template,
+      action: skillWatcherNotifyAction(template.name, template.trigger),
+    };
+  });
+}
+
 export const CreateWatcherSchema = z.object({
   serverId: z.string().min(1),
   name: z.string().min(1).max(128),

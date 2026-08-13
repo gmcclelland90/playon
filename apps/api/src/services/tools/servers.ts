@@ -60,6 +60,7 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
         const skill = loadSkillMetadata(skillRoots, skillName);
         if (skill?.metadata.watchers?.length) {
           try {
+            // seedFromSkill rewrites action.kind=agent on managed / node-authoritative servers.
             await watchers.seedFromSkill(server.id, skill.metadata.name, skill.metadata.watchers);
           } catch {
             /* seeding is best-effort */

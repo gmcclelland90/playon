@@ -1,11 +1,15 @@
+import fs from "node:fs";
+import path from "node:path";
 import { and, desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   CreateWatcherSchema,
+  NODE_AUTHORITATIVE_MARKER,
   UpdateWatcherSchema,
   WatcherActionSchema,
   WatcherTriggerSchema,
   computeNextDueAt,
+  sanitizeSkillWatcherTemplatesForSeed,
   validateLogPattern,
   type CreateWatcherInput,
   type SkillWatcherTemplate,
@@ -14,11 +18,13 @@ import {
   type WatcherAction,
   type WatcherRun,
   type WatcherRunStatusSchema,
+  type WatcherSeedTargetFacts,
   type WatcherTrigger,
 } from "@playon/shared";
 import type { z } from "zod";
 import type { Db } from "../db/client.js";
-import { watcherRuns, watchers } from "../db/schema.js";
+import { servers, watcherRuns, watchers } from "../db/schema.js";
+import { readSkillMarker } from "./skill-marker.js";
 
 type RunStatus = z.infer<typeof WatcherRunStatusSchema>;
 
@@ -263,6 +269,10 @@ export class WatcherService {
   /**
    * Seed skill watcher templates for a server. Replaces prior skill_template
    * rows for the same skill slug on that server.
+   *
+   * Managed / node-authoritative servers never receive `action.kind=agent`
+   * (rewritten to tools + notify). Import/manage callers should use this same
+   * path so the guard cannot be skipped.
    */
   async seedFromSkill(
     serverId: string,
@@ -280,8 +290,12 @@ export class WatcherService {
         await this.delete(row.id);
       }
     }
+    const safeTemplates = sanitizeSkillWatcherTemplatesForSeed(
+      templates,
+      await this.seedTargetFacts(serverId),
+    );
     const created: Watcher[] = [];
-    for (const t of templates) {
+    for (const t of safeTemplates) {
       created.push(
         await this.create(
           {
@@ -298,5 +312,23 @@ export class WatcherService {
       );
     }
     return created;
+  }
+
+  private async seedTargetFacts(serverId: string): Promise<WatcherSeedTargetFacts> {
+    const rows = await this.db
+      .select()
+      .from(servers)
+      .where(eq(servers.id, serverId))
+      .limit(1);
+    const dataPath = rows[0]?.dataPath;
+    if (!dataPath) return {};
+    const marker = readSkillMarker(dataPath);
+    return {
+      managedFrom: marker?.managedFrom,
+      nodeAuthoritative: marker?.nodeAuthoritative,
+      hasNodeAuthoritativeMarker: fs.existsSync(
+        path.join(dataPath, NODE_AUTHORITATIVE_MARKER),
+      ),
+    };
   }
 }
