@@ -4,6 +4,8 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+## [0.2.4] — 2026-08-13
+
 ### Added
 
 - **Join-path canary** — `pnpm lab:join-path-canary` probes published `joinHost:gamePort` from `resolveJoinAddress` / `nodes.join_host` (not `127.0.0.1`). Fails if loopback is open but join host is not. Linux `fixtures.lab-docker-server` in CI/unit; WSL sibling + Windows PE live TCP documented as lab-only. Does not relax matrix `port_open` (`#843`).
@@ -12,16 +14,24 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ### Changed
 
-- **Scoped in-app tool catalog** — chat turns send an install/maintain subset instead of all ~64 tool defs (~25k tokens). A spin-up turn keeps create/start/health/stop/list/placement/panel; rcon, WSL, snapshots, watcher-delete, and skill promote stay off that surface. MCP and watcher scripts still get the full catalog.
-- **NVIDIA sequential tool calls** — NVIDIA / llama-3.1-8b backends set `parallel_tool_calls=false` and accept only one `tool_call` per completion; the orchestrator still loops. Venice/grok remain uncapped if the model emits a batch.
-- **In-session stop** — `servers_stop` of a server this chat created (inverse of `servers_create_from_skill` this turn/session) auto-approves. `watchers_delete` stays confirm-gated. Friend/live inventory is not a valid target just because `servers_list` returned it.
-- **Ollama Settings default** — suggested/default tag is `qwen2.5` (`llama3.2` has no native tools). Native Gemini default stays `gemini-2.5-flash` (stale 404 for new keys; a follow-up will pick a live id). Settings hint documents that; Gemini 3.x tool loops round-trip `thought_signature`.
+- **Scoped in-app tool catalog** — chat turns send an install/maintain subset instead of all ~64 tool defs (~25k tokens). A spin-up turn keeps create/start/health/stop/list/placement/panel; rcon, WSL, snapshots, watcher-delete, and skill promote stay off that surface. MCP and watcher scripts still get the full catalog (`#862`).
+- **NVIDIA sequential tool calls** — NVIDIA / llama-3.1-8b backends set `parallel_tool_calls=false` and accept only one `tool_call` per completion; the orchestrator still loops. Venice/grok remain uncapped if the model emits a batch (`#862`).
+- **In-session stop** — `servers_stop` of a server this chat created (inverse of `servers_create_from_skill` this turn/session) auto-approves. `watchers_delete` stays confirm-gated. Unbound `servers_list` does not leak live inventory; friend/live servers are not valid stop targets just because list returned them (`#862`).
+- **Ollama Settings default** — suggested/default tag is `qwen2.5` (`llama3.2` has no native tools). Native Gemini default stays `gemini-2.5-flash` (stale 404 for new keys; a follow-up will pick a live id). Settings hint documents that; Gemini 3.x tool loops round-trip `thought_signature` (`#862`).
 
 ### Fixed
 
 - **Windows UDP `port_open`** — lab-matrix no longer treats Home `status=running` as a listen. Windows UDP/no-TCP requires query-online or a node-side `net_udp_listen` check (`ss`/`netstat`). Linux `ss` path is unchanged (`#846`).
-- **`fetch_url` destinations** — RFC1918 and localhost are blocked by default (no implicit loopback exception). Hosts opt in NAS/loopback IPs or CIDRs under Settings → Nodes. Link-local metadata cannot be allowlisted (`#858`).
-- **Native Gemini tool follow-ups** — OpenAI-compat client persists and echoes `tool_calls[].extra_content.google.thought_signature` so Gemini 3.x does not 400 `missing thought_signature` on the next functionCall. OpenRouter `google/gemini-*` is unchanged (already PASSed usage-bar).
+- **`fetch_url` destinations** — RFC1918 and localhost are blocked by default (no implicit loopback exception). Hosts opt in NAS/loopback IPs or CIDRs under Settings → Nodes. Link-local metadata cannot be allowlisted (`#861` / `#858`).
+- **Watcher seed guard** — never seed `action.kind=agent` on managed or node-authoritative servers. Skill templates may still declare agent actions for lab/unmanaged hosts; `seedFromSkill` rewrites those to tools + notify so an auto-approved agent turn cannot restart or mutate a live world (`#860` / `#857`).
+- **Native Gemini tool follow-ups** — OpenAI-compat client persists and echoes `tool_calls[].extra_content.google.thought_signature` so Gemini 3.x does not 400 `missing thought_signature` on the next functionCall. OpenRouter `google/gemini-*` is unchanged (already PASSed usage-bar) (`#862`).
+
+### Notes
+
+- Update Home via OTA (**Settings → About / Updates → Update & restart**).
+- Venice default remains **grok-4-5**.
+- Ollama suggested/default tag is now **qwen2.5**.
+- Gemini Settings default `gemini-2.5-flash` still 404s for new Google keys — use a live 3.x model id or OpenRouter.
 
 ## [0.2.3] — 2026-08-12
 
