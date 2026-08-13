@@ -86,6 +86,19 @@ describe("llmSettingsFromPut", () => {
       baseUrl: "https://gateway.example/v1",
       model: "my-model",
     });
+
+    expect(
+      llmSettingsFromPut({
+        preset: "custom",
+        baseUrl: "https://api.groq.com/openai/v1",
+        model: "openai/gpt-oss-120b",
+      }),
+    ).toMatchObject({
+      provider: "openai_compatible",
+      preset: "custom",
+      baseUrl: "https://api.groq.com/openai/v1",
+      model: "openai/gpt-oss-120b",
+    });
   });
 
   it("infers legacy openai_compatible + venice host as venice", () => {
@@ -95,6 +108,17 @@ describe("llmSettingsFromPut", () => {
       model: "llama-3.3-70b",
     });
     expect(publicLlm.preset).toBe("venice");
+  });
+
+  it("maps a stored groq-shaped config to custom", () => {
+    const publicLlm = toPublicLlmSettings({
+      provider: "openai_compatible",
+      preset: "groq" as LlmSettings["preset"],
+      baseUrl: "https://api.groq.com/openai/v1",
+      model: "openai/gpt-oss-120b",
+    });
+    expect(publicLlm.preset).toBe("custom");
+    expect(publicLlm.baseUrl).toBe("https://api.groq.com/openai/v1");
   });
 
   it("rejects custom preset without a base URL", () => {

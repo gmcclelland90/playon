@@ -25,6 +25,23 @@ describe("settings route request contracts", () => {
     expect(LlmSettingsPutRequestSchema.parse({ preset: "custom", apiKey: "" }).apiKey).toBe("");
   });
 
+  it("rejects groq as an out-of-box preset while still accepting custom", () => {
+    expect(LlmSettingsPutRequestSchema.safeParse({ preset: "groq" }).success).toBe(false);
+    expect(LlmSettingsPutRequestSchema.parse({ preset: "custom" }).preset).toBe("custom");
+    for (const preset of [
+      "venice",
+      "openai",
+      "anthropic",
+      "gemini",
+      "openrouter",
+      "deepseek",
+      "nvidia",
+      "ollama",
+    ] as const) {
+      expect(LlmSettingsPutRequestSchema.parse({ preset }).preset).toBe(preset);
+    }
+  });
+
   it("lets both Ollama jobs fall back to the stored base url", () => {
     expect(OllamaInstallRequestSchema.parse({})).toEqual({});
     expect(OllamaPullRequestSchema.safeParse({}).success).toBe(false);
