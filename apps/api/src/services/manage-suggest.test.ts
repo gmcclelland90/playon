@@ -65,10 +65,17 @@ function mkTmp(): string {
   return dir;
 }
 
+/** Skills root nested under a unique tmp dir so parent yaml cannot shadow fixtures. */
+function isolatedSkillsRoot(): string {
+  const dir = path.join(mkTmp(), "skills");
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
 describe("ManageSuggestService.suggest (local)", () => {
   it("probes allowlisted roots and returns Zomboid candidates", async () => {
     const dataRoot = mkTmp();
-    const skillsRoot = mkTmp();
+    const skillsRoot = isolatedSkillsRoot();
     const scanRoot = mkTmp();
     const serverDir = path.join(scanRoot, "pz");
     fs.mkdirSync(serverDir);
@@ -124,6 +131,7 @@ describe("ManageSuggestService.suggest (local)", () => {
       {} as never,
     );
     const result = await svc.suggest("local");
+    expect(result.scannedRoots).toContain(path.resolve(scanRoot));
     expect(result.candidates).toHaveLength(1);
     expect(result.candidates[0]?.suggestedGame).toBe("Project Zomboid");
     expect(result.candidates[0]?.path).toBe(path.resolve(serverDir));
@@ -131,7 +139,7 @@ describe("ManageSuggestService.suggest (local)", () => {
 
   it("manages local path without packing", async () => {
     const dataRoot = mkTmp();
-    const skillsRoot = mkTmp();
+    const skillsRoot = isolatedSkillsRoot();
     fs.writeFileSync(path.join(skillsRoot, "import-hints.yaml"), "version: 1\nhints: []\n");
     fs.writeFileSync(
       path.join(skillsRoot, "import-scan-roots.yaml"),
@@ -164,7 +172,7 @@ describe("ManageSuggestService.suggest (local)", () => {
 
   it("binds manageFromNode to catalog skill from import hint", async () => {
     const dataRoot = mkTmp();
-    const skillsRoot = mkTmp();
+    const skillsRoot = isolatedSkillsRoot();
     const gameSkillDir = path.join(skillsRoot, "games", "project-zomboid");
     fs.mkdirSync(path.join(gameSkillDir, "guides"), { recursive: true });
     fs.writeFileSync(
