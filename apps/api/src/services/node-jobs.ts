@@ -4,6 +4,7 @@ import { nanoid } from "nanoid";
 import {
   NodeJobError,
   NodeJobKindSchema,
+  isNewerVersion,
   parseNodeJobArgs,
   type NodeJobKind,
 } from "@playon/shared";
@@ -26,6 +27,14 @@ export interface NodeJob {
 
 /** Kinds that survive a Home process restart (JSON file, not sqlite). */
 const DURABLE_JOB_KINDS = new Set<NodeJobKind>(["node_self_update"]);
+
+/** Running self-update is not abandoned on jobs/next — the Windows helper swaps after the agent exits. */
+export function shouldAbandonRunningJobOnReclaim(kind: NodeJobKind): boolean {
+  return kind !== "node_self_update";
+}
+
+/** Heartbeat with an older stamp than this means the Windows swap did not land. */
+export const SELF_UPDATE_STALE_MS = 15 * 60 * 1000;
 
 export function nodeSelfUpdateJobsPath(dataRoot: string): string {
   return path.join(dataRoot, "node-self-update-jobs.json");
@@ -100,7 +109,10 @@ export class NodeJobService {
       for (const row of raw) {
         if (!isPersistedDurableJob(row)) continue;
         if (this.jobs.has(row.id)) continue;
-        const status = row.status === "running" ? "queued" : row.status;
+        const status =
+          row.status === "running" && shouldAbandonRunningJobOnReclaim(row.kind)
+            ? "queued"
+            : row.status;
         this.jobs.set(row.id, {
           ...row,
           status,
@@ -173,15 +185,24 @@ export class NodeJobService {
 
   /** Claim the oldest queued job for this node (or null). */
   claimNext(nodeId: string): NodeJob | null {
-    // Agent runs one job at a time; a new claim means any prior "running" was abandoned
-    // (process crash / restart) and must not block UI reconnect forever.
+    // Agent runs one job at a time. A new claim means a prior "running" job was
+    // abandoned (crash / restart) — except node_self_update, whose Windows helper
+    // kills the agent before reportJobResult and then swaps the tree. Reclaiming
+    // that as failed is how playon-win-1 stayed on 0.2.3 after a successful Linux path.
     const now = new Date().toISOString();
     for (const j of this.jobs.values()) {
-      if (j.nodeId === nodeId && j.status === "running") {
-        j.status = "failed";
-        j.error = "abandoned: agent reclaimed without completing";
-        j.updatedAt = now;
-      }
+      if (j.nodeId !== nodeId || j.status !== "running") continue;
+      if (!shouldAbandonRunningJobOnReclaim(j.kind)) continue;
+      j.status = "failed";
+      j.error = "abandoned: agent reclaimed without completing";
+      j.updatedAt = now;
+    }
+    const selfUpdateInFlight = [...this.jobs.values()].some(
+      (j) => j.nodeId === nodeId && j.kind === "node_self_update" && j.status === "running",
+    );
+    if (selfUpdateInFlight) {
+      this.writePersist();
+      return null;
     }
     const queued = [...this.jobs.values()]
       .filter((j) => j.nodeId === nodeId && j.status === "queued")
@@ -195,6 +216,37 @@ export class NodeJobService {
     job.updatedAt = now;
     this.writePersist();
     return { ...job };
+  }
+
+  /**
+   * After a self-update restart, the new agent heartbeats before it can POST
+   * job result. Mark the in-flight update done when the stamp matches; fail it
+   * if the old stamp is still reporting after `staleMs`.
+   */
+  reconcileSelfUpdateOnHeartbeat(
+    nodeId: string,
+    agentVersion: string,
+    nowMs: number = Date.now(),
+    staleMs: number = SELF_UPDATE_STALE_MS,
+  ): NodeJob | null {
+    const job = this.findActive(nodeId, "node_self_update");
+    if (!job) return null;
+    const target = typeof job.args.version === "string" ? job.args.version : "";
+    if (target && !isNewerVersion(target, agentVersion || "0.0.0")) {
+      return this.complete(job.id, {
+        version: agentVersion,
+        installRoot: "heartbeat",
+        preserved: [],
+        restartRequired: false,
+      });
+    }
+    if (job.status !== "running") return null;
+    const created = Date.parse(job.createdAt);
+    if (!Number.isFinite(created) || nowMs - created < staleMs) return null;
+    if (target && isNewerVersion(target, agentVersion || "0.0.0")) {
+      return this.fail(job.id, "abandoned: update did not land after restart");
+    }
+    return null;
   }
 
   complete(jobId: string, result: unknown): NodeJob {

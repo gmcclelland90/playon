@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { NodeJobError } from "@playon/shared";
-import { NodeJobService } from "./node-jobs.js";
+import { NodeJobService, shouldAbandonRunningJobOnReclaim } from "./node-jobs.js";
 
 const SELF_UPDATE_ARGS = {
   downloadUrl: "https://example.com/playon-node-0.1.11-linux-x64.tar.gz",
@@ -179,6 +179,56 @@ describe("NodeJobService", () => {
     expect((await svc.waitFor(job.id, { timeoutMs: 1000 })).status).toBe("done");
   });
 
+  it("does not abandon a running node_self_update when the agent reconnects", () => {
+    expect(shouldAbandonRunningJobOnReclaim("ping")).toBe(true);
+    expect(shouldAbandonRunningJobOnReclaim("node_self_update")).toBe(false);
+    const svc = new NodeJobService();
+    const job = svc.enqueue("win-1", "node_self_update", SELF_UPDATE_ARGS);
+    expect(svc.claimNext("win-1")?.id).toBe(job.id);
+    expect(svc.claimNext("win-1")).toBeNull();
+    expect(svc.get(job.id)?.status).toBe("running");
+    expect(svc.get(job.id)?.error).toBeUndefined();
+  });
+
+  it("still abandons a running ping when the agent reclaims", () => {
+    const svc = new NodeJobService();
+    const ping = svc.enqueue("win-1", "ping");
+    const next = svc.enqueue("win-1", "fs_list", { path: "." });
+    expect(svc.claimNext("win-1")?.id).toBe(ping.id);
+    const claimed = svc.claimNext("win-1");
+    expect(claimed?.id).toBe(next.id);
+    expect(svc.get(ping.id)?.status).toBe("failed");
+    expect(svc.get(ping.id)?.error).toMatch(/abandoned: agent reclaimed without completing/);
+  });
+
+  it("completes an in-flight self-update when heartbeat shows the target version", () => {
+    const svc = new NodeJobService();
+    const job = svc.enqueue("win-1", "node_self_update", SELF_UPDATE_ARGS);
+    svc.claimNext("win-1");
+    const done = svc.reconcileSelfUpdateOnHeartbeat("win-1", "0.1.11");
+    expect(done?.status).toBe("done");
+    expect(svc.get(job.id)?.status).toBe("done");
+    expect(svc.claimNext("win-1")).toBeNull();
+  });
+
+  it("does not complete a self-update heartbeat that is still on the old stamp", () => {
+    const svc = new NodeJobService();
+    const job = svc.enqueue("win-1", "node_self_update", { ...SELF_UPDATE_ARGS, version: "0.2.4" });
+    svc.claimNext("win-1");
+    expect(svc.reconcileSelfUpdateOnHeartbeat("win-1", "0.2.3")).toBeNull();
+    expect(svc.get(job.id)?.status).toBe("running");
+  });
+
+  it("fails a stale self-update if the old stamp is still heartbeating", () => {
+    const svc = new NodeJobService();
+    const job = svc.enqueue("win-1", "node_self_update", { ...SELF_UPDATE_ARGS, version: "0.2.4" });
+    svc.claimNext("win-1");
+    const later = Date.parse(job.createdAt) + 16 * 60 * 1000;
+    const failed = svc.reconcileSelfUpdateOnHeartbeat("win-1", "0.2.3", later, 15 * 60 * 1000);
+    expect(failed?.status).toBe("failed");
+    expect(failed?.error).toMatch(/did not land after restart/);
+  });
+
   it("findLatest returns failed jobs so the UI can surface them", () => {
     const svc = new NodeJobService();
     const job = svc.enqueue("node-a", "node_self_update", SELF_UPDATE_ARGS);
@@ -211,7 +261,7 @@ describe("NodeJobService", () => {
     }
   });
 
-  it("requeues a running durable job after reload so Update can be picked up again", () => {
+  it("keeps a running node_self_update across reload so reconnect is not abandoned", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "playon-jobs-"));
     const file = path.join(dir, "node-self-update-jobs.json");
     try {
@@ -221,7 +271,9 @@ describe("NodeJobService", () => {
       expect(a.claimNext("zomboid")?.id).toBe(job.id);
       const b = new NodeJobService();
       b.attachPersistFile(file);
-      expect(b.get(job.id)?.status).toBe("queued");
+      expect(b.get(job.id)?.status).toBe("running");
+      expect(b.claimNext("zomboid")).toBeNull();
+      expect(b.get(job.id)?.status).toBe("running");
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
