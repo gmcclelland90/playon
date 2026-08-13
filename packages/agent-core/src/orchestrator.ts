@@ -1,6 +1,14 @@
 import { AGENT_SYSTEM_PROMPT } from "./agent-prompt.js";
 import { runToolInvocation, type ConfirmPolicy, type ToolEntry } from "./invoke-tool.js";
 import { looksLikeToolShapedContent, type LlmClient, type LlmMessage } from "./llm.js";
+import {
+  catalogSystemPrompt,
+  isSessionCreatedStop,
+  SEQUENTIAL_TOOLS_PROMPT,
+  SESSION_CREATE_TOOLS,
+  serverIdFromToolResult,
+  type ToolCatalogStage,
+} from "./tool-catalog.js";
 import { toLlmToolDefinition, type ToolDefinition, type ToolHandler } from "./tools.js";
 
 export { confirmActionLabel, confirmSummary } from "./confirm-summary.js";
@@ -58,6 +66,13 @@ export interface OrchestratorOptions {
   confirmPolicy?: ConfirmPolicy;
   /** Actor label when confirmPolicy is auto (e.g. watcher:id). */
   autoApproveActor?: string;
+  /** LLM-facing catalog stage (install/maintain/full). */
+  catalogStage?: ToolCatalogStage;
+  /**
+   * Server ids this chat/session already created. `servers_stop` of these
+   * skips the confirm gate (inverse of servers_create_from_skill this turn).
+   */
+  sessionCreatedServerIds?: Iterable<string>;
 }
 
 /** Thrown when the host stops an in-flight chat turn. */
@@ -163,11 +178,16 @@ function summarizeMaxIterations(toolTrace: ToolTraceEntry[]): string {
 
 export class Orchestrator {
   private readonly tools = new Map<string, ToolEntry>();
+  private readonly sessionCreatedServerIds: Set<string>;
+  private boundWorkspaceServerId: string | undefined;
 
   constructor(
     private readonly llm: LlmClient,
     private readonly options: OrchestratorOptions = {},
-  ) {}
+  ) {
+    this.sessionCreatedServerIds = new Set(options.sessionCreatedServerIds ?? []);
+    this.boundWorkspaceServerId = options.workspaceServerId;
+  }
 
   registerTool(def: ToolDefinition, handler: ToolHandler): void {
     this.tools.set(def.name, { def, handler });
@@ -197,6 +217,17 @@ export class Orchestrator {
         role: "system",
         content: workspaceSystemPrompt(this.options.workspaceServerId),
       });
+    }
+    const catalogNote = catalogSystemPrompt(this.options.catalogStage ?? "full");
+    if (catalogNote) {
+      systemMessages.push({ role: "system", content: catalogNote });
+    }
+    const maxToolCalls =
+      this.llm.maxToolCallsPerCompletion && this.llm.maxToolCallsPerCompletion > 0
+        ? this.llm.maxToolCallsPerCompletion
+        : undefined;
+    if (maxToolCalls === 1) {
+      systemMessages.push({ role: "system", content: SEQUENTIAL_TOOLS_PROMPT });
     }
     if (RESUME_USER_RE.test(userMessage.trim())) {
       systemMessages.push({ role: "system", content: RESUME_SYSTEM_PROMPT });
@@ -242,17 +273,22 @@ export class Orchestrator {
         };
       }
 
+      const toolCalls =
+        maxToolCalls && completion.toolCalls.length > maxToolCalls
+          ? completion.toolCalls.slice(0, maxToolCalls)
+          : completion.toolCalls;
+
       // Do not stream interim "thinking" text that accompanies tool calls — models often
       // restate the plan each round, and concatenating those fragments garbles the UI.
       messages.push({
         role: "assistant",
         content: completion.content,
-        toolCalls: completion.toolCalls,
+        toolCalls,
       });
 
       let roundHadFailure = false;
 
-      for (const call of completion.toolCalls) {
+      for (const call of toolCalls) {
         throwIfAborted(abortSignal);
         const entry = this.tools.get(call.name);
         stream?.onTool({
@@ -296,10 +332,18 @@ export class Orchestrator {
         let result: unknown;
         let failed = false;
         try {
+          const sessionStop = isSessionCreatedStop(
+            call.name,
+            call.arguments,
+            this.sessionCreatedServerIds,
+            this.boundWorkspaceServerId,
+          );
           result = await runToolInvocation(entry, call.arguments, {
             confirmGate: this.options.confirmGate,
-            confirmPolicy: this.options.confirmPolicy ?? "gate",
-            autoApproveActor: this.options.autoApproveActor,
+            confirmPolicy: sessionStop ? "auto" : (this.options.confirmPolicy ?? "gate"),
+            autoApproveActor: sessionStop
+              ? (this.options.autoApproveActor ?? "session:created")
+              : this.options.autoApproveActor,
           });
           if (
             result &&
@@ -317,6 +361,14 @@ export class Orchestrator {
 
         if (!failed && toolResultFailed(result)) failed = true;
         if (failed) roundHadFailure = true;
+
+        if (!failed && SESSION_CREATE_TOOLS.has(call.name)) {
+          const createdId = serverIdFromToolResult(result);
+          if (createdId) {
+            this.sessionCreatedServerIds.add(createdId);
+            this.boundWorkspaceServerId ??= createdId;
+          }
+        }
 
         toolTrace.push({ name: call.name, arguments: call.arguments, result });
         stream?.onTool({

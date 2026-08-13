@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { extractToolCallsFromContent, looksLikeToolShapedContent } from "./llm.js";
+import {
+  extractToolCallsFromContent,
+  googleThoughtSignature,
+  isGeminiOpenAiCompatBackend,
+  isSequentialToolCallingBackend,
+  looksLikeToolShapedContent,
+  OpenAICompatibleLlmClient,
+} from "./llm.js";
 
 describe("extractToolCallsFromContent", () => {
   describe("OpenAI/Hermes JSON formats", () => {
@@ -274,3 +281,251 @@ describe("looksLikeToolShapedContent", () => {
     expect(looksLikeToolShapedContent("")).toBe(false);
   });
 });
+
+describe("NVIDIA-shaped sequential tool calling", () => {
+  it("detects NVIDIA preset, host, and 8B model ids", () => {
+    expect(isSequentialToolCallingBackend({ preset: "nvidia" })).toBe(true);
+    expect(
+      isSequentialToolCallingBackend({
+        baseUrl: "https://integrate.api.nvidia.com/v1",
+      }),
+    ).toBe(true);
+    expect(
+      isSequentialToolCallingBackend({ model: "meta/llama-3.1-8b-instruct" }),
+    ).toBe(true);
+    expect(isSequentialToolCallingBackend({ preset: "venice", model: "grok-4-5" })).toBe(
+      false,
+    );
+  });
+
+  it("sends parallel_tool_calls=false and keeps a single tool_call", async () => {
+    let posted: Record<string, unknown> | undefined;
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      posted = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: "",
+                tool_calls: [
+                  {
+                    id: "1",
+                    function: { name: "servers_list", arguments: "{}" },
+                  },
+                  {
+                    id: "2",
+                    function: {
+                      name: "snapshot_create",
+                      arguments: '{"serverId":"live-friend"}',
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    const client = new OpenAICompatibleLlmClient(
+      "https://integrate.api.nvidia.com/v1",
+      "nvapi-test",
+      "meta/llama-3.1-8b-instruct",
+      "openai_compatible",
+      {
+        parallelToolCalls: false,
+        maxToolCallsPerCompletion: 1,
+        fetchImpl,
+      },
+    );
+
+    const result = await client.complete(
+      [{ role: "user", content: "spin up" }],
+      [
+        { name: "servers_list", description: "list", parameters: {} },
+        { name: "snapshot_create", description: "snap", parameters: {} },
+      ],
+    );
+
+    expect(posted?.parallel_tool_calls).toBe(false);
+    expect(posted?.tool_choice).toBe("auto");
+    expect(result.toolCalls).toHaveLength(1);
+    expect(result.toolCalls?.[0]?.name).toBe("servers_list");
+  });
+
+  it("leaves Venice completions with multiple tool_calls intact when uncapped", async () => {
+    const fetchImpl: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: "",
+                tool_calls: [
+                  { id: "1", function: { name: "servers_list", arguments: "{}" } },
+                  { id: "2", function: { name: "skill_list", arguments: "{}" } },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+
+    const client = new OpenAICompatibleLlmClient(
+      "https://api.venice.ai/api/v1",
+      "key",
+      "grok-4-5",
+      "openai_compatible",
+      { fetchImpl },
+    );
+    const result = await client.complete(
+      [{ role: "user", content: "list" }],
+      [{ name: "servers_list", description: "l", parameters: {} }],
+    );
+    expect(result.toolCalls).toHaveLength(2);
+  });
+});
+
+describe("Gemini thought_signature round-trip", () => {
+  const geminiSig = "CiQAAAA-gemini-thought-sig";
+
+  it("detects the native Gemini OpenAI-compat host, not OpenRouter", () => {
+    expect(isGeminiOpenAiCompatBackend({ preset: "gemini" })).toBe(true);
+    expect(
+      isGeminiOpenAiCompatBackend({
+        baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+      }),
+    ).toBe(true);
+    expect(
+      isGeminiOpenAiCompatBackend({
+        preset: "openrouter",
+        baseUrl: "https://openrouter.ai/api/v1",
+      }),
+    ).toBe(false);
+  });
+
+  it("persists extra_content.google.thought_signature and sends it on the tool follow-up", async () => {
+    const posted: Array<Record<string, unknown>> = [];
+    let round = 0;
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      posted.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      round += 1;
+      if (round === 1) {
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: "",
+                  tool_calls: [
+                    {
+                      id: "function-call-1",
+                      type: "function",
+                      extra_content: {
+                        google: { thought_signature: geminiSig },
+                      },
+                      function: {
+                        name: "servers_list",
+                        arguments: "{}",
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "listed" } }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    const client = new OpenAICompatibleLlmClient(
+      "https://generativelanguage.googleapis.com/v1beta/openai",
+      "gai-test",
+      "gemini-3.1-flash-lite",
+      "openai_compatible",
+      { fetchImpl },
+    );
+
+    const first = await client.complete(
+      [{ role: "user", content: "list servers" }],
+      [{ name: "servers_list", description: "list", parameters: {} }],
+    );
+    expect(first.toolCalls).toHaveLength(1);
+    expect(googleThoughtSignature(first.toolCalls?.[0]?.extraContent)).toBe(geminiSig);
+
+    const second = await client.complete(
+      [
+        { role: "user", content: "list servers" },
+        {
+          role: "assistant",
+          content: "",
+          toolCalls: first.toolCalls,
+        },
+        {
+          role: "tool",
+          name: "servers_list",
+          toolCallId: "function-call-1",
+          content: "[]",
+        },
+      ],
+      [{ name: "servers_list", description: "list", parameters: {} }],
+    );
+    expect(second.content).toBe("listed");
+
+    const followUp = posted[1];
+    expect(followUp).toBeDefined();
+    const messages = followUp?.messages as Array<Record<string, unknown>>;
+    const assistant = messages.find((m) => m.role === "assistant" && Array.isArray(m.tool_calls));
+    expect(assistant).toBeDefined();
+    const toolCalls = assistant?.tool_calls as Array<Record<string, unknown>>;
+    expect(toolCalls[0]?.extra_content).toEqual({
+      google: { thought_signature: geminiSig },
+    });
+  });
+
+  it("does not invent extra_content on Venice/OpenRouter-shaped tool_calls", async () => {
+    let posted: Record<string, unknown> | undefined;
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      posted = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "ok" } }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+    const client = new OpenAICompatibleLlmClient(
+      "https://openrouter.ai/api/v1",
+      "or-key",
+      "google/gemini-2.5-flash",
+      "openai_compatible",
+      { fetchImpl },
+    );
+    await client.complete(
+      [
+        {
+          role: "assistant",
+          content: "",
+          toolCalls: [{ id: "1", name: "servers_list", arguments: {} }],
+        },
+        { role: "tool", name: "servers_list", toolCallId: "1", content: "[]" },
+      ],
+      [{ name: "servers_list", description: "list", parameters: {} }],
+    );
+    const messages = posted?.messages as Array<Record<string, unknown>>;
+    const assistant = messages.find((m) => m.role === "assistant");
+    const toolCalls = assistant?.tool_calls as Array<Record<string, unknown>>;
+    expect(toolCalls[0]?.extra_content).toBeUndefined();
+  });
+});
+

@@ -91,6 +91,8 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPreset> = {
     requiresApiKey: true,
     apiKeyLabel: "Google AI API key",
     baseUrlEditable: false,
+    docsHint:
+      "gemini-2.5-flash/pro 404 for new Google AI keys — pick a live id from AI Studio. Gemini 3.x tool loops need thought signatures; PlayOn round-trips them on this endpoint.",
     docsPath: "/docs/providers/gemini",
   },
   openrouter: {
@@ -158,8 +160,8 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPreset> = {
     label: "Ollama (offline)",
     transport: "ollama",
     baseUrl: "http://127.0.0.1:11434/v1",
-    defaultModel: "llama3.2",
-    suggestedModels: ["llama3.2", "qwen2.5", "mistral"],
+    defaultModel: "qwen2.5",
+    suggestedModels: ["qwen2.5", "llama3.2", "mistral"],
     requiresApiKey: false,
     apiKeyLabel: "API key (optional)",
     baseUrlEditable: true,

@@ -13,6 +13,12 @@ export type ToolEntry = {
   surface?: ToolSurfaceMeta;
   /** Declared scope; the composing registry resolves it before calling the handler. */
   workspacePolicy?: ToolWorkspacePolicy;
+  /**
+   * Runs before confirm. Return an error object to abort (workspace/session
+   * targeting). Confirm must not fire for a friend/live server the session
+   * is not allowed to touch.
+   */
+  preflight?: (args: Record<string, unknown>) => Record<string, unknown> | null;
   handler: ToolHandler;
 };
 
@@ -31,6 +37,11 @@ export async function runToolInvocation(
   } = {},
 ): Promise<unknown> {
   const confirmPolicy = options.confirmPolicy ?? "gate";
+
+  if (entry.preflight) {
+    const blocked = entry.preflight(args);
+    if (blocked) return blocked;
+  }
 
   if (!entry.def.requiresConfirm) {
     return entry.handler(args);

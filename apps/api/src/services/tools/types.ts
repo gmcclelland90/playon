@@ -2,6 +2,7 @@ import type {
   ToolDefinition,
   ToolSurfaceMeta,
   ToolWorkspacePolicy,
+  ToolCatalogStage,
 } from "@playon/agent-core";
 import type { ControlPlane } from "../../control-plane.js";
 import type { WorkspaceBinding } from "./workspace.js";
@@ -13,6 +14,8 @@ export type ToolContext = {
   workspace: WorkspaceBinding;
   /** Global skills plus the bound server's own skill folder. */
   skillRoots: string[];
+  /** LLM-facing catalog; omit or `full` for MCP / watcher scripts. */
+  catalog?: ToolCatalogStage;
 };
 
 /** Server id already resolved against the workspace binding by the invoke path. */

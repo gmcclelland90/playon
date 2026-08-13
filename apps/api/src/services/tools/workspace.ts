@@ -1,7 +1,14 @@
 import type { ServerService } from "../servers.js";
 
 /** Mutable chat↔server binding for the duration of an agent turn. */
-export type WorkspaceBinding = { serverId: string | undefined };
+export type WorkspaceBinding = {
+  serverId: string | undefined;
+  /**
+   * In-app chat/session: server-scoped tools cannot target inventory this
+   * session did not bind or create (friend/live ids from servers_list are not valid).
+   */
+  restrictTargets?: boolean;
+};
 
 /** Bound maintain chat cannot import/provision a sibling server identity. */
 export function workspaceCreateForbidden(
@@ -47,6 +54,7 @@ function requestedServerId(args: Record<string, unknown>): string | undefined {
 export function resolveWorkspaceServerId(
   args: Record<string, unknown>,
   workspaceServerId: string | undefined,
+  options?: { restrictTargets?: boolean },
 ): { ok: true; serverId: string } | { ok: false; error: Record<string, unknown> } {
   const requested = requestedServerId(args);
   if (workspaceServerId) {
@@ -62,6 +70,16 @@ export function resolveWorkspaceServerId(
     }
     return { ok: true, serverId: requested ?? workspaceServerId };
   }
+  if (options?.restrictTargets && requested) {
+    return {
+      ok: false,
+      error: {
+        error: "session_target_forbidden",
+        requestedServerId: requested,
+        hint: "This chat is not bound to that server. Create one here or select it in the UI.",
+      },
+    };
+  }
   if (!requested) {
     return { ok: false, error: { error: "serverId_required" } };
   }
@@ -71,6 +89,7 @@ export function resolveWorkspaceServerId(
 export function resolveOptionalWorkspaceServerId(
   args: Record<string, unknown>,
   workspaceServerId: string | undefined,
+  options?: { restrictTargets?: boolean },
 ): { ok: true; serverId: string | undefined } | { ok: false; error: Record<string, unknown> } {
   const requested = requestedServerId(args);
   if (workspaceServerId) {
@@ -85,6 +104,16 @@ export function resolveOptionalWorkspaceServerId(
       };
     }
     return { ok: true, serverId: requested ?? workspaceServerId };
+  }
+  if (options?.restrictTargets && requested) {
+    return {
+      ok: false,
+      error: {
+        error: "session_target_forbidden",
+        requestedServerId: requested,
+        hint: "This chat is not bound to that server. Create one here or select it in the UI.",
+      },
+    };
   }
   return { ok: true, serverId: requested };
 }

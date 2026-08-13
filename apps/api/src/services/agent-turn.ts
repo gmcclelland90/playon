@@ -13,9 +13,14 @@ import type {
   LlmClient,
   LlmMessage,
   OrchestratorResult,
+  ToolCatalogStage,
   ToolTraceEntry,
 } from "@playon/agent-core";
-import { ChatAbortedError } from "@playon/agent-core";
+import {
+  ChatAbortedError,
+  SESSION_CREATE_TOOLS,
+  serverIdFromToolResult,
+} from "@playon/agent-core";
 import { HttpError, messageFromError } from "@playon/shared";
 import type { ControlPlane } from "../control-plane.js";
 import { conversations, messages, toolInvocations, users } from "../db/schema.js";
@@ -28,11 +33,7 @@ import {
   createPlayOnToolSurface,
 } from "./tools.js";
 
-const CREATE_BIND_TOOLS = new Set([
-  "servers_create_from_skill",
-  "servers_import_local",
-  "servers_import_sftp",
-]);
+const CREATE_BIND_TOOLS = SESSION_CREATE_TOOLS;
 
 /** Prefer create/import tool results when binding an unbound install conversation. */
 export function serverIdFromCreateTrace(
@@ -40,16 +41,8 @@ export function serverIdFromCreateTrace(
 ): string | undefined {
   for (const trace of toolTrace) {
     if (!CREATE_BIND_TOOLS.has(trace.name)) continue;
-    const result = trace.result;
-    if (!result || typeof result !== "object") continue;
-    const rec = result as Record<string, unknown>;
-    if (typeof rec.error === "string") continue;
-    if (typeof rec.serverId === "string" && rec.serverId) return rec.serverId;
-    const nested = rec.server;
-    if (nested && typeof nested === "object") {
-      const id = (nested as { id?: unknown }).id;
-      if (typeof id === "string" && id) return id;
-    }
+    const id = serverIdFromToolResult(trace.result);
+    if (id) return id;
   }
   return undefined;
 }
@@ -166,12 +159,14 @@ export class AgentTurn {
     let conversationId: string;
     let workspaceServerId: string | undefined;
     let priorMessages: LlmMessage[] = [];
+    let sessionCreatedServerIds: string[] = [];
 
     if (isChat) {
       const bound = await this.bindChatConversation(input, now);
       conversationId = bound.conversationId;
       workspaceServerId = bound.workspaceServerId;
       priorMessages = bound.priorMessages;
+      sessionCreatedServerIds = bound.sessionCreatedServerIds;
     } else {
       conversationId = nanoid();
       workspaceServerId = input.serverId;
@@ -320,6 +315,12 @@ export class AgentTurn {
         },
       };
 
+      const catalog: ToolCatalogStage = isChat
+        ? workspaceServerId
+          ? "maintain"
+          : "install"
+        : "full";
+
       const orchestrator = createOrchestrator(plane, llm, {
         confirmGate,
         workspaceServerId,
@@ -327,6 +328,9 @@ export class AgentTurn {
         confirmPolicy: isChat ? "gate" : "auto",
         autoApproveActor: isChat ? undefined : `watcher:${input.watcherId}`,
         stream,
+        catalog,
+        restrictTargets: true,
+        sessionCreatedServerIds,
       });
 
       publishActivity("thinking");
@@ -410,6 +414,7 @@ export class AgentTurn {
     conversationId: string;
     workspaceServerId: string | undefined;
     priorMessages: LlmMessage[];
+    sessionCreatedServerIds: string[];
   }> {
     let conversationId = input.conversationId;
     let workspaceServerId: string | undefined = input.serverId;
@@ -474,7 +479,27 @@ export class AgentTurn {
       createdAt: now,
     });
 
-    return { conversationId, workspaceServerId, priorMessages };
+    const sessionCreatedServerIds = await this.loadSessionCreatedServerIds(conversationId);
+    return { conversationId, workspaceServerId, priorMessages, sessionCreatedServerIds };
+  }
+
+  private async loadSessionCreatedServerIds(conversationId: string): Promise<string[]> {
+    const rows = await this.plane.db
+      .select()
+      .from(toolInvocations)
+      .where(eq(toolInvocations.conversationId, conversationId));
+    const ids: string[] = [];
+    for (const row of rows) {
+      if (!SESSION_CREATE_TOOLS.has(row.toolName) || row.status !== "ok") continue;
+      try {
+        const parsed = row.resultJson ? (JSON.parse(row.resultJson) as unknown) : undefined;
+        const id = serverIdFromToolResult(parsed);
+        if (id) ids.push(id);
+      } catch {
+        /* ignore malformed audit rows */
+      }
+    }
+    return ids;
   }
 
   private async persistWatcherConversation(

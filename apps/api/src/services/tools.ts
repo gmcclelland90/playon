@@ -2,12 +2,14 @@ import type {
   ChatStreamSink,
   ConfirmGate,
   ConfirmPolicy,
+  ToolCatalogStage,
   ToolDefinition,
   ToolEntry,
   ToolSurface,
 } from "@playon/agent-core";
 import {
   createToolSurface,
+  isSequentialToolCallingBackend,
   Orchestrator,
   OpenAICompatibleLlmClient,
   runToolInvocation,
@@ -85,7 +87,15 @@ export async function createLlmClient(
       "llm_api_key_required: set an API key under Settings → In-app agents, or PLAYON_VENICE_API_KEY for Venice (re-save the key if PLAYON_SESSION_SECRET changed)",
     );
   }
-  return new OpenAICompatibleLlmClient(baseUrl, apiKey, model, "openai_compatible");
+  const sequential = isSequentialToolCallingBackend({
+    preset: presetId,
+    baseUrl,
+    model,
+  });
+  return new OpenAICompatibleLlmClient(baseUrl, apiKey, model, "openai_compatible", {
+    parallelToolCalls: false,
+    maxToolCallsPerCompletion: sequential ? 1 : undefined,
+  });
 }
 
 export type PlayOnToolRegistry = {
@@ -105,6 +115,9 @@ export type PlayOnToolRegistry = {
 export type PlayOnToolRegistryOptions = {
   confirmGate?: ConfirmGate;
   workspaceServerId?: string;
+  catalog?: ToolCatalogStage;
+  /** Chat/session: reject targeting servers this turn did not bind or create. */
+  restrictTargets?: boolean;
 };
 
 /**
@@ -126,7 +139,10 @@ export function createPlayOnToolRegistry(
 ): PlayOnTools {
   const { config } = plane;
   /** Binds on first create/import so mid-turn sibling creates cannot fork. */
-  const workspace: WorkspaceBinding = { serverId: options.workspaceServerId };
+  const workspace: WorkspaceBinding = {
+    serverId: options.workspaceServerId,
+    restrictTargets: options.restrictTargets,
+  };
   const skillRoots = skillsRootsForWorkspace(
     config.skillsRoots,
     config.dataRoot,
@@ -134,7 +150,12 @@ export function createPlayOnToolRegistry(
   );
 
   const tools = new Map<string, ToolEntry>();
-  for (const entry of composeToolEntries({ plane, workspace, skillRoots })) {
+  for (const entry of composeToolEntries({
+    plane,
+    workspace,
+    skillRoots,
+    catalog: options.catalog ?? "full",
+  })) {
     tools.set(entry.def.name, entry);
   }
 
@@ -196,11 +217,16 @@ export function createOrchestrator(
     abortSignal?: AbortSignal;
     confirmPolicy?: "gate" | "auto";
     autoApproveActor?: string;
+    catalog?: ToolCatalogStage;
+    restrictTargets?: boolean;
+    sessionCreatedServerIds?: Iterable<string>;
   } = {},
 ): Orchestrator {
   const { registry } = createPlayOnToolRegistry(plane, {
     confirmGate: options.confirmGate,
     workspaceServerId: options.workspaceServerId,
+    catalog: options.catalog,
+    restrictTargets: options.restrictTargets,
   });
   const orch = new Orchestrator(llm, {
     confirmGate: options.confirmGate,
@@ -209,6 +235,8 @@ export function createOrchestrator(
     abortSignal: options.abortSignal,
     confirmPolicy: options.confirmPolicy,
     autoApproveActor: options.autoApproveActor,
+    catalogStage: options.catalog,
+    sessionCreatedServerIds: options.sessionCreatedServerIds,
   });
   registry.registerInto(orch);
   return orch;

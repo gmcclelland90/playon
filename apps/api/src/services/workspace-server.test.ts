@@ -42,4 +42,17 @@ describe("resolveWorkspaceServerId", () => {
       expect(resolved.error.error).toBe("serverId_required");
     }
   });
+
+  it("rejects unrelated live server ids in a restricted unbound session", () => {
+    const resolved = resolveWorkspaceServerId(
+      { serverId: "minecraft-small" },
+      undefined,
+      { restrictTargets: true },
+    );
+    expect(resolved.ok).toBe(false);
+    if (!resolved.ok) {
+      expect(resolved.error.error).toBe("session_target_forbidden");
+      expect(resolved.error.requestedServerId).toBe("minecraft-small");
+    }
+  });
 });

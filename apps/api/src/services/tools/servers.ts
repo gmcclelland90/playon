@@ -180,7 +180,12 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
       surface: { skill: "orchestrator", activityVerb: "run" },
       handler: async () => {
         const rows = await servers.list();
-        return rows.map((s) => ({
+        const scoped = workspace.restrictTargets
+          ? workspace.serverId
+            ? rows.filter((s) => s.id === workspace.serverId)
+            : []
+          : rows;
+        return scoped.map((s) => ({
           id: s.id,
           name: s.name,
           game: s.game,

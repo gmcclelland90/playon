@@ -86,4 +86,34 @@ describe("runToolInvocation", () => {
       confirmActor: "token:abc",
     });
   });
+
+  it("runs preflight before confirm so unrelated targets never prompt", async () => {
+    const handler = vi.fn(async () => ({ stopped: true }));
+    const gate: ConfirmGate = {
+      requestConfirmation: vi.fn(async () => ({ requestId: "r9", approved: true })),
+    };
+    const result = await runToolInvocation(
+      {
+        def: {
+          name: "servers_stop",
+          description: "",
+          parameters: {},
+          requiresConfirm: true,
+        },
+        preflight: (args) =>
+          args.serverId === "live-friend"
+            ? { error: "session_target_forbidden", requestedServerId: args.serverId }
+            : null,
+        handler,
+      },
+      { serverId: "live-friend" },
+      { confirmGate: gate },
+    );
+    expect(result).toEqual({
+      error: "session_target_forbidden",
+      requestedServerId: "live-friend",
+    });
+    expect(gate.requestConfirmation).not.toHaveBeenCalled();
+    expect(handler).not.toHaveBeenCalled();
+  });
 });
