@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   extractToolCallsFromContent,
+  googleThoughtSignature,
+  isGeminiOpenAiCompatBackend,
   isSequentialToolCallingBackend,
   looksLikeToolShapedContent,
   OpenAICompatibleLlmClient,
@@ -384,6 +386,146 @@ describe("NVIDIA-shaped sequential tool calling", () => {
       [{ name: "servers_list", description: "l", parameters: {} }],
     );
     expect(result.toolCalls).toHaveLength(2);
+  });
+});
+
+describe("Gemini thought_signature round-trip", () => {
+  const geminiSig = "CiQAAAA-gemini-thought-sig";
+
+  it("detects the native Gemini OpenAI-compat host, not OpenRouter", () => {
+    expect(isGeminiOpenAiCompatBackend({ preset: "gemini" })).toBe(true);
+    expect(
+      isGeminiOpenAiCompatBackend({
+        baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+      }),
+    ).toBe(true);
+    expect(
+      isGeminiOpenAiCompatBackend({
+        preset: "openrouter",
+        baseUrl: "https://openrouter.ai/api/v1",
+      }),
+    ).toBe(false);
+  });
+
+  it("persists extra_content.google.thought_signature and sends it on the tool follow-up", async () => {
+    const posted: Array<Record<string, unknown>> = [];
+    let round = 0;
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      posted.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      round += 1;
+      if (round === 1) {
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: "",
+                  tool_calls: [
+                    {
+                      id: "function-call-1",
+                      type: "function",
+                      extra_content: {
+                        google: { thought_signature: geminiSig },
+                      },
+                      function: {
+                        name: "servers_list",
+                        arguments: "{}",
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "listed" } }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    const client = new OpenAICompatibleLlmClient(
+      "https://generativelanguage.googleapis.com/v1beta/openai",
+      "gai-test",
+      "gemini-3.1-flash-lite",
+      "openai_compatible",
+      { fetchImpl },
+    );
+
+    const first = await client.complete(
+      [{ role: "user", content: "list servers" }],
+      [{ name: "servers_list", description: "list", parameters: {} }],
+    );
+    expect(first.toolCalls).toHaveLength(1);
+    expect(googleThoughtSignature(first.toolCalls?.[0]?.extraContent)).toBe(geminiSig);
+
+    const second = await client.complete(
+      [
+        { role: "user", content: "list servers" },
+        {
+          role: "assistant",
+          content: "",
+          toolCalls: first.toolCalls,
+        },
+        {
+          role: "tool",
+          name: "servers_list",
+          toolCallId: "function-call-1",
+          content: "[]",
+        },
+      ],
+      [{ name: "servers_list", description: "list", parameters: {} }],
+    );
+    expect(second.content).toBe("listed");
+
+    const followUp = posted[1];
+    expect(followUp).toBeDefined();
+    const messages = followUp?.messages as Array<Record<string, unknown>>;
+    const assistant = messages.find((m) => m.role === "assistant" && Array.isArray(m.tool_calls));
+    expect(assistant).toBeDefined();
+    const toolCalls = assistant?.tool_calls as Array<Record<string, unknown>>;
+    expect(toolCalls[0]?.extra_content).toEqual({
+      google: { thought_signature: geminiSig },
+    });
+  });
+
+  it("does not invent extra_content on Venice/OpenRouter-shaped tool_calls", async () => {
+    let posted: Record<string, unknown> | undefined;
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      posted = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "ok" } }],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+    const client = new OpenAICompatibleLlmClient(
+      "https://openrouter.ai/api/v1",
+      "or-key",
+      "google/gemini-2.5-flash",
+      "openai_compatible",
+      { fetchImpl },
+    );
+    await client.complete(
+      [
+        {
+          role: "assistant",
+          content: "",
+          toolCalls: [{ id: "1", name: "servers_list", arguments: {} }],
+        },
+        { role: "tool", name: "servers_list", toolCallId: "1", content: "[]" },
+      ],
+      [{ name: "servers_list", description: "list", parameters: {} }],
+    );
+    const messages = posted?.messages as Array<Record<string, unknown>>;
+    const assistant = messages.find((m) => m.role === "assistant");
+    const toolCalls = assistant?.tool_calls as Array<Record<string, unknown>>;
+    expect(toolCalls[0]?.extra_content).toBeUndefined();
   });
 });
 

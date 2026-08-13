@@ -103,5 +103,9 @@ describe("llm presets", () => {
     expect(LLM_PRESETS.ollama.defaultModel).toBe("qwen2.5");
     expect(LLM_PRESETS.ollama.suggestedModels).toEqual(["qwen2.5", "llama3.2", "mistral"]);
     expect(LLM_PRESETS.ollama.suggestedModels[0]).toBe(LLM_PRESETS.ollama.defaultModel);
+    // Native Gemini: do not invent a replacement id. 2.5-flash remains listed but is stale for new keys.
+    expect(LLM_PRESETS.gemini.defaultModel).toBe("gemini-2.5-flash");
+    expect(LLM_PRESETS.gemini.docsHint).toMatch(/404/);
+    expect(LLM_PRESETS.gemini.docsHint).toMatch(/thought signature/i);
   });
 });

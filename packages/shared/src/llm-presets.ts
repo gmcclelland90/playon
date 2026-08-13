@@ -91,6 +91,8 @@ export const LLM_PRESETS: Record<LlmPresetId, LlmPreset> = {
     requiresApiKey: true,
     apiKeyLabel: "Google AI API key",
     baseUrlEditable: false,
+    docsHint:
+      "gemini-2.5-flash/pro 404 for new Google AI keys — pick a live id from AI Studio. Gemini 3.x tool loops need thought signatures; PlayOn round-trips them on this endpoint.",
     docsPath: "/docs/providers/gemini",
   },
   openrouter: {

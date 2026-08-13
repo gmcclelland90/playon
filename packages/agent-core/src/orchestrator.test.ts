@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { LlmMessage } from "./llm.js";
 import { ChatAbortedError, Orchestrator } from "./orchestrator.js";
 
 describe("Orchestrator tool exposure", () => {
@@ -274,6 +275,45 @@ describe("Orchestrator in-session servers_stop confirm", () => {
     expect(result.toolTrace[0]?.result).toMatchObject({
       error: "confirm_denied",
       toolName: "watchers_delete",
+    });
+  });
+});
+
+describe("Orchestrator Gemini thought_signature", () => {
+  it("passes extraContent through to the next complete() so the client can echo it", async () => {
+    const seen: LlmMessage[][] = [];
+    let round = 0;
+    const orch = new Orchestrator({
+      mode: "openai_compatible",
+      async complete(messages) {
+        seen.push(messages);
+        round += 1;
+        if (round === 1) {
+          return {
+            content: "",
+            toolCalls: [
+              {
+                id: "function-call-1",
+                name: "servers_list",
+                arguments: {},
+                extraContent: { google: { thought_signature: "sig-loop" } },
+              },
+            ],
+          };
+        }
+        return { content: "done" };
+      },
+    });
+    orch.registerTool(
+      { name: "servers_list", description: "list", parameters: {} },
+      async () => ({ servers: [] }),
+    );
+    const result = await orch.handle("list");
+    expect(result.content).toBe("done");
+    expect(seen.length).toBeGreaterThanOrEqual(2);
+    const assistant = seen[1]?.find((m) => m.role === "assistant" && m.toolCalls?.length);
+    expect(assistant?.toolCalls?.[0]?.extraContent).toEqual({
+      google: { thought_signature: "sig-loop" },
     });
   });
 });

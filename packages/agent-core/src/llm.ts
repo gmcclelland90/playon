@@ -12,6 +12,11 @@ export interface LlmToolCall {
   id: string;
   name: string;
   arguments: Record<string, unknown>;
+  /**
+   * Provider extras that must round-trip on the next request.
+   * Gemini OpenAI-compat: `{ google: { thought_signature } }` on functionCall parts.
+   */
+  extraContent?: Record<string, unknown>;
 }
 
 export interface LlmCompletion {
@@ -54,6 +59,38 @@ export function isSequentialToolCallingBackend(input: {
   return false;
 }
 
+/** Native Gemini OpenAI-compat (not OpenRouter `google/gemini-*`). */
+export function isGeminiOpenAiCompatBackend(input: {
+  preset?: string | null;
+  baseUrl?: string | null;
+}): boolean {
+  const preset = (input.preset ?? "").toLowerCase();
+  const base = (input.baseUrl ?? "").toLowerCase();
+  if (preset === "gemini") return true;
+  return base.includes("generativelanguage.googleapis.com");
+}
+
+export function asExtraContent(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+export function googleThoughtSignature(
+  extra: Record<string, unknown> | undefined,
+): string | undefined {
+  const google = extra?.google;
+  if (!google || typeof google !== "object" || Array.isArray(google)) return undefined;
+  const sig = (google as { thought_signature?: unknown }).thought_signature;
+  return typeof sig === "string" && sig ? sig : undefined;
+}
+
+function extraContentForWire(
+  extra: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!extra || Object.keys(extra).length === 0) return undefined;
+  return extra;
+}
+
 interface OpenAiChatResponse {
   choices?: Array<{
     message?: {
@@ -61,6 +98,7 @@ interface OpenAiChatResponse {
       tool_calls?: Array<{
         id: string;
         function: { name: string; arguments: string };
+        extra_content?: Record<string, unknown>;
       }>;
     };
   }>;
@@ -352,14 +390,18 @@ export class OpenAICompatibleLlmClient implements LlmClient {
           return {
             role: "assistant",
             content: m.content || null,
-            tool_calls: m.toolCalls.map((tc) => ({
-              id: tc.id,
-              type: "function",
-              function: {
-                name: tc.name,
-                arguments: JSON.stringify(tc.arguments ?? {}),
-              },
-            })),
+            tool_calls: m.toolCalls.map((tc) => {
+              const extra = extraContentForWire(tc.extraContent);
+              return {
+                id: tc.id,
+                type: "function",
+                function: {
+                  name: tc.name,
+                  arguments: JSON.stringify(tc.arguments ?? {}),
+                },
+                ...(extra ? { extra_content: extra } : {}),
+              };
+            }),
           };
         }
         return { role: m.role, content: m.content };
@@ -408,11 +450,15 @@ export class OpenAICompatibleLlmClient implements LlmClient {
     const data = (await res.json()) as OpenAiChatResponse;
     const message = data.choices?.[0]?.message;
     const content = message?.content ?? "";
-    let toolCalls = message?.tool_calls?.map((tc) => ({
-      id: tc.id,
-      name: tc.function.name,
-      arguments: parseToolArguments(tc.function.arguments || "{}"),
-    }));
+    let toolCalls = message?.tool_calls?.map((tc) => {
+      const extra = asExtraContent(tc.extra_content);
+      return {
+        id: tc.id,
+        name: tc.function.name,
+        arguments: parseToolArguments(tc.function.arguments || "{}"),
+        ...(extra ? { extraContent: extra } : {}),
+      };
+    });
 
     if (!toolCalls?.length && tools?.length) {
       const recovered = extractToolCallsFromContent(content);
