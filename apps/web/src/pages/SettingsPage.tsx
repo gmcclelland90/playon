@@ -16,7 +16,16 @@ import {
   nodePresenceLabel,
   runtimeErrorHint,
 } from "../status";
+import { playonSocket } from "../ws";
 import { McpAccessTokensSection } from "./settings/McpAccessTokensSection";
+import {
+  SETTINGS_NODE_HEADER_CLASS,
+  SETTINGS_NODE_ITEM_CLASS,
+  SETTINGS_NODE_NOTES_CLASS,
+  nodeDockerChip,
+  nodeUpdateInFlight,
+  nodeUpdateRowMessage,
+} from "./settings-nodes";
 
 type SettingsSectionId =
   | "about"
@@ -179,6 +188,21 @@ export function SettingsPage({ user }: { user: PublicUser }) {
     return Number.isFinite(n) ? n : null;
   });
   const [wslJobTick, setWslJobTick] = useState(0);
+  const [nodeUpdateJobs, setNodeUpdateJobs] = useState<Record<string, string>>(() => {
+    try {
+      const raw = sessionStorage.getItem("playon.nodeUpdateJobs");
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as unknown;
+      if (!parsed || typeof parsed !== "object") return {};
+      return Object.fromEntries(
+        Object.entries(parsed as Record<string, unknown>).filter(
+          (entry): entry is [string, string] => typeof entry[1] === "string",
+        ),
+      );
+    } catch {
+      return {};
+    }
+  });
 
   useEffect(() => {
     if (wslJobId && wslJobNodeId) {
@@ -195,6 +219,14 @@ export function SettingsPage({ user }: { user: PublicUser }) {
       sessionStorage.removeItem("playon.wslJobStartedAt");
     }
   }, [wslJobId, wslJobNodeId, wslJobStartedAt]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem("playon.nodeUpdateJobs", JSON.stringify(nodeUpdateJobs));
+    } catch {
+      // ignore
+    }
+  }, [nodeUpdateJobs]);
 
   const backupTarget = useQuery({
     queryKey: ["backup-target"],
@@ -368,8 +400,23 @@ export function SettingsPage({ user }: { user: PublicUser }) {
     queryKey: ["updates"],
     queryFn: () => api.updatesStatus(false),
     enabled: can(user.role, "settings.llm"),
-    refetchInterval: 10_000,
+    refetchInterval: (q) => {
+      const rows = q.state.data?.nodes ?? [];
+      if (rows.some((n) => n.updateJob?.status === "queued" || n.updateJob?.status === "running")) {
+        return 1500;
+      }
+      return 10_000;
+    },
   });
+
+  useEffect(() => {
+    playonSocket.connect();
+    return playonSocket.subscribe((ev) => {
+      if (ev.type !== "update.progress" || ev.target !== "node") return;
+      void qc.invalidateQueries({ queryKey: ["updates"] });
+      void qc.invalidateQueries({ queryKey: ["nodes"] });
+    });
+  }, [qc]);
 
   const checkUpdates = useMutation({
     mutationFn: () => api.updatesStatus(true),
@@ -387,8 +434,9 @@ export function SettingsPage({ user }: { user: PublicUser }) {
 
   const updateNodeMut = useMutation({
     mutationFn: (nodeId: string) => api.updateNode(nodeId),
-    onSuccess: async (_data, nodeId) => {
-      setNodeNotice(`Update queued for ${nodeId}. Waiting for the node to restart…`);
+    onSuccess: async (data, nodeId) => {
+      setNodeUpdateJobs((prev) => ({ ...prev, [nodeId]: data.jobId }));
+      setNodeError(null);
       await qc.invalidateQueries({ queryKey: ["updates"] });
       await qc.invalidateQueries({ queryKey: ["nodes"] });
     },
@@ -996,6 +1044,15 @@ export function SettingsPage({ user }: { user: PublicUser }) {
               const wslPanelOpen = wslPanelNodeId === n.id;
               const nodeUpdate = updates.data?.nodes?.find((u) => u.nodeId === n.id);
               const needsAgentUpdate = Boolean(nodeUpdate?.updateAvailable);
+              const updateJob = nodeUpdate?.updateJob ?? null;
+              const updateFeedback = nodeUpdateRowMessage({
+                job: updateJob,
+                expectedJobId: nodeUpdateJobs[n.id] ?? null,
+                updateAvailable: Boolean(nodeUpdate?.updateAvailable),
+              });
+              const thisNodeUpdating =
+                (updateNodeMut.isPending && updateNodeMut.variables === n.id) ||
+                nodeUpdateInFlight(updateJob);
               const homeBlocksNodeUpdate =
                 Boolean(updates.data && !updates.data.homeCurrentEnoughForNodes) && n.id !== "local";
               const pendingSetup = isPendingNodeSetup({
@@ -1013,19 +1070,26 @@ export function SettingsPage({ user }: { user: PublicUser }) {
               });
               const onlineish =
                 n.status === "online" || presenceLabel.toLowerCase().includes("online");
+              const dockerChip = nodeDockerChip({
+                pendingSetup,
+                docker: Boolean(n.docker),
+                isWindows,
+                wslSiblingOnline: Boolean(wslOnline),
+                wslSiblingHasDocker: Boolean(wslSibling?.docker),
+              });
               return (
-              <li key={n.id}>
-                <div className="btn-row" style={{ justifyContent: "space-between" }}>
-                  <div>
+              <li key={n.id} className={SETTINGS_NODE_ITEM_CLASS}>
+                <div className={SETTINGS_NODE_HEADER_CLASS}>
+                  <div className="settings-node-identity">
                     <strong>{n.name}</strong>{" "}
                     <span className="muted">{n.badge ?? n.kind}</span>
                     <div className="settings-node-chips" aria-label="Node status">
                       <span className={`status-chip${onlineish ? " live" : " warn"}`}>
                         {presenceLabel}
                       </span>
-                      {!pendingSetup ? (
-                        <span className={`status-chip${n.docker ? " live" : " warn"}`}>
-                          {n.docker ? "Docker" : "No Docker"}
+                      {dockerChip ? (
+                        <span className={`status-chip${dockerChip.tone === "live" ? " live" : dockerChip.tone === "warn" ? " warn" : ""}`}>
+                          {dockerChip.label}
                         </span>
                       ) : null}
                       {n.agentVersion && n.agentVersion !== "pending" ? (
@@ -1061,7 +1125,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                       <p className="muted status-inline">{presenceHint}</p>
                     ) : null}
                   </div>
-                  <div className="btn-row">
+                  <div className="btn-row settings-node-actions">
                     {needsDocker && !isWindows && !pendingSetup ? (
                       <button
                         className="btn btn-primary"
@@ -1121,7 +1185,9 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                           : "Repair WSL"}
                       </button>
                     ) : null}
-                    {n.id !== "local" && user.role === "owner" && needsAgentUpdate ? (
+                    {n.id !== "local" &&
+                    user.role === "owner" &&
+                    (needsAgentUpdate || thisNodeUpdating || updateJob?.status === "failed") ? (
                       <button
                         className="btn btn-primary"
                         type="button"
@@ -1132,7 +1198,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                         }
                         disabled={
                           homeBlocksNodeUpdate ||
-                          updateNodeMut.isPending ||
+                          thisNodeUpdating ||
                           n.status === "offline"
                         }
                         onClick={() => {
@@ -1140,7 +1206,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                           updateNodeMut.mutate(n.id);
                         }}
                       >
-                        {updateNodeMut.isPending ? "Updating…" : "Update"}
+                        {thisNodeUpdating ? "Updating…" : "Update"}
                       </button>
                     ) : null}
                     {n.id !== "local" ? (
@@ -1185,6 +1251,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                     ) : null}
                   </div>
                 </div>
+                <div className={SETTINGS_NODE_NOTES_CLASS}>
                 {homeBlocksNodeUpdate && needsAgentUpdate ? (
                   <p className="muted status-inline">
                     Update PlayOn Home first, then update this node.
@@ -1199,6 +1266,21 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                       : ""}
                   </p>
                 ) : null}
+                {updateFeedback ? (
+                  <p
+                    className={
+                      updateFeedback.tone === "error"
+                        ? "error"
+                        : updateFeedback.tone === "ok"
+                          ? "ok"
+                          : "muted status-inline"
+                    }
+                    role="status"
+                  >
+                    {updateFeedback.text}
+                  </p>
+                ) : null}
+                </div>
                 {isWindows && wslPanelOpen ? (
                   <div className="stack tight" style={{ marginTop: "0.5rem" }}>
                     <p className="muted status-inline">

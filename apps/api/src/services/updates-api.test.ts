@@ -9,7 +9,9 @@ import { createDb, type Db } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
 import { hashPassword } from "../auth/password.js";
 import { createSession, SESSION_COOKIE } from "../auth/session.js";
-import { users } from "../db/schema.js";
+import { users, nodes } from "../db/schema.js";
+import { readAppVersion } from "./app-version.js";
+import { attachNodeJobPersist, NodeJobService } from "./node-jobs.js";
 import { clearUpdateManifestCacheForTests } from "./updates.js";
 
 function testConfig(dataRoot: string): AppConfig {
@@ -131,5 +133,122 @@ describe("updates API", () => {
       body: "{}",
     });
     expect(res.status).toBe(403);
+  });
+
+  it("surfaces node self-update jobs on status and reuses an in-flight queue", async () => {
+    const homeVer = readAppVersion();
+    const sha = "a".repeat(64);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("latest.json")) {
+          return {
+            ok: true,
+            json: async () => ({
+              version: homeVer,
+              channel: "stable",
+              notesUrl: "https://playon.games/docs/changelog",
+              home: {},
+              node: {
+                "linux-x64": {
+                  downloadUrl: `https://github.com/gmcclelland90/playon/releases/download/v${homeVer}/playon-node-${homeVer}-linux-x64.tar.gz`,
+                  sha256: sha,
+                },
+                "windows-x64": {
+                  downloadUrl: `https://github.com/gmcclelland90/playon/releases/download/v${homeVer}/playon-node-${homeVer}-windows-x64.zip`,
+                  sha256: sha,
+                },
+              },
+            }),
+          };
+        }
+        return { ok: false, status: 404 };
+      }),
+    );
+
+    await db.insert(nodes).values([
+      {
+        id: "upd-win-parent",
+        name: "playon-win-1",
+        os: "windows",
+        docker: false,
+        native: true,
+        lastSeenAt: new Date(),
+        kind: "lan",
+        agentVersion: "0.2.3",
+        tunnelStatus: "none",
+      },
+      {
+        id: "upd-win-parent-wsl",
+        name: "playon-win-1-wsl",
+        os: "linux",
+        docker: true,
+        native: true,
+        lastSeenAt: new Date(),
+        kind: "lan",
+        agentVersion: "0.2.3",
+        tunnelStatus: "none",
+      },
+      {
+        id: "upd-zomboid",
+        name: "zomboid",
+        os: "linux",
+        docker: true,
+        native: true,
+        lastSeenAt: new Date(),
+        kind: "lan",
+        agentVersion: "0.2.1",
+        tunnelStatus: "none",
+      },
+    ]);
+
+    const app = createApp(db, testConfig(root));
+    attachNodeJobPersist(root);
+    const queued = await app.request("/api/nodes/upd-win-parent/update", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(queued.status).toBe(200);
+    const queuedBody = (await queued.json()) as { jobId: string; version: string };
+    expect(queuedBody.jobId).toBeTruthy();
+    expect(queuedBody.version).toBe(homeVer);
+
+    const again = await app.request("/api/nodes/upd-win-parent/update", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(again.status).toBe(200);
+    const againBody = (await again.json()) as { jobId: string };
+    expect(againBody.jobId).toBe(queuedBody.jobId);
+
+    const status = await app.request("/api/updates/status", { headers: { cookie } });
+    expect(status.status).toBe(200);
+    const body = (await status.json()) as {
+      homeCurrentEnoughForNodes: boolean;
+      nodes: Array<{
+        nodeId: string;
+        updateJob: { jobId: string; status: string; version?: string } | null;
+      }>;
+    };
+    expect(body.homeCurrentEnoughForNodes).toBe(true);
+    const win = body.nodes.find((n) => n.nodeId === "upd-win-parent");
+    const wsl = body.nodes.find((n) => n.nodeId === "upd-win-parent-wsl");
+    const zomboid = body.nodes.find((n) => n.nodeId === "upd-zomboid");
+    expect(win?.updateJob).toMatchObject({
+      jobId: queuedBody.jobId,
+      status: "queued",
+      version: homeVer,
+    });
+    expect(wsl?.updateJob).toBeNull();
+    expect(zomboid?.updateJob).toBeNull();
+
+    const persistFile = path.join(root, "node-self-update-jobs.json");
+    expect(fs.existsSync(persistFile)).toBe(true);
+    const restored = new NodeJobService();
+    restored.attachPersistFile(persistFile);
+    expect(restored.get(queuedBody.jobId)?.status).toBe("queued");
+    expect(restored.get(queuedBody.jobId)?.nodeId).toBe("upd-win-parent");
   });
 });

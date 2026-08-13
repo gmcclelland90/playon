@@ -3,7 +3,7 @@ import { loadConfig, type AppConfig } from "./config.js";
 import { createDb } from "./db/client.js";
 import { applyBootstrap } from "./db/migrate.js";
 import { LiveQueryScheduler } from "./services/live-query-scheduler.js";
-import { nodeJobService } from "./services/node-jobs.js";
+import { attachNodeJobPersist, nodeJobService } from "./services/node-jobs.js";
 import { SnapshotScheduler } from "./services/snapshot-scheduler.js";
 import { WatcherScheduler } from "./services/watcher-scheduler.js";
 import { webDistReady } from "./static-web.js";
@@ -285,6 +285,7 @@ export async function startControlPlane(
 ): Promise<RunningControlPlane> {
   const host: ControlPlaneHost = { ...defaultControlPlaneHost(), ...overrides };
   const config = host.loadConfig();
+  attachNodeJobPersist(config.dataRoot);
   const app = host.buildApp(config);
   const webReady = Boolean(config.webDist && webDistReady(config.webDist));
 

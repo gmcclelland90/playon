@@ -2369,6 +2369,9 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     const body = await jsonBody(c, NodeHeartbeatSchema);
     // Protocol skew guard: remember what this agent says it can execute.
     nodeJobService.advertiseJobKinds(body.nodeId, body.jobKinds);
+    if (body.agentVersion) {
+      nodeJobService.reconcileSelfUpdateOnHeartbeat(body.nodeId, body.agentVersion);
+    }
     const now = new Date();
     const existing = await db.select().from(nodes).where(eq(nodes.id, body.nodeId)).limit(1);
     const kind: NodeKind =

@@ -9,6 +9,7 @@ import {
   clearUpdateManifestCacheForTests,
   downloadAndVerifyUpdate,
   extractUpdateArchive,
+  nodeUpdateJobView,
   pickAsset,
   preservePathsForHomeUpdate,
   resolveUpdateManifestUrl,
@@ -171,5 +172,28 @@ describe("preservePathsForHomeUpdate", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("nodeUpdateJobView", () => {
+  it("maps a queued self-update job for the Settings row", () => {
+    expect(
+      nodeUpdateJobView({
+        id: "job-1",
+        nodeId: "playon-win-1",
+        kind: "node_self_update",
+        args: { version: "0.2.4" },
+        status: "queued",
+        createdAt: "2026-08-13T00:00:00.000Z",
+        updatedAt: "2026-08-13T00:00:00.000Z",
+      }),
+    ).toEqual({
+      jobId: "job-1",
+      status: "queued",
+      progress: undefined,
+      error: undefined,
+      version: "0.2.4",
+    });
+    expect(nodeUpdateJobView(null)).toBeNull();
   });
 });

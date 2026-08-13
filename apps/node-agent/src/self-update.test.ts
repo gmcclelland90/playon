@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Mock child_process for Windows test only
@@ -241,5 +242,27 @@ describe("performNodeSelfUpdate", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("apply-self-update.ps1", () => {
+  it("detaches from the agent Job object and disables RestartCount before swapping", () => {
+    const helper = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "..",
+      "..",
+      "deploy",
+      "windows",
+      "apply-self-update.ps1",
+    );
+    const src = fs.readFileSync(helper, "utf8");
+    expect(src).toMatch(/\[switch\]\$Detached/);
+    expect(src).toMatch(/Disable-ScheduledTask/);
+    expect(src).toMatch(/PlayOnNodeAgentApplyUpdate/);
+    expect(src).toMatch(/Register-ScheduledTask/);
+    expect(src).toMatch(/CREATE_BREAKAWAY_FROM_JOB/);
+    expect(src.indexOf("Disable-ScheduledTask")).toBeLessThan(src.indexOf("Waiting for node-agent"));
+    expect(src.indexOf("Register-ScheduledTask")).toBeLessThan(src.indexOf("Waiting for node-agent"));
   });
 });

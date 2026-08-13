@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -200,10 +200,10 @@ function performWindowsSelfUpdate(opts: {
     ...preserveArgs,
   ];
 
-  const { spawn } = require("node:child_process");
   const child = spawn("powershell.exe", args, {
     detached: true,
     stdio: "ignore",
+    windowsHide: true,
   });
   child.unref();
 
