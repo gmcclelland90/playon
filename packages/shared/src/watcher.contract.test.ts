@@ -6,7 +6,10 @@ import {
   WatcherTriggerSchema,
   computeNextDueAt,
   cronMatches,
+  isManagedOrNodeAuthoritativeSeedTarget,
   isWatcherScriptTool,
+  sanitizeSkillWatcherTemplatesForSeed,
+  skillWatcherNotifyAction,
   validateLogPattern,
 } from "./watcher.js";
 import { SkillMetadataSchema } from "./skill.js";
@@ -133,5 +136,101 @@ describe("Watcher schemas", () => {
         workshopIds: [],
       }),
     ).toThrow();
+  });
+
+  it("classifies managed and node-authoritative seed targets", () => {
+    expect(isManagedOrNodeAuthoritativeSeedTarget({})).toBe(false);
+    expect(isManagedOrNodeAuthoritativeSeedTarget({ managedFrom: "" })).toBe(false);
+    expect(isManagedOrNodeAuthoritativeSeedTarget({ nodeAuthoritative: false })).toBe(
+      false,
+    );
+    expect(
+      isManagedOrNodeAuthoritativeSeedTarget({ managedFrom: "/opt/pzserver" }),
+    ).toBe(true);
+    expect(isManagedOrNodeAuthoritativeSeedTarget({ nodeAuthoritative: true })).toBe(
+      true,
+    );
+    expect(
+      isManagedOrNodeAuthoritativeSeedTarget({ hasNodeAuthoritativeMarker: true }),
+    ).toBe(true);
+  });
+
+  it("keeps agent templates on unmanaged seed targets", () => {
+    const agent = SkillWatcherTemplateSchema.parse({
+      name: "Escalate to monitor agent",
+      trigger: { kind: "health", onFail: ["escalate"] },
+      action: {
+        kind: "agent",
+        prompt: "Diagnose the health failure.",
+      },
+    });
+    const seeded = sanitizeSkillWatcherTemplatesForSeed([agent], {});
+    expect(seeded[0]?.action.kind).toBe("agent");
+  });
+
+  it("rewrites agent templates to tools + notify on managed / node-authoritative seed", () => {
+    const agent = SkillWatcherTemplateSchema.parse({
+      name: "Escalate to monitor agent",
+      trigger: { kind: "health", onFail: ["escalate"] },
+      action: {
+        kind: "agent",
+        prompt: "Diagnose and restart if safe.",
+      },
+    });
+    for (const facts of [
+      { managedFrom: "/opt/pzserver" },
+      { nodeAuthoritative: true },
+      { hasNodeAuthoritativeMarker: true },
+    ]) {
+      const seeded = sanitizeSkillWatcherTemplatesForSeed([agent], facts);
+      expect(seeded).toHaveLength(1);
+      expect(seeded[0]?.action.kind).toBe("tools");
+      expect(seeded[0]?.action).toEqual(
+        skillWatcherNotifyAction(agent.name, agent.trigger),
+      );
+      if (seeded[0]?.action.kind === "tools") {
+        expect(seeded[0].action.steps.some((s) => s.tool === "servers_restart")).toBe(
+          false,
+        );
+        expect(seeded[0].action.steps.every((s) => s.tool === "panel_publish")).toBe(
+          true,
+        );
+      }
+    }
+  });
+
+  it("preserves NZL-style workshop notify templates on managed seed", () => {
+    const notify = SkillWatcherTemplateSchema.parse({
+      name: "Workshop Update Notifier",
+      defaultEnabled: true,
+      cooldownMs: 300_000,
+      debounceMs: 60_000,
+      trigger: { kind: "workshop_update", workshopIds: ["3579640010"] },
+      action: {
+        kind: "tools",
+        steps: [
+          {
+            tool: "panel_publish",
+            args: {
+              title: "Workshop Mod Updated",
+              message:
+                "ST Additions - Pry Open has been updated. Please schedule a server restart to apply changes.",
+            },
+          },
+        ],
+      },
+    });
+    const seeded = sanitizeSkillWatcherTemplatesForSeed([notify], {
+      managedFrom: "/opt/pzserver",
+      nodeAuthoritative: true,
+    });
+    expect(seeded[0]?.action).toEqual(notify.action);
+    expect(seeded[0]?.action.kind).toBe("tools");
+    if (seeded[0]?.action.kind === "tools") {
+      expect(seeded[0].action.steps[0]?.tool).toBe("panel_publish");
+      expect(seeded[0].action.steps.some((s) => s.tool === "servers_restart")).toBe(
+        false,
+      );
+    }
   });
 });

@@ -96,7 +96,10 @@ The recommended pattern is to **notify** users about updates and ask them to sch
 
 ### Agent-Assisted Planning
 
-Use an agent action to prompt for human approval:
+Use an agent action to prompt for human approval. Skill templates must not seed
+`action.kind=agent` on managed or node-authoritative servers (the seed path
+rewrites those templates to tools + notify). Hosts may still create an agent
+watcher manually.
 
 ```json
 {
