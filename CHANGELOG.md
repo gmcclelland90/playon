@@ -8,7 +8,7 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 - **Settings → Nodes row layout** — Windows parent rows with a WSL helper no longer wrap Update/Remove under the chips. Header stays name/chips | actions; helper copy sits below. Optional Docker Desktop is not a warn-scream **No Docker** chip when an online WSL sibling already has Docker.
 - **Node Update feedback** — queued / running / failed status shows on that node’s row. `node_self_update` jobs persist across a Home restart so Update is not a silent miss; pressing Update again reuses an in-flight job or re-queues if the job is gone. Windows parent Update still targets only that node (WSL sibling keeps its own button).
-- **Windows node self-update** — `apply-self-update.ps1` detaches from the agent Job object and disables PlayOnNodeAgent RestartCount before swapping, so Task Scheduler cannot restart 0.2.3 while the zip is applying. Home no longer marks a running `node_self_update` `abandoned` when the agent calls `jobs/next` after the swap; a matching heartbeat completes the job. Linux tarball path unchanged.
+- **Windows node self-update** — `apply-self-update.ps1` disables PlayOnNodeAgent RestartCount and relaunches outside the agent Job (one-shot `PlayOnNodeAgentApplyUpdate` task, or `CREATE_BREAKAWAY_FROM_JOB`) so Task Scheduler cannot restart 0.2.3 and kill the helper before the zip lands. Home no longer marks a running `node_self_update` `abandoned` when the agent calls `jobs/next` after the swap; a matching heartbeat completes the job. Linux tarball path unchanged.
 
 ## [0.2.4] — 2026-08-13
 

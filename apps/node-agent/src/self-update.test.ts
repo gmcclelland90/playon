@@ -259,8 +259,10 @@ describe("apply-self-update.ps1", () => {
     const src = fs.readFileSync(helper, "utf8");
     expect(src).toMatch(/\[switch\]\$Detached/);
     expect(src).toMatch(/Disable-ScheduledTask/);
-    expect(src).toMatch(/Start-Process/);
+    expect(src).toMatch(/PlayOnNodeAgentApplyUpdate/);
+    expect(src).toMatch(/Register-ScheduledTask/);
+    expect(src).toMatch(/CREATE_BREAKAWAY_FROM_JOB/);
     expect(src.indexOf("Disable-ScheduledTask")).toBeLessThan(src.indexOf("Waiting for node-agent"));
-    expect(src.indexOf("Start-Process")).toBeLessThan(src.indexOf("Waiting for node-agent"));
+    expect(src.indexOf("Register-ScheduledTask")).toBeLessThan(src.indexOf("Waiting for node-agent"));
   });
 });

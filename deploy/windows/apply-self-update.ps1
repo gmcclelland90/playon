@@ -9,6 +9,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 $TaskName = "PlayOnNodeAgent"
+$UpdateTaskName = "PlayOnNodeAgentApplyUpdate"
 $LogFile = Join-Path $env:TEMP "playon-apply-self-update.log"
 
 function Write-Log {
@@ -22,6 +23,13 @@ function Write-Log {
   }
 }
 
+function Format-ProcessArgs {
+  param([string[]]$Parts)
+  return ($Parts | ForEach-Object {
+    if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '""') + '"' } else { $_ }
+  }) -join " "
+}
+
 function Disable-NodeAgentTask {
   try {
     Disable-ScheduledTask -TaskName $TaskName -ErrorAction Stop | Out-Null
@@ -31,11 +39,11 @@ function Disable-NodeAgentTask {
   }
 }
 
-# 0.2.3+ agents spawn this script as a child of PlayOnNodeAgent. Task Scheduler
-# RestartCount would start the *old* binary before the swap, and a Job object
-# would kill this helper when the agent PID exits. Relaunch detached first.
-if (-not $Detached) {
-  Disable-NodeAgentTask
+function Unregister-ApplyUpdateTask {
+  try { Unregister-ScheduledTask -TaskName $UpdateTaskName -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+}
+
+function Get-RelaunchArgList {
   $relaunch = @(
     "-NoProfile",
     "-ExecutionPolicy", "Bypass",
@@ -48,8 +56,100 @@ if (-not $Detached) {
   foreach ($name in $Preserve) {
     $relaunch += @("-Preserve", $name)
   }
-  Write-Log "Relaunching detached helper (pid=$AgentPid source=$SourceDir)."
-  Start-Process -FilePath "powershell.exe" -ArgumentList $relaunch -WindowStyle Hidden | Out-Null
+  return $relaunch
+}
+
+# Start-Process stays in the PlayOnNodeAgent Job; Task Scheduler then kills
+# the helper when the agent PID exits (zip never lands). Break away with a
+# one-shot task, or CREATE_BREAKAWAY_FROM_JOB if that register fails.
+function Start-BreakawayHelper {
+  $argList = Get-RelaunchArgList
+  $argString = Format-ProcessArgs $argList
+  $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+  if ($existing) {
+    try {
+      $action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $argString
+      $settings = New-ScheduledTaskSettingsSet `
+        -AllowStartIfOnBatteries `
+        -DontStopIfGoingOnBatteries `
+        -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+      $p = $existing.Principal
+      $principal = New-ScheduledTaskPrincipal `
+        -UserId $p.UserId `
+        -LogonType $p.LogonType `
+        -RunLevel $p.RunLevel
+      Register-ScheduledTask `
+        -TaskName $UpdateTaskName `
+        -Action $action `
+        -Principal $principal `
+        -Settings $settings `
+        -Force | Out-Null
+      Start-ScheduledTask -TaskName $UpdateTaskName -ErrorAction Stop
+      Write-Log "Started one-shot $UpdateTaskName (pid=$AgentPid source=$SourceDir)."
+      return
+    } catch {
+      Write-Log "WARNING: one-shot $UpdateTaskName failed: $_. Falling back to CREATE_BREAKAWAY_FROM_JOB."
+    }
+  } else {
+    Write-Log "WARNING: $TaskName missing; CREATE_BREAKAWAY_FROM_JOB fallback."
+  }
+  Start-BreakawayProcess -ArgString $argString
+}
+
+function Start-BreakawayProcess {
+  param([string]$ArgString)
+  if (-not ("PlayOnBreakaway" -as [type])) {
+    Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class PlayOnBreakaway {
+  [StructLayout(LayoutKind.Sequential)]
+  public struct STARTUPINFO {
+    public int cb;
+    public IntPtr lpReserved, lpDesktop, lpTitle;
+    public int dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+    public short wShowWindow, cbReserved2;
+    public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
+  }
+  [StructLayout(LayoutKind.Sequential)]
+  public struct PROCESS_INFORMATION {
+    public IntPtr hProcess, hThread;
+    public int dwProcessId, dwThreadId;
+  }
+  [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  public static extern bool CreateProcess(
+    string lpApplicationName, string lpCommandLine, IntPtr lpProcessAttributes,
+    IntPtr lpThreadAttributes, bool bInheritHandles, uint dwCreationFlags,
+    IntPtr lpEnvironment, string lpCurrentDirectory,
+    ref STARTUPINFO lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
+  public const uint CREATE_BREAKAWAY_FROM_JOB = 0x01000000;
+  public const uint CREATE_NEW_PROCESS_GROUP = 0x00000200;
+  public const uint CREATE_NO_WINDOW = 0x08000000;
+}
+"@
+  }
+  $si = New-Object PlayOnBreakaway+STARTUPINFO
+  $si.cb = [Runtime.InteropServices.Marshal]::SizeOf([type][PlayOnBreakaway+STARTUPINFO])
+  $pi = New-Object PlayOnBreakaway+PROCESS_INFORMATION
+  $cmd = "powershell.exe $ArgString"
+  $flags = [PlayOnBreakaway]::CREATE_BREAKAWAY_FROM_JOB -bor [PlayOnBreakaway]::CREATE_NEW_PROCESS_GROUP -bor [PlayOnBreakaway]::CREATE_NO_WINDOW
+  $ok = [PlayOnBreakaway]::CreateProcess(
+    $null, $cmd, [IntPtr]::Zero, [IntPtr]::Zero, $false, $flags,
+    [IntPtr]::Zero, $null, [ref]$si, [ref]$pi
+  )
+  if (-not $ok) {
+    $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+    throw "CreateProcess breakaway failed (Win32 $err)"
+  }
+  Write-Log "Started breakaway helper pid=$($pi.dwProcessId)."
+}
+
+# 0.2.3+ agents spawn this script as a child of PlayOnNodeAgent. Task Scheduler
+# RestartCount would start the *old* binary before the swap, and a Job object
+# would kill this helper when the agent PID exits. Relaunch outside that Job.
+if (-not $Detached) {
+  Disable-NodeAgentTask
+  Start-BreakawayHelper
   exit 0
 }
 
@@ -80,6 +180,7 @@ try {
 if (-not (Test-Path $SourceDir)) {
   Write-Log "ERROR: Source directory not found: $SourceDir"
   try { Enable-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Out-Null } catch {}
+  Unregister-ApplyUpdateTask
   exit 1
 }
 
@@ -116,6 +217,7 @@ $useBundled = Test-Path $nodeExe
 if (-not (Test-Path $agentJs)) {
   Write-Log "ERROR: Agent missing after swap: $agentJs"
   try { Enable-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Out-Null } catch {}
+  Unregister-ApplyUpdateTask
   exit 1
 }
 
@@ -123,6 +225,7 @@ $envFile = Join-Path $TargetDir "node.env.cmd"
 if (-not (Test-Path $envFile)) {
   Write-Log "ERROR: node.env.cmd missing — cannot regenerate start-node.cmd without environment"
   try { Enable-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Out-Null } catch {}
+  Unregister-ApplyUpdateTask
   exit 1
 }
 
@@ -185,7 +288,9 @@ try {
   Write-Log "Update complete and agent restarted."
 } catch {
   Write-Log "ERROR: Failed to start ${TaskName}: $_"
+  Unregister-ApplyUpdateTask
   exit 1
 }
 
+Unregister-ApplyUpdateTask
 Write-Log "Self-update completed successfully."
