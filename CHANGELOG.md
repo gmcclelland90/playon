@@ -13,6 +13,7 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 ### Fixed
 
 - **Windows UDP `port_open`** — lab-matrix no longer treats Home `status=running` as a listen. Windows UDP/no-TCP requires query-online or a node-side `net_udp_listen` check (`ss`/`netstat`). Linux `ss` path is unchanged (`#846`).
+- **`fetch_url` destinations** — RFC1918 and localhost are blocked by default (no implicit loopback exception). Hosts opt in NAS/loopback IPs or CIDRs under Settings → Nodes. Link-local metadata cannot be allowlisted (`#858`).
 
 ## [0.2.3] — 2026-08-12
 

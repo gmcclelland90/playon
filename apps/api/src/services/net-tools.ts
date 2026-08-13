@@ -3,7 +3,12 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import { URL } from "node:url";
+import { assertFetchDestinationIp, parseFetchLanAllowlist } from "./fetch-destination.js";
 import type { ServerService } from "./servers.js";
+
+export { isBlockedDestinationIp } from "./fetch-destination.js";
+
+export type FetchLanAllowlistLoader = () => Promise<readonly string[]>;
 
 const MAX_FETCH_BYTES = 100 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 120_000;
@@ -48,53 +53,14 @@ function canListen(host: string, port: number): Promise<boolean> {
   });
 }
 
-function isExplicitLoopbackHost(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "[::1]";
-}
-
-/** True if the IP is private, loopback, link-local, or otherwise non-public. */
-export function isBlockedDestinationIp(ip: string): boolean {
-  const v = ip.toLowerCase().replace(/^\[|\]$/g, "");
-  if (net.isIPv4(v)) {
-    const parts = v.split(".").map((p) => Number(p));
-    const [a, b] = parts;
-    if (a === 10) return true;
-    if (a === 127) return true;
-    if (a === 0) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b !== undefined && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 100 && b !== undefined && b >= 64 && b <= 127) return true; // CGNAT
-    if (a !== undefined && a >= 224) return true; // multicast / reserved
-    return false;
-  }
-  if (net.isIPv6(v)) {
-    if (v === "::1" || v === "::") return true;
-    if (v.startsWith("fc") || v.startsWith("fd")) return true; // ULA
-    if (v.startsWith("fe80")) return true; // link-local
-    // IPv4-mapped
-    if (v.startsWith("::ffff:")) {
-      const mapped = v.slice("::ffff:".length);
-      if (net.isIPv4(mapped)) return isBlockedDestinationIp(mapped);
-    }
-    return false;
-  }
-  return true;
-}
-
-async function assertAllowedFetchHost(parsed: URL): Promise<void> {
+async function assertAllowedFetchHost(parsed: URL, allowlist: readonly string[]): Promise<void> {
   const hostname = parsed.hostname;
   if (!hostname) throw new Error("invalid_url");
 
   if (net.isIP(hostname)) {
-    if (isBlockedDestinationIp(hostname) && !isExplicitLoopbackHost(hostname)) {
-      throw new Error("fetch_blocked_destination");
-    }
+    assertFetchDestinationIp(hostname, allowlist);
     return;
   }
-
-  if (isExplicitLoopbackHost(hostname)) return;
 
   let addresses: string[];
   try {
@@ -105,9 +71,7 @@ async function assertAllowedFetchHost(parsed: URL): Promise<void> {
   }
   if (addresses.length === 0) throw new Error("fetch_dns_failed");
   for (const addr of addresses) {
-    if (isBlockedDestinationIp(addr)) {
-      throw new Error("fetch_blocked_destination");
-    }
+    assertFetchDestinationIp(addr, allowlist);
   }
 }
 
@@ -137,7 +101,19 @@ function parseUrl(raw: string): URL {
 }
 
 export class NetToolsService {
-  constructor(private readonly servers: ServerService) {}
+  constructor(
+    private readonly servers: ServerService,
+    private readonly getLanAllowlist?: FetchLanAllowlistLoader,
+  ) {}
+
+  private async lanAllowlist(): Promise<readonly string[]> {
+    const raw = (await this.getLanAllowlist?.()) ?? [];
+    try {
+      return parseFetchLanAllowlist(raw);
+    } catch {
+      return [];
+    }
+  }
 
   async portCheck(args: {
     host?: string;
@@ -178,8 +154,9 @@ export class NetToolsService {
     let current = parseUrl(args.url);
     let redirects = 0;
 
+    const allowlist = await this.lanAllowlist();
     while (true) {
-      await assertAllowedFetchHost(current);
+      await assertAllowedFetchHost(current, allowlist);
       const result = await this.downloadOnce(current, headers);
       if (result.kind === "redirect") {
         redirects += 1;

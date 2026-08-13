@@ -339,6 +339,13 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  getFetchSettings: () =>
+    request<{ fetch: { lanAllowlist: string[] } }>("/api/settings/fetch"),
+  putFetchSettings: (body: { lanAllowlist: string[] }) =>
+    request<{ fetch: { lanAllowlist: string[] } }>("/api/settings/fetch", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   addNode: (body: {
     kind: "lan" | "cloud";
     host: string;

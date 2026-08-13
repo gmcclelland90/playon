@@ -35,7 +35,7 @@ export const contentToolModule: ToolModule = ({ plane }) => {
       def: {
         name: "fetch_url",
         description:
-          "Download an HTTP(S) URL into a path under a server data directory (jailed). Follows redirects; max 100MB. Blocks private/link-local destinations except explicit localhost/127.0.0.1.",
+          "Download an HTTP(S) URL into a path under a server data directory (jailed). Follows redirects; max 100MB. Blocks RFC1918, localhost, and other private destinations unless the host opted those IPs/CIDRs in under Settings (NAS). Public URLs are allowed.",
         requiresConfirm: true,
         parameters: {
           type: "object",

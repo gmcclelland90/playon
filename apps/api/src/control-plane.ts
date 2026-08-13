@@ -24,6 +24,7 @@ import { PlayerPanel } from "./services/player-panel.js";
 import { ServerAdoptionService } from "./services/server-adoption.js";
 import { ServerQueryService } from "./services/server-query.js";
 import { ServerService } from "./services/servers.js";
+import { FETCH_SETTINGS_KEY, getSetting, type FetchSettings } from "./services/settings.js";
 import { SkillDraftService } from "./services/skill-drafts.js";
 import { SkillPackageService } from "./services/skill-packages.js";
 import { SnapshotService } from "./services/snapshots.js";
@@ -80,7 +81,10 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
   const adoption = new ServerAdoptionService(db, config, servers, snapshots);
   servers.bindAdoption(adoption);
   const panel = new PanelService(db, eventHub);
-  const net = new NetToolsService(servers);
+  const net = new NetToolsService(servers, async () => {
+    const stored = await getSetting<FetchSettings>(db, FETCH_SETTINGS_KEY);
+    return stored?.lanAllowlist ?? [];
+  });
   const queries = new ServerQueryService(servers, config);
   const playerPanel = new PlayerPanel(servers, panel, queries, config);
   const health = new HealthService(servers, net, config, queries);

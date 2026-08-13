@@ -100,6 +100,7 @@ export function llmSettingsFromPut(body: {
 export const CLOUD_SETTINGS_KEY = "cloud.vultr";
 export const SKILLS_CATALOG_KEY = "skills.catalog";
 export const NODE_SETTINGS_KEY = "nodes";
+export const FETCH_SETTINGS_KEY = "fetch";
 export const WG_HOME_SETTINGS_KEY = "cloud.wireguard.home";
 
 export type VultrCloudSettings = {
@@ -132,6 +133,21 @@ export const DEFAULT_NODE_SETTINGS: NodeSettings = {
   localComputeEnabled: true,
   nextOverlayHost: 2,
 };
+
+/** Host-opted fetch_url destinations (RFC1918 / ULA / loopback CIDRs). */
+export type FetchSettings = {
+  lanAllowlist: string[];
+};
+
+export const DEFAULT_FETCH_SETTINGS: FetchSettings = {
+  lanAllowlist: [],
+};
+
+export function toPublicFetchSettings(stored: FetchSettings | null): FetchSettings {
+  return {
+    lanAllowlist: stored?.lanAllowlist ?? [],
+  };
+}
 
 export function toPublicCloudSettings(stored: VultrCloudSettings | null): {
   provider: "vultr";
