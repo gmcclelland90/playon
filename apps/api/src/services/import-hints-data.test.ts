@@ -1,10 +1,26 @@
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { loadImportHintRules, loadImportScanRoots } from "./import-hints-data.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../../");
 const skillsRoot = path.join(repoRoot, "skills");
+
+const tmpDirs: string[] = [];
+
+function mkTmp(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "playon-hints-"));
+  tmpDirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  for (const d of tmpDirs.splice(0)) {
+    fs.rmSync(d, { recursive: true, force: true });
+  }
+});
 
 describe("import-hints-data", () => {
   it("loads Zomboid fingerprint and manage cutover metadata from import-hints.yaml", () => {
@@ -43,6 +59,57 @@ describe("import-hints-data", () => {
   it("loads linux scan roots for install trees (Steam/opt/servers)", () => {
     const roots = loadImportScanRoots([skillsRoot], "linux");
     expect(roots.some((r) => r.includes("steamapps"))).toBe(true);
+    expect(roots.some((r) => r.includes("/opt/"))).toBe(true);
+    expect(roots.some((r) => r.includes("Zomboid"))).toBe(false);
+  });
+
+  it("prefers yaml inside a skills root over a leftover file in the parent dir", () => {
+    const parent = mkTmp();
+    const isolated = path.join(parent, "skills");
+    fs.mkdirSync(isolated);
+    fs.writeFileSync(
+      path.join(parent, "import-scan-roots.yaml"),
+      "version: 1\nlinux: []\nwindows: []\n",
+    );
+    fs.writeFileSync(
+      path.join(isolated, "import-scan-roots.yaml"),
+      'version: 1\nlinux:\n  - "/opt/pzserver"\nwindows: []\n',
+    );
+    expect(loadImportScanRoots([isolated], "linux")).toEqual(["/opt/pzserver"]);
+  });
+
+  it("finds skills/ yaml when skillsRoots is catalog/platform", () => {
+    const repo = mkTmp();
+    const platform = path.join(repo, "catalog", "platform");
+    fs.mkdirSync(platform, { recursive: true });
+    fs.mkdirSync(path.join(repo, "skills"));
+    fs.writeFileSync(
+      path.join(repo, "skills", "import-scan-roots.yaml"),
+      'version: 1\nlinux:\n  - "/opt/pzserver"\nwindows: []\n',
+    );
+    expect(loadImportScanRoots([platform], "linux")).toEqual(["/opt/pzserver"]);
+  });
+
+  it("does not let leftover yaml in os.tmpdir() shadow a mkdtemp skills root", () => {
+    const poison = path.join(os.tmpdir(), "import-scan-roots.yaml");
+    const previous = fs.existsSync(poison) ? fs.readFileSync(poison, "utf8") : null;
+    try {
+      fs.writeFileSync(poison, "version: 1\nlinux: []\nwindows: []\n");
+      const isolated = mkTmp();
+      fs.writeFileSync(
+        path.join(isolated, "import-scan-roots.yaml"),
+        'version: 1\nlinux:\n  - "/opt/pzserver"\nwindows: []\n',
+      );
+      expect(loadImportScanRoots([isolated], "linux")).toEqual(["/opt/pzserver"]);
+    } finally {
+      if (previous == null) fs.rmSync(poison, { force: true });
+      else fs.writeFileSync(poison, previous);
+    }
+  });
+
+  it("resolves scan roots from the repo catalog/platform layout", () => {
+    const platform = path.join(repoRoot, "catalog", "platform");
+    const roots = loadImportScanRoots([platform], "linux");
     expect(roots.some((r) => r.includes("/opt/"))).toBe(true);
     expect(roots.some((r) => r.includes("Zomboid"))).toBe(false);
   });

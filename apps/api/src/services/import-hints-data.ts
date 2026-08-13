@@ -21,12 +21,27 @@ const ImportScanRootsFileSchema = z.object({
   windows: z.array(z.string().min(1)).default([]),
 });
 
+/**
+ * Locate import-hints / import-scan-roots YAML for a skills root.
+ *
+ * Search order (first hit wins):
+ * 1. Inside the root — isolated test fixtures and dataRoot/skills copies.
+ *    Must beat "beside", otherwise a leftover file in os.tmpdir() (the parent of
+ *    mkdtemp dirs) shadows the fixture and Scan returns no candidates.
+ * 2. Beside the root — `skills/platform` → `skills/import-*.yaml`.
+ * 3. Repo `skills/` next to `catalog/platform|fixtures` (Phase 4 layout).
+ */
 function resolveBesideSkills(skillsRoots: string[], fileName: string): string | null {
   for (const root of skillsRoots) {
-    const beside = path.join(path.dirname(root), fileName);
-    if (fs.existsSync(beside)) return beside;
-    const inside = path.join(root, fileName);
-    if (fs.existsSync(inside)) return inside;
+    const abs = path.resolve(root);
+    const candidates = [path.join(abs, fileName), path.join(path.dirname(abs), fileName)];
+    const base = path.basename(abs);
+    if (base === "platform" || base === "fixtures") {
+      candidates.push(path.resolve(abs, "..", "..", "skills", fileName));
+    }
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) return candidate;
+    }
   }
   return null;
 }
