@@ -8,7 +8,7 @@ import type { AppConfig } from "../config.js";
 import { createDb, type Db } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
 import { LAB_DOCKER_SKILL, resolveFixturesRoot } from "../lab-games-root.js";
-import { isBlockedDestinationIp, NetToolsService } from "./net-tools.js";
+import { NetToolsService } from "./net-tools.js";
 import { ServerService } from "./servers.js";
 
 const temps: Array<{ root: string; sqlite: Database.Database; server?: http.Server }> = [];
@@ -23,7 +23,12 @@ function findRepoRoot(): string {
   }
 }
 
-function tempEnv(): { db: Db; config: AppConfig; net: NetToolsService; servers: ServerService } {
+function tempEnv(lanAllowlist: string[] = []): {
+  db: Db;
+  config: AppConfig;
+  net: NetToolsService;
+  servers: ServerService;
+} {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-net-"));
   const dbPath = path.join(root, "playon.db");
   applyBootstrap(dbPath);
@@ -40,7 +45,12 @@ function tempEnv(): { db: Db; config: AppConfig; net: NetToolsService; servers: 
   const { db, sqlite } = createDb(dbPath);
   temps.push({ root, sqlite });
   const servers = new ServerService(db, config);
-  return { db, config, servers, net: new NetToolsService(servers) };
+  return {
+    db,
+    config,
+    servers,
+    net: new NetToolsService(servers, async () => lanAllowlist),
+  };
 }
 
 afterEach(async () => {
@@ -53,17 +63,6 @@ afterEach(async () => {
   }
 });
 
-describe("isBlockedDestinationIp", () => {
-  it("blocks private and link-local ranges", () => {
-    expect(isBlockedDestinationIp("10.0.0.1")).toBe(true);
-    expect(isBlockedDestinationIp("192.168.1.1")).toBe(true);
-    expect(isBlockedDestinationIp("172.16.0.1")).toBe(true);
-    expect(isBlockedDestinationIp("169.254.169.254")).toBe(true);
-    expect(isBlockedDestinationIp("127.0.0.1")).toBe(true);
-    expect(isBlockedDestinationIp("8.8.8.8")).toBe(false);
-  });
-});
-
 describe("NetToolsService", () => {
   it("suggests a bindable port", async () => {
     const { net } = tempEnv();
@@ -72,8 +71,8 @@ describe("NetToolsService", () => {
     expect(suggestion.port).toBeGreaterThanOrEqual(29000);
   });
 
-  it("fetches a URL into the server jail", async () => {
-    const { net, servers } = tempEnv();
+  it("fetches a URL into the server jail when loopback is allowlisted", async () => {
+    const { net, servers } = tempEnv(["127.0.0.1"]);
     const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
 
     const httpServer = http.createServer((_req, res) => {
@@ -98,7 +97,7 @@ describe("NetToolsService", () => {
   });
 
   it("follows redirects within the hop limit", async () => {
-    const { net, servers } = tempEnv();
+    const { net, servers } = tempEnv(["127.0.0.1"]);
     const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
 
     const httpServer = http.createServer((req, res) => {
@@ -126,7 +125,45 @@ describe("NetToolsService", () => {
     );
   });
 
-  it("rejects blocked private destinations", async () => {
+  it("rejects RFC1918 destinations by default", async () => {
+    const { net, servers } = tempEnv();
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
+    await expect(
+      net.fetchUrl({
+        serverId: server.id,
+        url: "http://192.168.1.50/mod.zip",
+        destPath: "game/mod.zip",
+      }),
+    ).rejects.toThrow(/fetch_blocked_destination/);
+    await expect(
+      net.fetchUrl({
+        serverId: server.id,
+        url: "http://10.0.0.1/mod.zip",
+        destPath: "game/mod.zip",
+      }),
+    ).rejects.toThrow(/fetch_blocked_destination/);
+  });
+
+  it("rejects localhost by default", async () => {
+    const { net, servers } = tempEnv();
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
+    await expect(
+      net.fetchUrl({
+        serverId: server.id,
+        url: "http://127.0.0.1/local.bin",
+        destPath: "game/local.bin",
+      }),
+    ).rejects.toThrow(/fetch_blocked_destination/);
+    await expect(
+      net.fetchUrl({
+        serverId: server.id,
+        url: "http://localhost/local.bin",
+        destPath: "game/local.bin",
+      }),
+    ).rejects.toThrow(/fetch_blocked_destination/);
+  });
+
+  it("rejects link-local metadata destinations", async () => {
     const { net, servers } = tempEnv();
     const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
     await expect(
@@ -138,8 +175,44 @@ describe("NetToolsService", () => {
     ).rejects.toThrow(/fetch_blocked_destination/);
   });
 
+  it("still blocks localhost when only a LAN CIDR is allowlisted", async () => {
+    const { net, servers } = tempEnv(["192.168.1.0/24"]);
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
+    await expect(
+      net.fetchUrl({
+        serverId: server.id,
+        url: "http://127.0.0.1/local.bin",
+        destPath: "game/local.bin",
+      }),
+    ).rejects.toThrow(/fetch_blocked_destination/);
+  });
+
+  it("fetches when the destination is on the host allowlist", async () => {
+    const { net, servers } = tempEnv(["192.168.1.0/24", "127.0.0.1"]);
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
+
+    const httpServer = http.createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("from-allowlist");
+    });
+    await new Promise<void>((resolve) => httpServer.listen(0, "127.0.0.1", () => resolve()));
+    const addr = httpServer.address();
+    if (!addr || typeof addr === "string") throw new Error("no_port");
+    temps[temps.length - 1]!.server = httpServer;
+
+    const fetched = await net.fetchUrl({
+      serverId: server.id,
+      url: `http://127.0.0.1:${addr.port}/nas.txt`,
+      destPath: "game/nas.txt",
+    });
+    expect(fs.readFileSync(path.join(server.dataPath, "game", "nas.txt"), "utf8")).toBe(
+      "from-allowlist",
+    );
+    expect(fetched.bytes).toBeGreaterThan(0);
+  });
+
   it("rejects oversized payloads", async () => {
-    const { net, servers } = tempEnv();
+    const { net, servers } = tempEnv(["127.0.0.1"]);
     const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
 
     const chunk = Buffer.alloc(1024 * 1024, 1); // 1 MiB

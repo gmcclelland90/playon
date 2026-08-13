@@ -51,6 +51,12 @@ export const NodeSettingsPutRequestSchema = z.object({
 
 export type NodeSettingsPutRequest = z.infer<typeof NodeSettingsPutRequestSchema>;
 
+export const FetchSettingsPutRequestSchema = z.object({
+  lanAllowlist: z.array(z.string().max(80)).max(32),
+});
+
+export type FetchSettingsPutRequest = z.infer<typeof FetchSettingsPutRequestSchema>;
+
 export const CreateAccessTokenRequestSchema = z.object({
   name: z.string().min(1).max(80).default("MCP token"),
   autoApproveConfirms: z.boolean().optional(),

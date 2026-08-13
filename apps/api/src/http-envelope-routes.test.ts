@@ -888,6 +888,35 @@ describe("transport error envelope on migrated routes", () => {
     });
   });
 
+  it("stores a fetch_url LAN allowlist and rejects non-private entries", async () => {
+    const app = createApp(db, config);
+
+    const denied = await app.request("/api/settings/fetch", {
+      method: "PUT",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ lanAllowlist: ["169.254.169.254"] }),
+    });
+    expect(denied.status).toBe(400);
+    const deniedBody = (await denied.json()) as Envelope;
+    expect(deniedBody.error).toMatch(/fetch_allowlist_not_private/);
+
+    const set = await app.request("/api/settings/fetch", {
+      method: "PUT",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ lanAllowlist: ["192.168.1.50", "10.0.0.0/8"] }),
+    });
+    expect(set.status).toBe(200);
+    expect((await set.json()) as { fetch: { lanAllowlist: string[] } }).toEqual({
+      fetch: { lanAllowlist: ["192.168.1.50", "10.0.0.0/8"] },
+    });
+
+    const read = await app.request("/api/settings/fetch", { headers: { cookie } });
+    expect(read.status).toBe(200);
+    expect((await read.json()) as { fetch: { lanAllowlist: string[] } }).toEqual({
+      fetch: { lanAllowlist: ["192.168.1.50", "10.0.0.0/8"] },
+    });
+  });
+
   it("gates every settings route on the same 403 forbidden envelope", async () => {
     const app = createApp(db, config);
     await expectForbidden(app, [
@@ -899,6 +928,8 @@ describe("transport error envelope on migrated routes", () => {
       ["/api/settings/llm/ollama/pull", { method: "POST" }],
       ["/api/settings/nodes", {}],
       ["/api/settings/nodes", { method: "PUT" }],
+      ["/api/settings/fetch", {}],
+      ["/api/settings/fetch", { method: "PUT" }],
       ["/api/settings/cloud", {}],
       ["/api/settings/cloud/vultr/connect", { method: "POST" }],
       ["/api/settings/cloud/vultr", { method: "DELETE" }],
@@ -915,6 +946,7 @@ describe("transport error envelope on migrated routes", () => {
     const cases: Array<[string, string, unknown, string]> = [
       ["/api/settings/llm", "PUT", {}, "preset_or_provider_required"],
       ["/api/settings/nodes", "PUT", {}, "localComputeEnabled"],
+      ["/api/settings/fetch", "PUT", {}, "lanAllowlist"],
       ["/api/settings/llm/ollama/pull", "POST", {}, "model"],
     ];
 

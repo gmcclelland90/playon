@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CreateAccessTokenRequestSchema,
+  FetchSettingsPutRequestSchema,
   LlmSettingsPutRequestSchema,
   NodeSettingsPutRequestSchema,
   OllamaInstallRequestSchema,
@@ -37,6 +38,17 @@ describe("settings route request contracts", () => {
     expect(NodeSettingsPutRequestSchema.parse({ localComputeEnabled: false })).toEqual({
       localComputeEnabled: false,
     });
+  });
+
+  it("accepts an empty or populated fetch_url LAN allowlist", () => {
+    expect(FetchSettingsPutRequestSchema.parse({ lanAllowlist: [] })).toEqual({ lanAllowlist: [] });
+    expect(
+      FetchSettingsPutRequestSchema.parse({ lanAllowlist: ["192.168.1.50", "10.0.0.0/8"] }),
+    ).toEqual({ lanAllowlist: ["192.168.1.50", "10.0.0.0/8"] });
+    expect(FetchSettingsPutRequestSchema.safeParse({}).success).toBe(false);
+    expect(
+      FetchSettingsPutRequestSchema.safeParse({ lanAllowlist: ["x".repeat(81)] }).success,
+    ).toBe(false);
   });
 
   it("names an access token when the caller does not", () => {

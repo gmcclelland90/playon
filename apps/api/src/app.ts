@@ -34,6 +34,7 @@ import {
   NodeHeartbeatSchema,
   NodeJobKindSchema,
   NodeSettingsPutRequestSchema,
+  FetchSettingsPutRequestSchema,
   OllamaInstallRequestSchema,
   OllamaPullRequestSchema,
   PanelInputRequestSchema,
@@ -74,6 +75,7 @@ import {
   sessionHasRole,
 } from "./http-policy.js";
 import { redactJson, redactString } from "./services/redaction.js";
+import { parseFetchLanAllowlist } from "./services/fetch-destination.js";
 import { mountStaticWeb } from "./static-web.js";
 import { panelUrlsFor, getPanelRuntime, setPanelRuntime } from "./services/panel-runtime.js";
 import {
@@ -101,12 +103,15 @@ import {
   getSetting,
   LLM_SETTINGS_KEY,
   NODE_SETTINGS_KEY,
+  FETCH_SETTINGS_KEY,
   SKILLS_CATALOG_KEY,
   setSetting,
   llmSettingsFromPut,
   toPublicCloudSettings,
+  toPublicFetchSettings,
   toPublicLlmSettings,
   toPublicNodeSettings,
+  type FetchSettings,
   type LlmSettings,
   type NodeSettings,
   type SkillsCatalogSettings,
@@ -1880,6 +1885,27 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     return c.json({
       nodes: toPublicNodeSettings(await getSetting(db, NODE_SETTINGS_KEY)),
     });
+  });
+
+  app.get("/api/settings/fetch", async (c) => {
+    requireCan(c, "settings.llm");
+    const stored = await getSetting<FetchSettings>(db, FETCH_SETTINGS_KEY);
+    return c.json({ fetch: toPublicFetchSettings(stored) });
+  });
+
+  app.put("/api/settings/fetch", async (c) => {
+    requireCan(c, "settings.llm");
+    const body = await jsonBody(c, FetchSettingsPutRequestSchema);
+    try {
+      const lanAllowlist = parseFetchLanAllowlist(body.lanAllowlist);
+      await setSetting(db, FETCH_SETTINGS_KEY, { lanAllowlist } satisfies FetchSettings);
+      return c.json({ fetch: toPublicFetchSettings({ lanAllowlist }) });
+    } catch (err) {
+      throw serviceHttpError(err, {
+        fallback: "fetch_settings_failed",
+        code: "fetch_settings_failed",
+      });
+    }
   });
 
   app.post("/api/nodes/add", async (c) => {

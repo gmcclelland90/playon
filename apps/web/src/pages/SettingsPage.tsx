@@ -142,6 +142,8 @@ export function SettingsPage({ user }: { user: PublicUser }) {
   const [userCreated, setUserCreated] = useState<string | null>(null);
   const [backupRoot, setBackupRoot] = useState("");
   const [backupSaved, setBackupSaved] = useState(false);
+  const [fetchLanAllowlistText, setFetchLanAllowlistText] = useState("");
+  const [fetchAllowlistSaved, setFetchAllowlistSaved] = useState(false);
 
   const [nodeNotice, setNodeNotice] = useState<string | null>(null);
   const [nodeError, setNodeError] = useState<string | null>(null);
@@ -202,6 +204,12 @@ export function SettingsPage({ user }: { user: PublicUser }) {
   const nodeSettings = useQuery({
     queryKey: ["node-settings"],
     queryFn: api.getNodeSettings,
+    enabled: can(user.role, "settings.llm"),
+  });
+
+  const fetchSettings = useQuery({
+    queryKey: ["fetch-settings"],
+    queryFn: api.getFetchSettings,
     enabled: can(user.role, "settings.llm"),
   });
 
@@ -398,6 +406,24 @@ export function SettingsPage({ user }: { user: PublicUser }) {
     onError: (err: Error) => setNodeError(nodeActionError(err)),
   });
 
+  const saveFetchSettings = useMutation({
+    mutationFn: () =>
+      api.putFetchSettings({
+        lanAllowlist: fetchLanAllowlistText
+          .split(/[\n,]/)
+          .map((line) => line.trim())
+          .filter(Boolean),
+      }),
+    onSuccess: async (data) => {
+      setFetchLanAllowlistText(data.fetch.lanAllowlist.join("\n"));
+      setFetchAllowlistSaved(true);
+      setNodeError(null);
+      await qc.invalidateQueries({ queryKey: ["fetch-settings"] });
+      window.setTimeout(() => setFetchAllowlistSaved(false), 3000);
+    },
+    onError: (err: Error) => setNodeError(nodeActionError(err)),
+  });
+
   const removeNodeMut = useMutation({
     mutationFn: ({ id, force }: { id: string; force?: boolean }) => api.removeNode(id, force),
     onSuccess: async () => {
@@ -589,6 +615,12 @@ export function SettingsPage({ user }: { user: PublicUser }) {
       setBackupRoot(backupTarget.data.target.rootPath);
     }
   }, [backupTarget.data]);
+
+  useEffect(() => {
+    if (fetchSettings.data?.fetch) {
+      setFetchLanAllowlistText(fetchSettings.data.fetch.lanAllowlist.join("\n"));
+    }
+  }, [fetchSettings.data]);
 
   const save = useMutation({
     mutationFn: () =>
@@ -889,6 +921,41 @@ export function SettingsPage({ user }: { user: PublicUser }) {
             <span>Also host game servers on this machine (Local)</span>
           </label>
         )}
+        {can(user.role, "settings.llm") ? (
+          <form
+            className="stack tight"
+            onSubmit={(e) => {
+              e.preventDefault();
+              saveFetchSettings.mutate();
+            }}
+          >
+            <label className="field">
+              <span>fetch_url LAN allowlist</span>
+              <textarea
+                rows={3}
+                value={fetchLanAllowlistText}
+                onChange={(e) => setFetchLanAllowlistText(e.target.value)}
+                placeholder={"192.168.1.50\n10.0.0.0/24"}
+                spellCheck={false}
+              />
+            </label>
+            <p className="muted status-inline">
+              Default blocks RFC1918 and localhost. Add NAS IPs or CIDRs (one per line) to let
+              fetch_url pull from those addresses only. Loopback is opt-in the same way — there is
+              no implicit localhost exception.
+            </p>
+            <div className="btn-row">
+              <button
+                className="btn btn-primary"
+                type="submit"
+                disabled={saveFetchSettings.isPending || fetchSettings.isLoading}
+              >
+                {saveFetchSettings.isPending ? "Saving…" : "Save fetch allowlist"}
+              </button>
+              {fetchAllowlistSaved ? <span className="ok">Saved</span> : null}
+            </div>
+          </form>
+        ) : null}
         {!dockerInstallNodeId && nodesList.data?.wireguardTools === false ? (
           <p className="muted status-inline">
             WireGuard tools not detected on Home — install wireguard-tools (Linux) or WireGuard for

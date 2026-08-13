@@ -47,6 +47,12 @@ Blank-machine imaging: [`infra/blank-node/README.md`](../infra/blank-node/README
 
 Cutover metadata lives on each fingerprint’s optional `manage:` block in `skills/import-hints.yaml` (userdata home dirs, `serverNameArg`, `adminPasswordArg`, `worldSubdirs`).
 
+### fetch_url destinations
+
+`fetch_url` downloads HTTP(S) URLs into a server jail. **Public** destinations are allowed. **RFC1918, localhost/loopback, link-local, ULA, and CGNAT are blocked by default** — there is no implicit `localhost` / `127.0.0.1` exception (that used to stay open while LAN was blocked).
+
+To pull a mod zip from a NAS, add that host’s IP or CIDR under **Settings → Nodes → fetch_url LAN allowlist** (`192.168.1.50` or `10.0.0.0/24`). Loopback is the same opt-in if you intentionally want Home-local HTTP. Link-local / cloud metadata (`169.254.0.0/16`, `fe80::/10`) cannot be allowlisted.
+
 ### Managed server environment
 
 Managed/node-authoritative servers store `managedFrom` in their `skill.json` marker (the absolute path to the original install on the node). The control plane passes this as `PLAYON_MANAGED_FROM` in the process environment so catalog `start.sh` scripts can fall back to binaries in the original install location when the game jail overlay doesn't contain them.
