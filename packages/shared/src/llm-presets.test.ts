@@ -9,11 +9,18 @@ import {
 
 describe("llm presets", () => {
   it("includes the first-wave provider ids", () => {
-    expect(LLM_PRESET_IDS).toContain("venice");
-    expect(LLM_PRESET_IDS).toContain("nvidia");
-    expect(LLM_PRESET_IDS).toContain("openrouter");
-    expect(LLM_PRESET_IDS).toContain("ollama");
-    expect(LLM_PRESET_IDS).toContain("custom");
+    expect(LLM_PRESET_IDS).toEqual([
+      "venice",
+      "openai",
+      "anthropic",
+      "gemini",
+      "openrouter",
+      "deepseek",
+      "nvidia",
+      "ollama",
+      "custom",
+    ]);
+    expect(LLM_PRESET_IDS).not.toContain("groq");
   });
 
   it("maps ollama transport to the ollama preset", () => {
@@ -58,16 +65,33 @@ describe("llm presets", () => {
         baseUrl: "https://llm.example.internal/v1",
       }),
     ).toBe("custom");
+    expect(
+      inferLlmPreset({
+        provider: "openai_compatible",
+        baseUrl: "https://api.groq.com/openai/v1",
+      }),
+    ).toBe("custom");
   });
 
   it("honors an explicit stored preset", () => {
     expect(
       inferLlmPreset({
         provider: "openai_compatible",
-        preset: "groq",
+        preset: "deepseek",
         baseUrl: "https://api.openai.com/v1",
       }),
-    ).toBe("groq");
+    ).toBe("deepseek");
+  });
+
+  it("treats a retired groq stored preset as custom", () => {
+    expect(isLlmPresetId("groq")).toBe(false);
+    expect(
+      inferLlmPreset({
+        provider: "openai_compatible",
+        preset: "groq",
+        baseUrl: "https://api.groq.com/openai/v1",
+      }),
+    ).toBe("custom");
   });
 
   it("validates preset ids", () => {
@@ -93,7 +117,6 @@ describe("llm presets", () => {
     expect(LLM_PRESETS.venice.suggestedModels[0]).toBe(LLM_PRESETS.venice.defaultModel);
     expect(LLM_PRESETS.venice.suggestedModels).toContain("llama-3.3-70b");
     expect(LLM_PRESETS.anthropic.defaultModel).toBe("claude-sonnet-5");
-    expect(LLM_PRESETS.groq.defaultModel).toBe("openai/gpt-oss-120b");
     expect(LLM_PRESETS.nvidia.suggestedModels).toContain(
       "nvidia/llama-3.3-nemotron-super-49b-v1.5",
     );

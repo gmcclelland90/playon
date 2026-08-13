@@ -4,6 +4,10 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+### Changed
+
+- **Settings LLM presets** — Groq is no longer an out-of-the-box provider. Custom OpenAI-compatible endpoints still accept any base URL and key.
+
 ### Fixed
 
 - **Settings → Nodes row layout** — Windows parent rows with a WSL helper no longer wrap Update/Remove under the chips. Header stays name/chips | actions; helper copy sits below. Optional Docker Desktop is not a warn-scream **No Docker** chip when an online WSL sibling already has Docker.
