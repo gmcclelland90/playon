@@ -1,7 +1,8 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import type Database from "better-sqlite3";
+import { afterEach, describe, expect, it } from "vitest";
 import * as agentCore from "@playon/agent-core";
 import { OpenAICompatibleLlmClient } from "@playon/agent-core";
 import type { AppConfig } from "../config.js";
@@ -9,6 +10,21 @@ import { createControlPlane, type ControlPlane } from "../control-plane.js";
 import { createDb } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
 import { createOrchestrator, createPlayOnToolRegistry } from "./tools.js";
+
+const temps: Array<{ root: string; sqlite: Database.Database }> = [];
+
+afterEach(() => {
+  while (temps.length) {
+    const entry = temps.pop();
+    if (!entry) break;
+    try {
+      entry.sqlite.close();
+    } catch {
+      /* ignore */
+    }
+    rmSync(entry.root, { recursive: true, force: true });
+  }
+});
 
 /** Every tool in the catalog. Domain modules are the only place metadata lives. */
 const ALL_TOOLS = [
@@ -117,7 +133,8 @@ function testPlane(): ControlPlane {
   const dataRoot = mkdtempSync(path.join(tmpdir(), "playon-parity-"));
   applyBootstrap(path.join(dataRoot, "playon.sqlite"));
   const config = testConfig(dataRoot);
-  const { db } = createDb(config.dbPath);
+  const { db, sqlite } = createDb(config.dbPath);
+  temps.push({ root: dataRoot, sqlite });
   return createControlPlane(db, config);
 }
 
