@@ -241,8 +241,8 @@ describe("install-node.ps1 manifest extract (#868)", () => {
     );
     const src = fs.readFileSync(installer, "utf8");
     expect(src).toMatch(/--force-local/);
-    expect(src).toMatch(/-xzf/);
+    expect(src).toMatch(/& tar --force-local -xzf/);
     expect(src).toMatch(/ProgressPreference/);
-    expect(src.indexOf("tar --force-local")).toBeLessThan(src.indexOf("Expand-Archive"));
+    expect(src.indexOf("& tar --force-local -xzf")).toBeLessThan(src.lastIndexOf("Expand-Archive"));
   });
 });
