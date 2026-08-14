@@ -93,6 +93,7 @@ After each release, skim CHANGELOG **Fixed** entries and file `test-debt` for ga
 - Windows PE / Steam dual-place coverage still depends on `playon-win-1` online ([#46](https://github.com/gmcclelland90/playon/issues/46))
 - Windows container place+start is unit-covered; live `har0x/sbox-server` on Server Core needs Docker Engine in Windows container mode on the node ([#873](https://github.com/gmcclelland90/playon/issues/873))
 - Join-path live TCP on WSL sibling and Windows PE is lab-only (unit covers `resolveJoinAddress`; [lab-matrix.md](lab-matrix.md), [#843](https://github.com/gmcclelland90/playon/issues/843))
+- Managed instance liveness (leftover reap, healthy reuse, first-see port-dead, persisted start grace, docker native-tree reap, health-restart single-instance, workshop_update notify-only, existing managed Health-monitor migrate) is unit-covered in `@playon/shared` + `@playon/runtime` + api runtime-handle / health / watcher tests ([#880](https://github.com/gmcclelland90/playon/issues/880))
 - Weekly e2e is scheduled but not yet in every-PR CI ([#44](https://github.com/gmcclelland90/playon/issues/44))
 - Lab cadence timer must be installed once on playon-dev ([infra/lab](../infra/lab/README.md), [#45](https://github.com/gmcclelland90/playon/issues/45))
 

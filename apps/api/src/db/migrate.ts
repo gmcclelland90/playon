@@ -95,6 +95,14 @@ function ensureAccessTokensTable(raw: Database.Database) {
   `);
 }
 
+function ensureServerInstanceStartedAt(raw: Database.Database) {
+  const cols = raw.prepare(`PRAGMA table_info(servers)`).all() as Array<{ name: string }>;
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has("instance_started_at")) {
+    raw.exec(`ALTER TABLE servers ADD COLUMN instance_started_at INTEGER`);
+  }
+}
+
 function ensureWatchersTables(raw: Database.Database) {
   raw.exec(`
     CREATE TABLE IF NOT EXISTS watchers (
@@ -140,6 +148,7 @@ export function applyBootstrap(dbPath: string) {
   ensureAgentProgressSkillTable(raw);
   ensureAccessTokensTable(raw);
   ensureWatchersTables(raw);
+  ensureServerInstanceStartedAt(raw);
   raw.close();
 }
 

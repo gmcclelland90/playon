@@ -112,7 +112,7 @@ export const WatcherActionSchema = z.discriminatedUnion("kind", [
 
 export type WatcherAction = z.infer<typeof WatcherActionSchema>;
 
-export const WatcherSourceSchema = z.enum(["user", "skill_template"]);
+export const WatcherSourceSchema = z.enum(["user", "skill_template", "platform"]);
 export const WatcherConfirmModeSchema = z.enum(["auto"]);
 export const WatcherRunStatusSchema = z.enum([
   "queued",
@@ -175,6 +175,29 @@ export type WatcherSeedTargetFacts = {
   hasNodeAuthoritativeMarker?: boolean | null;
 };
 
+/** Facts for who may receive the platform Health monitor on upgrade. */
+export type PlatformHealthSeedFacts = {
+  hasSkillMarker: boolean;
+  importedFrom?: string | null;
+  managedFrom?: string | null;
+};
+
+/**
+ * Create-from-skill and managed servers get the platform Health monitor.
+ * Import/friend trees (`importedFrom` without `managedFrom`) do not.
+ */
+export function serverEligibleForPlatformHealthMonitor(
+  facts: PlatformHealthSeedFacts,
+): boolean {
+  if (!facts.hasSkillMarker) return false;
+  const imported =
+    typeof facts.importedFrom === "string" && facts.importedFrom.length > 0;
+  const managed =
+    typeof facts.managedFrom === "string" && facts.managedFrom.length > 0;
+  if (imported && !managed) return false;
+  return true;
+}
+
 export function isManagedOrNodeAuthoritativeSeedTarget(
   facts: WatcherSeedTargetFacts,
 ): boolean {
@@ -188,8 +211,47 @@ export function isManagedOrNodeAuthoritativeSeedTarget(
 const MANAGED_WATCHER_NOTIFY_MESSAGE =
   "A watcher fired on this managed server. Schedule a reboot when convenient — PlayOn will not auto-restart.";
 
-const WORKSHOP_WATCHER_NOTIFY_MESSAGE =
+export const WORKSHOP_WATCHER_NOTIFY_MESSAGE =
   "One or more workshop mods have been updated. Schedule a server restart to apply changes — PlayOn will not auto-restart.";
+
+/** Platform default for new servers: one clean restart when advertised host ports fail. */
+export const PLATFORM_HEALTH_MONITOR_NAME = "Health monitor";
+
+export const PLATFORM_HEALTH_MONITOR_TEMPLATE: SkillWatcherTemplate = {
+  name: PLATFORM_HEALTH_MONITOR_NAME,
+  defaultEnabled: true,
+  cooldownMs: 300_000,
+  debounceMs: 30_000,
+  trigger: { kind: "health", onFail: ["restart"] },
+  action: {
+    kind: "tools",
+    continueOnError: false,
+    steps: [{ tool: "servers_health_check", args: { remediate: true } }],
+  },
+};
+
+/** Health + onFail restart — the Monitor “don’t leave it dead” watcher. */
+export function watcherTriggerIsHealthRestart(trigger: WatcherTrigger): boolean {
+  return trigger.kind === "health" && Boolean(trigger.onFail?.includes("restart"));
+}
+
+/**
+ * True when a tools action would start or restart the server.
+ * `workshop_update` must never do this.
+ */
+export function watcherActionWouldRestart(action: WatcherAction): boolean {
+  if (action.kind !== "tools") return false;
+  return action.steps.some((step) => {
+    if (step.tool === "servers_restart" || step.tool === "servers_start") return true;
+    if (step.tool === "servers_health_check") return step.args.remediate === true;
+    return false;
+  });
+}
+
+/** workshop_update is notify-only: no agent turn, no start/restart/remediate. */
+export function workshopUpdateActionMustBeNotifyOnly(action: WatcherAction): boolean {
+  return action.kind === "agent" || watcherActionWouldRestart(action);
+}
 
 /** Deterministic tools + notify action used when agent templates cannot be seeded. */
 export function skillWatcherNotifyAction(
@@ -224,14 +286,40 @@ export function sanitizeSkillWatcherTemplatesForSeed(
   templates: SkillWatcherTemplate[],
   facts: WatcherSeedTargetFacts,
 ): SkillWatcherTemplate[] {
-  if (!isManagedOrNodeAuthoritativeSeedTarget(facts)) return templates;
+  const managed = isManagedOrNodeAuthoritativeSeedTarget(facts);
   return templates.map((template) => {
-    if (template.action.kind !== "agent") return template;
-    return {
-      ...template,
-      action: skillWatcherNotifyAction(template.name, template.trigger),
-    };
+    if (
+      template.trigger.kind === "workshop_update" &&
+      workshopUpdateActionMustBeNotifyOnly(template.action)
+    ) {
+      return {
+        ...template,
+        action: skillWatcherNotifyAction(template.name, template.trigger),
+      };
+    }
+    if (managed && template.action.kind === "agent") {
+      return {
+        ...template,
+        action: skillWatcherNotifyAction(template.name, template.trigger),
+      };
+    }
+    return template;
   });
+}
+
+/** Rewrite a persisted/create action so workshop_update cannot auto-restart. */
+export function sanitizeWatcherActionForTrigger(
+  trigger: WatcherTrigger,
+  action: WatcherAction,
+  name: string,
+): WatcherAction {
+  if (
+    trigger.kind === "workshop_update" &&
+    workshopUpdateActionMustBeNotifyOnly(action)
+  ) {
+    return skillWatcherNotifyAction(name, trigger);
+  }
+  return action;
 }
 
 export const CreateWatcherSchema = z.object({

@@ -5,12 +5,16 @@ import { nanoid } from "nanoid";
 import {
   CreateWatcherSchema,
   NODE_AUTHORITATIVE_MARKER,
+  PLATFORM_HEALTH_MONITOR_TEMPLATE,
   UpdateWatcherSchema,
   WatcherActionSchema,
   WatcherTriggerSchema,
   computeNextDueAt,
   sanitizeSkillWatcherTemplatesForSeed,
+  sanitizeWatcherActionForTrigger,
+  serverEligibleForPlatformHealthMonitor,
   validateLogPattern,
+  watcherTriggerIsHealthRestart,
   type CreateWatcherInput,
   type SkillWatcherTemplate,
   type UpdateWatcherInput,
@@ -47,7 +51,12 @@ function toWatcher(row: typeof watchers.$inferSelect): Watcher {
     cooldownMs: row.cooldownMs,
     debounceMs: row.debounceMs,
     confirmMode: row.confirmMode === "auto" ? "auto" : "auto",
-    source: row.source === "skill_template" ? "skill_template" : "user",
+    source:
+      row.source === "skill_template"
+        ? "skill_template"
+        : row.source === "platform"
+          ? "platform"
+          : "user",
     skillSlug: row.skillSlug ?? undefined,
     lastFiredAt: row.lastFiredAt ? row.lastFiredAt.getTime() : null,
     nextDueAt: row.nextDueAt ? row.nextDueAt.getTime() : null,
@@ -84,30 +93,47 @@ function validateTrigger(trigger: WatcherTrigger): void {
 }
 
 export class WatcherService {
+  private platformHealthMigrated = false;
+
   constructor(private readonly db: Db) {}
 
-  async list(serverId?: string): Promise<Watcher[]> {
+  private async listRows(serverId?: string): Promise<Watcher[]> {
     const rows = serverId
       ? await this.db.select().from(watchers).where(eq(watchers.serverId, serverId))
       : await this.db.select().from(watchers);
     return rows.map(toWatcher);
   }
 
+  async list(serverId?: string): Promise<Watcher[]> {
+    await this.migratePlatformHealthMonitorsOnce();
+    return this.listRows(serverId);
+  }
+
   async listEnabled(): Promise<Watcher[]> {
+    await this.migratePlatformHealthMonitorsOnce();
     const rows = await this.db.select().from(watchers).where(eq(watchers.enabled, true));
     return rows.map(toWatcher);
   }
 
-  async get(id: string): Promise<Watcher | null> {
+  private async getRow(id: string): Promise<Watcher | null> {
     const rows = await this.db.select().from(watchers).where(eq(watchers.id, id)).limit(1);
     return rows[0] ? toWatcher(rows[0]) : null;
   }
 
+  async get(id: string): Promise<Watcher | null> {
+    await this.migratePlatformHealthMonitorsOnce();
+    return this.getRow(id);
+  }
+
   async create(
     input: CreateWatcherInput,
-    opts?: { source?: "user" | "skill_template"; skillSlug?: string },
+    opts?: { source?: "user" | "skill_template" | "platform"; skillSlug?: string },
   ): Promise<Watcher> {
-    const body = CreateWatcherSchema.parse(input);
+    const parsed = CreateWatcherSchema.parse(input);
+    const body = {
+      ...parsed,
+      action: sanitizeWatcherActionForTrigger(parsed.trigger, parsed.action, parsed.name),
+    };
     validateTrigger(body.trigger);
     const id = nanoid();
     const now = new Date();
@@ -132,15 +158,20 @@ export class WatcherService {
       createdAt: now,
       updatedAt: now,
     });
-    return (await this.get(id))!;
+    return (await this.getRow(id))!;
   }
 
   async update(id: string, input: UpdateWatcherInput): Promise<Watcher | null> {
-    const existing = await this.get(id);
+    const existing = await this.getRow(id);
     if (!existing) return null;
     const body = UpdateWatcherSchema.parse(input);
     if (body.trigger) validateTrigger(body.trigger);
     const trigger = body.trigger ?? existing.trigger;
+    const action = sanitizeWatcherActionForTrigger(
+      trigger,
+      body.action ?? existing.action,
+      body.name ?? existing.name,
+    );
     const now = new Date();
     const nextDueAt =
       trigger.kind === "schedule"
@@ -157,14 +188,14 @@ export class WatcherService {
         name: body.name ?? existing.name,
         enabled: body.enabled ?? existing.enabled,
         triggerJson: JSON.stringify(trigger),
-        actionJson: JSON.stringify(body.action ?? existing.action),
+        actionJson: JSON.stringify(action),
         cooldownMs: body.cooldownMs ?? existing.cooldownMs,
         debounceMs: body.debounceMs ?? existing.debounceMs,
         nextDueAt,
         updatedAt: now,
       })
       .where(eq(watchers.id, id));
-    return this.get(id);
+    return this.getRow(id);
   }
 
   async setEnabled(id: string, enabled: boolean): Promise<Watcher | null> {
@@ -172,7 +203,7 @@ export class WatcherService {
   }
 
   async delete(id: string): Promise<boolean> {
-    const existing = await this.get(id);
+    const existing = await this.getRow(id);
     if (!existing) return false;
     await this.db.delete(watcherRuns).where(eq(watcherRuns.watcherId, id));
     await this.db.delete(watchers).where(eq(watchers.id, id));
@@ -180,7 +211,7 @@ export class WatcherService {
   }
 
   async markFired(id: string, atMs: number = Date.now()): Promise<void> {
-    const w = await this.get(id);
+    const w = await this.getRow(id);
     if (!w) return;
     const nextDueAt =
       w.trigger.kind === "schedule"
@@ -311,7 +342,83 @@ export class WatcherService {
         ),
       );
     }
+    await this.ensurePlatformHealthMonitor(serverId, safeTemplates);
     return created;
+  }
+
+  /**
+   * Seed the platform Health monitor when the skill did not already declare
+   * a health+restart watcher. Callers decide eligibility (new create vs
+   * existing create-from-skill / managed). Import/friend stay out.
+   */
+  async ensurePlatformHealthMonitor(
+    serverId: string,
+    skillTemplates: SkillWatcherTemplate[] = [],
+  ): Promise<Watcher | null> {
+    const existing = await this.listRows(serverId);
+    const skillHasHealthRestart = skillTemplates.some((t) =>
+      watcherTriggerIsHealthRestart(t.trigger),
+    );
+    const platformRows = existing.filter(
+      (w) => w.source === "platform" && watcherTriggerIsHealthRestart(w.trigger),
+    );
+    if (skillHasHealthRestart) {
+      for (const w of platformRows) await this.delete(w.id);
+      return null;
+    }
+    if (existing.some((w) => watcherTriggerIsHealthRestart(w.trigger))) return null;
+    const t = PLATFORM_HEALTH_MONITOR_TEMPLATE;
+    return this.create(
+      {
+        serverId,
+        name: t.name,
+        enabled: t.defaultEnabled,
+        trigger: t.trigger,
+        action: t.action,
+        cooldownMs: t.cooldownMs,
+        debounceMs: t.debounceMs,
+      },
+      { source: "platform" },
+    );
+  }
+
+  /**
+   * One-shot: existing create-from-skill / managed servers without a
+   * health+restart watcher get the platform Health monitor. Import/friend
+   * (`importedFrom` without `managedFrom`) are skipped. workshop_update
+   * rows are not rewritten.
+   */
+  async migratePlatformHealthMonitors(): Promise<string[]> {
+    const rows = await this.db.select().from(servers);
+    const seeded: string[] = [];
+    for (const row of rows) {
+      const marker = readSkillMarker(row.dataPath);
+      const extras = marker as { importedFrom?: unknown } | null;
+      const importedFrom =
+        typeof extras?.importedFrom === "string" ? extras.importedFrom : null;
+      if (
+        !serverEligibleForPlatformHealthMonitor({
+          hasSkillMarker: Boolean(marker),
+          importedFrom,
+          managedFrom: marker?.managedFrom,
+        })
+      ) {
+        continue;
+      }
+      const created = await this.ensurePlatformHealthMonitor(row.id, []);
+      if (created) seeded.push(row.id);
+    }
+    return seeded;
+  }
+
+  async migratePlatformHealthMonitorsOnce(): Promise<void> {
+    if (this.platformHealthMigrated) return;
+    this.platformHealthMigrated = true;
+    try {
+      await this.migratePlatformHealthMonitors();
+    } catch {
+      this.platformHealthMigrated = false;
+    }
   }
 
   private async seedTargetFacts(serverId: string): Promise<WatcherSeedTargetFacts> {
@@ -330,5 +437,21 @@ export class WatcherService {
         path.join(dataPath, NODE_AUTHORITATIVE_MARKER),
       ),
     };
+  }
+}
+
+/** Best-effort seed for create-from-skill (HTTP + tool). Not used on import. */
+export async function seedWatchersForNewServer(
+  watchers: WatcherService,
+  args: {
+    serverId: string;
+    skillSlug: string;
+    templates?: SkillWatcherTemplate[];
+  },
+): Promise<void> {
+  try {
+    await watchers.seedFromSkill(args.serverId, args.skillSlug, args.templates ?? []);
+  } catch {
+    /* seeding is best-effort */
   }
 }

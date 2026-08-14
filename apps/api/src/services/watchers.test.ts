@@ -2,7 +2,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { NODE_AUTHORITATIVE_MARKER, type SkillWatcherTemplate } from "@playon/shared";
+import {
+  NODE_AUTHORITATIVE_MARKER,
+  PLATFORM_HEALTH_MONITOR_NAME,
+  watcherActionWouldRestart,
+  type SkillWatcherTemplate,
+} from "@playon/shared";
 import { applyBootstrap } from "../db/migrate.js";
 import { createDb } from "../db/client.js";
 import { WatcherService } from "./watchers.js";
@@ -165,6 +170,10 @@ describe("WatcherService", () => {
     expect(seeded).toHaveLength(1);
     expect(seeded[0]?.action.kind).toBe("agent");
     expect(seeded[0]?.source).toBe("skill_template");
+    const listed = await svc.list("lab1");
+    expect(
+      listed.some((w) => w.source === "platform" && w.name === PLATFORM_HEALTH_MONITOR_NAME),
+    ).toBe(true);
   });
 
   it("does not seed action.kind=agent on managed or node-authoritative servers", async () => {
@@ -248,6 +257,205 @@ describe("WatcherService", () => {
       const notify = seeded.find((w) => w.name === workshopNotifyTemplate.name);
       expect(notify?.action).toEqual(workshopNotifyTemplate.action);
       expect(notify?.action.kind).toBe("tools");
+      expect(watcherActionWouldRestart(notify!.action)).toBe(false);
+
+      const listed = await svc.list(c.id);
+      expect(listed.some((w) => w.name === PLATFORM_HEALTH_MONITOR_NAME)).toBe(true);
+      expect(
+        listed.some(
+          (w) => w.name === PLATFORM_HEALTH_MONITOR_NAME && w.source === "platform" && w.enabled,
+        ),
+      ).toBe(true);
     }
+  });
+
+  it("seeds an enabled platform health monitor when the skill has no health+restart", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-watchers-"));
+    dirs.push(root);
+    const dbPath = path.join(root, "playon.db");
+    applyBootstrap(dbPath);
+    const { db } = createDb(dbPath);
+    const { servers } = await import("../db/schema.js");
+    const dataPath = path.join(root, "servers", "new1");
+    fs.mkdirSync(dataPath, { recursive: true });
+    await db.insert(servers).values({
+      id: "new1",
+      name: "New",
+      game: "lab",
+      nodeId: null,
+      runtimeMode: "docker",
+      status: "stopped",
+      dataPath,
+      createdAt: new Date(),
+    });
+
+    const svc = new WatcherService(db);
+    const seeded = await svc.seedFromSkill("new1", "games.no-watchers", []);
+    expect(seeded).toHaveLength(0);
+    const listed = await svc.list("new1");
+    const monitor = listed.find((w) => w.name === PLATFORM_HEALTH_MONITOR_NAME);
+    expect(monitor?.enabled).toBe(true);
+    expect(monitor?.source).toBe("platform");
+    expect(monitor?.trigger.kind).toBe("health");
+    expect(watcherActionWouldRestart(monitor!.action)).toBe(true);
+  });
+
+  it("does not duplicate the platform monitor when the skill already has health+restart", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-watchers-"));
+    dirs.push(root);
+    const dbPath = path.join(root, "playon.db");
+    applyBootstrap(dbPath);
+    const { db } = createDb(dbPath);
+    const { servers } = await import("../db/schema.js");
+    const dataPath = path.join(root, "servers", "lab2");
+    fs.mkdirSync(dataPath, { recursive: true });
+    await db.insert(servers).values({
+      id: "lab2",
+      name: "Lab",
+      game: "lab",
+      nodeId: null,
+      runtimeMode: "docker",
+      status: "stopped",
+      dataPath,
+      createdAt: new Date(),
+    });
+
+    const svc = new WatcherService(db);
+    const seeded = await svc.seedFromSkill("lab2", "fixtures.lab-docker-server", [
+      {
+        name: "Health restart",
+        defaultEnabled: true,
+        cooldownMs: 300_000,
+        debounceMs: 30_000,
+        trigger: { kind: "health", onFail: ["restart"] },
+        action: {
+          kind: "tools",
+          continueOnError: false,
+          steps: [{ tool: "servers_health_check", args: { remediate: true } }],
+        },
+      },
+    ]);
+    expect(seeded).toHaveLength(1);
+    const listed = await svc.list("lab2");
+    expect(listed.filter((w) => w.trigger.kind === "health" && w.source === "platform")).toHaveLength(
+      0,
+    );
+    expect(listed.filter((w) => watcherActionWouldRestart(w.action))).toHaveLength(1);
+  });
+
+  it("rewrites workshop_update create/update so the action cannot restart", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-watchers-"));
+    dirs.push(root);
+    const dbPath = path.join(root, "playon.db");
+    applyBootstrap(dbPath);
+    const { db } = createDb(dbPath);
+    const { servers } = await import("../db/schema.js");
+    await db.insert(servers).values({
+      id: "ws1",
+      name: "PZ",
+      game: "zomboid",
+      nodeId: null,
+      runtimeMode: "native",
+      status: "stopped",
+      dataPath: path.join(root, "servers", "ws1"),
+      createdAt: new Date(),
+    });
+
+    const svc = new WatcherService(db);
+    const created = await svc.create({
+      serverId: "ws1",
+      name: "Workshop Update Notifier",
+      enabled: true,
+      trigger: { kind: "workshop_update", workshopIds: ["3579640010"] },
+      action: {
+        kind: "tools",
+        steps: [{ tool: "servers_restart", args: {} }],
+      },
+    });
+    expect(watcherActionWouldRestart(created.action)).toBe(false);
+    if (created.action.kind === "tools") {
+      expect(created.action.steps.every((s) => s.tool === "panel_publish")).toBe(true);
+      expect(created.action.steps.some((s) => s.tool === "servers_restart")).toBe(false);
+    }
+
+    const updated = await svc.update(created.id, {
+      action: {
+        kind: "tools",
+        steps: [{ tool: "servers_health_check", args: { remediate: true } }],
+      },
+    });
+    expect(watcherActionWouldRestart(updated!.action)).toBe(false);
+  });
+
+  it("migrates existing create-from-skill and managed servers; skips import/friend", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-watchers-"));
+    dirs.push(root);
+    const dbPath = path.join(root, "playon.db");
+    applyBootstrap(dbPath);
+    const { db } = createDb(dbPath);
+    const { servers } = await import("../db/schema.js");
+
+    async function insertServer(
+      id: string,
+      extras: Record<string, unknown>,
+    ): Promise<void> {
+      const dataPath = path.join(root, "servers", id);
+      fs.mkdirSync(dataPath, { recursive: true });
+      fs.writeFileSync(
+        path.join(dataPath, "skill.json"),
+        JSON.stringify({
+          skillName: "games.project-zomboid",
+          version: "0.1.0",
+          runtimeMode: "native",
+          containerSupport: "none",
+          nodeId: null,
+          ...extras,
+        }),
+      );
+      await db.insert(servers).values({
+        id,
+        name: id,
+        game: "zomboid",
+        nodeId: null,
+        runtimeMode: "native",
+        status: "stopped",
+        dataPath,
+        createdAt: new Date(),
+      });
+    }
+
+    await insertServer("created1", {});
+    await insertServer("managed1", { managedFrom: "/opt/pzserver" });
+    await insertServer("import1", { importedFrom: "/legacy/server" });
+    await insertServer("nzl3", {
+      managedFrom: "/opt/pzserver",
+      importedFrom: "/opt/pzserver",
+    });
+
+    const svc = new WatcherService(db);
+    const seeded = await svc.migratePlatformHealthMonitors();
+    expect(seeded.sort()).toEqual(["created1", "managed1", "nzl3"].sort());
+
+    await svc.create({
+      serverId: "nzl3",
+      name: "Workshop Update Notifier",
+      enabled: true,
+      trigger: { kind: "workshop_update", workshopIds: ["3579640010"] },
+      action: workshopNotifyTemplate.action,
+    });
+
+    for (const id of ["created1", "managed1", "nzl3"]) {
+      const listed = await svc.list(id);
+      expect(
+        listed.some((w) => w.name === PLATFORM_HEALTH_MONITOR_NAME && w.enabled),
+        id,
+      ).toBe(true);
+    }
+    const imported = await svc.list("import1");
+    expect(imported.some((w) => w.name === PLATFORM_HEALTH_MONITOR_NAME)).toBe(false);
+
+    const workshop = (await svc.list("nzl3")).find((w) => w.trigger.kind === "workshop_update");
+    expect(workshop).toBeTruthy();
+    expect(watcherActionWouldRestart(workshop!.action)).toBe(false);
   });
 });

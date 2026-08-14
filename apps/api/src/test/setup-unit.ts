@@ -1,5 +1,8 @@
 import { vi } from "vitest";
 
+/** Skip live TCP/UDP probes on the CI host; tests set portsBoundOverride when they need bind evidence. */
+process.env.PLAYON_SKIP_HOST_PORT_PROBE = "1";
+
 /**
  * Unit tests use FakeDocker / mocked runtimes — they must not depend on a real
  * Docker socket. After Phase 0, createFromSkill throws no_eligible_node when

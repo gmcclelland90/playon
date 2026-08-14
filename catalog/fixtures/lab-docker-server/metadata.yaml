@@ -44,9 +44,12 @@ healthChecks:
     port: 25565
     onFail: restart
 watchers:
+  # Lab equivalent of the platform Health monitor (enabled for new servers).
+  # workshop_update must stay notify-only and is not declared here.
   - name: Health restart
-    defaultEnabled: false
-    cooldownMs: 120000
+    defaultEnabled: true
+    cooldownMs: 300000
+    debounceMs: 30000
     trigger:
       kind: health
       onFail:

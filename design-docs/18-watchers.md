@@ -14,7 +14,7 @@ A watcher is bound to a server and has:
 2. **Action** — `tools` (ordered allowlisted calls) or `agent` (Orchestrator turn)  
 3. **Guards** — enabled, cooldown, debounce, concurrency limits  
 
-Skill metadata may declare `watchers[]` templates. On `servers_create_from_skill`, templates are seeded with `source: skill_template` (usually disabled until the host enables them).
+Skill metadata may declare `watchers[]` templates. On `servers_create_from_skill` (HTTP or tool), templates are seeded with `source: skill_template`. Create-from-skill and managed servers also get an enabled platform **Health monitor** (`source: platform`) unless a health+restart watcher already exists: advertised host-local game ports fail → one clean `servers_health_check` remediate restart (reap leftover first). Not an agent turn. Existing create-from-skill / managed rows (no health+restart watcher) are migrated on Home boot and watcher list/get. Import/friend trees (`importedFrom` without `managedFrom`) are skipped. `workshop_update` is notify-only and must never auto-restart.
 
 ## Triggers (v1)
 

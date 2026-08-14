@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS servers (
   runtime_mode TEXT NOT NULL DEFAULT 'docker',
   status TEXT NOT NULL DEFAULT 'stopped',
   data_path TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  instance_started_at INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS conversations (
