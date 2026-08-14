@@ -1296,7 +1296,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                     </p>
                     {wslInstalled && wslOnline ? (
                       <p className="muted status-inline">
-                        <strong>Networking:</strong> WSL LAN join uses the Windows host's IP. On Win11 22H2+, mirrored networking exposes WSL ports directly; older NAT mode may require manual portproxy setup for some games.
+                        <strong>Networking:</strong> WSL LAN join uses the Windows host's IP. PlayOn publishes game ports on that address after start (mirrored networking or the Windows node agent). Update the Windows node if a WSL server is not joinable.
                       </p>
                     ) : null}
                     {wslOneLiner ? (

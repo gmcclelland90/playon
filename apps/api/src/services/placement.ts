@@ -2,10 +2,14 @@ import os from "node:os";
 import { eq } from "drizzle-orm";
 import {
   deriveNodePresence,
+  evaluateWslLanPublish,
   isLocalNodeId,
+  isWslNodeId,
   LOCAL_NODE_ID,
   placementBadge,
   placementFromNodeKind,
+  skillHasLanJoinPort,
+  wslParentNodeId,
   type ComputePlacement,
   type NodeKind,
   type NodePresence,
@@ -22,6 +26,7 @@ import type { Db } from "../db/client.js";
 import { nodes } from "../db/schema.js";
 import { loadSkillMetadata } from "./skills.js";
 import type { NetToolsService } from "./net-tools.js";
+import { parentAdvertisesLanPublish } from "./wsl-lan-publish.js";
 import {
   DEFAULT_NODE_SETTINGS,
   getSetting,
@@ -76,6 +81,7 @@ export type NodeCaps = {
   lastSeenAt: Date;
   kind: NodeKind;
   tunnelStatus: NodeTunnelStatus;
+  joinHost?: string | null;
 };
 
 export function scoreNodeForSkill(
@@ -191,6 +197,37 @@ export function scoreNodeForSkill(
   };
 }
 
+/**
+ * LAN-joinable skills cannot sit on a WSL sibling whose Windows parent cannot
+ * publish the advertised join_host (empty/loopback, or old agent without
+ * net_port_publish). Fall back to a node that can (local docker / playon-dev).
+ */
+export function applyWslLanPlacement(
+  candidates: PlacementCandidate[],
+  caps: NodeCaps[],
+  skill: SkillMetadata,
+  advertiseHost: string,
+): PlacementCandidate[] {
+  if (!skillHasLanJoinPort(skill)) return candidates;
+  const byId = new Map(caps.map((c) => [c.id, c]));
+  for (const c of candidates) {
+    if (!isWslNodeId(c.nodeId)) continue;
+    const parentId = wslParentNodeId(c.nodeId);
+    const parent = parentId ? byId.get(parentId) : undefined;
+    const verdict = evaluateWslLanPublish({
+      parentJoinHost: parent?.joinHost,
+      advertiseHost,
+      parentAdvertisesPublish: parentId ? parentAdvertisesLanPublish(parentId) : false,
+    });
+    c.reasons.push(verdict.reason);
+    if (!verdict.ok && c.eligible) {
+      c.eligible = false;
+      c.score -= 1000;
+    }
+  }
+  return candidates;
+}
+
 export class PlacementService {
   constructor(
     private readonly db: Db,
@@ -277,6 +314,7 @@ export class PlacementService {
       lastSeenAt: n.lastSeenAt,
       kind: (n.kind as NodeKind) || (n.id === LOCAL_NODE_ID ? "local" : "lan"),
       tunnelStatus: (n.tunnelStatus as NodeTunnelStatus) || "none",
+      joinHost: n.joinHost,
     }));
   }
 
@@ -293,6 +331,8 @@ export class PlacementService {
         }),
       )
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+
+    applyWslLanPlacement(candidates, caps, skill.metadata, this.config.advertiseHost);
 
     // Home suggestBind is this API host's bind table. Do not attach port_ok:25566
     // to a WSL/LAN candidate — that is playon-dev, not the recommended node.

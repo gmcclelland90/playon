@@ -12,7 +12,7 @@ Companion docs: [agent-dev-loop.md](agent-dev-loop.md), [lab-matrix.md](lab-matr
 | Merge | `pnpm loop:verify` | Before merge when touching API / agent / runtime; always before release | Linux lab + [nightly-docker](../.github/workflows/nightly-docker.yml) |
 | Runtime | `pnpm loop:verify:runtime` | Docker lifecycle / Paper path changes | Lab + nightly |
 | Catalog | `pnpm lab:matrix` | Skill / catalog changes; standing lab cadence | Lab timer ([infra/lab](../infra/lab/README.md)) |
-| Join-path canary | `pnpm lab:join-path-canary` | Published `joinHost:gamePort` from `resolveJoinAddress` (not loopback). Ready-gate uses that advertised path from Home; loopback diagnosis for a remote node is `net_tcp_connect` on that node, never Home soak. | Unit in `pnpm verify`; live Docker / WSL / Win PE lab-only ([#843](https://github.com/gmcclelland90/playon/issues/843)) |
+| Join-path canary | `pnpm lab:join-path-canary` | Published `joinHost:gamePort` from `resolveJoinAddress` (not loopback). Ready-gate uses that advertised path from Home; WSL NAT publish is `net_port_publish` on the Windows parent LAN IP. | Unit in `pnpm verify`; live Docker / WSL / Win PE lab-only ([#843](https://github.com/gmcclelland90/playon/issues/843)) |
 | LLM canary | `pnpm lab:llm-canary` | Two-step tool trace (Venice + Ollama when present) | Playon Ops `llm-model-compat` (Mon/Thu) |
 | UI smoke | `pnpm test:e2e` | Auth / panel / UI flows | Weekly Actions (`e2e-weekly.yml`) |
 

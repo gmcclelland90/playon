@@ -54,6 +54,7 @@ export const NodeJobKindSchema = z.enum([
   "runtime_caps",
   "net_udp_listen",
   "net_tcp_connect",
+  "net_port_publish",
   "node_self_update",
   "manage_probe",
   "manage_pack",

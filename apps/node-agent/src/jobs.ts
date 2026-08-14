@@ -14,6 +14,7 @@ import {
   type DockerAdapter,
   type ProcessSupervisor,
 } from "@playon/runtime";
+import { portPublishRegistry } from "./port-publish.js";
 import {
   FS_READ_MAX_BYTES,
   MANAGE_PACK_STAGING_REL,
@@ -121,6 +122,7 @@ export const SUPPORTED_JOB_KINDS: readonly NodeJobKind[] = [
   "runtime_caps",
   "net_udp_listen",
   "net_tcp_connect",
+  "net_port_publish",
   "node_self_update",
   "fs_list",
   "fs_ensure_dir",
@@ -309,6 +311,34 @@ export async function executeJob(
     const { host, port } = parseNodeJobArgs("net_tcp_connect", job.args);
     const state = await probeTcpConnect(host, port);
     return parseNodeJobResult("net_tcp_connect", { host, port, state });
+  }
+
+  if (job.kind === "net_port_publish") {
+    const args = parseNodeJobArgs("net_port_publish", job.args);
+    if (args.action === "release_server") {
+      return parseNodeJobResult("net_port_publish", portPublishRegistry.releaseServer(args.serverId));
+    }
+    if (args.action === "release") {
+      return parseNodeJobResult(
+        "net_port_publish",
+        portPublishRegistry.release({
+          serverId: args.serverId,
+          listenPort: args.listenPort!,
+          protocol: args.protocol!,
+        }),
+      );
+    }
+    return parseNodeJobResult(
+      "net_port_publish",
+      await portPublishRegistry.ensure({
+        serverId: args.serverId,
+        listenHost: args.listenHost!,
+        listenPort: args.listenPort!,
+        protocol: args.protocol!,
+        targetHost: args.targetHost,
+        targetPort: args.targetPort ?? args.listenPort!,
+      }),
+    );
   }
 
   if (job.kind === "node_self_update") {

@@ -8,16 +8,19 @@ import { applyBootstrap } from "../db/migrate.js";
 import { nodes } from "../db/schema.js";
 import type { AppConfig } from "../config.js";
 import {
+  applyWslLanPlacement,
   PlacementService,
   scoreNodeForSkill,
   type HostCapabilityProbe,
   type NodeCaps,
 } from "./placement.js";
 import type { NetToolsService } from "./net-tools.js";
+import { nodeJobService } from "./node-jobs.js";
 
 const temps: Array<{ root: string; close: () => void }> = [];
 
 afterEach(() => {
+  nodeJobService.forgetJobKinds("playon-win-1");
   for (const entry of temps.splice(0)) {
     entry.close();
     fs.rmSync(entry.root, { recursive: true, force: true });
@@ -302,6 +305,112 @@ describe("scoreNodeForSkill windows containers", () => {
   });
 });
 
+describe("applyWslLanPlacement", () => {
+  const now = Date.now();
+
+  it("marks WSL ineligible when the parent cannot publish a LAN join host", () => {
+    const wsl = scoreNodeForSkill(
+      caps({
+        id: "playon-win-1-wsl",
+        name: "win-wsl",
+        lastSeenAt: new Date(now - 1000),
+      }),
+      baseSkill,
+      now,
+    );
+    const local = scoreNodeForSkill(
+      caps({
+        id: "local",
+        name: "home",
+        kind: "local",
+        lastSeenAt: new Date(now - 1000),
+      }),
+      baseSkill,
+      now,
+    );
+    expect(wsl.eligible).toBe(true);
+    applyWslLanPlacement(
+      [wsl, local],
+      [
+        caps({
+          id: "playon-win-1",
+          name: "win",
+          os: "windows",
+          joinHost: "172.16.0.94",
+          lastSeenAt: new Date(now - 1000),
+        }),
+        caps({ id: "playon-win-1-wsl", name: "win-wsl", lastSeenAt: new Date(now - 1000) }),
+        caps({ id: "local", name: "home", kind: "local", lastSeenAt: new Date(now - 1000) }),
+      ],
+      baseSkill,
+      "127.0.0.1",
+    );
+    expect(wsl.eligible).toBe(false);
+    expect(wsl.reasons).toContain("wsl_lan_publish_unavailable");
+    expect(local.eligible).toBe(true);
+  });
+
+  it("keeps WSL eligible when the parent advertises net_port_publish", () => {
+    nodeJobService.advertiseJobKinds("playon-win-1", ["net_port_publish"]);
+    const wsl = scoreNodeForSkill(
+      caps({
+        id: "playon-win-1-wsl",
+        name: "win-wsl",
+        lastSeenAt: new Date(now - 1000),
+      }),
+      baseSkill,
+      now,
+    );
+    applyWslLanPlacement(
+      [wsl],
+      [
+        caps({
+          id: "playon-win-1",
+          name: "win",
+          os: "windows",
+          joinHost: "172.16.0.94",
+          lastSeenAt: new Date(now - 1000),
+        }),
+        caps({ id: "playon-win-1-wsl", name: "win-wsl", lastSeenAt: new Date(now - 1000) }),
+      ],
+      baseSkill,
+      "127.0.0.1",
+    );
+    expect(wsl.eligible).toBe(true);
+    expect(wsl.reasons).toContain("wsl_lan_publishable");
+  });
+
+  it("marks WSL ineligible when parent join_host is loopback", () => {
+    nodeJobService.advertiseJobKinds("playon-win-1", ["net_port_publish"]);
+    const wsl = scoreNodeForSkill(
+      caps({
+        id: "playon-win-1-wsl",
+        name: "win-wsl",
+        lastSeenAt: new Date(now - 1000),
+      }),
+      baseSkill,
+      now,
+    );
+    applyWslLanPlacement(
+      [wsl],
+      [
+        caps({
+          id: "playon-win-1",
+          name: "win",
+          os: "windows",
+          joinHost: "127.0.0.1",
+          lastSeenAt: new Date(now - 1000),
+        }),
+        caps({ id: "playon-win-1-wsl", name: "win-wsl", lastSeenAt: new Date(now - 1000) }),
+      ],
+      baseSkill,
+      "127.0.0.1",
+    );
+    expect(wsl.eligible).toBe(false);
+    expect(wsl.reasons).toContain("wsl_parent_join_host_unusable");
+  });
+});
+
 describe("PlacementService.resolveNodeId", () => {
   const linuxOnlyYaml = `
 name: fixtures.linux-only-demo
@@ -347,6 +456,97 @@ ports:
     });
 
     await expect(placement.resolveNodeId(skillName)).resolves.toBe("lab-linux");
+  });
+
+  it("does not recommend a WSL sibling when the parent cannot publish LAN", async () => {
+    const { placement, db, skillName } = placementEnv(linuxOnlyYaml, windowsLocalProbe);
+    await placement.ensureLocalNode();
+    await db.insert(nodes).values({
+      id: "playon-win-1",
+      name: "win",
+      os: "windows",
+      docker: false,
+      native: true,
+      steamcmd: true,
+      freeDiskBytes: 20 * 1024 ** 3,
+      agentVersion: "test",
+      lastSeenAt: new Date(),
+      kind: "lan",
+      tunnelStatus: "none",
+      joinHost: "172.16.0.94",
+    });
+    await db.insert(nodes).values({
+      id: "playon-win-1-wsl",
+      name: "win-wsl",
+      os: "linux",
+      docker: true,
+      native: true,
+      steamcmd: false,
+      freeDiskBytes: 40 * 1024 ** 3,
+      agentVersion: "test",
+      lastSeenAt: new Date(),
+      kind: "lan",
+      tunnelStatus: "none",
+    });
+    await db.insert(nodes).values({
+      id: "playon-dev",
+      name: "dev",
+      os: "linux",
+      docker: true,
+      native: true,
+      steamcmd: false,
+      freeDiskBytes: 20 * 1024 ** 3,
+      agentVersion: "test",
+      lastSeenAt: new Date(),
+      kind: "lan",
+      tunnelStatus: "none",
+      joinHost: "172.16.0.10",
+    });
+
+    const plan = await placement.plan(skillName);
+    expect(plan.recommendedNodeId).toBe("playon-dev");
+    const wsl = plan.candidates.find((c) => c.nodeId === "playon-win-1-wsl");
+    expect(wsl?.eligible).toBe(false);
+    expect(wsl?.reasons).toContain("wsl_lan_publish_unavailable");
+  });
+
+  it("may recommend WSL when the parent advertises net_port_publish", async () => {
+    nodeJobService.advertiseJobKinds("playon-win-1", ["net_port_publish"]);
+    const { placement, db, skillName } = placementEnv(linuxOnlyYaml, windowsLocalProbe);
+    await placement.ensureLocalNode();
+    await db.insert(nodes).values({
+      id: "playon-win-1",
+      name: "win",
+      os: "windows",
+      docker: false,
+      native: true,
+      steamcmd: true,
+      freeDiskBytes: 20 * 1024 ** 3,
+      agentVersion: "test",
+      lastSeenAt: new Date(),
+      kind: "lan",
+      tunnelStatus: "none",
+      joinHost: "172.16.0.94",
+    });
+    await db.insert(nodes).values({
+      id: "playon-win-1-wsl",
+      name: "win-wsl",
+      os: "linux",
+      docker: true,
+      native: true,
+      steamcmd: false,
+      freeDiskBytes: 40 * 1024 ** 3,
+      agentVersion: "test",
+      lastSeenAt: new Date(),
+      kind: "lan",
+      tunnelStatus: "none",
+    });
+
+    const plan = await placement.plan(skillName);
+    expect(plan.recommendedNodeId).toBe("playon-win-1-wsl");
+    const wsl = plan.candidates.find((c) => c.nodeId === "playon-win-1-wsl");
+    expect(wsl?.eligible).toBe(true);
+    expect(wsl?.reasons).toContain("wsl_lan_publishable");
   });
 
   it("does not attach Home suggestBind as port_ok for a remote recommended node", async () => {

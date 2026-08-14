@@ -75,12 +75,16 @@ import {
   AdminDialectSchema,
   deriveNodePresence,
   isLocalNodeId,
+  isLoopbackJoinHost,
+  isWslNodeId,
+  lanPublishPortsForSkill,
   NODE_AUTHORITATIVE_MARKER,
   wslParentNodeId,
   type AdminDialect,
   type SkillMetadata,
 } from "@playon/shared";
 import { dispatchNodeJob, nodeServerRelPath } from "./node-runtime.js";
+import { ensureWslLanPublish, releaseWslLanPublish } from "./wsl-lan-publish.js";
 
 export interface ServerRecord {
   id: string;
@@ -1096,6 +1100,40 @@ export class ServerService {
     }
   }
 
+  /**
+   * WSL sibling: publish game/RCON/query on the Windows parent LAN IP so
+   * resolveJoinAddress (parent join_host) is actually reachable. Syncs an
+   * empty WSL join_host from the parent so the advertised path is explicit.
+   */
+  private async ensureWslParentPublish(server: ServerRecord, skillName: string): Promise<void> {
+    if (!server.nodeId || !isWslNodeId(server.nodeId)) return;
+    const parentId = wslParentNodeId(server.nodeId);
+    if (!parentId) return;
+    const parent = await this.nodeRow(parentId);
+    const parentJoinHost = parent?.joinHost?.trim() || this.config.advertiseHost;
+    await this.syncWslJoinHost(server.nodeId, parentJoinHost);
+
+    const skill = this.resolveSkill(skillName)?.metadata ?? null;
+    const extra: number[] = [];
+    if (this.wantsAnyRcon(skillName)) extra.push(this.rconPortForSkill(skillName, server.game));
+    const ports = lanPublishPortsForSkill(skill, extra);
+    if (!ports.length) return;
+    await ensureWslLanPublish({
+      serverId: server.id,
+      wslNodeId: server.nodeId,
+      parentJoinHost,
+      ports,
+    });
+  }
+
+  private async syncWslJoinHost(wslNodeId: string, parentJoinHost: string): Promise<void> {
+    const host = parentJoinHost.trim();
+    if (!host || isLoopbackJoinHost(host)) return;
+    const wsl = await this.nodeRow(wslNodeId);
+    if (!wsl || wsl.joinHost?.trim()) return;
+    await this.db.update(nodes).set({ joinHost: host }).where(eq(nodes.id, wslNodeId));
+  }
+
   async list(): Promise<ServerRecord[]> {
     const rows = await this.db.select().from(servers);
     const records = rows.map(toRecord);
@@ -1304,6 +1342,7 @@ export class ServerService {
       }).catch(() => undefined);
     }
     await this.ensureCloudGateway(server, skillName);
+    await this.ensureWslParentPublish(server, skillName);
   }
 
   async start(id: string): Promise<ServerRecord> {
@@ -1349,6 +1388,7 @@ export class ServerService {
     this.emitStatus(id, "stopping");
     this.stopLogFollow(id);
     await this.gateway?.releaseServer(id).catch(() => undefined);
+    await releaseWslLanPublish({ serverId: id, wslNodeId: server.nodeId }).catch(() => undefined);
 
     await this.openRuntime(server)
       .then((handle) => handle.stop())
