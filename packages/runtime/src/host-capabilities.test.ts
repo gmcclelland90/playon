@@ -2,9 +2,19 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { detectHostOs, probeHostCapabilities, steamcmdAvailable } from "./host-capabilities.js";
+import {
+  detectHostOs,
+  probeHostCapabilities,
+  steamcmdAvailable,
+  WINDOWS_DOCKER_PIPES,
+} from "./host-capabilities.js";
 
 describe("host-capabilities", () => {
+  it("lists the Windows docker named pipes the probe checks", () => {
+    expect(WINDOWS_DOCKER_PIPES).toContain("\\\\.\\pipe\\docker_engine");
+    expect(WINDOWS_DOCKER_PIPES).toContain("\\\\.\\pipe\\dockerDesktopWindowsEngine");
+  });
+
   it("reports os and native always true", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-caps-"));
     const caps = probeHostCapabilities(root);

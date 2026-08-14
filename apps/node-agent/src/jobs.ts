@@ -23,7 +23,7 @@ import {
 } from "@playon/shared";
 import { assertPackPathAllowed, runImportProbe } from "./import-probe.js";
 import { runManageCutover } from "./manage-cutover.js";
-import { probeCapabilities } from "./capabilities.js";
+import { probeCapabilitiesForHeartbeat } from "./capabilities.js";
 import { executeWslEnsureJob } from "./wsl-ensure.js";
 import {
   beginContainerLogFollow,
@@ -144,6 +144,19 @@ export interface RemoteJob {
 let dockerAdapter: DockerAdapter | null = null;
 let processSupervisor: ProcessSupervisor | null = null;
 
+/**
+ * Windows install defaults to PLAYON_RUNTIME=native (PE / SteamCMD). A Windows
+ * container engine on the same host must still be usable — Linux SteamCMD-only
+ * hosts that force native stay native-only.
+ */
+export function shouldTryDockerAdapter(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  if (env.PLAYON_RUNTIME === "native" && platform !== "win32") return false;
+  return true;
+}
+
 async function ensureAdapters(): Promise<{
   docker: DockerAdapter | null;
   process: ProcessSupervisor;
@@ -151,17 +164,20 @@ async function ensureAdapters(): Promise<{
   if (processSupervisor) {
     return { docker: dockerAdapter, process: processSupervisor };
   }
-  const mode = process.env.PLAYON_RUNTIME === "native" ? "native" : "docker";
-  try {
-    const adapters = await createRuntime(mode);
-    dockerAdapter = mode === "docker" ? adapters.docker : null;
-    processSupervisor = adapters.process;
-  } catch {
-    const adapters = await createRuntime("native");
-    dockerAdapter = null;
-    processSupervisor = adapters.process;
+  if (shouldTryDockerAdapter()) {
+    try {
+      const adapters = await createRuntime("docker");
+      dockerAdapter = adapters.docker;
+      processSupervisor = adapters.process;
+      return { docker: dockerAdapter, process: processSupervisor };
+    } catch {
+      /* fall through to native */
+    }
   }
-  return { docker: dockerAdapter, process: processSupervisor! };
+  const adapters = await createRuntime("native");
+  dockerAdapter = null;
+  processSupervisor = adapters.process;
+  return { docker: dockerAdapter, process: processSupervisor };
 }
 
 export async function claimNextJob(
@@ -261,7 +277,7 @@ export async function executeJob(
   if (job.kind === "runtime_caps") {
     parseNodeJobArgs("runtime_caps", job.args);
     return parseNodeJobResult("runtime_caps", {
-      ...probeCapabilities(dataRoot),
+      ...(await probeCapabilitiesForHeartbeat(dataRoot)),
       jobKinds: [...SUPPORTED_JOB_KINDS],
     });
   }
@@ -432,7 +448,10 @@ export async function executeJob(
   const { docker, process: proc } = await ensureAdapters();
 
   if (job.kind === "container_create") {
-    const { name, image, env, cmd, ports, binds } = parseNodeJobArgs("container_create", job.args);
+    const { name, image, env, cmd, ports, binds, tty, isolation } = parseNodeJobArgs(
+      "container_create",
+      job.args,
+    );
     if (!docker) throw new Error("docker_unavailable");
     // An absolute hostPath is a deliberate escape hatch for host-owned mounts;
     // anything relative resolves inside the jail.
@@ -452,6 +471,8 @@ export async function executeJob(
         ...(cmd.length ? { cmd } : {}),
         ports,
         binds: resolvedBinds,
+        ...(tty != null ? { tty } : {}),
+        ...(isolation ? { isolation } : {}),
       }),
     );
   }

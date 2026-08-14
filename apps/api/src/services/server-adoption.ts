@@ -8,7 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { nanoid } from "nanoid";
-import { NODE_AUTHORITATIVE_MARKER } from "@playon/shared";
+import { isLocalNodeId, NODE_AUTHORITATIVE_MARKER } from "@playon/shared";
 import type { AppConfig } from "../config.js";
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
@@ -113,9 +113,15 @@ export class ServerAdoptionService {
     private readonly snapshots: SnapshotService | null = null,
   ) {}
 
-  resolveRuntimeMode(containerSupport: string): AdoptionRuntimeMode {
-    if (this.config.runtimeMode === "native") return "native";
+  resolveRuntimeMode(
+    containerSupport: string,
+    opts?: { nodeId?: string },
+  ): AdoptionRuntimeMode {
     if (containerSupport === "none") return "native";
+    // A remote node that placement already accepted for a container skill must
+    // run docker even when Home itself is PLAYON_RUNTIME=native.
+    if (opts?.nodeId && !isLocalNodeId(opts.nodeId)) return "docker";
+    if (this.config.runtimeMode === "native") return "native";
     return "docker";
   }
 
@@ -125,7 +131,9 @@ export class ServerAdoptionService {
 
     const placement = new PlacementService(this.db, this.config);
     const resolvedNodeId = await placement.resolveNodeId(skill.metadata.name, nodeId);
-    const runtimeMode = this.resolveRuntimeMode(skill.metadata.containerSupport);
+    const runtimeMode = this.resolveRuntimeMode(skill.metadata.containerSupport, {
+      nodeId: resolvedNodeId,
+    });
     return { skill, nodeId: resolvedNodeId, runtimeMode };
   }
 

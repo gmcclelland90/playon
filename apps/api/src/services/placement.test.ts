@@ -205,6 +205,101 @@ describe("scoreNodeForSkill", () => {
   });
 });
 
+const windowsDockerSkill = SkillMetadataSchema.parse({
+  name: "games.sbox-docker",
+  version: "1.0.0",
+  description: "windows container",
+  os: ["windows"],
+  arch: ["amd64"],
+  containerSupport: "full",
+  dockerImage: "har0x/sbox-server:latest",
+  ports: [{ name: "game", protocol: "udp", default: 27015 }],
+});
+
+describe("scoreNodeForSkill windows containers", () => {
+  const now = Date.now();
+
+  it("places a Windows-container skill on a Windows node with docker", () => {
+    const win = scoreNodeForSkill(
+      caps({
+        id: "playon-win-1",
+        name: "win",
+        os: "windows",
+        docker: true,
+        steamcmd: true,
+        lastSeenAt: new Date(now - 1000),
+      }),
+      windowsDockerSkill,
+      now,
+    );
+    expect(win.eligible).toBe(true);
+    expect(win.reasons).toContain("docker_ready");
+    expect(win.reasons).toContain("os_ok:windows");
+  });
+
+  it("rejects a Windows-container skill when the Windows node has no Windows docker", () => {
+    const win = scoreNodeForSkill(
+      caps({
+        id: "playon-win-1",
+        name: "win",
+        os: "windows",
+        docker: false,
+        steamcmd: true,
+        lastSeenAt: new Date(now - 1000),
+      }),
+      windowsDockerSkill,
+      now,
+    );
+    expect(win.eligible).toBe(false);
+    expect(win.reasons).toContain("docker_required");
+  });
+
+  it("does not place a Windows-container skill on a Linux WSL sibling", () => {
+    const wsl = scoreNodeForSkill(
+      caps({
+        id: "playon-win-1-wsl",
+        name: "win-wsl",
+        os: "linux",
+        docker: true,
+        lastSeenAt: new Date(now - 1000),
+      }),
+      windowsDockerSkill,
+      now,
+    );
+    expect(wsl.eligible).toBe(false);
+    expect(wsl.reasons).toContain("os_mismatch:linux");
+  });
+
+  it("still places linux docker skills on the WSL sibling, not the Windows parent", () => {
+    const win = scoreNodeForSkill(
+      caps({
+        id: "playon-win-1",
+        name: "win",
+        os: "windows",
+        docker: true,
+        lastSeenAt: new Date(now - 1000),
+      }),
+      baseSkill,
+      now,
+    );
+    const wsl = scoreNodeForSkill(
+      caps({
+        id: "playon-win-1-wsl",
+        name: "win-wsl",
+        os: "linux",
+        docker: true,
+        lastSeenAt: new Date(now - 1000),
+      }),
+      baseSkill,
+      now,
+    );
+    expect(win.eligible).toBe(false);
+    expect(win.reasons).toContain("os_mismatch:windows");
+    expect(wsl.eligible).toBe(true);
+    expect(wsl.reasons).toContain("docker_ready");
+  });
+});
+
 describe("PlacementService.resolveNodeId", () => {
   const linuxOnlyYaml = `
 name: fixtures.linux-only-demo
@@ -250,5 +345,38 @@ ports:
     });
 
     await expect(placement.resolveNodeId(skillName)).resolves.toBe("lab-linux");
+  });
+
+  it("places a Windows-container skill on a remote Windows docker node", async () => {
+    const yaml = `
+name: fixtures.linux-only-demo
+version: 1.0.0
+description: windows container
+os: [windows]
+arch: [amd64]
+containerSupport: full
+dockerImage: har0x/sbox-server:latest
+ports:
+  - name: game
+    protocol: udp
+    default: 27015
+`;
+    const { placement, db, skillName } = placementEnv(yaml, windowsLocalProbe);
+    await placement.ensureLocalNode();
+    await db.insert(nodes).values({
+      id: "playon-win-1",
+      name: "win",
+      os: "windows",
+      docker: true,
+      native: true,
+      steamcmd: true,
+      freeDiskBytes: 20 * 1024 ** 3,
+      agentVersion: "test",
+      lastSeenAt: new Date(),
+      kind: "lan",
+      tunnelStatus: "none",
+    });
+
+    await expect(placement.resolveNodeId(skillName)).resolves.toBe("playon-win-1");
   });
 });

@@ -16,11 +16,17 @@ export function detectHostOs(): HostOs {
   return process.platform === "win32" ? "windows" : "linux";
 }
 
+/** Named pipes a Windows-container engine may expose. */
+export const WINDOWS_DOCKER_PIPES = [
+  "\\\\.\\pipe\\docker_engine",
+  "\\\\.\\pipe\\dockerDesktopWindowsEngine",
+] as const;
+
 /** True when a Docker Engine socket/pipe appears present. */
 export function dockerSocketAvailable(): boolean {
   try {
     if (process.platform === "win32") {
-      return fs.existsSync("\\\\.\\pipe\\docker_engine");
+      return WINDOWS_DOCKER_PIPES.some((pipe) => fs.existsSync(pipe));
     }
     return fs.existsSync("/var/run/docker.sock");
   } catch {

@@ -75,6 +75,24 @@ describe("SkillMetadataSchema contract", () => {
     expect(parsed.dependencies).toEqual(["platform.docker-basics"]);
   });
 
+  it("accepts Windows-container TTY and isolation overrides", () => {
+    const parsed = SkillMetadataSchema.parse({
+      name: "games.sbox-docker",
+      version: "0.1.0",
+      os: ["windows"],
+      containerSupport: "full",
+      dockerImage: "har0x/sbox-server:latest",
+      dockerArgs: ["+game", "facepunch.sandbox"],
+      dockerTty: true,
+      dockerIsolation: "process",
+      dockerDataMount: "C:\\data",
+    });
+    expect(parsed.dockerTty).toBe(true);
+    expect(parsed.dockerIsolation).toBe("process");
+    expect(parsed.dockerDataMount).toBe("C:\\data");
+    expect(parsed.os).toEqual(["windows"]);
+  });
+
   it("accepts steamAppId for SteamCMD skills", () => {
     const parsed = SkillMetadataSchema.parse({
       name: "games.rust",

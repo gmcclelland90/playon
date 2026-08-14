@@ -8,6 +8,10 @@ export interface ContainerSpec {
   cmd?: string[];
   ports?: Array<{ host: number; container: number; protocol?: "tcp" | "udp" }>;
   binds?: Array<{ hostPath: string; containerPath: string }>;
+  /** `docker run -t`. Defaults on for Windows-container engines. */
+  tty?: boolean;
+  /** Windows container isolation. Omit to use the daemon default. */
+  isolation?: "process" | "hyperv";
 }
 
 export interface ContainerInfo {

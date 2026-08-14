@@ -351,6 +351,30 @@ describe("remote docker ServerRuntimeHandle", () => {
     });
   });
 
+  it("forwards optional TTY and isolation only when the spec sets them", async () => {
+    const node = fakeNode();
+    const handle = openServerRuntime(
+      { serverId: "sbox", mode: "docker", locality: "remote" },
+      {
+        containerName: "playon-sbox",
+        docker: remoteDockerTransport(node.dispatch, { serverId: "sbox" }),
+        resolveContainerSpec: async () => ({
+          image: "har0x/sbox-server:latest",
+          tty: true,
+          isolation: "process",
+        }),
+      },
+    );
+
+    await handle.start();
+
+    expect(node.jobs.find((j) => j.kind === "container_create")!.args).toMatchObject({
+      image: "har0x/sbox-server:latest",
+      tty: true,
+      isolation: "process",
+    });
+  });
+
   it("re-resolves identity on the node instead of creating a second container", async () => {
     const node = fakeNode({ id: "abc123", name: "playon-srv1", status: "exited" });
 

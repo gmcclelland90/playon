@@ -1,14 +1,14 @@
 import type { NodeHeartbeat } from "@playon/shared";
-import { probeCapabilities } from "./capabilities.js";
+import { probeCapabilitiesForHeartbeat } from "./capabilities.js";
 import { SUPPORTED_JOB_KINDS } from "./jobs.js";
 
-export function buildHeartbeat(opts: {
+export async function buildHeartbeat(opts: {
   nodeId: string;
   name: string;
   dataRoot: string;
   agentVersion?: string;
-}): NodeHeartbeat {
-  const caps = probeCapabilities(opts.dataRoot);
+}): Promise<NodeHeartbeat> {
+  const caps = await probeCapabilitiesForHeartbeat(opts.dataRoot);
   return {
     nodeId: opts.nodeId,
     name: opts.name,
