@@ -1,7 +1,6 @@
 import {
   evaluateWslLanPublish,
   isWslNodeId,
-  lanPublishPortsForSkill,
   wslParentNodeId,
 } from "@playon/shared";
 import { nodeJobService } from "./node-jobs.js";
