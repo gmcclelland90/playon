@@ -1,8 +1,16 @@
+/** Process-up is not joinable unless the advertised join path was proven. */
+export function displayServerStatus(status: string, ready?: boolean | null): string {
+  if (status === "running" && ready !== true) return "degraded";
+  return status;
+}
+
 /** Human labels + short guidance for server/runtime status strings. */
 export function statusLabel(status: string): string {
   switch (status) {
     case "running":
       return "Running";
+    case "degraded":
+      return "Not joinable";
     case "stopped":
       return "Stopped";
     case "starting":
@@ -73,6 +81,8 @@ export function statusHint(status: string): string | null {
     case "error":
     case "failed":
       return "Ask the agents in chat, or check Dashboard activity.";
+    case "degraded":
+      return "Process is up but the advertised join address is not reachable.";
     case "stopped":
       return "Start when players are ready.";
     case "docker_unavailable":

@@ -5,6 +5,7 @@ import {
   isPendingNodeSetup,
   nodePresenceLabel,
   shortDisplayName,
+  displayServerStatus,
   statusLabel,
 } from "../../status";
 import {
@@ -748,11 +749,12 @@ export function AgentCanvas({
           activity && activity.serverId === server.id && activity.phase !== "idle"
             ? activity
             : undefined;
-        drawCrate(crate, selected, server.status === "running");
+        const shown = displayServerStatus(server.status, server.ready);
+        drawCrate(crate, selected, shown === "running");
         name.text = shortDisplayName(server.name, 18);
         status.text = busyHere
-          ? `${statusLabel(server.status)} · ${busyHere.label || busyHere.verb}`
-          : statusLabel(server.status);
+          ? `${statusLabel(shown)} · ${busyHere.label || busyHere.verb}`
+          : statusLabel(shown);
       });
     }
 

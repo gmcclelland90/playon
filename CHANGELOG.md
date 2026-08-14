@@ -4,6 +4,10 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+### Fixed
+
+- **WSL LAN join path** — after a WSL sibling start, the Windows parent publishes game/RCON/query ports on its advertised `join_host` (userspace `net_port_publish` → `127.0.0.1`, where WSL localhostForwarding already listens). Empty WSL `join_host` is synced from the parent. Ready / “up” / panel join_info still require that advertised host:port open from Home. `net_port_check` on localhost without `nodeId` returns `loopback_requires_nodeId` (Home soak Paper must not count). Placement skips a WSL sibling for LAN-joinable skills when the parent join host is loopback/empty or the Windows agent does not advertise `net_port_publish`, and falls back to a node that can publish (e.g. local docker / playon-dev). Does not ask hosts to run `netsh` portproxy. Update the Windows node agent so `net_port_publish` is advertised.
+
 ## [0.2.6] — 2026-08-14
 
 ### Added

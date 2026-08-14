@@ -1,9 +1,10 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { NodeJobKindSchema, type NodeJobKind } from "@playon/shared";
 import { executeJob, shouldTryDockerAdapter, SUPPORTED_JOB_KINDS } from "./jobs.js";
+import { portPublishRegistry } from "./port-publish.js";
 
 describe("shouldTryDockerAdapter", () => {
   it("tries Docker on Windows even when PLAYON_RUNTIME=native", () => {
@@ -23,6 +24,10 @@ describe("SUPPORTED_JOB_KINDS", () => {
     expect([...SUPPORTED_JOB_KINDS].sort()).toEqual([...NodeJobKindSchema.options].sort());
     expect(new Set(SUPPORTED_JOB_KINDS).size).toBe(SUPPORTED_JOB_KINDS.length);
   });
+});
+
+afterEach(() => {
+  portPublishRegistry.releaseAll();
 });
 
 describe("executeJob", () => {
@@ -409,6 +414,111 @@ describe("executeJob", () => {
       ).rejects.toMatchObject({ code: "validation_failed", kind: "net_udp_listen" });
     } finally {
       await new Promise<void>((resolve) => socket.close(() => resolve()));
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports a bound TCP port via net_tcp_connect and rejects non-loopback hosts", async () => {
+    const net = await import("node:net");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-tcp-"));
+    const server = net.createServer();
+    try {
+      const port = await new Promise<number>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", () => {
+          const addr = server.address();
+          resolve(!addr || typeof addr === "string" ? 0 : addr.port);
+        });
+      });
+      const bound = (await executeJob(
+        { id: "tcp-1", nodeId: "n1", kind: "net_tcp_connect", args: { port } },
+        root,
+      )) as { host: string; port: number; state: string };
+      expect(bound.host).toBe("127.0.0.1");
+      expect(bound.port).toBe(port);
+      expect(bound.state).toBe("open");
+
+      const closed = (await executeJob(
+        { id: "tcp-2", nodeId: "n1", kind: "net_tcp_connect", args: { host: "127.0.0.1", port: 1 } },
+        root,
+      )) as { state: string };
+      expect(closed.state).toBe("closed");
+
+      await expect(
+        executeJob(
+          {
+            id: "tcp-lan",
+            nodeId: "n1",
+            kind: "net_tcp_connect",
+            args: { host: "172.16.0.94", port },
+          },
+          root,
+        ),
+      ).rejects.toMatchObject({ code: "validation_failed", kind: "net_tcp_connect" });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("publishes a TCP port onto a listen host and releases it", async () => {
+    const net = await import("node:net");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-pub-"));
+    const backend = net.createServer((socket) => {
+      socket.on("data", (buf) => socket.write(buf));
+    });
+    try {
+      const backendPort = await new Promise<number>((resolve, reject) => {
+        backend.once("error", reject);
+        backend.listen(0, "127.0.0.1", () => {
+          const addr = backend.address();
+          resolve(!addr || typeof addr === "string" ? 0 : addr.port);
+        });
+      });
+      const ensured = (await executeJob(
+        {
+          id: "pub-1",
+          nodeId: "n1",
+          kind: "net_port_publish",
+          args: {
+            action: "ensure",
+            serverId: "srv-wsl",
+            listenHost: "127.0.0.1",
+            listenPort: 39231,
+            protocol: "tcp",
+            targetHost: "127.0.0.1",
+            targetPort: backendPort,
+          },
+        },
+        root,
+      )) as { ok: boolean; listening: boolean; listenPort: number };
+      expect(ensured.ok).toBe(true);
+      expect(ensured.listening).toBe(true);
+
+      const echoed = await new Promise<string>((resolve, reject) => {
+        const client = net.connect({ host: "127.0.0.1", port: 39231 });
+        client.once("error", reject);
+        client.write("lan");
+        client.once("data", (buf) => {
+          client.end();
+          resolve(buf.toString());
+        });
+      });
+      expect(echoed).toBe("lan");
+
+      const released = (await executeJob(
+        {
+          id: "pub-2",
+          nodeId: "n1",
+          kind: "net_port_publish",
+          args: { action: "release_server", serverId: "srv-wsl" },
+        },
+        root,
+      )) as { ok: boolean; listening: boolean };
+      expect(released.ok).toBe(true);
+      expect(released.listening).toBe(false);
+    } finally {
+      await new Promise<void>((resolve) => backend.close(() => resolve()));
       fs.rmSync(root, { recursive: true, force: true });
     }
   });

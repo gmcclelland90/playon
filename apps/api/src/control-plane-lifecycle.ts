@@ -239,12 +239,13 @@ export function defaultControlPlaneHost(): ControlPlaneHost {
       };
     },
     createSchedulers: (app) => {
-      const { servers, playerPanel, queries, snapshots, watcherEngine } = app.controlPlane;
+      const { servers, playerPanel, queries, joinReady, snapshots, watcherEngine } =
+        app.controlPlane;
       return [
         { name: "snapshot", scheduler: new SnapshotScheduler(snapshots) },
         {
           name: "live-query",
-          scheduler: new LiveQueryScheduler(servers, playerPanel, queries),
+          scheduler: new LiveQueryScheduler(servers, playerPanel, queries, joinReady),
         },
         { name: "watcher", scheduler: new WatcherScheduler(watcherEngine) },
       ];

@@ -46,7 +46,7 @@ pnpm lab:publish-status --force --history-comment
 
 A skill is `ok` only when `port_open` passes:
 
-- **TCP:** connect succeeds (Linux loopback / Windows `net_port_check` against `join_host`)
+- **TCP:** connect succeeds (Linux loopback / Windows `net_port_check` against `join_host`). Ready-gate / in-app “up” is the advertised join host from Home; a localhost check must run on the server’s node (`net_tcp_connect`), not the API host.
 - **Linux UDP:** `ss -uln` shows the required bind (query port only when `queryPortName` is set — Steam-networking exception). `status=running` is not enough.
 - **Windows UDP / no-TCP:** node-side listen (`net_port_check protocol=udp` → `net_udp_listen` job, Windows `netstat`) **or** query-online. Home `status=running` is not enough. Old agents that do not advertise `net_udp_listen` fall back to query; no dialect + no listen → `udp_listen_unproven`.
 

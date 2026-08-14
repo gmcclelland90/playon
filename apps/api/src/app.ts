@@ -230,6 +230,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     panel: panelService,
     playerPanel,
     queries: queryService,
+    joinReady: joinReadyService,
     health: healthService,
     placement: placementService,
     migrate: migrateService,
@@ -264,7 +265,9 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
               event.serverId,
             );
           }
-          await playerPanel.publishForStatus(event.serverId, event.status, live);
+          const joinReady = await joinReadyService.probe(event.serverId);
+          const panelStatus = joinReady.ready ? event.status : joinReady.status;
+          await playerPanel.publishForStatus(event.serverId, panelStatus, live);
         } else if (event.status === "stopped" || event.status === "error") {
           await playerPanel.publishForStatus(event.serverId, event.status);
         }
@@ -1411,7 +1414,10 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     requireRole(c, "operator");
     const list = await serverService.list();
     return c.json({
-      servers: list,
+      servers: list.map((s) => {
+        const cached = joinReadyService.cached(s.id);
+        return { ...s, ready: cached?.ready };
+      }),
       advertiseHost: config.advertiseHost,
       runtimeMode: config.runtimeMode,
     });
@@ -1421,7 +1427,12 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     requireRole(c, "operator");
     const detail = await serverService.detail(c.req.param("id"));
     if (!detail) throw HttpError.notFound("not_found", { code: "server_not_found" });
-    return c.json(detail);
+    const joinReady = await joinReadyService.probe(c.req.param("id"));
+    return c.json({
+      ...detail,
+      server: { ...detail.server, ready: joinReady.ready },
+      runtime: { ...detail.runtime, ready: joinReady.ready, joinPath: joinReady.joinPath },
+    });
   });
 
   app.get("/api/servers/:id/fs", async (c) => {
@@ -1559,7 +1570,9 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     // `empty_command` business result rather than a transport-level 400.
     const body = (await c.req.json().catch(() => null)) as { command?: unknown } | null;
     const command = typeof body?.command === "string" ? body.command : "";
-    const result = await execConsoleCommand(serverService, c.req.param("id"), command);
+    const result = await execConsoleCommand(serverService, c.req.param("id"), command, {
+      joinReady: joinReadyService,
+    });
     if (result.error === "unknown_server") {
       throw HttpError.notFound("not_found", { code: "server_not_found" });
     }
@@ -1706,9 +1719,21 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       (id) => queryService.queryServerWithRetry(id, { attempts: 5, delayMs: 1200 }),
       server.id,
     );
-    await playerPanel.publishForStatus(server.id, "running", live);
+    const joinReady = await joinReadyService.probeWithRetry(server.id, {
+      attempts: 5,
+      delayMs: 1200,
+    });
+    const panelStatus = joinReady.ready ? "running" : joinReady.status;
+    await playerPanel.publishForStatus(server.id, panelStatus, live);
     const detail = await serverService.detail(server.id);
-    return { server, runtime: detail?.runtime };
+    return {
+      server: { ...server, ready: joinReady.ready },
+      runtime: detail
+        ? { ...detail.runtime, ready: joinReady.ready, joinPath: joinReady.joinPath }
+        : undefined,
+      ready: joinReady.ready,
+      joinPath: joinReady.joinPath,
+    };
   };
 
   app.post("/api/servers/:id/start", async (c) => {
@@ -1762,10 +1787,15 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     const body = await jsonBody(c, RelocateServerRequestSchema);
     try {
       const result = await migrateService.relocate(c.req.param("id"), body.targetNodeId);
-      await playerPanel.publishForStatus(
-        result.server.id,
-        result.server.status === "running" ? "running" : "stopped",
-      );
+      if (result.server.status === "running" || result.server.status === "starting") {
+        const joinReady = await joinReadyService.probeWithRetry(result.server.id);
+        await playerPanel.publishForStatus(
+          result.server.id,
+          joinReady.ready ? "running" : joinReady.status,
+        );
+      } else {
+        await playerPanel.publishForStatus(result.server.id, "stopped");
+      }
       return c.json({ relocate: result });
     } catch (err) {
       throw serviceHttpError(err, {

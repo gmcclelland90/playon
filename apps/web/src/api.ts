@@ -38,6 +38,8 @@ export type ServerRow = {
   game: string | null;
   nodeId?: string | null;
   status: string;
+  /** Advertised join-path proof. Missing/false means do not claim the server is up. */
+  ready?: boolean;
   runtimeMode: string;
   dataPath: string;
 };
@@ -111,6 +113,15 @@ export type ServerDetail = {
     containerStatus?: string;
     imageHint?: string;
     join?: { address: string; port: number };
+    ready?: boolean;
+    joinPath?: {
+      ok: boolean;
+      reason: string;
+      joinHost: string;
+      port: number;
+      loopbackState: string;
+      joinHostState: string;
+    };
     logs?: string[];
     console?: ServerConsoleCapability;
   };

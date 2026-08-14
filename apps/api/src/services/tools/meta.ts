@@ -1,7 +1,8 @@
 import { probeUdpListen } from "@playon/runtime";
-import type { UdpListenProbe } from "@playon/shared";
+import { isLocalNodeId, isLoopbackJoinHost, type UdpListenProbe } from "@playon/shared";
+import { checkNodeLoopbackTcp } from "../node-loopback-tcp.js";
 import { nodeJobService, type NodeJobKind } from "../node-jobs.js";
-import { globalTool, type ToolModule } from "./types.js";
+import { globalTool, optionalServerTool, type ToolModule } from "./types.js";
 
 const NODE_JOB_TIMEOUT_MS = 20_000;
 
@@ -79,9 +80,9 @@ async function runNodeJob(
   }
 }
 
-/** Host and node probes: no server workspace, no side effects on managed servers. */
+/** Host and node probes. Loopback TCP is scoped to a server/node — never Home soak. */
 export const metaToolModule: ToolModule = ({ plane }) => {
-  const { net } = plane;
+  const { net, servers } = plane;
 
   return [
     globalTool({
@@ -120,11 +121,11 @@ export const metaToolModule: ToolModule = ({ plane }) => {
         }),
     }),
 
-    globalTool({
+    optionalServerTool({
       def: {
         name: "net_port_check",
         description:
-          "Check whether a TCP port appears open on a host, or whether a UDP port is bound on a node (pass protocol=udp and nodeId for remote Windows/Linux agents)",
+          "Check whether a TCP port appears open. For 127.0.0.1/localhost, pass nodeId (or bind the chat to a server) so the check runs on that node — Home localhost is not a remote game server. Non-loopback hosts are probed from Home (LAN/advertised path). UDP: pass protocol=udp and nodeId for a remote listen-table probe.",
         parameters: {
           type: "object",
           properties: {
@@ -132,12 +133,13 @@ export const metaToolModule: ToolModule = ({ plane }) => {
             port: { type: "number" },
             protocol: { type: "string", enum: ["tcp", "udp"] },
             nodeId: { type: "string" },
+            serverId: { type: "string" },
           },
           required: ["port"],
         },
       },
       surface: { skill: "monitor", activityVerb: "fetch" },
-      handler: async (args) => {
+      handler: async (args, { serverId }) => {
         const protocol = String(args.protocol ?? "tcp").toLowerCase() === "udp" ? "udp" : "tcp";
         if (protocol === "udp") {
           return udpPortCheck({
@@ -146,10 +148,40 @@ export const metaToolModule: ToolModule = ({ plane }) => {
             host: args.host ? String(args.host) : undefined,
           });
         }
-        return net.portCheck({
-          host: args.host ? String(args.host) : undefined,
-          port: Number(args.port),
-        });
+        const host = args.host ? String(args.host) : "127.0.0.1";
+        const port = Number(args.port);
+        if (isLoopbackJoinHost(host)) {
+          let nodeId = args.nodeId ? String(args.nodeId) : undefined;
+          if (!nodeId && serverId) {
+            const server = await servers.get(serverId);
+            nodeId = server?.nodeId ?? undefined;
+          }
+          if (!nodeId) {
+            return {
+              host,
+              port,
+              protocol: "tcp",
+              state: "closed",
+              error: "loopback_requires_nodeId",
+              hint: "127.0.0.1 on Home is not the game server. Pass nodeId or bind the chat to a server so the check runs on that node.",
+            };
+          }
+          if (isLocalNodeId(nodeId)) {
+            const probe = await net.portCheck({ host, port });
+            return { ...probe, protocol: "tcp", scope: "home" };
+          }
+          const loopback = await checkNodeLoopbackTcp(nodeId, port, host);
+          return {
+            host,
+            port,
+            protocol: "tcp",
+            state: loopback.state,
+            scope: loopback.scope,
+            ...(loopback.unavailable ? { error: "loopback_node_unavailable" } : {}),
+          };
+        }
+        const probe = await net.portCheck({ host, port });
+        return { ...probe, protocol: "tcp", scope: "home" };
       },
     }),
 

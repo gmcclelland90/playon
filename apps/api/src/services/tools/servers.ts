@@ -81,7 +81,8 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
     serverTool({
       def: {
         name: "servers_start",
-        description: "Start a server",
+        description:
+          "Start a server. Returns ready=true only when the advertised panel join host:port is reachable (or query succeeded). Process-up or 127.0.0.1 is not enough — never tell the host the server is up unless ready is true.",
         parameters: {
           type: "object",
           properties: { serverId: { type: "string" } },
@@ -99,15 +100,20 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
           (id) => queries.queryServerWithRetry(id, POST_START_QUERY),
           server.id,
         );
-        await playerPanel.publishForStatus(server.id, "running", live);
+        const joinReady = await plane.joinReady.probeWithRetry(server.id, POST_START_QUERY);
+        const panelStatus = joinReady.ready ? "running" : joinReady.status;
+        await playerPanel.publishForStatus(server.id, panelStatus, live);
         const detail = await servers.detail(server.id);
         return {
           serverId: server.id,
           status: server.status,
+          ready: joinReady.ready,
+          joinPath: joinReady.joinPath,
+          joinReady,
           runtime: detail?.runtime,
           join: detail?.runtime.join,
           panelPublished: true,
-          playerVisible: isPlayerPanelLiveStatus(server.status),
+          playerVisible: isPlayerPanelLiveStatus(panelStatus),
           liveOnline: live?.online ?? false,
         };
       },
@@ -159,11 +165,16 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
           (id) => queries.queryServerWithRetry(id, POST_START_QUERY),
           server.id,
         );
-        await playerPanel.publishForStatus(server.id, "running", live);
+        const joinReady = await plane.joinReady.probeWithRetry(server.id, POST_START_QUERY);
+        const panelStatus = joinReady.ready ? "running" : joinReady.status;
+        await playerPanel.publishForStatus(server.id, panelStatus, live);
         const detail = await servers.detail(server.id);
         return {
           serverId: server.id,
           status: server.status,
+          ready: joinReady.ready,
+          joinPath: joinReady.joinPath,
+          joinReady,
           runtime: detail?.runtime,
           join: detail?.runtime.join,
           liveOnline: live?.online ?? false,
@@ -185,12 +196,16 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
             ? rows.filter((s) => s.id === workspace.serverId)
             : []
           : rows;
-        return scoped.map((s) => ({
-          id: s.id,
-          name: s.name,
-          game: s.game,
-          status: s.status,
-        }));
+        return scoped.map((s) => {
+          const cached = plane.joinReady.cached(s.id);
+          return {
+            id: s.id,
+            name: s.name,
+            game: s.game,
+            status: s.status,
+            ready: cached?.ready,
+          };
+        });
       },
     }),
 
@@ -198,7 +213,7 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
       def: {
         name: "servers_health_check",
         description:
-          "Run skill-declared health checks for a server. Set remediate=true to auto-restart on known restartable failures.",
+          "Run skill-declared health checks plus the advertised join-path gate. ready=true only when the panel join host:port is reachable. Set remediate=true to auto-restart on known restartable process failures (not join-path publish gaps).",
         parameters: {
           type: "object",
           properties: {
@@ -415,9 +430,14 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
           const server = await servers.get(serverId);
           if (server && (server.status === "running" || server.status === "starting")) {
             try {
+              const joinReady = await plane.joinReady.probe(serverId);
               await playerPanel.publishForStatus(
                 serverId,
-                server.status === "starting" ? "starting" : "running",
+                joinReady.ready
+                  ? server.status === "starting"
+                    ? "starting"
+                    : "running"
+                  : joinReady.status,
                 state,
               );
             } catch {

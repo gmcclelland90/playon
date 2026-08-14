@@ -25,7 +25,7 @@ import { ChatMarkdown } from "../components/ChatMarkdown";
 import { MapAddNodePanel } from "../components/MapAddNodePanel";
 import { MapManageSuggestPanel } from "../components/MapManageSuggestPanel";
 import { ServerConsoleBubble } from "../components/ServerConsoleBubble";
-import { runtimeErrorHint, statusHint, statusLabel } from "../status";
+import { displayServerStatus, runtimeErrorHint, statusHint, statusLabel } from "../status";
 import { playonSocket } from "../ws";
 
 function isAbortError(err: unknown): boolean {
@@ -628,7 +628,9 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   }, [pendingConfirm]);
 
   const selected = servers.data?.servers.find((s) => s.id === selectedId);
-  const status = detail.data?.server.status ?? selected?.status ?? "unknown";
+  const processStatus = detail.data?.server.status ?? selected?.status ?? "unknown";
+  const ready = detail.data?.runtime.ready ?? detail.data?.server.ready ?? selected?.ready;
+  const status = displayServerStatus(processStatus, ready);
   const join = detail.data?.runtime.join;
   const activityOnSelected =
     selectedId && activity && activity.serverId === selectedId && activity.phase !== "idle"
@@ -870,7 +872,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                 <button
                   type="button"
                   className="btn btn-primary btn-compact"
-                  disabled={opsBusy || status === "running" || status === "starting"}
+                  disabled={opsBusy || processStatus === "running" || processStatus === "starting"}
                   onClick={() => start.mutate(selectedId)}
                 >
                   {start.isPending ? "Starting…" : "Start"}

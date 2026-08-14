@@ -117,6 +117,7 @@ describe("isPlayerPanelLiveStatus", () => {
   it("treats running and starting as live for the player panel", () => {
     expect(isPlayerPanelLiveStatus("running")).toBe(true);
     expect(isPlayerPanelLiveStatus("starting")).toBe(true);
+    expect(isPlayerPanelLiveStatus("degraded")).toBe(true);
     expect(isPlayerPanelLiveStatus("stopped")).toBe(false);
     expect(isPlayerPanelLiveStatus("error")).toBe(false);
     expect(isPlayerPanelLiveStatus(undefined)).toBe(false);

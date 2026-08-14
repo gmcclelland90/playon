@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  displayServerStatus,
   evaluateJoinPathProbe,
+  evaluateJoinReady,
   isLoopbackJoinHost,
+  JOIN_HOST_NOT_REACHABLE,
   JOIN_PATH_CANARY_SKILL,
+  joinHostNotReachableResult,
   probeJoinPath,
 } from "./join-path-probe.js";
 
@@ -98,6 +102,40 @@ describe("probeJoinPath", () => {
     expect(result.reason).toBe("loopback_open_join_host_closed");
   });
 
+  it("uses checkLoopback for the diagnostic leg and check for the advertised host", async () => {
+    const seen: string[] = [];
+    const result = await probeJoinPath({
+      joinHost: "172.16.0.94",
+      port: 25565,
+      check: async (host) => {
+        seen.push(`home:${host}`);
+        return "closed";
+      },
+      checkLoopback: async (host) => {
+        seen.push(`node:${host}`);
+        return "closed";
+      },
+      loopbackScope: "node",
+    });
+    expect(seen).toEqual(["node:127.0.0.1", "home:172.16.0.94"]);
+    expect(result.reason).toBe("join_host_closed");
+    expect(result.loopbackScope).toBe("node");
+    expect(result.ok).toBe(false);
+  });
+
+  it("does not treat Home-open loopback as node-open when checkLoopback is closed", async () => {
+    const result = await probeJoinPath({
+      joinHost: "172.16.0.94",
+      port: 25565,
+      check: async (host) => (host === "127.0.0.1" ? "open" : "closed"),
+      checkLoopback: async () => "closed",
+    });
+    expect(result.loopbackState).toBe("closed");
+    expect(result.joinHostState).toBe("closed");
+    expect(result.reason).toBe("join_host_closed");
+    expect(result.ok).toBe(false);
+  });
+
   it("does not double-probe when join host is loopback", async () => {
     let calls = 0;
     const result = await probeJoinPath({
@@ -117,5 +155,114 @@ describe("probeJoinPath", () => {
 describe("join-path canary fixture", () => {
   it("uses the lab Docker fixture, not a curated games.* skill", () => {
     expect(JOIN_PATH_CANARY_SKILL).toBe("fixtures.lab-docker-server");
+  });
+});
+
+describe("evaluateJoinReady", () => {
+  const advertisedClosed = evaluateJoinPathProbe({
+    joinHost: "172.16.0.94",
+    port: 25565,
+    loopbackState: "open",
+    joinHostState: "closed",
+  });
+  const advertisedOpen = evaluateJoinPathProbe({
+    joinHost: "172.16.0.94",
+    port: 25565,
+    loopbackState: "open",
+    joinHostState: "open",
+  });
+
+  it("localhost-open + advertised-closed is not ready", () => {
+    const result = evaluateJoinReady({
+      processStatus: "running",
+      joinPath: advertisedClosed,
+      protocol: "tcp",
+    });
+    expect(result.ready).toBe(false);
+    expect(result.status).toBe("degraded");
+    expect(result.reason).toBe("loopback_open_join_host_closed");
+  });
+
+  it("advertised-open is ready", () => {
+    const result = evaluateJoinReady({
+      processStatus: "running",
+      joinPath: advertisedOpen,
+      protocol: "tcp",
+    });
+    expect(result.ready).toBe(true);
+    expect(result.status).toBe("running");
+    expect(result.reason).toBe("join_host_open");
+  });
+
+  it("does not treat process-up as ready when the advertised host is closed", () => {
+    const result = evaluateJoinReady({
+      processStatus: "running",
+      joinPath: advertisedClosed,
+      queryOnline: false,
+      protocol: "tcp",
+    });
+    expect(result.ready).toBe(false);
+    expect(result.status).not.toBe("running");
+  });
+
+  it("treats query success on the advertised host as ready", () => {
+    const result = evaluateJoinReady({
+      processStatus: "running",
+      joinPath: advertisedClosed,
+      queryOnline: true,
+      protocol: "tcp",
+    });
+    expect(result.ready).toBe(true);
+    expect(result.reason).toBe("query_online");
+  });
+
+  it("keeps starting (not running) while the process is still binding", () => {
+    const result = evaluateJoinReady({
+      processStatus: "starting",
+      joinPath: advertisedClosed,
+      protocol: "tcp",
+    });
+    expect(result.ready).toBe(false);
+    expect(result.status).toBe("starting");
+  });
+
+  it("does not claim UDP ready from process-up without advertised query proof", () => {
+    const result = evaluateJoinReady({
+      processStatus: "running",
+      joinPath: advertisedOpen,
+      protocol: "udp",
+    });
+    expect(result.ready).toBe(false);
+    expect(result.reason).toBe("udp_join_unproven");
+    expect(result.status).toBe("degraded");
+  });
+});
+
+describe("displayServerStatus", () => {
+  it("never shows running unless ready is true", () => {
+    expect(displayServerStatus("running", true)).toBe("running");
+    expect(displayServerStatus("running", false)).toBe("degraded");
+    expect(displayServerStatus("running", undefined)).toBe("degraded");
+    expect(displayServerStatus("stopped", false)).toBe("stopped");
+  });
+});
+
+describe("joinHostNotReachableResult", () => {
+  it("returns a fail-fast RCON error instead of a connect timeout", () => {
+    const report = evaluateJoinReady({
+      processStatus: "running",
+      joinPath: evaluateJoinPathProbe({
+        joinHost: "172.16.0.94",
+        port: 25565,
+        loopbackState: "open",
+        joinHostState: "closed",
+      }),
+      protocol: "tcp",
+    });
+    const blocked = joinHostNotReachableResult(report);
+    expect(blocked.error).toBe(JOIN_HOST_NOT_REACHABLE);
+    expect(blocked.joinHost).toBe("172.16.0.94");
+    expect(blocked.hint).toMatch(/advertised join address/);
+    expect(blocked.hint).not.toMatch(/rcon_connect_timeout/);
   });
 });

@@ -14,3 +14,4 @@ export * from "./updates.js";
 export * from "./update-extract.js";
 export * from "./watcher.js";
 export * from "./udp-listen.js";
+export * from "./wsl-lan-publish.js";

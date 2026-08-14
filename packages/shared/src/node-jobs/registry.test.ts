@@ -113,6 +113,46 @@ describe("parseNodeJobArgs", () => {
     );
   });
 
+  it("validates net_port_publish args", () => {
+    expect(
+      parseNodeJobArgs("net_port_publish", {
+        action: "ensure",
+        serverId: "s1",
+        listenHost: "172.16.0.94",
+        listenPort: 25565,
+        protocol: "tcp",
+      }),
+    ).toEqual({
+      action: "ensure",
+      serverId: "s1",
+      listenHost: "172.16.0.94",
+      listenPort: 25565,
+      protocol: "tcp",
+      targetHost: "127.0.0.1",
+    });
+    expect(
+      parseNodeJobArgs("net_port_publish", { action: "release_server", serverId: "s1" }),
+    ).toEqual({ action: "release_server", serverId: "s1", targetHost: "127.0.0.1" });
+    expect(() =>
+      parseNodeJobArgs("net_port_publish", { action: "ensure", serverId: "s1", protocol: "tcp" }),
+    ).toThrow(/validation_failed/);
+  });
+
+  it("validates net_tcp_connect args (loopback only)", () => {
+    expect(parseNodeJobArgs("net_tcp_connect", { port: 25565 })).toEqual({
+      host: "127.0.0.1",
+      port: 25565,
+    });
+    expect(parseNodeJobArgs("net_tcp_connect", { host: "localhost", port: 25565 })).toEqual({
+      host: "localhost",
+      port: 25565,
+    });
+    expect(() =>
+      parseNodeJobArgs("net_tcp_connect", { host: "172.16.0.94", port: 25565 }),
+    ).toThrow(/validation_failed/);
+    expect(() => parseNodeJobArgs("net_tcp_connect", { port: 0 })).toThrow(/validation_failed/);
+  });
+
   it("applies fs defaults so both shores see the same args", () => {
     expect(parseNodeJobArgs("fs_list", {})).toEqual({ path: "." });
     expect(parseNodeJobArgs("fs_read_text", { path: "servers/a/log.txt" })).toEqual({
@@ -508,6 +548,37 @@ describe("parseNodeJobResult", () => {
     expect(parseNodeJobResult("fs_copy", { from: "a", to: "b" }).to).toBe("b");
     expect(parseNodeJobResult("fs_put_archive", { path: "servers/a", ok: true }).ok).toBe(true);
     expect(parseNodeJobResult("fs_get_archive", { archiveBase64: "" }).archiveBase64).toBe("");
+  });
+
+  it("accepts a net_port_publish payload", () => {
+    expect(
+      parseNodeJobResult("net_port_publish", {
+        ok: true,
+        listening: true,
+        action: "ensure",
+        serverId: "s1",
+        listenHost: "172.16.0.94",
+        listenPort: 25565,
+        protocol: "tcp",
+      }),
+    ).toMatchObject({ ok: true, listening: true, action: "ensure" });
+  });
+
+  it("accepts a net_tcp_connect payload", () => {
+    expect(
+      parseNodeJobResult("net_tcp_connect", {
+        host: "127.0.0.1",
+        port: 25565,
+        state: "open",
+      }),
+    ).toEqual({ host: "127.0.0.1", port: 25565, state: "open" });
+    expect(() =>
+      parseNodeJobResult("net_tcp_connect", {
+        host: "127.0.0.1",
+        port: 25565,
+        state: "listening",
+      }),
+    ).toThrow(NodeJobError);
   });
 
   it("accepts a net_udp_listen payload", () => {

@@ -51,61 +51,46 @@ Manual smoke test for WSL Phase 2 (networking mode detection + LAN join) on `pla
 - [ ] Use the copied join address (Windows host IP + port)
 - [ ] Attempt to connect to the server
 - [ ] Verify:
-  - [ ] **Mirrored mode:** Connection should succeed immediately
-  - [ ] **NAT mode:** Connection may fail (requires manual portproxy setup for production)
+  - [ ] **Mirrored mode:** Connection should succeed (WSL `-p 0.0.0.0` is on the parent NIC)
+  - [ ] **NAT mode:** Connection should succeed after start — the Windows node-agent publishes `join_host:port` → `127.0.0.1:port` (`net_port_publish`). Do not run `netsh` portproxy.
 
-### 6. Port Forwarding Check (NAT Mode Only)
+### 6. Parent publish check (NAT)
 
-If networking mode is NAT and the LAN join failed:
+If the advertised Windows LAN IP was closed before start and open after:
 
-- [ ] On Windows host PowerShell (Administrator), run:
-  ```powershell
-  netsh interface portproxy show all
-  ```
-- [ ] Check if a port forwarding rule exists for the game port
-- [ ] If not, manually add portproxy rule (example for port 25565):
-  ```powershell
-  $wslIp = (wsl hostname -I).Trim()
-  netsh interface portproxy add v4tov4 listenaddress=0.0.0.0 listenport=25565 connectaddress=$wslIp connectport=25565
-  ```
-- [ ] Retry LAN join from client device
-- [ ] Verify connection now succeeds
+- [ ] Windows node agent version advertises `net_port_publish` (Update the Windows node from Settings → Nodes if placement skipped WSL)
+- [ ] Home ready-gate / `servers_start` `ready=true` only when that advertised host:port answers
+- [ ] Placement skipped WSL (`wsl_lan_publish_unavailable`) and used local docker if the parent agent is too old
 
 ### 7. Settings UI Warning Check
 
 - [ ] Open Settings → Nodes in PlayOn Home
 - [ ] If WSL is in NAT mode, verify:
   - [ ] A networking warning is displayed in the WSL panel (mentions mirrored vs NAT)
-  - [ ] Warning is clear about the potential need for port forwarding
+  - [ ] Warning does not tell the host to run `netsh`
 
 ### 8. Cleanup
 
-- [ ] Stop and delete the test server
-- [ ] (Optional) Remove portproxy rules if added:
-  ```powershell
-  netsh interface portproxy delete v4tov4 listenaddress=0.0.0.0 listenport=25565
-  ```
+- [ ] Stop and delete the test server (stop releases `net_port_publish` mappings)
 
 ## Expected Results
 
 ✅ **Pass Criteria:**
 - WSL sibling node shows online and can run servers
 - Join host resolves to Windows host's LAN IP (not localhost or WSL internal IP)
-- LAN clients can join servers on mirrored mode without extra setup
-- NAT mode shows a clear warning and documents portproxy requirement
+- After start, that LAN IP:port is open from Home (or placement used a reachable non-WSL node)
+- Agent/UI never claims up unless `ready=true`
 - Settings UI displays networking mode information
 
 ❌ **Fail Criteria:**
 - Join host resolves to `127.0.0.1` or WSL internal IP
-- LAN clients cannot reach the server even in mirrored mode
-- No networking mode information is displayed
+- LAN clients cannot reach the advertised address and the agent still said the server was up
+- Placement picked WSL when the parent cannot publish
 
 ## Notes
 
-- **Mirrored networking** is the preferred mode (Win11 22H2+) and should work out of the box for LAN join
-- **NAT mode** is the fallback for older Windows builds and requires manual `netsh interface portproxy` setup for production LAN gaming
-- Port forwarding rules may need to be added/removed per game port in NAT mode
-- WSL VM restart (e.g., `wsl --shutdown`) clears portproxy rules; consider making them persistent or documenting per-skill setup
+- **Mirrored networking** (Win11 22H2+) exposes WSL published ports on the parent NIC
+- **NAT mode** uses PlayOn `net_port_publish` on the Windows parent (LAN `join_host` → `127.0.0.1`). Update the Windows node agent. Do not ask the host for `netsh` portproxy.
 
 ## Automated join-path canary
 
@@ -114,4 +99,3 @@ Address resolution (Linux fixture, WSL parent `join_host`, Windows node `join_ho
 ## Additional Resources
 
 - [WSL networking documentation](https://learn.microsoft.com/en-us/windows/wsl/networking)
-- [Windows netsh portproxy reference](https://learn.microsoft.com/en-us/windows-server/networking/technologies/netsh/netsh-interface-portproxy)

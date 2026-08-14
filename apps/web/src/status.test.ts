@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  displayServerStatus,
   isPendingNodeSetup,
   nodePresenceHint,
   nodePresenceLabel,
@@ -10,6 +11,14 @@ import {
 } from "./status";
 
 describe("status helpers", () => {
+  it("does not label a server Running unless join-ready is true", () => {
+    expect(displayServerStatus("running", true)).toBe("running");
+    expect(displayServerStatus("running", false)).toBe("degraded");
+    expect(displayServerStatus("running", undefined)).toBe("degraded");
+    expect(statusLabel("degraded")).toBe("Not joinable");
+    expect(statusHint("degraded")).toMatch(/advertised join address/);
+  });
+
   it("labels docker_unavailable", () => {
     expect(statusLabel("docker_unavailable")).toBe("Docker missing");
     expect(statusHint("docker_unavailable")).toMatch(/Install Docker/);

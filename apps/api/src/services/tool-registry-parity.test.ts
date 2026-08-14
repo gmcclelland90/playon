@@ -285,6 +285,7 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
       );
     }
     // Panel tools narrow to the bound server but still answer in an unbound chat.
+    expect(byName.get("net_port_check")?.workspacePolicy).toBe("server_optional");
     expect(byName.get("panel_publish")?.workspacePolicy).toBe("server_optional");
     expect(byName.get("panel_upsert")?.workspacePolicy).toBe("server_optional");
     expect(byName.get("panel_theme")?.workspacePolicy).toBe("server_required");
