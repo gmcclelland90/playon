@@ -25,7 +25,7 @@ export async function checkServerLoopbackTcp(
   port: number,
   homeCheck: (host: string, port: number) => Promise<JoinPathPortState>,
 ): Promise<LoopbackTcpProbe> {
-  if (isLocalNodeId(nodeId)) {
+  if (isLocalNodeId(nodeId) || !nodeId) {
     return { state: await homeCheck("127.0.0.1", port), scope: "home", unavailable: false };
   }
   return checkNodeLoopbackTcp(nodeId, port);
