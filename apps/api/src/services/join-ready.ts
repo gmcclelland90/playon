@@ -1,5 +1,6 @@
 import {
   evaluateJoinReady,
+  isLocalNodeId,
   joinHostNotReachableResult,
   probeJoinPath,
   type JoinPathPortState,
@@ -10,6 +11,10 @@ import type { AppConfig } from "../config.js";
 import { readSkillMarker } from "./skill-marker.js";
 import { loadSkillMetadata } from "./skills.js";
 import type { NetToolsService } from "./net-tools.js";
+import {
+  checkServerLoopbackTcp,
+  type LoopbackTcpProbe,
+} from "./node-loopback-tcp.js";
 import type { ServerQueryService } from "./server-query.js";
 import type { ServerRecord, ServerService } from "./servers.js";
 
@@ -28,19 +33,31 @@ function emptyJoinPath(joinHost: string, port: number, reason: string): JoinPath
   };
 }
 
+export type JoinReadyLoopbackFn = (
+  nodeId: string,
+  port: number,
+) => Promise<LoopbackTcpProbe>;
+
 /**
  * Advertised-join ready gate. Process-up / loopback is not enough — Home must
  * prove the panel join host:port (or a query against that address).
+ * The #843 loopback leg for a remote node runs on that node, never Home.
  */
 export class JoinReadyService {
   private readonly cache = new Map<string, { at: number; report: JoinReadyReport }>();
+  private readonly loopbackOnNode: JoinReadyLoopbackFn;
 
   constructor(
     private readonly dbServers: ServerService,
     private readonly net: NetToolsService,
     private readonly config: AppConfig,
     private readonly queries?: ServerQueryService,
-  ) {}
+    loopbackOnNode?: JoinReadyLoopbackFn,
+  ) {
+    this.loopbackOnNode =
+      loopbackOnNode ??
+      ((nodeId, port) => checkServerLoopbackTcp(nodeId, port, (host, p) => this.checkTcp(host, p)));
+  }
 
   cached(serverId: string, maxAgeMs = 60_000): JoinReadyReport | null {
     const hit = this.cache.get(serverId);
@@ -104,10 +121,20 @@ export class JoinReadyService {
 
     let joinPath: JoinPathProbeResult;
     if (protocol === "tcp" && join.port > 0) {
+      const nodeId = server.nodeId;
+      const remote = !isLocalNodeId(nodeId);
       joinPath = await probeJoinPath({
         joinHost: join.address,
         port: join.port,
         check: async (host, port) => this.checkTcp(host, port),
+        checkLoopback:
+          remote && nodeId
+            ? async (_host, port) => {
+                const probe = await this.loopbackOnNode(nodeId, port);
+                return probe.state;
+              }
+            : undefined,
+        loopbackScope: remote ? "node" : "home",
       });
     } else if (protocol === "udp") {
       joinPath = emptyJoinPath(join.address, join.port, "udp_not_tcp_probed");

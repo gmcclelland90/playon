@@ -6,7 +6,11 @@ export type JoinPathProbeInput = {
   port: number;
   loopbackState: JoinPathPortState;
   joinHostState: JoinPathPortState;
+  loopbackScope?: JoinPathLoopbackScope;
 };
+
+/** Where the loopback leg was probed. Remote servers must use `node`, never Home. */
+export type JoinPathLoopbackScope = "node" | "home";
 
 export type JoinPathProbeResult = {
   ok: boolean;
@@ -16,6 +20,8 @@ export type JoinPathProbeResult = {
   port: number;
   loopbackState: JoinPathPortState;
   joinHostState: JoinPathPortState;
+  /** Absent on older canary fixtures; ready-gate sets this. */
+  loopbackScope?: JoinPathLoopbackScope;
 };
 
 /** Fixture used by the join-path canary (Linux Docker + WSL sibling stand-in). */
@@ -40,6 +46,7 @@ export function evaluateJoinPathProbe(input: JoinPathProbeInput): JoinPathProbeR
     port: input.port,
     loopbackState: input.loopbackState,
     joinHostState: input.joinHostState,
+    ...(input.loopbackScope ? { loopbackScope: input.loopbackScope } : {}),
   };
 
   if (!joinHost) {
@@ -69,20 +76,33 @@ export function evaluateJoinPathProbe(input: JoinPathProbeInput): JoinPathProbeR
 export async function probeJoinPath(args: {
   joinHost: string;
   port: number;
+  /** Advertised / LAN-client vantage (Home TCP). */
   check: (host: string, port: number) => Promise<JoinPathPortState>;
+  /**
+   * Loopback diagnostic vantage. For a remote node this must be that node's
+   * localhost — never Home `127.0.0.1` (soak Paper on the API host).
+   */
+  checkLoopback?: (host: string, port: number) => Promise<JoinPathPortState>;
   loopbackHost?: string;
+  loopbackScope?: JoinPathLoopbackScope;
 }): Promise<JoinPathProbeResult> {
   const loopbackHost = args.loopbackHost?.trim() || "127.0.0.1";
   const joinHost = args.joinHost.trim();
-  const loopbackState = await args.check(loopbackHost, args.port);
   const sameHost =
     isLoopbackJoinHost(joinHost) || joinHost.toLowerCase() === loopbackHost.toLowerCase();
+  // Advertised loopback is the player-facing Home path — do not substitute a node job.
+  const loopbackCheck = sameHost ? args.check : (args.checkLoopback ?? args.check);
+  const loopbackState = await loopbackCheck(loopbackHost, args.port);
   const joinHostState = sameHost ? loopbackState : await args.check(joinHost, args.port);
+  const loopbackScope: JoinPathLoopbackScope | undefined = sameHost
+    ? "home"
+    : args.loopbackScope ?? (args.checkLoopback ? "node" : "home");
   return evaluateJoinPathProbe({
     joinHost,
     port: args.port,
     loopbackState,
     joinHostState,
+    loopbackScope,
   });
 }
 

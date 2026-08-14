@@ -6,6 +6,7 @@ import {
 } from "@playon/shared";
 import type { JoinReadyService } from "./join-ready.js";
 import type { NetToolsService } from "./net-tools.js";
+import { checkServerLoopbackTcp } from "./node-loopback-tcp.js";
 import type { ServerQueryService } from "./server-query.js";
 import type { ServerRecord, ServerService } from "./servers.js";
 import { readSkillMarker } from "./skill-marker.js";
@@ -121,14 +122,22 @@ export class HealthService {
           onFail: check.onFail,
         });
         if (!ok && check.onFail === "restart") {
-          // Advertised-closed + loopback-open is a publish/path gap, not a dead process.
-          const loopback = isLoopbackJoinHost(host)
-            ? probe
-            : await this.net.portCheck({ host: "127.0.0.1", port });
-          if (loopback.state === "open" && !isLoopbackJoinHost(host)) {
-            /* do not restart — join-path gate reports degraded instead */
-          } else {
+          // Advertised-closed + node loopback-open is a publish/path gap, not a dead process.
+          // Never use Home 127.0.0.1 for a remote node (soak Paper on the API host).
+          if (isLoopbackJoinHost(host)) {
             needsRestart = true;
+          } else {
+            const loopback = await checkServerLoopbackTcp(server.nodeId, port, async (h, p) => {
+              const home = await this.net.portCheck({ host: h, port: p });
+              return home.state;
+            });
+            if (loopback.state === "open") {
+              /* do not restart — join-path gate reports degraded instead */
+            } else if (loopback.unavailable) {
+              /* cannot confirm node loopback — do not thrash a live process */
+            } else {
+              needsRestart = true;
+            }
           }
         }
         if (!ok && check.onFail === "escalate") escalations.push(check.id);

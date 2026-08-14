@@ -413,6 +413,49 @@ describe("executeJob", () => {
     }
   });
 
+  it("reports a bound TCP port via net_tcp_connect and rejects non-loopback hosts", async () => {
+    const net = await import("node:net");
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-tcp-"));
+    const server = net.createServer();
+    try {
+      const port = await new Promise<number>((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, "127.0.0.1", () => {
+          const addr = server.address();
+          resolve(!addr || typeof addr === "string" ? 0 : addr.port);
+        });
+      });
+      const bound = (await executeJob(
+        { id: "tcp-1", nodeId: "n1", kind: "net_tcp_connect", args: { port } },
+        root,
+      )) as { host: string; port: number; state: string };
+      expect(bound.host).toBe("127.0.0.1");
+      expect(bound.port).toBe(port);
+      expect(bound.state).toBe("open");
+
+      const closed = (await executeJob(
+        { id: "tcp-2", nodeId: "n1", kind: "net_tcp_connect", args: { host: "127.0.0.1", port: 1 } },
+        root,
+      )) as { state: string };
+      expect(closed.state).toBe("closed");
+
+      await expect(
+        executeJob(
+          {
+            id: "tcp-lan",
+            nodeId: "n1",
+            kind: "net_tcp_connect",
+            args: { host: "172.16.0.94", port },
+          },
+          root,
+        ),
+      ).rejects.toMatchObject({ code: "validation_failed", kind: "net_tcp_connect" });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("manage_probe finds allowlisted trees and manage_pack rejects escapes", async () => {
     const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-"));
     const scan = fs.mkdtempSync(path.join(os.tmpdir(), "playon-scan-"));

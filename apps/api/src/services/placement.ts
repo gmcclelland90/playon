@@ -2,6 +2,7 @@ import os from "node:os";
 import { eq } from "drizzle-orm";
 import {
   deriveNodePresence,
+  isLocalNodeId,
   LOCAL_NODE_ID,
   placementBadge,
   placementFromNodeKind,
@@ -293,7 +294,9 @@ export class PlacementService {
       )
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
 
-    if (this.net && candidates[0]?.eligible) {
+    // Home suggestBind is this API host's bind table. Do not attach port_ok:25566
+    // to a WSL/LAN candidate — that is playon-dev, not the recommended node.
+    if (this.net && candidates[0]?.eligible && isLocalNodeId(candidates[0].nodeId)) {
       const preferred = skill.metadata.ports.find((p) => p.default)?.default;
       if (preferred) {
         try {

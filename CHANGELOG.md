@@ -6,7 +6,7 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ### Fixed
 
-- **Advertised join-path ready gate** — in-app agents and UI/status no longer treat process-up, Paper “Done!”, or `127.0.0.1:port` as “server is up.” Ready requires the panel join host:port (`resolveJoinAddress` / `nodes.join_host`) to be open from Home, or a query against that address to succeed. Loopback-open + advertised-closed stays `degraded` / not-ready. RCON and console fail fast with `join_host_not_reachable` instead of hanging into `rcon_connect_timeout`. Does not invent portproxy/firewall instructions.
+- **Advertised join-path ready gate** — in-app agents and UI/status no longer treat process-up, Paper “Done!”, or `127.0.0.1:port` as “server is up.” Ready requires the panel join host:port (`resolveJoinAddress` / `nodes.join_host`) to be open from Home, or a query against that address to succeed. The #843 loopback leg for a remote node uses `net_tcp_connect` on that node — never Home `127.0.0.1` (playon-dev soak Paper must not count). `net_port_check` on localhost without `nodeId` / a bound server returns `loopback_requires_nodeId` instead of probing Home. Placement does not attach Home `port_ok` to a remote/WSL candidate. Loopback-open + advertised-closed stays `degraded` / not-ready. RCON and console fail fast with `join_host_not_reachable` instead of hanging into `rcon_connect_timeout`. Agents need `net_tcp_connect` for accurate `loopback_open_join_host_closed`; ready still holds without it. Does not invent portproxy/firewall instructions.
 
 ## [0.2.6] — 2026-08-14
 

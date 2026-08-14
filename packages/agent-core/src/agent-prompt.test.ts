@@ -7,5 +7,6 @@ describe("AGENT_SYSTEM_PROMPT", () => {
     expect(AGENT_SYSTEM_PROMPT).toMatch(/advertised panel join host:port/);
     expect(AGENT_SYSTEM_PROMPT).toMatch(/127\.0\.0\.1:port is not enough/);
     expect(AGENT_SYSTEM_PROMPT).toMatch(/loopback_open_join_host_closed/);
+    expect(AGENT_SYSTEM_PROMPT).toMatch(/net_port_check on 127\.0\.0\.1/);
   });
 });

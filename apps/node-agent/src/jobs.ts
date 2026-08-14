@@ -1,5 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -31,6 +32,22 @@ import {
   stopLogFollow,
 } from "./log-follow.js";
 import { performNodeSelfUpdate } from "./self-update.js";
+
+/** TCP connect on this node. Used for the #843 loopback leg — not a remote scan. */
+function probeTcpConnect(host: string, port: number, timeoutMs = 1500): Promise<"open" | "closed"> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host, port });
+    const done = (result: "open" | "closed") => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(result);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => done("open"));
+    socket.once("timeout", () => done("closed"));
+    socket.once("error", () => done("closed"));
+  });
+}
 
 function managePackStagingDir(dataRoot: string): string {
   const dir = path.join(dataRoot, ...MANAGE_PACK_STAGING_REL.split("/"));
@@ -103,6 +120,7 @@ export const SUPPORTED_JOB_KINDS: readonly NodeJobKind[] = [
   "ping",
   "runtime_caps",
   "net_udp_listen",
+  "net_tcp_connect",
   "node_self_update",
   "fs_list",
   "fs_ensure_dir",
@@ -285,6 +303,12 @@ export async function executeJob(
   if (job.kind === "net_udp_listen") {
     const { port } = parseNodeJobArgs("net_udp_listen", job.args);
     return parseNodeJobResult("net_udp_listen", probeUdpListen(port));
+  }
+
+  if (job.kind === "net_tcp_connect") {
+    const { host, port } = parseNodeJobArgs("net_tcp_connect", job.args);
+    const state = await probeTcpConnect(host, port);
+    return parseNodeJobResult("net_tcp_connect", { host, port, state });
   }
 
   if (job.kind === "node_self_update") {

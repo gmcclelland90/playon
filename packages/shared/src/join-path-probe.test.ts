@@ -102,6 +102,40 @@ describe("probeJoinPath", () => {
     expect(result.reason).toBe("loopback_open_join_host_closed");
   });
 
+  it("uses checkLoopback for the diagnostic leg and check for the advertised host", async () => {
+    const seen: string[] = [];
+    const result = await probeJoinPath({
+      joinHost: "172.16.0.94",
+      port: 25565,
+      check: async (host) => {
+        seen.push(`home:${host}`);
+        return "closed";
+      },
+      checkLoopback: async (host) => {
+        seen.push(`node:${host}`);
+        return "closed";
+      },
+      loopbackScope: "node",
+    });
+    expect(seen).toEqual(["node:127.0.0.1", "home:172.16.0.94"]);
+    expect(result.reason).toBe("join_host_closed");
+    expect(result.loopbackScope).toBe("node");
+    expect(result.ok).toBe(false);
+  });
+
+  it("does not treat Home-open loopback as node-open when checkLoopback is closed", async () => {
+    const result = await probeJoinPath({
+      joinHost: "172.16.0.94",
+      port: 25565,
+      check: async (host) => (host === "127.0.0.1" ? "open" : "closed"),
+      checkLoopback: async () => "closed",
+    });
+    expect(result.loopbackState).toBe("closed");
+    expect(result.joinHostState).toBe("closed");
+    expect(result.reason).toBe("join_host_closed");
+    expect(result.ok).toBe(false);
+  });
+
   it("does not double-probe when join host is loopback", async () => {
     let calls = 0;
     const result = await probeJoinPath({

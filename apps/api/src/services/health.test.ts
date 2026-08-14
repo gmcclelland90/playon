@@ -200,7 +200,11 @@ describe("HealthService", () => {
       port,
       state: host === lan ? "closed" : "open",
     }));
-    const joinReady = new JoinReadyService(servers, net, config);
+    const joinReady = new JoinReadyService(servers, net, config, undefined, async () => ({
+      state: "open",
+      scope: "node",
+      unavailable: false,
+    }));
     const health = new HealthService(servers, net, config, undefined, joinReady);
 
     await db.insert(nodes).values({
@@ -234,6 +238,53 @@ describe("HealthService", () => {
     expect(report.ok).toBe(false);
     expect(report.checks.some((c) => c.id === "join-path" && !c.ok)).toBe(true);
     expect(report.joinPath?.reason).toBe("loopback_open_join_host_closed");
+    expect(restart).not.toHaveBeenCalled();
+  });
+
+  it("does not treat Home soak 127.0.0.1 as the remote server's loopback", async () => {
+    const lan = "172.16.0.94";
+    const { db, config } = tempConfig();
+    const servers = new ServerService(db, config);
+    const net = new NetToolsService(servers);
+    vi.spyOn(net, "portCheck").mockImplementation(async ({ host, port }) => ({
+      host: host?.trim() || "127.0.0.1",
+      port,
+      state: host === lan ? "closed" : "open",
+    }));
+    const joinReady = new JoinReadyService(servers, net, config);
+    const health = new HealthService(servers, net, config, undefined, joinReady);
+
+    await db.insert(nodes).values({
+      id: "playon-win-1-wsl",
+      name: "wsl",
+      os: "linux",
+      docker: true,
+      native: true,
+      steamcmd: true,
+      freeDiskBytes: 1e11,
+      lastSeenAt: new Date(),
+      kind: "lan",
+      tunnelStatus: "none",
+      joinHost: null,
+    });
+    const created = await servers.createFromSkill({
+      skillName: LAB_DOCKER_SKILL,
+      serverName: "Health Soak Split",
+    });
+    const get = servers.get.bind(servers);
+    servers.get = async (id: string) => {
+      const row = await get(id);
+      return row ? { ...row, status: "running", nodeId: "playon-win-1-wsl" } : row;
+    };
+    servers.joinInfoFor = async () => ({ address: lan, port: 25565 });
+    servers.resolveJoinAddress = async () => lan;
+    const restart = vi.spyOn(servers, "restart");
+
+    const report = await health.checkServer(created.id, { remediate: true });
+    expect(report.ready).toBe(false);
+    expect(report.joinPath?.reason).toBe("join_host_closed");
+    expect(report.joinPath?.loopbackState).toBe("closed");
+    expect(report.joinPath?.loopbackScope).toBe("node");
     expect(restart).not.toHaveBeenCalled();
   });
 });

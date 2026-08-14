@@ -137,7 +137,7 @@ afterEach(() => {
 });
 
 describe("JoinReadyService", () => {
-  it("localhost-open + advertised-closed is not ready", async () => {
+  it("Home soak localhost-open does not count as node loopback for a remote server", async () => {
     const lan = firstNonLoopbackIPv4();
     if (!lan) return;
 
@@ -168,10 +168,56 @@ describe("JoinReadyService", () => {
       const report = await joinReady.probe(seeded.id);
       expect(report.ready).toBe(false);
       expect(report.status).toBe("degraded");
+      expect(report.reason).toBe("join_host_closed");
+      expect(report.joinPath.joinHost).toBe(lan);
+      expect(report.joinPath.loopbackState).toBe("closed");
+      expect(report.joinPath.joinHostState).toBe("closed");
+      expect(report.joinPath.loopbackScope).toBe("node");
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("node loopback-open + advertised-closed is not ready", async () => {
+    const lan = firstNonLoopbackIPv4();
+    if (!lan) return;
+
+    const { db, config, root } = tempConfig();
+    const servers = new ServerService(db, config);
+    const net = new NetToolsService(servers);
+    const joinReady = new JoinReadyService(servers, net, config, undefined, async () => ({
+      state: "open",
+      scope: "node",
+      unavailable: false,
+    }));
+
+    await insertNode(db, { id: "node-lan", name: "lan", os: "linux", joinHost: lan });
+    const seeded = await seedRunningServer(db, root, "node-lan");
+    const { server, port } = await listen("127.0.0.1");
+    try {
+      servers.get = async (id: string) =>
+        id === seeded.id
+          ? {
+              id: seeded.id,
+              name: "Join Ready",
+              game: "Lab Docker Server",
+              nodeId: "node-lan",
+              runtimeMode: "docker",
+              status: "running",
+              dataPath: seeded.dataPath,
+              createdAt: new Date(),
+            }
+          : null;
+      servers.joinInfoFor = async () => ({ address: lan, port });
+
+      const report = await joinReady.probe(seeded.id);
+      expect(report.ready).toBe(false);
+      expect(report.status).toBe("degraded");
       expect(report.reason).toBe("loopback_open_join_host_closed");
       expect(report.joinPath.joinHost).toBe(lan);
       expect(report.joinPath.loopbackState).toBe("open");
       expect(report.joinPath.joinHostState).toBe("closed");
+      expect(report.joinPath.loopbackScope).toBe("node");
     } finally {
       await closeServer(server);
     }

@@ -13,6 +13,7 @@ import {
   type HostCapabilityProbe,
   type NodeCaps,
 } from "./placement.js";
+import type { NetToolsService } from "./net-tools.js";
 
 const temps: Array<{ root: string; close: () => void }> = [];
 
@@ -34,6 +35,7 @@ const windowsLocalProbe: HostCapabilityProbe = () => ({
 function placementEnv(
   skillYaml: string,
   probeHost?: HostCapabilityProbe,
+  net?: NetToolsService,
 ): { placement: PlacementService; db: Db; skillName: string } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-placement-"));
   const dbPath = path.join(root, "playon.db");
@@ -55,7 +57,7 @@ function placementEnv(
   fs.mkdirSync(config.dataRoot, { recursive: true });
   const { db, sqlite } = createDb(dbPath);
   temps.push({ root, close: () => sqlite.close() });
-  return { placement: new PlacementService(db, config, undefined, probeHost), db, skillName };
+  return { placement: new PlacementService(db, config, net, probeHost), db, skillName };
 }
 
 const baseSkill = SkillMetadataSchema.parse({
@@ -345,6 +347,33 @@ ports:
     });
 
     await expect(placement.resolveNodeId(skillName)).resolves.toBe("lab-linux");
+  });
+
+  it("does not attach Home suggestBind as port_ok for a remote recommended node", async () => {
+    const net = {
+      suggestBind: async () => ({ host: "0.0.0.0", port: 25566, available: true }),
+    } as unknown as NetToolsService;
+    const { placement, db, skillName } = placementEnv(linuxOnlyYaml, windowsLocalProbe, net);
+    await placement.ensureLocalNode();
+    await db.insert(nodes).values({
+      id: "playon-win-1-wsl",
+      name: "win-wsl",
+      os: "linux",
+      docker: true,
+      native: true,
+      steamcmd: false,
+      freeDiskBytes: 20 * 1024 ** 3,
+      agentVersion: "test",
+      lastSeenAt: new Date(),
+      kind: "lan",
+      tunnelStatus: "none",
+    });
+
+    const plan = await placement.plan(skillName);
+    expect(plan.recommendedNodeId).toBe("playon-win-1-wsl");
+    const remote = plan.candidates.find((c) => c.nodeId === "playon-win-1-wsl");
+    expect(remote?.reasons.some((r) => r.startsWith("port_ok:"))).toBe(false);
+    expect(remote?.reasons).not.toContain("port_ok:25566");
   });
 
   it("places a Windows-container skill on a remote Windows docker node", async () => {

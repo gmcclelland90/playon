@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isLoopbackJoinHost } from "../join-path-probe.js";
 import { UDP_LISTEN_PROBES } from "../udp-listen.js";
 import { defineNodeJob, type NodeJobContractMap } from "./contract.js";
 
@@ -19,9 +20,43 @@ export const NetUdpListenResultSchema = z.object({
   probe: z.enum(UDP_LISTEN_PROBES),
 });
 
+/**
+ * TCP connect on the node itself (typically 127.0.0.1). Used by the #843
+ * join-path loopback leg so Home soak Paper cannot fake “localhost open”.
+ * Non-loopback hosts are rejected — this is not a remote scanner.
+ */
+export const NetTcpConnectArgsSchema = z
+  .object({
+    host: z.string().min(1).default("127.0.0.1"),
+    port: z.number().int().min(1).max(65535),
+  })
+  .strict()
+  .superRefine((val, ctx) => {
+    if (!isLoopbackJoinHost(val.host)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "net_tcp_connect_host_must_be_loopback",
+        path: ["host"],
+      });
+    }
+  });
+
+export const NetTcpConnectResultSchema = z.object({
+  host: z.string(),
+  port: z.number().int().min(1).max(65535),
+  state: z.enum(["open", "closed"]),
+});
+
 export const NET_NODE_JOB_CONTRACTS = {
   net_udp_listen: defineNodeJob("net_udp_listen", NetUdpListenArgsSchema, NetUdpListenResultSchema),
+  net_tcp_connect: defineNodeJob(
+    "net_tcp_connect",
+    NetTcpConnectArgsSchema,
+    NetTcpConnectResultSchema,
+  ),
 } as const satisfies NodeJobContractMap;
 
 export type NetUdpListenArgs = z.infer<typeof NetUdpListenArgsSchema>;
 export type NetUdpListenResult = z.infer<typeof NetUdpListenResultSchema>;
+export type NetTcpConnectArgs = z.infer<typeof NetTcpConnectArgsSchema>;
+export type NetTcpConnectResult = z.infer<typeof NetTcpConnectResultSchema>;
