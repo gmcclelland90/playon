@@ -4,9 +4,20 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+## [0.2.8] — 2026-08-14
+
 ### Fixed
 
-- **Managed instance liveness** — start never stacks a second process or container for the same server id. Leftovers under the server tree (including a JVM that chdir'd out of `game/` into `home/`) are reaped first; a healthy instance (alive and advertised game ports bound on the host) is reused. A process/container that is alive but has dropped those ports is dead: reap, mark `error`, never report running. First-see of an already-`running` leftover with unbound advertised ports is dead immediately — the 15 min grace applies only while `starting`, or after a start this Home persisted (so a Home restart does not reset the clock). Docker `reap_then_start` also sweeps native leftovers beside the container. Health treats host-local unbound advertised ports as failed (`onFail: restart`), not as a join-path publish gap (`#877`). Create-from-skill and managed servers get an enabled **Health monitor** watcher (tools `servers_health_check` + remediate — one clean restart, not an agent turn). Existing rows without a health+restart watcher are migrated on boot / watcher list; import/friend (`importedFrom` without `managedFrom`) are skipped. `workshop_update` stays notify-only and cannot auto-restart. Generic for native and docker — not PZ-specific (`#880`).
+- **Single-instance start** — start reaps a leftover process or container for the same server id and never starts a sibling (`#881` / `#880`).
+- **Instance liveness** — alive + advertised host ports unbound = dead. First-see of an already-`running` leftover has no 15 min grace; persist instance start time so a Home restart does not reset the clock (`#881` / `#880`).
+- **Default Health monitor** — seeded on new create-from-skill servers and migrated onto existing managed / create-from-skill servers; import / friend (`importedFrom` without `managedFrom`) are skipped (`#881` / `#880`).
+- **`workshop_update`** stays notify-only and cannot auto-restart (`#881` / `#880`).
+- **Windows health join-path unit test** no longer hangs on remote reconcile (`#883` / `#882`).
+
+### Notes
+
+- Update Home via OTA (**Settings → About / Updates → Update & restart**).
+- Node OTA is a follow-up from the parent (not part of this cut).
 
 ## [0.2.7] — 2026-08-14
 
