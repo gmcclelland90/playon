@@ -18,6 +18,7 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 - **Skill scan / Paper smoke** — `native.libraryPathRelative` stringifies finite YAML numbers (unquoted Steam app ids such as `376030` used as AMP-style dirs). One invalid skill no longer aborts `listSkills` / `createFromSkill` (`#871` / `#872`).
 - **Windows node self-update extract** — `node_self_update` no longer unpacks the zip with `execFileSync("powershell.exe", Expand-Archive, { timeout: 60000 })` (`spawnSync powershell.exe ETIMEDOUT` on playon-win-1, `#868`). Extract is async `tar` (zip and tar.gz; `--force-local` on Windows) with a 10-minute cap and a PowerShell fallback that sets `$ProgressPreference = 'SilentlyContinue'`. Ships `playon-node-*-windows-x64.tar.gz` and prefers it in `latest.json` so 0.2.3/0.2.5 agents use their existing `tar -xzf` branch and skip Expand-Archive. Home Windows zip and Linux tarball paths unchanged (`#868` / `#869`).
+- **Windows `package:node` tarball** — GitHub `windows-latest` uses bsdtar, which has no `--force-local`. Create the OTA `playon-node-*-windows-x64.tar.gz` from the output directory with a relative `-f` so the colon in `D:` is not treated as a remote host. Zip + Linux tarball unchanged; `latest.json` still prefers the Windows tar.gz.
 
 ### Notes
 

@@ -15,6 +15,7 @@ import { execFileSync, execSync } from "node:child_process";
 import https from "node:https";
 import { createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
+import { linuxNodeTarCreate, windowsNodeTarCreate } from "./package-node-archive.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -316,13 +317,14 @@ if (isWin) {
   console.log("Packaged Node at", zipPath);
   // 0.2.3/0.2.5 agents Expand-Archive zips with a 60s spawnSync timeout (#868).
   // They already have a tar -xzf branch — publish tar.gz so OTA skips PowerShell.
-  const tarPath = path.join(out, `${baseName}.tar.gz`);
-  execFileSync("tar", ["--force-local", "-czf", tarPath, "-C", out, "playon-node"], {
-    stdio: "inherit",
-  });
-  console.log("Packaged Node tarball at", tarPath);
+  // windows-latest bsdtar rejects GNU force-local; create from out/ with a relative -f.
+  const archiveName = `${baseName}.tar.gz`;
+  const plan = windowsNodeTarCreate({ archiveName, outDir: out });
+  execFileSync(plan.cmd, plan.args, { cwd: plan.cwd, stdio: "inherit" });
+  console.log("Packaged Node tarball at", path.join(out, archiveName));
 } else {
   const tarPath = path.join(out, `${baseName}.tar.gz`);
-  execFileSync("tar", ["-czf", tarPath, "-C", out, "playon-node"], { stdio: "inherit" });
+  const plan = linuxNodeTarCreate({ archivePath: tarPath, outDir: out });
+  execFileSync(plan.cmd, plan.args, { stdio: "inherit" });
   console.log("Packaged Node at", tarPath);
 }
