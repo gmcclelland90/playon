@@ -64,6 +64,17 @@ export const SkillJoinSchema = z.object({
 });
 export type SkillJoin = z.infer<typeof SkillJoinSchema>;
 
+/**
+ * YAML unquoted Steam app ids (`376030`) parse as numbers. AMP-style install
+ * dirs use those digits as a path segment, so stringify finite numbers only.
+ */
+export function coerceSkillPathSegment(value: unknown): unknown {
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return value;
+}
+
+export const SkillPathSegmentSchema = z.preprocess(coerceSkillPathSegment, z.string());
+
 /** Native process launch declared by the skill (start.sh still wins when present). */
 export const SkillNativeSchema = z.object({
   binary: z.string().min(1).optional(),
@@ -71,7 +82,7 @@ export const SkillNativeSchema = z.object({
   args: z.array(z.string()).default([]),
   env: z.record(z.string(), z.string()).default({}),
   /** Paths relative to game/ prepended to LD_LIBRARY_PATH on Linux. */
-  libraryPathRelative: z.array(z.string()).default([]),
+  libraryPathRelative: z.array(SkillPathSegmentSchema).default([]),
   preferStartScript: z.boolean().default(true),
 });
 export type SkillNative = z.infer<typeof SkillNativeSchema>;

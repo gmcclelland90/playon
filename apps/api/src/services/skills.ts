@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import yaml from "js-yaml";
+import { ZodError } from "zod";
 import { SkillMetadataSchema, type SkillMetadata } from "@playon/shared";
 
 export interface SkillEntry {
@@ -44,9 +45,28 @@ function skillIdFromPath(skillDir: string, root: string): string {
   return rel || path.basename(skillDir);
 }
 
+function formatSkillLoadError(err: unknown): string {
+  if (err instanceof ZodError) {
+    const issue = err.issues[0];
+    const issuePath = issue?.path?.length ? issue.path.join(".") : "metadata";
+    return `${issuePath}: ${issue?.message ?? "invalid_skill"}`;
+  }
+  return err instanceof Error ? err.message : String(err);
+}
+
 function loadMetadataFile(metadataPath: string): SkillMetadata {
   const raw = yaml.load(fs.readFileSync(metadataPath, "utf8"));
   return SkillMetadataSchema.parse(raw);
+}
+
+/** Parse skill metadata; return null (and warn) so one bad tree cannot abort listing. */
+function tryLoadMetadataFile(metadataPath: string): SkillMetadata | null {
+  try {
+    return loadMetadataFile(metadataPath);
+  } catch (err) {
+    console.warn(`skipping invalid skill metadata ${metadataPath}: ${formatSkillLoadError(err)}`);
+    return null;
+  }
 }
 
 function scanSkillsRoot(root: string): SkillEntry[] {
@@ -56,10 +76,12 @@ function scanSkillsRoot(root: string): SkillEntry[] {
   const walk = (dir: string) => {
     const metadataPath = path.join(dir, "metadata.yaml");
     if (fs.existsSync(metadataPath)) {
+      const metadata = tryLoadMetadataFile(metadataPath);
+      if (!metadata) return;
       entries.push({
         id: skillIdFromPath(dir, root),
         path: dir,
-        metadata: loadMetadataFile(metadataPath),
+        metadata,
       });
       return;
     }

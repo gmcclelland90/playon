@@ -116,5 +116,38 @@ describe("SkillMetadataSchema contract", () => {
     });
     expect(parsed.steamBetaLinux).toBe("linuxbranch");
   });
+
+  it("stringifies finite numeric libraryPathRelative segments (YAML Steam app ids)", () => {
+    const parsed = SkillMetadataSchema.parse({
+      name: "games.ark-evolved",
+      version: "0.1.4",
+      native: {
+        binary: "ShooterGame/Binaries/Linux/ShooterGameServer",
+        libraryPathRelative: [
+          "ShooterGame/Binaries/Linux",
+          "linux64",
+          ".",
+          "ARK Survival Evolved Dedicated Server",
+          "ARK Survival Evolved Dedicated Server/linux64",
+          "ARK Survival Evolved Dedicated Server/ShooterGame/Binaries/Linux",
+          376030,
+          "376030/linux64",
+          "376030/ShooterGame/Binaries/Linux",
+        ],
+      },
+    });
+    expect(parsed.native?.libraryPathRelative[6]).toBe("376030");
+    expect(parsed.native?.libraryPathRelative.every((p) => typeof p === "string")).toBe(true);
+  });
+
+  it("rejects non-stringifiable libraryPathRelative entries", () => {
+    expect(() =>
+      SkillMetadataSchema.parse({
+        name: "games.broken",
+        version: "0.1.0",
+        native: { libraryPathRelative: ["linux64", { not: "a path" }] },
+      }),
+    ).toThrow(/string/i);
+  });
 });
 
