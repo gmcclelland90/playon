@@ -556,8 +556,8 @@ ports:
     const { placement, db, skillName } = placementEnv(linuxOnlyYaml, windowsLocalProbe, net);
     await placement.ensureLocalNode();
     await db.insert(nodes).values({
-      id: "playon-win-1-wsl",
-      name: "win-wsl",
+      id: "lab-linux",
+      name: "lab",
       os: "linux",
       docker: true,
       native: true,
@@ -570,8 +570,8 @@ ports:
     });
 
     const plan = await placement.plan(skillName);
-    expect(plan.recommendedNodeId).toBe("playon-win-1-wsl");
-    const remote = plan.candidates.find((c) => c.nodeId === "playon-win-1-wsl");
+    expect(plan.recommendedNodeId).toBe("lab-linux");
+    const remote = plan.candidates.find((c) => c.nodeId === "lab-linux");
     expect(remote?.reasons.some((r) => r.startsWith("port_ok:"))).toBe(false);
     expect(remote?.reasons).not.toContain("port_ok:25566");
   });
