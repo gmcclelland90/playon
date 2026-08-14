@@ -4,6 +4,10 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+### Fixed
+
+- **Skill scan / Paper smoke** — `native.libraryPathRelative` stringifies finite YAML numbers (unquoted Steam app ids such as `376030` used as AMP-style dirs). One invalid skill no longer aborts `listSkills` / `createFromSkill` (`#871`).
+
 ## [0.2.5] — 2026-08-13
 
 ### Changed
