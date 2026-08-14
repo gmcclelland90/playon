@@ -161,6 +161,7 @@ export class ServerService {
   private sharedProcess: ProcessSupervisor | null = null;
   private adoption: ServerAdoptionService | null = null;
   private readonly instanceStartedAt = new Map<string, number>();
+  private instanceStartedHydrated = false;
   private readonly crashRestarts = new Set<string>();
   private readonly reconciling = new Set<string>();
 
@@ -1235,7 +1236,9 @@ export class ServerService {
     if (bound !== false) {
       return { ok: true, detail: "host port probe skipped or unknown" };
     }
-    if (this.startedAgoMs(server.id) < this.portDeadGraceMs) {
+    await this.hydrateInstanceStartedAt();
+    const startedAgo = this.startedAgoMs(server.id);
+    if (startedAgo != null && startedAgo < this.portDeadGraceMs) {
       return { ok: true, detail: "advertised game ports still binding (grace)" };
     }
     return { ok: false, detail: "advertised game ports unbound on host" };
@@ -1292,16 +1295,40 @@ export class ServerService {
     await this.sharedProcess?.reclaim?.(identity.name, identity.cwd);
   }
 
-  private markInstanceStarted(serverId: string): void {
-    this.instanceStartedAt.set(serverId, Date.now());
+  private async hydrateInstanceStartedAt(): Promise<void> {
+    if (this.instanceStartedHydrated) return;
+    this.instanceStartedHydrated = true;
+    const rows = await this.db
+      .select({ id: servers.id, at: servers.instanceStartedAt })
+      .from(servers);
+    for (const row of rows) {
+      if (row.at && !this.instanceStartedAt.has(row.id)) {
+        this.instanceStartedAt.set(row.id, row.at.getTime());
+      }
+    }
   }
 
-  private startedAgoMs(serverId: string): number {
+  private async markInstanceStarted(serverId: string): Promise<void> {
+    const at = Date.now();
+    this.instanceStartedAt.set(serverId, at);
+    await this.db
+      .update(servers)
+      .set({ instanceStartedAt: new Date(at) })
+      .where(eq(servers.id, serverId));
+  }
+
+  private async clearInstanceStarted(serverId: string): Promise<void> {
+    this.instanceStartedAt.delete(serverId);
+    await this.db
+      .update(servers)
+      .set({ instanceStartedAt: null })
+      .where(eq(servers.id, serverId));
+  }
+
+  /** `null` = no persisted start (first see). Never invent “just now”. */
+  private startedAgoMs(serverId: string): number | null {
     const at = this.instanceStartedAt.get(serverId);
-    if (at == null) {
-      this.instanceStartedAt.set(serverId, Date.now());
-      return 0;
-    }
+    if (at == null) return null;
     return Date.now() - at;
   }
 
@@ -1349,6 +1376,7 @@ export class ServerService {
         return;
       }
 
+      await this.hydrateInstanceStartedAt();
       const processAlive = status.state === "running";
       const hostPortsBound = processAlive ? await this.hostGamePortsBound(server) : null;
       const decision = decideReconcileInstance({
@@ -1547,7 +1575,6 @@ export class ServerService {
       const decision = decideStartInstance({ processAlive, hostPortsBound });
 
       if (decision === "reuse") {
-        this.markInstanceStarted(id);
         this.crashRestarts.delete(id);
         await this.db.update(servers).set({ status: "running" }).where(eq(servers.id, id));
         this.emitStatus(id, "running");
@@ -1557,6 +1584,7 @@ export class ServerService {
 
       if (decision === "reap_then_start") {
         await handle.stop().catch(() => undefined);
+        await this.reapNativeServerTree(server).catch(() => undefined);
       } else if (handle.mode === "docker") {
         // Native leftovers (skill start.sh / managed-start) must not sit beside
         // the named container. Native start already reclaims inside the supervisor.
@@ -1564,7 +1592,7 @@ export class ServerService {
       }
       await handle.start();
 
-      this.markInstanceStarted(id);
+      await this.markInstanceStarted(id);
       await this.db.update(servers).set({ status: "running" }).where(eq(servers.id, id));
       this.emitStatus(id, "running");
       await this.beginRuntimeLogFollow(id, handle);
@@ -1595,6 +1623,7 @@ export class ServerService {
       .then((handle) => handle.stop())
       .catch(() => undefined);
 
+    await this.clearInstanceStarted(id);
     await this.db.update(servers).set({ status: "stopped" }).where(eq(servers.id, id));
     this.emitStatus(id, "stopped");
     return (await this.getRaw(id))!;

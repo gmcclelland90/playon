@@ -11,6 +11,7 @@ import {
   isWatcherScriptTool,
   sanitizeSkillWatcherTemplatesForSeed,
   sanitizeWatcherActionForTrigger,
+  serverEligibleForPlatformHealthMonitor,
   skillWatcherNotifyAction,
   validateLogPattern,
   watcherActionWouldRestart,
@@ -264,6 +265,34 @@ describe("Watcher schemas", () => {
           restarting.name,
         ),
       ),
+    ).toBe(false);
+  });
+
+  it("platform health monitor seeds on create-from-skill and managed, not import/friend", () => {
+    expect(
+      serverEligibleForPlatformHealthMonitor({ hasSkillMarker: false }),
+    ).toBe(false);
+    expect(
+      serverEligibleForPlatformHealthMonitor({ hasSkillMarker: true }),
+    ).toBe(true);
+    expect(
+      serverEligibleForPlatformHealthMonitor({
+        hasSkillMarker: true,
+        managedFrom: "/opt/pzserver",
+      }),
+    ).toBe(true);
+    expect(
+      serverEligibleForPlatformHealthMonitor({
+        hasSkillMarker: true,
+        importedFrom: "/legacy/server",
+        managedFrom: "/opt/pzserver",
+      }),
+    ).toBe(true);
+    expect(
+      serverEligibleForPlatformHealthMonitor({
+        hasSkillMarker: true,
+        importedFrom: "/legacy/server",
+      }),
     ).toBe(false);
   });
 

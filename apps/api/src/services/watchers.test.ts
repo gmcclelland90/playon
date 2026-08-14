@@ -386,4 +386,76 @@ describe("WatcherService", () => {
     });
     expect(watcherActionWouldRestart(updated!.action)).toBe(false);
   });
+
+  it("migrates existing create-from-skill and managed servers; skips import/friend", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-watchers-"));
+    dirs.push(root);
+    const dbPath = path.join(root, "playon.db");
+    applyBootstrap(dbPath);
+    const { db } = createDb(dbPath);
+    const { servers } = await import("../db/schema.js");
+
+    async function insertServer(
+      id: string,
+      extras: Record<string, unknown>,
+    ): Promise<void> {
+      const dataPath = path.join(root, "servers", id);
+      fs.mkdirSync(dataPath, { recursive: true });
+      fs.writeFileSync(
+        path.join(dataPath, "skill.json"),
+        JSON.stringify({
+          skillName: "games.project-zomboid",
+          version: "0.1.0",
+          runtimeMode: "native",
+          containerSupport: "none",
+          nodeId: null,
+          ...extras,
+        }),
+      );
+      await db.insert(servers).values({
+        id,
+        name: id,
+        game: "zomboid",
+        nodeId: null,
+        runtimeMode: "native",
+        status: "stopped",
+        dataPath,
+        createdAt: new Date(),
+      });
+    }
+
+    await insertServer("created1", {});
+    await insertServer("managed1", { managedFrom: "/opt/pzserver" });
+    await insertServer("import1", { importedFrom: "/legacy/server" });
+    await insertServer("nzl3", {
+      managedFrom: "/opt/pzserver",
+      importedFrom: "/opt/pzserver",
+    });
+
+    const svc = new WatcherService(db);
+    const seeded = await svc.migratePlatformHealthMonitors();
+    expect(seeded.sort()).toEqual(["created1", "managed1", "nzl3"].sort());
+
+    await svc.create({
+      serverId: "nzl3",
+      name: "Workshop Update Notifier",
+      enabled: true,
+      trigger: { kind: "workshop_update", workshopIds: ["3579640010"] },
+      action: workshopNotifyTemplate.action,
+    });
+
+    for (const id of ["created1", "managed1", "nzl3"]) {
+      const listed = await svc.list(id);
+      expect(
+        listed.some((w) => w.name === PLATFORM_HEALTH_MONITOR_NAME && w.enabled),
+        id,
+      ).toBe(true);
+    }
+    const imported = await svc.list("import1");
+    expect(imported.some((w) => w.name === PLATFORM_HEALTH_MONITOR_NAME)).toBe(false);
+
+    const workshop = (await svc.list("nzl3")).find((w) => w.trigger.kind === "workshop_update");
+    expect(workshop).toBeTruthy();
+    expect(watcherActionWouldRestart(workshop!.action)).toBe(false);
+  });
 });

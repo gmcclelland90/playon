@@ -175,6 +175,29 @@ export type WatcherSeedTargetFacts = {
   hasNodeAuthoritativeMarker?: boolean | null;
 };
 
+/** Facts for who may receive the platform Health monitor on upgrade. */
+export type PlatformHealthSeedFacts = {
+  hasSkillMarker: boolean;
+  importedFrom?: string | null;
+  managedFrom?: string | null;
+};
+
+/**
+ * Create-from-skill and managed servers get the platform Health monitor.
+ * Import/friend trees (`importedFrom` without `managedFrom`) do not.
+ */
+export function serverEligibleForPlatformHealthMonitor(
+  facts: PlatformHealthSeedFacts,
+): boolean {
+  if (!facts.hasSkillMarker) return false;
+  const imported =
+    typeof facts.importedFrom === "string" && facts.importedFrom.length > 0;
+  const managed =
+    typeof facts.managedFrom === "string" && facts.managedFrom.length > 0;
+  if (imported && !managed) return false;
+  return true;
+}
+
 export function isManagedOrNodeAuthoritativeSeedTarget(
   facts: WatcherSeedTargetFacts,
 ): boolean {

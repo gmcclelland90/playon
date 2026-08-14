@@ -487,6 +487,28 @@ describe("local docker lifecycle through ServerRuntimeHandle", () => {
     expect(fake.calls.filter((c) => c.startsWith("start:"))).toHaveLength(1);
   });
 
+  it("docker reap_then_start also reaps a native leftover beside the container", async () => {
+    const { servers } = tempEnv();
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
+    await servers.start(server.id);
+    host.plantLeftover({
+      id: "native-orphan-77",
+      name: `server-${server.id}`,
+      pid: 77,
+      status: "running",
+    });
+    servers.portsBoundOverride = async () => false;
+    host.calls.length = 0;
+    fake.calls.length = 0;
+
+    const started = await servers.start(server.id);
+
+    expect(started.status).toBe("running");
+    expect(host.calls.some((c) => c.startsWith("reclaim:"))).toBe(true);
+    expect(host.running).toBeNull();
+    expect(fake.calls.filter((c) => c.startsWith("start:"))).toHaveLength(1);
+  });
+
   it("stop resolves the container id before stopping it", async () => {
     const { servers } = tempEnv();
     const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
@@ -620,6 +642,7 @@ describe("local native lifecycle through ServerRuntimeHandle", () => {
       `find:server-${id}:${gameDir}`,
       `find:server-${id}:${gameDir}`,
       `reclaim:server-${id}:${gameDir}`,
+      `reclaim:server-${id}:${gameDir}`,
       `find:server-${id}:${gameDir}`,
       `start:server-${id}:${gameDir}`,
     ]);
@@ -643,6 +666,7 @@ describe("local native lifecycle through ServerRuntimeHandle", () => {
       `find:server-${id}:${gameDir}`,
       `find:server-${id}:${gameDir}`,
       `reclaim:server-${id}:${gameDir}`,
+      `reclaim:server-${id}:${gameDir}`,
       `find:server-${id}:${gameDir}`,
       `start:server-${id}:${gameDir}`,
     ]);
@@ -662,6 +686,42 @@ describe("local native lifecycle through ServerRuntimeHandle", () => {
     expect(again.status).toBe("running");
     expect(host.calls).toEqual([`find:server-${id}:${gameDir}`]);
     expect(host.specs).toHaveLength(0);
+    expect(host.running).not.toBeNull();
+  });
+
+  it("first-see already-running + unbound ports is dead immediately (no 15 min keep)", async () => {
+    const { db, servers, id } = await nativeServer();
+    host.plantLeftover({
+      id: "native-orphan-99",
+      name: `server-${id}`,
+      pid: 99,
+      status: "running",
+    });
+    servers.portsBoundOverride = async () => false;
+    servers.autoRestartOnDeadInstance = false;
+    await db
+      .update(serversTable)
+      .set({ status: "running" })
+      .where(eq(serversTable.id, id));
+
+    const row = await servers.get(id);
+
+    expect(row!.status).toBe("error");
+    expect(host.running).toBeNull();
+  });
+
+  it("persisted start time keeps grace after a new ServerService (Home restart)", async () => {
+    const { db, config, servers, id } = await nativeServer();
+    await servers.start(id);
+    servers.autoRestartOnDeadInstance = false;
+
+    const restarted = new ServerService(db, config);
+    restarted.portsBoundOverride = async () => false;
+    restarted.autoRestartOnDeadInstance = false;
+
+    const row = await restarted.get(id);
+
+    expect(row!.status).toBe("running");
     expect(host.running).not.toBeNull();
   });
 
@@ -941,6 +1001,7 @@ describe("remote native lifecycle through ServerRuntimeHandle", () => {
     expect(processKinds()).toEqual([
       "process_status",
       "process_status",
+      "process_stop",
       "process_stop",
       "process_status",
       "process_start",

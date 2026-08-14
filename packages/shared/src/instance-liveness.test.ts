@@ -111,6 +111,25 @@ describe("decideReconcileInstance", () => {
     ).toBe("keep");
   });
 
+  it("treats first-see already-running + unbound ports as dead immediately", () => {
+    expect(
+      decideReconcileInstance({
+        processAlive: true,
+        hostPortsBound: false,
+        dbStatus: "running",
+      }),
+    ).toBe("dead");
+    expect(
+      decideReconcileInstance({
+        processAlive: true,
+        hostPortsBound: false,
+        dbStatus: "running",
+        startedAgoMs: null,
+        graceMs: DEFAULT_PORT_DEAD_GRACE_MS,
+      }),
+    ).toBe("dead");
+  });
+
   it("follows the process when the port probe is unavailable", () => {
     expect(
       decideReconcileInstance({

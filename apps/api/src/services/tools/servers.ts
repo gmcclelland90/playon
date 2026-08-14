@@ -60,8 +60,9 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
         await playerPanel.publishForStatus(server.id, "stopped");
         const skill = loadSkillMetadata(skillRoots, skillName);
         // Always seed: skill templates (if any) plus the platform Health monitor
-        // when the skill did not declare health+restart. Import/manage do not
-        // call this — existing friend servers are not mutated.
+        // when the skill did not declare health+restart. Import/friend (importedFrom
+        // without managedFrom) are not seeded here; existing create-from-skill /
+        // managed servers are migrated on list/get / Home boot.
         await seedWatchersForNewServer(watchers, {
           serverId: server.id,
           skillSlug: skill?.metadata.name ?? skillName,

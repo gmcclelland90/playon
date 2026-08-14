@@ -53,6 +53,8 @@ export const servers = sqliteTable("servers", {
   status: text("status").notNull().default("stopped"),
   dataPath: text("data_path").notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  /** Persisted so a Home restart does not reset port-dead grace. */
+  instanceStartedAt: integer("instance_started_at", { mode: "timestamp_ms" }),
 });
 
 export const conversations = sqliteTable("conversations", {

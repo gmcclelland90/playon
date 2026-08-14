@@ -33,20 +33,28 @@ export function decideStartInstance(input: {
 /**
  * Reconcile DB status with the runtime + host bind.
  *
- * Alive + ports dropped after grace (or after we already claimed `running`)
- * is dead: callers must reap and mark not-running. `starting` + unbound is
- * still binding. Unknown ports (`null`) keep the process-only mapping.
+ * Alive + advertised ports unbound:
+ * - `starting` — still binding (grace).
+ * - `running` with a known start time within grace — a start this Home
+ *   performed (persisted so a process restart does not reset the clock).
+ * - `running` with no known start (first see after upgrade / Home boot) —
+ *   dead immediately. Do not invent a 15 min keep for a wedged leftover.
+ *
+ * Unknown ports (`null`) keep the process-only mapping.
  */
 export function decideReconcileInstance(input: {
   processAlive: boolean;
   hostPortsBound: HostPortsBound;
   dbStatus: string;
-  /** Elapsed since this Home observed the instance as started / first seen. */
-  startedAgoMs?: number;
+  /**
+   * Elapsed since a persisted start. `null` / omitted = no known start
+   * (first see). Do not treat that as “just started”.
+   */
+  startedAgoMs?: number | null;
   graceMs?: number;
 }): ReconcileInstanceDecision {
   const graceMs = input.graceMs ?? DEFAULT_PORT_DEAD_GRACE_MS;
-  const startedAgoMs = input.startedAgoMs ?? 0;
+  const startedAgoMs = input.startedAgoMs;
 
   if (!input.processAlive) {
     if (
@@ -63,8 +71,11 @@ export function decideReconcileInstance(input: {
 
   if (input.hostPortsBound === false) {
     if (input.dbStatus === "starting") return "keep";
-    if (input.dbStatus === "running" && startedAgoMs >= graceMs) return "dead";
-    if (input.dbStatus === "running") return "keep";
+    if (input.dbStatus === "running") {
+      if (startedAgoMs == null) return "dead";
+      if (startedAgoMs >= graceMs) return "dead";
+      return "keep";
+    }
     return "keep";
   }
 

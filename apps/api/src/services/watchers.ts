@@ -12,6 +12,7 @@ import {
   computeNextDueAt,
   sanitizeSkillWatcherTemplatesForSeed,
   sanitizeWatcherActionForTrigger,
+  serverEligibleForPlatformHealthMonitor,
   validateLogPattern,
   watcherTriggerIsHealthRestart,
   type CreateWatcherInput,
@@ -92,23 +93,36 @@ function validateTrigger(trigger: WatcherTrigger): void {
 }
 
 export class WatcherService {
+  private platformHealthMigrated = false;
+
   constructor(private readonly db: Db) {}
 
-  async list(serverId?: string): Promise<Watcher[]> {
+  private async listRows(serverId?: string): Promise<Watcher[]> {
     const rows = serverId
       ? await this.db.select().from(watchers).where(eq(watchers.serverId, serverId))
       : await this.db.select().from(watchers);
     return rows.map(toWatcher);
   }
 
+  async list(serverId?: string): Promise<Watcher[]> {
+    await this.migratePlatformHealthMonitorsOnce();
+    return this.listRows(serverId);
+  }
+
   async listEnabled(): Promise<Watcher[]> {
+    await this.migratePlatformHealthMonitorsOnce();
     const rows = await this.db.select().from(watchers).where(eq(watchers.enabled, true));
     return rows.map(toWatcher);
   }
 
-  async get(id: string): Promise<Watcher | null> {
+  private async getRow(id: string): Promise<Watcher | null> {
     const rows = await this.db.select().from(watchers).where(eq(watchers.id, id)).limit(1);
     return rows[0] ? toWatcher(rows[0]) : null;
+  }
+
+  async get(id: string): Promise<Watcher | null> {
+    await this.migratePlatformHealthMonitorsOnce();
+    return this.getRow(id);
   }
 
   async create(
@@ -144,11 +158,11 @@ export class WatcherService {
       createdAt: now,
       updatedAt: now,
     });
-    return (await this.get(id))!;
+    return (await this.getRow(id))!;
   }
 
   async update(id: string, input: UpdateWatcherInput): Promise<Watcher | null> {
-    const existing = await this.get(id);
+    const existing = await this.getRow(id);
     if (!existing) return null;
     const body = UpdateWatcherSchema.parse(input);
     if (body.trigger) validateTrigger(body.trigger);
@@ -181,7 +195,7 @@ export class WatcherService {
         updatedAt: now,
       })
       .where(eq(watchers.id, id));
-    return this.get(id);
+    return this.getRow(id);
   }
 
   async setEnabled(id: string, enabled: boolean): Promise<Watcher | null> {
@@ -189,7 +203,7 @@ export class WatcherService {
   }
 
   async delete(id: string): Promise<boolean> {
-    const existing = await this.get(id);
+    const existing = await this.getRow(id);
     if (!existing) return false;
     await this.db.delete(watcherRuns).where(eq(watcherRuns.watcherId, id));
     await this.db.delete(watchers).where(eq(watchers.id, id));
@@ -197,7 +211,7 @@ export class WatcherService {
   }
 
   async markFired(id: string, atMs: number = Date.now()): Promise<void> {
-    const w = await this.get(id);
+    const w = await this.getRow(id);
     if (!w) return;
     const nextDueAt =
       w.trigger.kind === "schedule"
@@ -333,15 +347,15 @@ export class WatcherService {
   }
 
   /**
-   * Seed the platform Health monitor on new servers when the skill did not
-   * already declare a health+restart watcher. Existing servers are never
-   * migrated here (import / manage / friend hosts stay untouched).
+   * Seed the platform Health monitor when the skill did not already declare
+   * a health+restart watcher. Callers decide eligibility (new create vs
+   * existing create-from-skill / managed). Import/friend stay out.
    */
   async ensurePlatformHealthMonitor(
     serverId: string,
     skillTemplates: SkillWatcherTemplate[] = [],
   ): Promise<Watcher | null> {
-    const existing = await this.list(serverId);
+    const existing = await this.listRows(serverId);
     const skillHasHealthRestart = skillTemplates.some((t) =>
       watcherTriggerIsHealthRestart(t.trigger),
     );
@@ -366,6 +380,45 @@ export class WatcherService {
       },
       { source: "platform" },
     );
+  }
+
+  /**
+   * One-shot: existing create-from-skill / managed servers without a
+   * health+restart watcher get the platform Health monitor. Import/friend
+   * (`importedFrom` without `managedFrom`) are skipped. workshop_update
+   * rows are not rewritten.
+   */
+  async migratePlatformHealthMonitors(): Promise<string[]> {
+    const rows = await this.db.select().from(servers);
+    const seeded: string[] = [];
+    for (const row of rows) {
+      const marker = readSkillMarker(row.dataPath);
+      const extras = marker as { importedFrom?: unknown } | null;
+      const importedFrom =
+        typeof extras?.importedFrom === "string" ? extras.importedFrom : null;
+      if (
+        !serverEligibleForPlatformHealthMonitor({
+          hasSkillMarker: Boolean(marker),
+          importedFrom,
+          managedFrom: marker?.managedFrom,
+        })
+      ) {
+        continue;
+      }
+      const created = await this.ensurePlatformHealthMonitor(row.id, []);
+      if (created) seeded.push(row.id);
+    }
+    return seeded;
+  }
+
+  async migratePlatformHealthMonitorsOnce(): Promise<void> {
+    if (this.platformHealthMigrated) return;
+    this.platformHealthMigrated = true;
+    try {
+      await this.migratePlatformHealthMonitors();
+    } catch {
+      this.platformHealthMigrated = false;
+    }
   }
 
   private async seedTargetFacts(serverId: string): Promise<WatcherSeedTargetFacts> {

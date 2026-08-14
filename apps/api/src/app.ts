@@ -223,6 +223,7 @@ function serverFsHttpError(err: unknown, fallback: string, code: string): HttpEr
 export function createApp(db: Db, config: AppConfig): PlayOnApp {
   const app = new Hono<{ Variables: Vars }>();
   const plane = createControlPlane(db, config);
+  void plane.watchers.migratePlatformHealthMonitorsOnce();
   const {
     eventHub,
     confirm: confirmService,
