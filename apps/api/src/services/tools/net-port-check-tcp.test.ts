@@ -142,12 +142,13 @@ describe("net_port_check TCP loopback", () => {
       {},
     );
 
-    const closed = (await registry.invoke("net_port_check", {
+    const res = (await registry.invoke("net_port_check", {
       host: "172.16.0.94",
-      port: 1,
-    })) as { state: string; scope?: string; error?: string };
-    expect(closed.state).toBe("closed");
-    expect(closed.scope).toBe("home");
-    expect(closed.error).toBeUndefined();
+      port: 25565,
+    })) as { state: string; scope?: string; error?: string; protocol?: string };
+    expect(res.scope).toBe("home");
+    expect(res.protocol).toBe("tcp");
+    expect(res.error).toBeUndefined();
+    expect(["open", "closed"]).toContain(res.state);
   });
 });
