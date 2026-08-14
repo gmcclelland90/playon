@@ -40,15 +40,25 @@ function Get-NodeBundleFromManifest {
   }
   $staging = Join-Path ([System.IO.Path]::GetTempPath()) ("playon-node-" + [guid]::NewGuid().ToString("n"))
   New-Item -ItemType Directory -Force -Path $staging | Out-Null
-  $zipName = Split-Path $asset.downloadUrl -Leaf
-  $zipPath = Join-Path $staging $zipName
-  Write-Host "==> Downloading $zipName"
-  Invoke-WebRequest -Uri $asset.downloadUrl -OutFile $zipPath -UseBasicParsing
-  $hash = (Get-FileHash -Algorithm SHA256 -Path $zipPath).Hash.ToLowerInvariant()
+  $archiveName = Split-Path $asset.downloadUrl -Leaf
+  $archivePath = Join-Path $staging $archiveName
+  Write-Host "==> Downloading $archiveName"
+  Invoke-WebRequest -Uri $asset.downloadUrl -OutFile $archivePath -UseBasicParsing
+  $hash = (Get-FileHash -Algorithm SHA256 -Path $archivePath).Hash.ToLowerInvariant()
   if ($hash -ne $asset.sha256.ToLowerInvariant()) {
     throw "SHA256 mismatch for node package"
   }
-  Expand-Archive -Path $zipPath -DestinationPath $staging -Force
+  # Prefer tar (zip + tar.gz). Expand-Archive is the slow path that timed out on OTA (#868).
+  $ProgressPreference = "SilentlyContinue"
+  if ($archiveName -match '\.tar\.gz$') {
+    & tar --force-local -xzf $archivePath -C $staging
+    if ($LASTEXITCODE -ne 0) { throw "tar extract failed: $LASTEXITCODE" }
+  } else {
+    & tar --force-local -xf $archivePath -C $staging
+    if ($LASTEXITCODE -ne 0) {
+      Expand-Archive -LiteralPath $archivePath -DestinationPath $staging -Force
+    }
+  }
   $extracted = Join-Path $staging "playon-node"
   if (-not (Test-Path (Join-Path $extracted "apps\node-agent\dist\index.js"))) {
     $extracted = Get-ChildItem -Path $staging -Directory | Where-Object {

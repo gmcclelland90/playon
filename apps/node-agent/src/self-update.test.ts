@@ -4,27 +4,15 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-// Mock child_process for Windows test only
-let mockExecFileSync: any = null;
-vi.mock("node:child_process", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:child_process")>();
-  return {
-    ...actual,
-    execFileSync: (cmd: string, args?: readonly string[], options?: any) => {
-      if (mockExecFileSync) {
-        return mockExecFileSync(cmd, args, options);
-      }
-      return actual.execFileSync(cmd as any, args as any, options);
-    },
-  };
-});
-
-import { performNodeSelfUpdate, swapInstallTree } from "./self-update.js";
+import {
+  performNodeSelfUpdate,
+  requireWindowsUpdateHelper,
+  runExtractCommand,
+  swapInstallTree,
+} from "./self-update.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
-  mockExecFileSync = null;
 });
 
 describe("swapInstallTree", () => {
@@ -140,59 +128,32 @@ describe("performNodeSelfUpdate", () => {
     }
   });
 
-  it("throws if Windows update helper script is missing", async () => {
-    if (process.platform !== "win32") return;
+  it("throws if Windows update helper script is missing", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-win-"));
     try {
-      const installRoot = path.join(root, "install");
-      fs.mkdirSync(path.join(installRoot, "data"), { recursive: true });
-
-      mockExecFileSync = (cmd: string, args?: readonly string[], options?: any) => {
-        if (cmd === "powershell.exe" && args && args.some((a) => a.includes("Expand-Archive"))) {
-          const cmdStr = args.join(" ");
-          const destMatch = cmdStr.match(/-DestinationPath\s+'([^']+)'/);
-          if (destMatch) {
-            const destDir = destMatch[1];
-            const extractedRoot = path.join(destDir, "playon-node");
-            fs.mkdirSync(path.join(extractedRoot, "apps", "node-agent", "dist"), { recursive: true });
-            fs.writeFileSync(
-              path.join(extractedRoot, "package.json"),
-              JSON.stringify({ name: "playon-node", version: "0.2.0" }),
-            );
-            fs.writeFileSync(path.join(extractedRoot, "apps", "node-agent", "dist", "index.js"), "// agent");
-            return;
-          }
-        }
-        throw new Error(`Unexpected command: ${cmd}`);
-      };
-
-      const fakeArchiveBytes = Buffer.from("fake-zip-content");
-      const sha256 = crypto.createHash("sha256").update(fakeArchiveBytes).digest("hex");
-
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async () => ({
-          ok: true,
-          arrayBuffer: async () =>
-            fakeArchiveBytes.buffer.slice(
-              fakeArchiveBytes.byteOffset,
-              fakeArchiveBytes.byteOffset + fakeArchiveBytes.byteLength,
-            ),
-        })),
-      );
-
-      await expect(
-        performNodeSelfUpdate({
-          downloadUrl: "https://playon.games/home/packages/playon-node-0.2.0-windows-x64.zip",
-          sha256,
-          version: "0.2.0",
-          installRoot,
-          skipExit: false,
-        }),
-      ).rejects.toThrow("update_helper_missing");
+      const extracted = path.join(root, "playon-node");
+      fs.mkdirSync(path.join(extracted, "apps", "node-agent", "dist"), { recursive: true });
+      fs.writeFileSync(path.join(extracted, "package.json"), "{}");
+      expect(() => requireWindowsUpdateHelper(extracted)).toThrow("update_helper_missing");
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("reports update_extract_timeout instead of spawnSync ETIMEDOUT (#868)", async () => {
+    if (process.platform === "win32") return;
+    await expect(runExtractCommand("sleep", ["5"], 80)).rejects.toThrow(
+      /update_extract_timeout: sleep exceeded 80ms/,
+    );
+  });
+
+  it("does not unpack with execFileSync powershell and a 60s timeout", () => {
+    const src = fs.readFileSync(fileURLToPath(new URL("./self-update.ts", import.meta.url)), "utf8");
+    expect(src).not.toMatch(/execFileSync/);
+    expect(src).not.toMatch(/timeout:\s*60000/);
+    expect(src).toMatch(/runExtractCommand/);
+    expect(src).toMatch(/update_extract_timeout/);
+    expect(src).toMatch(/buildArchiveExtractCommands/);
   });
 
   it("swapInstallTree does not delete sibling processes under data tree (#837 regression)", () => {
@@ -264,5 +225,24 @@ describe("apply-self-update.ps1", () => {
     expect(src).toMatch(/CREATE_BREAKAWAY_FROM_JOB/);
     expect(src.indexOf("Disable-ScheduledTask")).toBeLessThan(src.indexOf("Waiting for node-agent"));
     expect(src.indexOf("Register-ScheduledTask")).toBeLessThan(src.indexOf("Waiting for node-agent"));
+  });
+});
+
+describe("install-node.ps1 manifest extract (#868)", () => {
+  it("extracts zip and tar.gz with tar --force-local, not Expand-Archive first", () => {
+    const installer = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "..",
+      "..",
+      "deploy",
+      "windows",
+      "install-node.ps1",
+    );
+    const src = fs.readFileSync(installer, "utf8");
+    expect(src).toMatch(/--force-local/);
+    expect(src).toMatch(/-xzf/);
+    expect(src).toMatch(/ProgressPreference/);
+    expect(src.indexOf("tar --force-local")).toBeLessThan(src.indexOf("Expand-Archive"));
   });
 });

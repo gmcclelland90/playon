@@ -5,6 +5,7 @@
  *
  * Output:
  *   dist-node/playon-node-<version>-windows-x64.zip
+ *   dist-node/playon-node-<version>-windows-x64.tar.gz  (OTA; 0.2.3+ agents skip Expand-Archive)
  *   dist-node/playon-node-<version>-linux-x64.tar.gz
  */
 import fs from "node:fs";
@@ -308,11 +309,18 @@ if (isWin) {
     [
       "-NoProfile",
       "-Command",
-      `Compress-Archive -Path '${stage.replace(/'/g, "''")}' -DestinationPath '${zipPath.replace(/'/g, "''")}' -Force`,
+      `$ProgressPreference = 'SilentlyContinue'; Compress-Archive -Path '${stage.replace(/'/g, "''")}' -DestinationPath '${zipPath.replace(/'/g, "''")}' -Force`,
     ],
     { stdio: "inherit" },
   );
   console.log("Packaged Node at", zipPath);
+  // 0.2.3/0.2.5 agents Expand-Archive zips with a 60s spawnSync timeout (#868).
+  // They already have a tar -xzf branch — publish tar.gz so OTA skips PowerShell.
+  const tarPath = path.join(out, `${baseName}.tar.gz`);
+  execFileSync("tar", ["--force-local", "-czf", tarPath, "-C", out, "playon-node"], {
+    stdio: "inherit",
+  });
+  console.log("Packaged Node tarball at", tarPath);
 } else {
   const tarPath = path.join(out, `${baseName}.tar.gz`);
   execFileSync("tar", ["-czf", tarPath, "-C", out, "playon-node"], { stdio: "inherit" });

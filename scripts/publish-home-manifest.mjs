@@ -39,10 +39,17 @@ function releaseUrl(filename) {
 }
 
 function findAsset(dir, kind, platform) {
-  const ext = platform.startsWith("windows") ? "zip" : "tar.gz";
-  const name = `playon-${kind}-${version}-${platform}.${ext}`;
-  const full = path.join(dir, name);
-  if (fs.existsSync(full)) return { name, full };
+  // Must match preferredUpdateAssetExtensions in packages/shared/src/update-extract.ts
+  const exts = platform.startsWith("windows")
+    ? kind === "node"
+      ? ["tar.gz", "zip"]
+      : ["zip", "tar.gz"]
+    : ["tar.gz", "zip"];
+  for (const ext of exts) {
+    const name = `playon-${kind}-${version}-${platform}.${ext}`;
+    const full = path.join(dir, name);
+    if (fs.existsSync(full)) return { name, full };
+  }
   return null;
 }
 

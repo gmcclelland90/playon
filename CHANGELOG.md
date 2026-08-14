@@ -10,7 +10,12 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ### Fixed
 
+- **Windows node self-update extract** — `node_self_update` no longer unpacks the zip with `execFileSync("powershell.exe", Expand-Archive, { timeout: 60000 })` (`spawnSync powershell.exe ETIMEDOUT` on playon-win-1, `#868`). Extract is async `tar` (zip and tar.gz; `--force-local` on Windows) with a 10-minute cap and a PowerShell fallback that sets `$ProgressPreference = 'SilentlyContinue'`. The next 0.2.x node package also ships `playon-node-*-windows-x64.tar.gz` so 0.2.3/0.2.5 agents use their existing `tar -xzf` branch and skip Expand-Archive. Home Windows zip and Linux tarball paths unchanged.
 - **Skill scan / Paper smoke** — `native.libraryPathRelative` stringifies finite YAML numbers (unquoted Steam app ids such as `376030` used as AMP-style dirs). One invalid skill no longer aborts `listSkills` / `createFromSkill` (`#871`).
+
+### Notes
+
+- playon-win-1 is still on agent 0.2.3; that build’s extract code cannot be patched in place. After this lands, OTA Home, then ship the next 0.2.x node tarball and press Update on the Windows parent. Do not retry 0.2.5 zip onto 0.2.3 — that path still hits the 60s Expand-Archive timeout.
 
 ## [0.2.5] — 2026-08-13
 
