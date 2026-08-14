@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CreateWatcherSchema,
+  PLATFORM_HEALTH_MONITOR_TEMPLATE,
   SkillWatcherTemplateSchema,
   WatcherActionSchema,
   WatcherTriggerSchema,
@@ -9,8 +10,11 @@ import {
   isManagedOrNodeAuthoritativeSeedTarget,
   isWatcherScriptTool,
   sanitizeSkillWatcherTemplatesForSeed,
+  sanitizeWatcherActionForTrigger,
   skillWatcherNotifyAction,
   validateLogPattern,
+  watcherActionWouldRestart,
+  watcherTriggerIsHealthRestart,
 } from "./watcher.js";
 import { SkillMetadataSchema } from "./skill.js";
 import { WsEventSchema } from "./events.js";
@@ -232,5 +236,49 @@ describe("Watcher schemas", () => {
         false,
       );
     }
+    expect(watcherActionWouldRestart(seeded[0]!.action)).toBe(false);
+  });
+
+  it("rewrites workshop_update start/restart/remediate to notify-only on any host", () => {
+    const restarting = SkillWatcherTemplateSchema.parse({
+      name: "Workshop Update Notifier",
+      defaultEnabled: true,
+      trigger: { kind: "workshop_update", workshopIds: ["3579640010"] },
+      action: {
+        kind: "tools",
+        steps: [{ tool: "servers_restart", args: {} }],
+      },
+    });
+    for (const facts of [{}, { managedFrom: "/opt/pzserver" }]) {
+      const seeded = sanitizeSkillWatcherTemplatesForSeed([restarting], facts);
+      expect(watcherActionWouldRestart(seeded[0]!.action)).toBe(false);
+      expect(seeded[0]?.action).toEqual(
+        skillWatcherNotifyAction(restarting.name, restarting.trigger),
+      );
+    }
+    expect(
+      watcherActionWouldRestart(
+        sanitizeWatcherActionForTrigger(
+          restarting.trigger,
+          restarting.action,
+          restarting.name,
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it("platform health monitor is tools restart, not an agent turn", () => {
+    expect(watcherTriggerIsHealthRestart(PLATFORM_HEALTH_MONITOR_TEMPLATE.trigger)).toBe(
+      true,
+    );
+    expect(PLATFORM_HEALTH_MONITOR_TEMPLATE.defaultEnabled).toBe(true);
+    expect(PLATFORM_HEALTH_MONITOR_TEMPLATE.action.kind).toBe("tools");
+    expect(watcherActionWouldRestart(PLATFORM_HEALTH_MONITOR_TEMPLATE.action)).toBe(true);
+    const seeded = sanitizeSkillWatcherTemplatesForSeed(
+      [PLATFORM_HEALTH_MONITOR_TEMPLATE],
+      { managedFrom: "/opt/pzserver", nodeAuthoritative: true },
+    );
+    expect(seeded[0]?.action.kind).toBe("tools");
+    expect(watcherActionWouldRestart(seeded[0]!.action)).toBe(true);
   });
 });

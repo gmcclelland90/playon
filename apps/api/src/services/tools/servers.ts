@@ -2,6 +2,7 @@ import { queryDialectToolEnum } from "@playon/server-query";
 import type { QueryDialect } from "@playon/shared";
 import { isPlayerPanelLiveStatus, safeQueryLive } from "../server-panel.js";
 import { loadSkillMetadata } from "../skills.js";
+import { seedWatchersForNewServer } from "../watchers.js";
 import { globalTool, serverTool, type ToolModule } from "./types.js";
 import { createOrReinstallFromSkill, workspaceCreateForbidden } from "./workspace.js";
 
@@ -58,14 +59,14 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
         await snapshots.create(server.id, "baseline");
         await playerPanel.publishForStatus(server.id, "stopped");
         const skill = loadSkillMetadata(skillRoots, skillName);
-        if (skill?.metadata.watchers?.length) {
-          try {
-            // seedFromSkill rewrites action.kind=agent on managed / node-authoritative servers.
-            await watchers.seedFromSkill(server.id, skill.metadata.name, skill.metadata.watchers);
-          } catch {
-            /* seeding is best-effort */
-          }
-        }
+        // Always seed: skill templates (if any) plus the platform Health monitor
+        // when the skill did not declare health+restart. Import/manage do not
+        // call this — existing friend servers are not mutated.
+        await seedWatchersForNewServer(watchers, {
+          serverId: server.id,
+          skillSlug: skill?.metadata.name ?? skillName,
+          templates: skill?.metadata.watchers,
+        });
         const join = await servers.joinInfoFor(server);
         return {
           serverId: server.id,

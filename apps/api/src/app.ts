@@ -145,6 +145,7 @@ import {
   serverFileStoreHttpStatus,
 } from "./services/server-file-store.js";
 import { readSkillMarker } from "./services/skill-marker.js";
+import { seedWatchersForNewServer } from "./services/watchers.js";
 import { ConfirmService } from "./services/confirm.js";
 import { EventHub } from "./services/event-hub.js";
 import { safeQueryLive } from "./services/server-panel.js";
@@ -1651,6 +1652,12 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         skillName: body.skillName!,
         serverName: body.serverName,
         nodeId: body.nodeId,
+      });
+      const skill = loadSkillMetadata(config.skillsRoots, body.skillName!);
+      await seedWatchersForNewServer(watcherService, {
+        serverId: server.id,
+        skillSlug: skill?.metadata.name ?? body.skillName!,
+        templates: skill?.metadata.watchers,
       });
       await playerPanel.publishForStatus(server.id, "stopped");
       return c.json({ server });

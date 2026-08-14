@@ -5,12 +5,15 @@ import { nanoid } from "nanoid";
 import {
   CreateWatcherSchema,
   NODE_AUTHORITATIVE_MARKER,
+  PLATFORM_HEALTH_MONITOR_TEMPLATE,
   UpdateWatcherSchema,
   WatcherActionSchema,
   WatcherTriggerSchema,
   computeNextDueAt,
   sanitizeSkillWatcherTemplatesForSeed,
+  sanitizeWatcherActionForTrigger,
   validateLogPattern,
+  watcherTriggerIsHealthRestart,
   type CreateWatcherInput,
   type SkillWatcherTemplate,
   type UpdateWatcherInput,
@@ -47,7 +50,12 @@ function toWatcher(row: typeof watchers.$inferSelect): Watcher {
     cooldownMs: row.cooldownMs,
     debounceMs: row.debounceMs,
     confirmMode: row.confirmMode === "auto" ? "auto" : "auto",
-    source: row.source === "skill_template" ? "skill_template" : "user",
+    source:
+      row.source === "skill_template"
+        ? "skill_template"
+        : row.source === "platform"
+          ? "platform"
+          : "user",
     skillSlug: row.skillSlug ?? undefined,
     lastFiredAt: row.lastFiredAt ? row.lastFiredAt.getTime() : null,
     nextDueAt: row.nextDueAt ? row.nextDueAt.getTime() : null,
@@ -105,9 +113,13 @@ export class WatcherService {
 
   async create(
     input: CreateWatcherInput,
-    opts?: { source?: "user" | "skill_template"; skillSlug?: string },
+    opts?: { source?: "user" | "skill_template" | "platform"; skillSlug?: string },
   ): Promise<Watcher> {
-    const body = CreateWatcherSchema.parse(input);
+    const parsed = CreateWatcherSchema.parse(input);
+    const body = {
+      ...parsed,
+      action: sanitizeWatcherActionForTrigger(parsed.trigger, parsed.action, parsed.name),
+    };
     validateTrigger(body.trigger);
     const id = nanoid();
     const now = new Date();
@@ -141,6 +153,11 @@ export class WatcherService {
     const body = UpdateWatcherSchema.parse(input);
     if (body.trigger) validateTrigger(body.trigger);
     const trigger = body.trigger ?? existing.trigger;
+    const action = sanitizeWatcherActionForTrigger(
+      trigger,
+      body.action ?? existing.action,
+      body.name ?? existing.name,
+    );
     const now = new Date();
     const nextDueAt =
       trigger.kind === "schedule"
@@ -157,7 +174,7 @@ export class WatcherService {
         name: body.name ?? existing.name,
         enabled: body.enabled ?? existing.enabled,
         triggerJson: JSON.stringify(trigger),
-        actionJson: JSON.stringify(body.action ?? existing.action),
+        actionJson: JSON.stringify(action),
         cooldownMs: body.cooldownMs ?? existing.cooldownMs,
         debounceMs: body.debounceMs ?? existing.debounceMs,
         nextDueAt,
@@ -311,7 +328,44 @@ export class WatcherService {
         ),
       );
     }
+    await this.ensurePlatformHealthMonitor(serverId, safeTemplates);
     return created;
+  }
+
+  /**
+   * Seed the platform Health monitor on new servers when the skill did not
+   * already declare a health+restart watcher. Existing servers are never
+   * migrated here (import / manage / friend hosts stay untouched).
+   */
+  async ensurePlatformHealthMonitor(
+    serverId: string,
+    skillTemplates: SkillWatcherTemplate[] = [],
+  ): Promise<Watcher | null> {
+    const existing = await this.list(serverId);
+    const skillHasHealthRestart = skillTemplates.some((t) =>
+      watcherTriggerIsHealthRestart(t.trigger),
+    );
+    const platformRows = existing.filter(
+      (w) => w.source === "platform" && watcherTriggerIsHealthRestart(w.trigger),
+    );
+    if (skillHasHealthRestart) {
+      for (const w of platformRows) await this.delete(w.id);
+      return null;
+    }
+    if (existing.some((w) => watcherTriggerIsHealthRestart(w.trigger))) return null;
+    const t = PLATFORM_HEALTH_MONITOR_TEMPLATE;
+    return this.create(
+      {
+        serverId,
+        name: t.name,
+        enabled: t.defaultEnabled,
+        trigger: t.trigger,
+        action: t.action,
+        cooldownMs: t.cooldownMs,
+        debounceMs: t.debounceMs,
+      },
+      { source: "platform" },
+    );
   }
 
   private async seedTargetFacts(serverId: string): Promise<WatcherSeedTargetFacts> {
@@ -330,5 +384,21 @@ export class WatcherService {
         path.join(dataPath, NODE_AUTHORITATIVE_MARKER),
       ),
     };
+  }
+}
+
+/** Best-effort seed for create-from-skill (HTTP + tool). Not used on import. */
+export async function seedWatchersForNewServer(
+  watchers: WatcherService,
+  args: {
+    serverId: string;
+    skillSlug: string;
+    templates?: SkillWatcherTemplate[];
+  },
+): Promise<void> {
+  try {
+    await watchers.seedFromSkill(args.serverId, args.skillSlug, args.templates ?? []);
+  } catch {
+    /* seeding is best-effort */
   }
 }

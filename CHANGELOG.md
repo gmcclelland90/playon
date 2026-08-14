@@ -6,7 +6,7 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ### Fixed
 
-- **Managed instance liveness** — start never stacks a second process or container for the same server id. Leftovers under the server tree (including a JVM that chdir'd out of `game/` into `home/`) are reaped first; a healthy instance (alive and advertised game ports bound on the host) is reused. A process/container that is alive but has dropped those ports is dead: reap, mark `error`, never report running. One clean auto-restart after that crash is allowed if the user did not stop. Same spirit as the WSL join ready-gate (`#877`). Generic for native and docker — not PZ-specific (`#880`).
+- **Managed instance liveness** — start never stacks a second process or container for the same server id. Leftovers under the server tree (including a JVM that chdir'd out of `game/` into `home/`) are reaped first; a healthy instance (alive and advertised game ports bound on the host) is reused. A process/container that is alive but has dropped those ports is dead: reap, mark `error`, never report running. Health treats host-local unbound advertised ports as failed (`onFail: restart`), not as a join-path publish gap (`#877`). New servers seed an enabled **Health monitor** watcher (tools `servers_health_check` + remediate — one clean restart, not an agent turn on managed hosts). `workshop_update` stays notify-only and cannot auto-restart. Existing / imported / friend servers are not migrated. Generic for native and docker — not PZ-specific (`#880`).
 
 ## [0.2.7] — 2026-08-14
 

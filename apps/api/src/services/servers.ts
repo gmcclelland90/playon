@@ -1213,6 +1213,34 @@ export class ServerService {
     return this.probeAdvertisedGamePorts(server);
   }
 
+  /**
+   * Host-local advertised game ports for health. Alive + unbound after grace
+   * is failed (not running). `starting` / still-in-grace is still binding.
+   * Unknown probe (`null`) does not invent a failure. Join-path stay separate.
+   */
+  async evaluateHostPortsHealth(server: ServerRecord): Promise<{
+    ok: boolean;
+    detail: string;
+  }> {
+    if (server.status === "starting" || server.status === "creating") {
+      return { ok: true, detail: "still binding advertised game ports" };
+    }
+    if (server.status !== "running") {
+      return { ok: true, detail: `host port check skipped while ${server.status}` };
+    }
+    const bound = await this.hostGamePortsBound(server);
+    if (bound === true) {
+      return { ok: true, detail: "advertised game ports bound on host" };
+    }
+    if (bound !== false) {
+      return { ok: true, detail: "host port probe skipped or unknown" };
+    }
+    if (this.startedAgoMs(server.id) < this.portDeadGraceMs) {
+      return { ok: true, detail: "advertised game ports still binding (grace)" };
+    }
+    return { ok: false, detail: "advertised game ports unbound on host" };
+  }
+
   private async probeAdvertisedGamePorts(server: ServerRecord): Promise<HostPortsBound> {
     const skillName = this.readSkillName(server.dataPath);
     const port = this.gamePortForSkill(skillName, server.game);

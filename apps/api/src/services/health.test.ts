@@ -104,7 +104,34 @@ describe("HealthService", () => {
     const health = new HealthService(servers, net, config);
     const report = await health.checkServer(created.id);
     expect(report.checks.some((c) => c.id === "game-port")).toBe(false);
+    expect(report.checks.some((c) => c.id === "host-ports")).toBe(true);
     expect(report.checks.every((c) => !String(c.detail).includes("25565"))).toBe(true);
+  });
+
+  it("alive process with advertised host ports unbound is not healthy", async () => {
+    const { db, config } = tempConfig();
+    const servers = new ServerService(db, config);
+    const net = new NetToolsService(servers);
+    const health = new HealthService(servers, net, config);
+
+    const created = await servers.createFromSkill({
+      skillName: LAB_DOCKER_SKILL,
+      serverName: "Unbound Ports",
+    });
+    const get = servers.get.bind(servers);
+    servers.get = async (id: string) => {
+      const row = await get(id);
+      return row ? { ...row, status: "running" } : row;
+    };
+    servers.portsBoundOverride = async () => false;
+    servers.portDeadGraceMs = 0;
+
+    const report = await health.checkServer(created.id);
+    expect(report.ok).toBe(false);
+    expect(report.checks.some((c) => c.id === "host-ports" && !c.ok)).toBe(true);
+    expect(report.checks.some((c) => c.id === "host-ports" && c.onFail === "restart")).toBe(
+      true,
+    );
   });
 
   it("resolves LAN joinHost for join/probe address", async () => {

@@ -230,7 +230,11 @@ export function WatchersPanel({
                 <strong>{w.name}</strong>
                 <div className="muted">
                   {w.enabled ? "on" : "off"} · {triggerSummary(w)} · {actionSummary(w)}
-                  {w.source === "skill_template" ? " · from skill" : ""}
+                  {w.source === "skill_template"
+                    ? " · from skill"
+                    : w.source === "platform"
+                      ? " · platform"
+                      : ""}
                   {w.lastFiredAt
                     ? ` · last ${new Date(w.lastFiredAt).toLocaleString()}`
                     : ""}

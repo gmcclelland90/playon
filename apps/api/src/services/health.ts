@@ -167,6 +167,15 @@ export class HealthService {
       }
     }
 
+    const hostPorts = await this.dbServers.evaluateHostPortsHealth(server);
+    results.push({
+      id: "host-ports",
+      ok: hostPorts.ok,
+      detail: hostPorts.detail,
+      onFail: "restart",
+    });
+    if (!hostPorts.ok) needsRestart = true;
+
     if (opts.remediate && needsRestart && escalations.length === 0) {
       try {
         await this.dbServers.restart(serverId);

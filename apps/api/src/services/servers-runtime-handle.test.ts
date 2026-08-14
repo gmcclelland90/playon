@@ -17,6 +17,8 @@ import { createDb, type Db } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
 import { nodes as nodesTable, servers as serversTable } from "../db/schema.js";
 import { LAB_DOCKER_SKILL, resolveFixturesRoot } from "../lab-games-root.js";
+import { HealthService } from "./health.js";
+import { NetToolsService } from "./net-tools.js";
 import { ServerService } from "./servers.js";
 
 const REMOTE_NODE_ID = "node-remote";
@@ -676,6 +678,32 @@ describe("local native lifecycle through ServerRuntimeHandle", () => {
     expect(row!.status).toBe("error");
     expect(host.calls).toContain(`reclaim:server-${id}:${gameDir}`);
     expect(host.running).toBeNull();
+  });
+
+  it("health restart reaps a leftover and starts exactly one instance", async () => {
+    const { db, config, servers, id } = await nativeServer();
+    host.plantLeftover({
+      id: "native-orphan-99",
+      name: `server-${id}`,
+      pid: 99,
+      status: "running",
+    });
+    // Leftover is unbound; the instance health-restart launches is healthy.
+    servers.portsBoundOverride = async () => host.running?.pid !== 99;
+    servers.portDeadGraceMs = 0;
+    servers.autoRestartOnDeadInstance = false;
+    await db
+      .update(serversTable)
+      .set({ status: "running" })
+      .where(eq(serversTable.id, id));
+
+    const health = new HealthService(servers, new NetToolsService(servers), config);
+    const report = await health.checkServer(id, { remediate: true });
+
+    expect(report.checks.some((c) => c.remediated === "restart")).toBe(true);
+    expect(host.specs).toHaveLength(1);
+    expect(host.running).not.toBeNull();
+    expect(host.running?.pid).not.toBe(99);
   });
 
   it("stop reclaims by identity, never by a stored process id", async () => {
