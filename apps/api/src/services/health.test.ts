@@ -12,7 +12,21 @@ import { LAB_DOCKER_SKILL, resolveFixturesRoot } from "../lab-games-root.js";
 import { HealthService } from "./health.js";
 import { JoinReadyService } from "./join-ready.js";
 import { NetToolsService } from "./net-tools.js";
-import { ServerService } from "./servers.js";
+import { ServerService, type ServerRecord } from "./servers.js";
+
+/**
+ * Health checks must not wrap `ServerService.get()`. That path reconciles
+ * runtime status; an inserted LAN node with a fresh `lastSeenAt` is "online"
+ * and remote `container_inspect` waits 15s for an agent that will never claim
+ * the job. Two get()s in `checkServer` hit the 30s Vitest budget on Windows.
+ */
+function stubGet(servers: ServerService, row: ServerRecord): void {
+  servers.get = async (id: string) => (id === row.id ? row : null);
+}
+
+function asRunning(row: ServerRecord, extras: Partial<ServerRecord> = {}): ServerRecord {
+  return { ...row, status: "running", ...extras };
+}
 
 const temps: Array<{ root: string; sqlite: Database.Database }> = [];
 
@@ -118,11 +132,7 @@ describe("HealthService", () => {
       skillName: LAB_DOCKER_SKILL,
       serverName: "Unbound Ports",
     });
-    const get = servers.get.bind(servers);
-    servers.get = async (id: string) => {
-      const row = await get(id);
-      return row ? { ...row, status: "running" } : row;
-    };
+    stubGet(servers, asRunning(created));
     servers.portsBoundOverride = async () => false;
     servers.portDeadGraceMs = 0;
 
@@ -160,11 +170,10 @@ describe("HealthService", () => {
       .set({ nodeId: "node-lan-1" })
       .where(eq(serversTable.id, created.id));
 
-    const row = await servers.get(created.id);
-    expect(row).toBeTruthy();
-    const addr = await servers.resolveJoinAddress(row!);
+    const row = { ...created, nodeId: "node-lan-1" };
+    const addr = await servers.resolveJoinAddress(row);
     expect(addr).toBe("172.16.0.109");
-    const join = await servers.joinInfoFor(row!);
+    const join = await servers.joinInfoFor(row);
     expect(join.address).toBe("172.16.0.109");
   });
 
@@ -251,11 +260,9 @@ describe("HealthService", () => {
       skillName: LAB_DOCKER_SKILL,
       serverName: "Health Join Split",
     });
-    const get = servers.get.bind(servers);
-    servers.get = async (id: string) => {
-      const row = await get(id);
-      return row ? { ...row, status: "running", nodeId: "node-lan-split" } : row;
-    };
+    stubGet(servers, asRunning(created, { nodeId: "node-lan-split" }));
+    // Host bind is up; advertised join host is closed — publish gap, not dead.
+    servers.portsBoundOverride = async () => true;
     servers.joinInfoFor = async () => ({ address: lan, port: 25565 });
     servers.resolveJoinAddress = async () => lan;
     const restart = vi.spyOn(servers, "restart");
@@ -298,11 +305,8 @@ describe("HealthService", () => {
       skillName: LAB_DOCKER_SKILL,
       serverName: "Health Soak Split",
     });
-    const get = servers.get.bind(servers);
-    servers.get = async (id: string) => {
-      const row = await get(id);
-      return row ? { ...row, status: "running", nodeId: "playon-win-1-wsl" } : row;
-    };
+    stubGet(servers, asRunning(created, { nodeId: "playon-win-1-wsl" }));
+    servers.portsBoundOverride = async () => true;
     servers.joinInfoFor = async () => ({ address: lan, port: 25565 });
     servers.resolveJoinAddress = async () => lan;
     const restart = vi.spyOn(servers, "restart");
