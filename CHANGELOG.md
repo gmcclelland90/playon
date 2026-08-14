@@ -4,9 +4,18 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+## [0.2.7] — 2026-08-14
+
 ### Fixed
 
-- **WSL LAN join path** — after a WSL sibling start, the Windows parent publishes game/RCON/query ports on its advertised `join_host` (userspace `net_port_publish` → `127.0.0.1`, where WSL localhostForwarding already listens). Empty WSL `join_host` is synced from the parent. Ready / “up” / panel join_info still require that advertised host:port open from Home. `net_port_check` on localhost without `nodeId` returns `loopback_requires_nodeId` (Home soak Paper must not count). Placement skips a WSL sibling for LAN-joinable skills when the parent join host is loopback/empty or the Windows agent does not advertise `net_port_publish`, and falls back to a node that can publish (e.g. local docker / playon-dev). Does not ask hosts to run `netsh` portproxy. Update the Windows node agent so `net_port_publish` is advertised.
+- **WSL LAN join path** — after a WSL sibling start, the Windows parent publishes game/RCON/query ports on its advertised `join_host` (userspace `net_port_publish` → `127.0.0.1`, where WSL localhostForwarding already listens). Empty WSL `join_host` is synced from the parent. Ready / “up” / panel join_info still require that advertised host:port open from Home. `net_port_check` on localhost without `nodeId` returns `loopback_requires_nodeId` (Home soak Paper must not count). Placement skips a WSL sibling for LAN-joinable skills when the parent join host is loopback/empty or the Windows agent does not advertise `net_port_publish`, and falls back to a node that can publish (e.g. local docker / playon-dev). Does not ask hosts to run `netsh` portproxy. Update the Windows node agent so `net_port_publish` is advertised (`#877`).
+- **Windows `package:node` tarball** — GitHub `windows-latest` uses bsdtar, which has no `--force-local`. Create the OTA `playon-node-*-windows-x64.tar.gz` from the output directory with a relative `-f` so the colon in `D:` is not treated as a remote host. Zip + Linux tarball unchanged; `latest.json` still prefers the Windows tar.gz (`#876`).
+
+### Notes
+
+- This is the actual Home ship after `v0.2.6` `release-home` failed on Windows tar `--force-local`. Do not move or delete the `v0.2.6` tag.
+- Update Home via OTA, then Update Windows nodes from Settings → Nodes.
+- playon-win-1 is still on agent 0.2.3; do not retry the 0.2.5 zip. After this tag, press Update on the Windows parent only (tarball).
 
 ## [0.2.6] — 2026-08-14
 
