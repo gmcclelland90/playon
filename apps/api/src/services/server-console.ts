@@ -1,4 +1,5 @@
-import type { AdminDialect } from "@playon/shared";
+import { joinHostNotReachableResult, type AdminDialect } from "@playon/shared";
+import type { JoinReadyService } from "./join-ready.js";
 import { rconBodyIndicatesFailure, rconExec, rconExecWithSelfHeal } from "./rcon.js";
 import type { ServerService } from "./servers.js";
 
@@ -134,6 +135,7 @@ export async function execConsoleCommand(
   servers: ServerService,
   serverId: string,
   rawCommand: string,
+  opts?: { joinReady?: JoinReadyService },
 ): Promise<ConsoleExecResult> {
   const dialect = await servers.getAdminDialect(serverId);
   if (!dialect) {
@@ -172,6 +174,19 @@ export async function execConsoleCommand(
   }
   if (cap.input === "unsupported") {
     return drivers[dialect](servers, serverId, command);
+  }
+
+  if ((dialect === "mc_rcon" || dialect === "source_rcon") && opts?.joinReady) {
+    const reachability = await opts.joinReady.probe(serverId);
+    if (!reachability.ready) {
+      const blocked = joinHostNotReachableResult(reachability);
+      return {
+        dialect,
+        ok: false,
+        error: blocked.error,
+        hint: blocked.hint,
+      };
+    }
   }
 
   return drivers[dialect](servers, serverId, command);

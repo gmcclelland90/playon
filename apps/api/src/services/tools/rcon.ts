@@ -1,3 +1,4 @@
+import { joinHostNotReachableResult } from "@playon/shared";
 import { rconExec, rconExecWithSelfHeal } from "../rcon.js";
 import { serverTool, type ToolModule } from "./types.js";
 
@@ -8,7 +9,7 @@ const RCON_NOT_CONFIGURED = {
 
 /** The live admin channel into a running server: send console commands, talk to players. */
 export const rconToolModule: ToolModule = ({ plane }) => {
-  const { servers } = plane;
+  const { servers, joinReady } = plane;
 
   return [
     serverTool({
@@ -27,6 +28,8 @@ export const rconToolModule: ToolModule = ({ plane }) => {
       },
       surface: { skill: "configurer", activityVerb: "run" },
       handler: async (args, { serverId }) => {
+        const reachability = await joinReady.probe(serverId);
+        if (!reachability.ready) return joinHostNotReachableResult(reachability);
         const endpoint = await servers.getRconEndpoint(serverId);
         if (!endpoint) return RCON_NOT_CONFIGURED;
         try {
@@ -53,6 +56,8 @@ export const rconToolModule: ToolModule = ({ plane }) => {
       },
       surface: { skill: "configurer", activityVerb: "run" },
       handler: async (args, { serverId }) => {
+        const reachability = await joinReady.probe(serverId);
+        if (!reachability.ready) return joinHostNotReachableResult(reachability);
         const endpoint = await servers.getRconEndpoint(serverId);
         if (!endpoint) return RCON_NOT_CONFIGURED;
         const message = String(args.message);

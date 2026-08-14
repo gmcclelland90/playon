@@ -223,14 +223,14 @@ export function preservedPanelBlocks(
 
 /** Statuses whose join blocks appear on the public player panel. */
 export function isPlayerPanelLiveStatus(status: string | null | undefined): boolean {
-  return status === "running" || status === "starting";
+  return status === "running" || status === "starting" || status === "degraded";
 }
 
 export async function publishServerPanel(
   servers: ServerService,
   panel: PanelService,
   serverId: string,
-  status: "running" | "starting" | "stopped" | "error",
+  status: "running" | "starting" | "degraded" | "stopped" | "error",
   live?: LiveServerState | null,
 ): Promise<void> {
   // Stopped/error servers leave the player panel — join info is only for live games.

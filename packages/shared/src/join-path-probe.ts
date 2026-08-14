@@ -85,3 +85,96 @@ export async function probeJoinPath(args: {
     joinHostState,
   });
 }
+
+/** User-facing status after the advertised join path has been evaluated. */
+export type JoinReadyStatus = "running" | "starting" | "degraded" | "stopped" | "error";
+
+export type JoinReadyInput = {
+  /** Process/container lifecycle from the control plane (not join-path). */
+  processStatus: string;
+  joinPath: JoinPathProbeResult;
+  /** Query against the advertised join host. null = not attempted. */
+  queryOnline?: boolean | null;
+  protocol: "tcp" | "udp";
+};
+
+export type JoinReadyReport = {
+  ready: boolean;
+  status: JoinReadyStatus;
+  reason: string;
+  joinPath: JoinPathProbeResult;
+  queryOnline?: boolean | null;
+  protocol: "tcp" | "udp";
+};
+
+const PROCESS_UP = new Set(["running", "starting"]);
+
+function processStatusOf(raw: string): JoinReadyStatus {
+  if (raw === "starting") return "starting";
+  if (raw === "running") return "running";
+  if (raw === "error" || raw === "failed") return "error";
+  return "stopped";
+}
+
+/**
+ * Ready-gate for “server is up / joinable”.
+ *
+ * Process-up, Paper “Done!”, or 127.0.0.1:port is not enough. Ready only when
+ * the advertised join host:port is open (TCP) or a query against that address
+ * succeeded. Loopback-open + advertised-closed stays not-ready (`degraded`).
+ */
+export function evaluateJoinReady(input: JoinReadyInput): JoinReadyReport {
+  const queryOnline = input.queryOnline ?? null;
+  const process = processStatusOf(input.processStatus);
+  const base = {
+    joinPath: input.joinPath,
+    queryOnline,
+    protocol: input.protocol,
+  };
+
+  if (!PROCESS_UP.has(input.processStatus)) {
+    return { ready: false, status: process, reason: "process_not_running", ...base };
+  }
+
+  // Query on the advertised host is LAN-client proof for TCP or UDP.
+  if (queryOnline === true) {
+    return { ready: true, status: "running", reason: "query_online", ...base };
+  }
+
+  if (input.protocol === "tcp") {
+    if (input.joinPath.ok) {
+      return { ready: true, status: "running", reason: input.joinPath.reason, ...base };
+    }
+    const status: JoinReadyStatus = process === "starting" ? "starting" : "degraded";
+    return { ready: false, status, reason: input.joinPath.reason, ...base };
+  }
+
+  // UDP: do not treat a TCP connect (or node listen table) as advertised proof.
+  const reason = queryOnline === false ? "query_offline" : "udp_join_unproven";
+  const status: JoinReadyStatus = process === "starting" ? "starting" : "degraded";
+  return { ready: false, status, reason, ...base };
+}
+
+/** Panel / UI status string — never “running” unless ready. */
+export function displayServerStatus(processStatus: string, ready?: boolean | null): string {
+  if (processStatus === "running" && ready !== true) return "degraded";
+  return processStatus;
+}
+
+export const JOIN_HOST_NOT_REACHABLE = "join_host_not_reachable";
+
+export function joinHostNotReachableResult(report: JoinReadyReport): {
+  error: typeof JOIN_HOST_NOT_REACHABLE;
+  reason: string;
+  joinHost: string;
+  port: number;
+  hint: string;
+} {
+  return {
+    error: JOIN_HOST_NOT_REACHABLE,
+    reason: report.reason,
+    joinHost: report.joinPath.joinHost,
+    port: report.joinPath.port,
+    hint: "Not reachable on the advertised join address. Process-up or 127.0.0.1 is not enough.",
+  };
+}

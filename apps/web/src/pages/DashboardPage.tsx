@@ -8,6 +8,7 @@ import {
   nodePresenceLabel,
   runtimeErrorHint,
   shortDisplayName,
+  displayServerStatus,
   statusLabel,
 } from "../status";
 
@@ -111,7 +112,7 @@ export function DashboardPage({ user }: { user: PublicUser }) {
   });
 
   const serverList = servers.data?.servers ?? [];
-  const running = serverList.filter((s) => s.status === "running").length;
+  const running = serverList.filter((s) => displayServerStatus(s.status, s.ready) === "running").length;
   const stopped = serverList.filter((s) => s.status === "stopped").length;
   const errored = serverList.filter((s) => s.status === "error").length;
   const serverName = (id: string) => serverList.find((s) => s.id === id)?.name ?? id.slice(0, 8);
@@ -318,8 +319,8 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                     <div>
                       <strong title={s.name}>{shortDisplayName(s.name, 28)}</strong>
                       <div className="muted canvas-status-row">
-                        <span className={`server-status-pill status-${s.status}`}>
-                          {statusLabel(s.status)}
+                        <span className={`server-status-pill status-${displayServerStatus(s.status, s.ready)}`}>
+                          {statusLabel(displayServerStatus(s.status, s.ready))}
                         </span>
                         <span title={s.runtimeMode ? `${s.game ?? ""} · ${s.runtimeMode}` : s.game ?? undefined}>
                           {s.game ?? "—"}

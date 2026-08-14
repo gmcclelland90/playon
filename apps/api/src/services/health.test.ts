@@ -10,6 +10,7 @@ import { nodes, servers as serversTable } from "../db/schema.js";
 import type { AppConfig } from "../config.js";
 import { LAB_DOCKER_SKILL, resolveFixturesRoot } from "../lab-games-root.js";
 import { HealthService } from "./health.js";
+import { JoinReadyService } from "./join-ready.js";
 import { NetToolsService } from "./net-tools.js";
 import { ServerService } from "./servers.js";
 
@@ -187,5 +188,52 @@ describe("HealthService", () => {
     expect(report.escalations.some((e) => e === "restart_failed:docker_unavailable")).toBe(true);
     expect(report.checks.every((c) => c.remediated !== "restart")).toBe(true);
     restart.mockRestore();
+  });
+
+  it("join-path gate: localhost-open + advertised-closed is not ready and does not restart", async () => {
+    const lan = "172.16.0.94";
+    const { db, config } = tempConfig();
+    const servers = new ServerService(db, config);
+    const net = new NetToolsService(servers);
+    vi.spyOn(net, "portCheck").mockImplementation(async ({ host, port }) => ({
+      host: host?.trim() || "127.0.0.1",
+      port,
+      state: host === lan ? "closed" : "open",
+    }));
+    const joinReady = new JoinReadyService(servers, net, config);
+    const health = new HealthService(servers, net, config, undefined, joinReady);
+
+    await db.insert(nodes).values({
+      id: "node-lan-split",
+      name: "lan",
+      os: "linux",
+      docker: true,
+      native: true,
+      steamcmd: true,
+      freeDiskBytes: 1e11,
+      lastSeenAt: new Date(),
+      kind: "lan",
+      tunnelStatus: "none",
+      joinHost: lan,
+    });
+    const created = await servers.createFromSkill({
+      skillName: LAB_DOCKER_SKILL,
+      serverName: "Health Join Split",
+    });
+    const get = servers.get.bind(servers);
+    servers.get = async (id: string) => {
+      const row = await get(id);
+      return row ? { ...row, status: "running", nodeId: "node-lan-split" } : row;
+    };
+    servers.joinInfoFor = async () => ({ address: lan, port: 25565 });
+    servers.resolveJoinAddress = async () => lan;
+    const restart = vi.spyOn(servers, "restart");
+
+    const report = await health.checkServer(created.id, { remediate: true });
+    expect(report.ready).toBe(false);
+    expect(report.ok).toBe(false);
+    expect(report.checks.some((c) => c.id === "join-path" && !c.ok)).toBe(true);
+    expect(report.joinPath?.reason).toBe("loopback_open_join_host_closed");
+    expect(restart).not.toHaveBeenCalled();
   });
 });

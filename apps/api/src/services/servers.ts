@@ -474,6 +474,13 @@ export class ServerService {
     return hit?.default ?? 0;
   }
 
+  /** Game-port protocol from the skill. Defaults to tcp when undeclared. */
+  gamePortProtocolForSkill(skillName: string): "tcp" | "udp" {
+    const skill = this.resolveSkill(skillName);
+    const hit = skill?.metadata.ports.find((p) => p.name === "game");
+    return hit?.protocol === "udp" ? "udp" : "tcp";
+  }
+
   rconPortForSkill(skillName: string, _game?: string | null): number {
     const fromMeta = this.portFromSkill(skillName, "rcon", 0);
     if (fromMeta > 0) return fromMeta;

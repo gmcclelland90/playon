@@ -1,4 +1,10 @@
-import type { HealthCheck, SkillMetadata } from "@playon/shared";
+import {
+  isLoopbackJoinHost,
+  type HealthCheck,
+  type JoinReadyReport,
+  type SkillMetadata,
+} from "@playon/shared";
+import type { JoinReadyService } from "./join-ready.js";
 import type { NetToolsService } from "./net-tools.js";
 import type { ServerQueryService } from "./server-query.js";
 import type { ServerRecord, ServerService } from "./servers.js";
@@ -18,6 +24,8 @@ export type ServerHealthReport = {
   serverId: string;
   status: string;
   ok: boolean;
+  ready: boolean;
+  joinPath?: JoinReadyReport["joinPath"];
   checks: HealthCheckResult[];
   escalations: string[];
 };
@@ -32,6 +40,7 @@ export class HealthService {
     private readonly net: NetToolsService,
     private readonly config: AppConfig,
     private readonly queries?: ServerQueryService,
+    private readonly joinReady?: JoinReadyService,
   ) {}
 
   private resolveChecks(server: ServerRecord): { meta: SkillMetadata | null; checks: HealthCheck[] } {
@@ -111,7 +120,17 @@ export class HealthService {
           detail: ok ? `${host}:${port} open` : `${host}:${port} closed`,
           onFail: check.onFail,
         });
-        if (!ok && check.onFail === "restart") needsRestart = true;
+        if (!ok && check.onFail === "restart") {
+          // Advertised-closed + loopback-open is a publish/path gap, not a dead process.
+          const loopback = isLoopbackJoinHost(host)
+            ? probe
+            : await this.net.portCheck({ host: "127.0.0.1", port });
+          if (loopback.state === "open" && !isLoopbackJoinHost(host)) {
+            /* do not restart — join-path gate reports degraded instead */
+          } else {
+            needsRestart = true;
+          }
+        }
         if (!ok && check.onFail === "escalate") escalations.push(check.id);
         continue;
       }
@@ -154,12 +173,27 @@ export class HealthService {
       }
     }
 
+    let joinReport: JoinReadyReport | undefined;
+    if (this.joinReady) {
+      joinReport = await this.joinReady.probe(serverId);
+      results.push({
+        id: "join-path",
+        ok: joinReport.ready,
+        detail: joinReport.ready
+          ? `advertised ${joinReport.joinPath.joinHost}:${joinReport.joinPath.port} reachable (${joinReport.reason})`
+          : `advertised ${joinReport.joinPath.joinHost}:${joinReport.joinPath.port} not reachable (${joinReport.reason})`,
+        onFail: "none",
+      });
+    }
+
     const refreshed = (await this.dbServers.get(serverId)) ?? server;
     const ok = results.every((r) => r.ok) && escalations.length === 0;
     return {
       serverId,
       status: refreshed.status,
       ok,
+      ready: joinReport?.ready ?? false,
+      joinPath: joinReport?.joinPath,
       checks: results,
       escalations,
     };

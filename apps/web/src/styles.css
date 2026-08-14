@@ -943,7 +943,8 @@ body.server-console-resizing iframe {
 }
 
 .server-status-pill.status-starting,
-.server-status-pill.status-stopping {
+.server-status-pill.status-stopping,
+.server-status-pill.status-degraded {
   color: oklch(0.82 0.12 85);
   border-color: oklch(0.82 0.12 85 / 0.4);
 }

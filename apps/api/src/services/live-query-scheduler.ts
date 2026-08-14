@@ -1,3 +1,4 @@
+import type { JoinReadyService } from "./join-ready.js";
 import type { PlayerPanel } from "./player-panel.js";
 import type { ServerQueryService } from "./server-query.js";
 import type { ServerService } from "./servers.js";
@@ -14,6 +15,7 @@ export class LiveQueryScheduler {
     private readonly servers: ServerService,
     private readonly playerPanel: PlayerPanel,
     private readonly queries: ServerQueryService,
+    private readonly joinReady?: JoinReadyService,
     private readonly intervalMs = Number(process.env.PLAYON_LIVE_QUERY_INTERVAL_MS ?? 20_000),
   ) {}
 
@@ -41,11 +43,19 @@ export class LiveQueryScheduler {
         if (server.status !== "running" && server.status !== "starting") continue;
         try {
           const live = await this.queries.queryServer(server.id);
-          await this.playerPanel.publishForStatus(
-            server.id,
-            server.status === "starting" ? "starting" : "running",
-            live,
-          );
+          const joinReady = this.joinReady
+            ? await this.joinReady.probe(server.id)
+            : null;
+          const panelStatus = joinReady
+            ? joinReady.ready
+              ? server.status === "starting"
+                ? "starting"
+                : "running"
+              : joinReady.status
+            : server.status === "starting"
+              ? "starting"
+              : "running";
+          await this.playerPanel.publishForStatus(server.id, panelStatus, live);
           updated++;
         } catch {
           // keep scheduler alive

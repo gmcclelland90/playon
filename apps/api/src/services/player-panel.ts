@@ -17,6 +17,7 @@ import {
   resolveJoin,
   safeQueryLive,
 } from "./server-panel.js";
+import type { JoinReadyService } from "./join-ready.js";
 import type { ServerQueryService } from "./server-query.js";
 import type { ServerService } from "./servers.js";
 
@@ -133,11 +134,12 @@ export class PlayerPanel {
     private readonly panel: PanelService,
     private readonly queries: ServerQueryService,
     private readonly config: AppConfig,
+    private readonly joinReady?: JoinReadyService,
   ) {}
 
   async publishForStatus(
     serverId: string,
-    status: "running" | "starting" | "stopped" | "error",
+    status: "running" | "starting" | "degraded" | "stopped" | "error",
     live?: LiveServerState | null,
   ): Promise<void> {
     await publishServerPanel(this.servers, this.panel, serverId, status, live);
@@ -154,13 +156,17 @@ export class PlayerPanel {
     let serverStatus: string | undefined;
     const detail = await this.servers.detail(serverId);
     serverStatus = detail?.server.status;
+    const joinReady = this.joinReady ? await this.joinReady.probe(serverId) : null;
+    if (joinReady && (detail?.server.status === "running" || detail?.server.status === "starting")) {
+      serverStatus = joinReady.ready ? "running" : joinReady.status;
+    }
     const join = detail?.runtime.join;
     if (join && detail) {
       const joinMeta = resolveJoin(this.servers, detail.server.dataPath);
       const existing = await this.panel.list(serverId);
       const previousStatusBody =
         existing.find((b) => b.type === "server_status")?.body ?? null;
-      const live = isPlayerPanelLiveStatus(detail.server.status)
+      const live = isPlayerPanelLiveStatus(serverStatus)
         ? await safeQueryLive(
             (id) => this.queries.queryServerWithRetry(id, { attempts: 3, delayMs: 800 }),
             serverId,
@@ -212,7 +218,7 @@ export class PlayerPanel {
       }
       // Live query fields are control-plane owned — merge/inject so agents cannot wipe them.
       parsedBlocks = enrichBlocksWithLiveStatus(parsedBlocks, {
-        status: detail.server.status,
+        status: serverStatus ?? detail.server.status,
         runtime: detail.runtime.kind,
         game: detail.server.game,
         live,

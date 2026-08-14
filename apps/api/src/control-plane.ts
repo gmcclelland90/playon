@@ -12,6 +12,7 @@ import { ConfirmService } from "./services/confirm.js";
 import { EventHub } from "./services/event-hub.js";
 import { ServerFsService } from "./services/fs-tools.js";
 import { HealthService } from "./services/health.js";
+import { JoinReadyService } from "./services/join-ready.js";
 import { ImportLocalService } from "./services/import-local.js";
 import { ManageSuggestService } from "./services/manage-suggest.js";
 import { ImportSftpService } from "./services/import-sftp.js";
@@ -45,6 +46,7 @@ export type ControlPlane = {
   playerPanel: PlayerPanel;
   net: NetToolsService;
   queries: ServerQueryService;
+  joinReady: JoinReadyService;
   health: HealthService;
   placement: PlacementService;
   migrate: MigrateService;
@@ -86,8 +88,9 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
     return stored?.lanAllowlist ?? [];
   });
   const queries = new ServerQueryService(servers, config);
-  const playerPanel = new PlayerPanel(servers, panel, queries, config);
-  const health = new HealthService(servers, net, config, queries);
+  const joinReady = new JoinReadyService(servers, net, config, queries);
+  const playerPanel = new PlayerPanel(servers, panel, queries, config, joinReady);
+  const health = new HealthService(servers, net, config, queries, joinReady);
   const placement = new PlacementService(db, config, net);
   const migrate = new MigrateService(db, servers, snapshots, placement, eventHub);
   const offNode = new OffNodeBackupService(db, config, snapshots);
@@ -114,6 +117,7 @@ export function createControlPlane(db: Db, config: AppConfig): ControlPlane {
     playerPanel,
     net,
     queries,
+    joinReady,
     health,
     placement,
     migrate,
