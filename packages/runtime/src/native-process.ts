@@ -15,6 +15,20 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function pathBasename(p: string): string {
+  const normalized = p.replace(/[\\/]+$/, "");
+  const idx = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+  return idx >= 0 ? normalized.slice(idx + 1) : normalized;
+}
+
+function pathDirname(p: string): string {
+  const normalized = p.replace(/[\\/]+$/, "");
+  const idx = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+  if (idx < 0) return ".";
+  if (idx === 0) return normalized[0] ?? ".";
+  return normalized.slice(0, idx);
+}
+
 /**
  * PlayOn game processes spawn with cwd `…/game`, but some runtimes (JVM
  * dedicated servers) chdir into sibling userdata (`…/home/…`). Orphan find
@@ -22,9 +36,9 @@ function sleep(ms: number): Promise<void> {
  */
 export function serverTreeRoot(cwd: string): string {
   const normalized = cwd.replace(/[\\/]+$/, "");
-  if (path.basename(normalized) === "game") {
-    const parent = path.dirname(normalized);
-    if (parent && parent !== "." && parent !== path.parse(normalized).root) return parent;
+  if (pathBasename(normalized) === "game") {
+    const parent = pathDirname(normalized);
+    if (parent && parent !== "." && parent !== "/" && parent !== "\\") return parent;
   }
   return normalized;
 }
@@ -32,8 +46,10 @@ export function serverTreeRoot(cwd: string): string {
 /** Cmdline match roots — game + home only. Never the parent server id path. */
 export function cmdlineOrphanRoots(cwd: string): string[] {
   const normalized = cwd.replace(/[\\/]+$/, "");
-  if (path.basename(normalized) !== "game") return [normalized];
-  return [normalized, path.join(path.dirname(normalized), "home")];
+  if (pathBasename(normalized) !== "game") return [normalized];
+  const parent = pathDirname(normalized);
+  const sep = normalized.includes("\\") ? "\\" : "/";
+  return [normalized, `${parent}${sep}home`];
 }
 
 /**

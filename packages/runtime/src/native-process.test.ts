@@ -107,6 +107,11 @@ describe("NativeProcessSupervisor", () => {
       "/data/servers/abc/game",
       "/data/servers/abc/home",
     ]);
+    expect(serverTreeRoot("C:\\data\\servers\\abc\\game")).toBe("C:\\data\\servers\\abc");
+    expect(cmdlineOrphanRoots("C:\\data\\servers\\abc\\game")).toEqual([
+      "C:\\data\\servers\\abc\\game",
+      "C:\\data\\servers\\abc\\home",
+    ]);
     expect(serverTreeRoot("/tmp/other")).toBe("/tmp/other");
   });
 
