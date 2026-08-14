@@ -83,11 +83,11 @@ export class HealthService {
 
     for (const check of checks) {
       if (check.type === "process_running") {
-        const ok = server.status === "running";
+        const ok = server.status === "running" || server.status === "starting";
         results.push({
           id: check.id,
           ok,
-          detail: ok ? "server status is running" : `server status is ${server.status}`,
+          detail: ok ? `server status is ${server.status}` : `server status is ${server.status}`,
           onFail: check.onFail,
         });
         if (!ok && check.onFail === "restart") needsRestart = true;

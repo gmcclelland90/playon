@@ -240,6 +240,14 @@ const host = vi.hoisted(() => {
     exited() {
       running = null;
     },
+    plantLeftover(info?: ProcessInfo) {
+      running = info ?? {
+        id: "native-orphan-99",
+        name: "server-leftover",
+        pid: 99,
+        status: "running",
+      };
+    },
     reset() {
       calls.length = 0;
       specs.length = 0;
@@ -443,6 +451,40 @@ describe("local docker lifecycle through ServerRuntimeHandle", () => {
     expect(fake.calls).toContain(`start:cid-playon-${server.id}`);
   });
 
+  it("start does not start a second container when a healthy instance already exists", async () => {
+    const { servers } = tempEnv();
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
+    await servers.start(server.id);
+    fake.calls.length = 0;
+    servers.portsBoundOverride = async () => true;
+
+    const again = await servers.start(server.id);
+
+    expect(again.status).toBe("running");
+    expect(fake.calls.filter((c) => c.startsWith("create:"))).toEqual([]);
+    expect(fake.calls.filter((c) => c.startsWith("start:"))).toEqual([]);
+  });
+
+  it("start reaps a leftover host process before starting the named container", async () => {
+    const { servers } = tempEnv();
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
+    host.plantLeftover({
+      id: "native-orphan-99",
+      name: `server-${server.id}`,
+      pid: 99,
+      status: "running",
+    });
+    servers.portsBoundOverride = async () => false;
+
+    const started = await servers.start(server.id);
+
+    expect(started.status).toBe("running");
+    expect(host.calls.some((c) => c.startsWith("reclaim:"))).toBe(true);
+    expect(host.running).toBeNull();
+    expect(fake.calls.filter((c) => c.startsWith("create:"))).toHaveLength(1);
+    expect(fake.calls.filter((c) => c.startsWith("start:"))).toHaveLength(1);
+  });
+
   it("stop resolves the container id before stopping it", async () => {
     const { servers } = tempEnv();
     const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
@@ -469,6 +511,20 @@ describe("local docker lifecycle through ServerRuntimeHandle", () => {
       expect.arrayContaining([`stop:cid-playon-${server.id}`, `start:cid-playon-${server.id}`]),
     );
     expect(fake.calls.filter((c) => c.startsWith("create:"))).toEqual([]);
+  });
+
+  it("alive container with advertised ports unbound is reaped and not reported running", async () => {
+    const { servers } = tempEnv();
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
+    await servers.start(server.id);
+    servers.portsBoundOverride = async () => false;
+    servers.portDeadGraceMs = 0;
+    servers.autoRestartOnDeadInstance = false;
+
+    const row = await servers.get(server.id);
+
+    expect(row!.status).toBe("error");
+    expect(fake.containers.get(`playon-${server.id}`)?.status).toBe("exited");
   });
 
   it("status reconciliation follows the container state", async () => {
@@ -512,7 +568,11 @@ describe("local native lifecycle through ServerRuntimeHandle", () => {
     const started = await servers.start(id);
 
     expect(started.status).toBe("running");
-    expect(host.calls).toEqual([`find:server-${id}:${gameDir}`, `start:server-${id}:${gameDir}`]);
+    expect(host.calls).toEqual([
+      `find:server-${id}:${gameDir}`,
+      `find:server-${id}:${gameDir}`,
+      `start:server-${id}:${gameDir}`,
+    ]);
     const spec = host.specs[0]!;
     expect(spec.args?.join(" ")).toContain(startScript);
     expect(spec.env?.PLAYON_SERVER_ID).toBe(id);
@@ -556,10 +616,66 @@ describe("local native lifecycle through ServerRuntimeHandle", () => {
 
     expect(host.calls).toEqual([
       `find:server-${id}:${gameDir}`,
+      `find:server-${id}:${gameDir}`,
       `reclaim:server-${id}:${gameDir}`,
+      `find:server-${id}:${gameDir}`,
       `start:server-${id}:${gameDir}`,
     ]);
     expect(host.specs).toHaveLength(2);
+  });
+
+  it("start reaps a leftover PID and launches exactly one new instance", async () => {
+    const { servers, id, gameDir } = await nativeServer();
+    host.plantLeftover({
+      id: "native-orphan-99",
+      name: `server-${id}`,
+      pid: 99,
+      status: "running",
+    });
+    servers.portsBoundOverride = async () => false;
+
+    const started = await servers.start(id);
+
+    expect(started.status).toBe("running");
+    expect(host.calls).toEqual([
+      `find:server-${id}:${gameDir}`,
+      `find:server-${id}:${gameDir}`,
+      `reclaim:server-${id}:${gameDir}`,
+      `find:server-${id}:${gameDir}`,
+      `start:server-${id}:${gameDir}`,
+    ]);
+    expect(host.specs).toHaveLength(1);
+    expect(host.running?.pid).not.toBe(99);
+  });
+
+  it("start does not spawn a second process when a healthy instance already exists", async () => {
+    const { servers, id, gameDir } = await nativeServer();
+    await servers.start(id);
+    host.calls.length = 0;
+    host.specs.length = 0;
+    servers.portsBoundOverride = async () => true;
+
+    const again = await servers.start(id);
+
+    expect(again.status).toBe("running");
+    expect(host.calls).toEqual([`find:server-${id}:${gameDir}`]);
+    expect(host.specs).toHaveLength(0);
+    expect(host.running).not.toBeNull();
+  });
+
+  it("alive process with advertised ports unbound is reaped and not reported running", async () => {
+    const { servers, id, gameDir } = await nativeServer();
+    await servers.start(id);
+    servers.portsBoundOverride = async () => false;
+    servers.portDeadGraceMs = 0;
+    servers.autoRestartOnDeadInstance = false;
+    host.calls.length = 0;
+
+    const row = await servers.get(id);
+
+    expect(row!.status).toBe("error");
+    expect(host.calls).toContain(`reclaim:server-${id}:${gameDir}`);
+    expect(host.running).toBeNull();
   });
 
   it("stop reclaims by identity, never by a stored process id", async () => {
@@ -596,6 +712,7 @@ describe("local native lifecycle through ServerRuntimeHandle", () => {
     expect(host.calls).toEqual([
       `find:server-${id}:${gameDir}`,
       `reclaim:server-${id}:${gameDir}`,
+      `find:server-${id}:${gameDir}`,
       `find:server-${id}:${gameDir}`,
       `start:server-${id}:${gameDir}`,
     ]);
@@ -744,7 +861,7 @@ describe("remote native lifecycle through ServerRuntimeHandle", () => {
     const started = await servers.start(id);
 
     expect(started.status).toBe("running");
-    expect(processKinds()).toEqual(["process_status", "process_start"]);
+    expect(processKinds()).toEqual(["process_status", "process_status", "process_start"]);
     // Home runs neither the process nor a container for a server it does not host.
     expect(host.calls).toEqual([]);
     expect(fake.calls).toEqual([]);
@@ -793,7 +910,13 @@ describe("remote native lifecycle through ServerRuntimeHandle", () => {
 
     await servers.start(id);
 
-    expect(processKinds()).toEqual(["process_status", "process_stop", "process_start"]);
+    expect(processKinds()).toEqual([
+      "process_status",
+      "process_status",
+      "process_stop",
+      "process_status",
+      "process_start",
+    ]);
     expect(node.jobs.find((j) => j.kind === "process_stop")!.args).toEqual({
       id: `native-${procName}-1`,
       name: procName,
@@ -831,6 +954,7 @@ describe("remote native lifecycle through ServerRuntimeHandle", () => {
     expect(processKinds()).toEqual([
       "process_status",
       "process_stop",
+      "process_status",
       "process_status",
       "process_start",
     ]);

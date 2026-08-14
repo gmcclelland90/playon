@@ -16,6 +16,27 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * PlayOn game processes spawn with cwd `…/game`, but some runtimes (JVM
+ * dedicated servers) chdir into sibling userdata (`…/home/…`). Orphan find
+ * and reclaim must cover the whole server tree, not only the launch cwd.
+ */
+export function serverTreeRoot(cwd: string): string {
+  const normalized = cwd.replace(/[\\/]+$/, "");
+  if (path.basename(normalized) === "game") {
+    const parent = path.dirname(normalized);
+    if (parent && parent !== "." && parent !== path.parse(normalized).root) return parent;
+  }
+  return normalized;
+}
+
+/** Cmdline match roots — game + home only. Never the parent server id path. */
+export function cmdlineOrphanRoots(cwd: string): string[] {
+  const normalized = cwd.replace(/[\\/]+$/, "");
+  if (path.basename(normalized) !== "game") return [normalized];
+  return [normalized, path.join(path.dirname(normalized), "home")];
+}
+
+/**
  * Spawns OS processes with cwd constrained to an optional jail root.
  * When `jailRoot` is set on the supervisor, `spec.cwd` must resolve inside it.
  */
@@ -144,15 +165,21 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     const tracked = this.findTracked(name, resolved);
     if (tracked) return { ...tracked.info };
     if (process.platform === "win32") return null;
-    const pid = listPidsWithCwdUnder(resolved)[0] ?? firstPidWithCmdlineUnder(resolved);
+    const pid =
+      listPidsWithCwdUnder(serverTreeRoot(resolved))[0] ?? firstPidWithCmdlineUnderRoots(resolved);
     if (pid == null) return null;
     // Untracked survivor: the pid is the only identity we can offer.
     return { id: `native-orphan-${pid}`, name, pid, status: "running" };
   }
 
   async reclaim(name: string, cwd: string): Promise<void> {
+    const tree = serverTreeRoot(cwd);
     for (const tracked of this.procs.values()) {
-      if (tracked.info.name !== name && tracked.cwdJail !== cwd) continue;
+      const sameTree =
+        tracked.cwdJail === cwd ||
+        tracked.cwdJail === tree ||
+        tracked.cwdJail.startsWith(`${tree}${path.sep}`);
+      if (tracked.info.name !== name && !sameTree) continue;
       if (tracked.info.status !== "running") continue;
       this.signalTracked(tracked);
       tracked.info.status = "stopped";
@@ -225,23 +252,20 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     }
   }
 
-  /** SIGTERM then SIGKILL any process whose /proc cwd is under `cwd`. */
+  /** SIGTERM then SIGKILL any process whose /proc cwd is under this server tree. */
   private async killOrphansByCwd(cwd: string): Promise<void> {
-    const target = cwd.replace(/\/+$/, "");
+    const target = serverTreeRoot(cwd.replace(/\/+$/, ""));
     if (!target || target === "/") return;
+    const cmdlineRoots = cmdlineOrphanRoots(cwd);
 
     const pids = listPidsWithCwdUnder(target);
-    // Fallback: pkill -f for start scripts under this game dir (covers races
-    // where /proc/cwd is unreadable to the agent user).
+    // Fallback: pkill -f for start scripts under game/ or home/ (covers races
+    // where /proc/cwd is unreadable to the agent user). Never pkill the parent
+    // server-id path — that can match unrelated node-agent job cmdlines.
     let pkillFoundAny = false;
     if (pids.length === 0) {
-      try {
-        execFileSync("pkill", ["-TERM", "-f", target], { stdio: "ignore" });
-        pkillFoundAny = true;
-      } catch {
-        // exit 1 = no match, nothing to kill
-        return;
-      }
+      pkillFoundAny = pkillMatchingRoots(cmdlineRoots, "TERM");
+      if (!pkillFoundAny) return;
     } else {
       for (const pid of pids) {
         try {
@@ -250,26 +274,13 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
           // already gone
         }
       }
-      try {
-        execFileSync("pkill", ["-TERM", "-f", target], { stdio: "ignore" });
-      } catch {
-        // exit 1 = no match
-      }
+      pkillMatchingRoots(cmdlineRoots, "TERM");
     }
 
     // Brief poll: if nothing survived SIGTERM, skip the long sleep.
     await sleep(100);
     const surviving = listPidsWithCwdUnder(target);
-    const pkillStillMatches = pkillFoundAny
-      ? (() => {
-          try {
-            execFileSync("pgrep", ["-f", target], { stdio: "ignore" });
-            return true;
-          } catch {
-            return false;
-          }
-        })()
-      : false;
+    const pkillStillMatches = pkillFoundAny && pgrepMatchingRoots(cmdlineRoots);
 
     if (surviving.length === 0 && !pkillStillMatches) {
       return;
@@ -284,11 +295,7 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
         // gone
       }
     }
-    try {
-      execFileSync("pkill", ["-KILL", "-f", target], { stdio: "ignore" });
-    } catch {
-      // no match
-    }
+    pkillMatchingRoots(cmdlineRoots, "KILL");
   }
 
   private require(id: string): TrackedProcess {
@@ -311,6 +318,41 @@ function firstPidWithCmdlineUnder(target: string): number | null {
     // exit 1 = no match
     return null;
   }
+}
+
+function firstPidWithCmdlineUnderRoots(cwd: string): number | null {
+  for (const root of cmdlineOrphanRoots(cwd)) {
+    const pid = firstPidWithCmdlineUnder(root);
+    if (pid != null) return pid;
+  }
+  return null;
+}
+
+function pkillMatchingRoots(roots: string[], signal: "TERM" | "KILL"): boolean {
+  let found = false;
+  for (const root of roots) {
+    if (!root || root === "/") continue;
+    try {
+      execFileSync("pkill", [`-${signal}`, "-f", root], { stdio: "ignore" });
+      found = true;
+    } catch {
+      // exit 1 = no match
+    }
+  }
+  return found;
+}
+
+function pgrepMatchingRoots(roots: string[]): boolean {
+  for (const root of roots) {
+    if (!root || root === "/") continue;
+    try {
+      execFileSync("pgrep", ["-f", root], { stdio: "ignore" });
+      return true;
+    } catch {
+      // exit 1 = no match
+    }
+  }
+  return false;
 }
 
 function listPidsWithCwdUnder(target: string): number[] {

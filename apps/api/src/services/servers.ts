@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { eq, inArray } from "drizzle-orm";
 import {
@@ -6,6 +7,7 @@ import {
   localDockerTransport,
   localNativeTransport,
   openServerRuntime,
+  probeUdpListen,
   remoteDockerTransport,
   remoteNativeTransport,
   type ContainerJobDispatch,
@@ -22,7 +24,6 @@ import {
   type ServerContainerSpec,
   type ServerProcessSpec,
   type ServerRuntimeHandle,
-  type ServerRuntimeState,
   type ServerRuntimeStatus,
 } from "@playon/runtime";
 import type { AppConfig } from "../config.js";
@@ -73,6 +74,9 @@ import {
 import { loadSkillMetadata, type SkillEntry } from "./skills.js";
 import {
   AdminDialectSchema,
+  DEFAULT_PORT_DEAD_GRACE_MS,
+  decideReconcileInstance,
+  decideStartInstance,
   deriveNodePresence,
   isLocalNodeId,
   isLoopbackJoinHost,
@@ -81,9 +85,11 @@ import {
   NODE_AUTHORITATIVE_MARKER,
   wslParentNodeId,
   type AdminDialect,
+  type HostPortsBound,
   type SkillMetadata,
 } from "@playon/shared";
 import { dispatchNodeJob, nodeServerRelPath } from "./node-runtime.js";
+import { checkNodeLoopbackTcp } from "./node-loopback-tcp.js";
 import { ensureWslLanPublish, releaseWslLanPublish } from "./wsl-lan-publish.js";
 
 export interface ServerRecord {
@@ -133,12 +139,40 @@ function toRecord(row: typeof servers.$inferSelect): ServerRecord {
   };
 }
 
+function probeLocalTcpPort(port: number, timeoutMs = 1500): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: "127.0.0.1", port });
+    const done = (open: boolean) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve(open);
+    };
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => done(true));
+    socket.once("timeout", () => done(false));
+    socket.once("error", () => done(false));
+  });
+}
+
 export class ServerService {
   private readonly adapters = new Map<string, DockerAdapter>();
   private readonly logFollows = new Map<string, LogFollowHandle>();
   private sharedDocker: DockerAdapter | null = null;
   private sharedProcess: ProcessSupervisor | null = null;
   private adoption: ServerAdoptionService | null = null;
+  private readonly instanceStartedAt = new Map<string, number>();
+  private readonly crashRestarts = new Set<string>();
+  private readonly reconciling = new Set<string>();
+
+  /**
+   * Unit tests assign this so start/reconcile do not probe the CI host.
+   * Production leaves it null and probes advertised game ports on the host.
+   */
+  portsBoundOverride: ((server: ServerRecord) => Promise<HostPortsBound>) | null = null;
+  /** After this, a running process with unbound advertised ports is dead. */
+  portDeadGraceMs = DEFAULT_PORT_DEAD_GRACE_MS;
+  /** One clean auto-restart after a port-dead crash if the user did not stop. */
+  autoRestartOnDeadInstance = true;
 
   /** Skill roots for panel/join resolution (same as create/start). */
   get skillsRoots(): string[] {
@@ -1168,32 +1202,149 @@ export class ServerService {
     }
   }
 
-  private async runtimeState(server: ServerRecord): Promise<ServerRuntimeState | null> {
-    return (await this.runtimeStatus(server))?.state ?? null;
+  /**
+   * Host-local advertised game-port bind. null = unknown / no port / probe
+   * unavailable. Never uses the Home join host — WSL publish gaps are not dead
+   * processes (see #877 / #843).
+   */
+  async hostGamePortsBound(server: ServerRecord): Promise<HostPortsBound> {
+    if (this.portsBoundOverride) return this.portsBoundOverride(server);
+    if (process.env.PLAYON_SKIP_HOST_PORT_PROBE === "1") return null;
+    return this.probeAdvertisedGamePorts(server);
+  }
+
+  private async probeAdvertisedGamePorts(server: ServerRecord): Promise<HostPortsBound> {
+    const skillName = this.readSkillName(server.dataPath);
+    const port = this.gamePortForSkill(skillName, server.game);
+    if (!port) return null;
+    const proto = this.gamePortProtocolForSkill(skillName);
+    try {
+      if (this.isRemoteNode(server)) {
+        if (!(await this.nodeIsOnline(server.nodeId))) return null;
+        if (proto === "udp") {
+          const result = await dispatchNodeJob({
+            nodeId: server.nodeId,
+            kind: "net_udp_listen",
+            args: { port },
+            timeoutMs: 5_000,
+            localHandler: () => probeUdpListen(port),
+          });
+          return result.listening;
+        }
+        const loopback = await checkNodeLoopbackTcp(server.nodeId!, port);
+        if (loopback.unavailable) return null;
+        return loopback.state === "open";
+      }
+      if (proto === "udp") {
+        const result = probeUdpListen(port);
+        if (result.probe === "unavailable") return null;
+        return result.listening;
+      }
+      return probeLocalTcpPort(port);
+    } catch {
+      return null;
+    }
+  }
+
+  /** Sweep host processes under this server's tree (game/ + home/), any mode. */
+  private async reapNativeServerTree(server: ServerRecord): Promise<void> {
+    const locality: RuntimeLocality = this.isRemoteNode(server) ? "remote" : "local";
+    const identity = this.processIdentity(server, locality);
+    if (locality === "remote") {
+      await dispatchNodeJob({
+        nodeId: server.nodeId,
+        kind: "process_stop",
+        args: { id: "", name: identity.name, cwd: identity.cwd, serverId: server.id },
+        timeoutMs: 60_000,
+        localHandler: async () => ({ ok: true }),
+      });
+      return;
+    }
+    await this.ensureRuntime().catch(() => undefined);
+    await this.sharedProcess?.reclaim?.(identity.name, identity.cwd);
+  }
+
+  private markInstanceStarted(serverId: string): void {
+    this.instanceStartedAt.set(serverId, Date.now());
+  }
+
+  private startedAgoMs(serverId: string): number {
+    const at = this.instanceStartedAt.get(serverId);
+    if (at == null) {
+      this.instanceStartedAt.set(serverId, Date.now());
+      return 0;
+    }
+    return Date.now() - at;
+  }
+
+  private async reapDeadInstance(server: ServerRecord): Promise<void> {
+    const handle = await this.openRuntime(server).catch(() => null);
+    await handle?.stop().catch(() => undefined);
+    await this.reapNativeServerTree(server).catch(() => undefined);
+
+    const mayRestart =
+      this.autoRestartOnDeadInstance &&
+      server.status === "running" &&
+      !this.crashRestarts.has(server.id);
+    if (mayRestart) {
+      this.crashRestarts.add(server.id);
+      try {
+        await this.start(server.id);
+        return;
+      } catch {
+        // fall through to error
+      }
+    }
+
+    await this.db.update(servers).set({ status: "error" }).where(eq(servers.id, server.id));
+    this.emitStatus(server.id, "error");
   }
 
   private async reconcileStatus(server: ServerRecord): Promise<void> {
     // A node we cannot reach cannot answer for its runtime: asking only parks
     // list()/get() behind a job that will time out, and silence is not "stopped".
     if (this.isRemoteNode(server) && !(await this.nodeIsOnline(server.nodeId))) return;
+    if (this.reconciling.has(server.id)) return;
+    this.reconciling.add(server.id);
 
-    const state = await this.runtimeState(server);
-    if (state === null) return;
+    try {
+      const status = await this.runtimeStatus(server);
+      if (status === null) return;
 
-    // Only docker reports "missing" (no container at all); a status the runtime
-    // never created must not overwrite a create/error state.
-    if (state === "missing") {
-      if (server.status === "running" || server.status === "starting") {
-        await this.db.update(servers).set({ status: "stopped" }).where(eq(servers.id, server.id));
-        this.emitStatus(server.id, "stopped");
+      // Only docker reports "missing" (no container at all); a status the runtime
+      // never created must not overwrite a create/error state.
+      if (status.state === "missing") {
+        if (server.status === "running" || server.status === "starting") {
+          await this.db.update(servers).set({ status: "stopped" }).where(eq(servers.id, server.id));
+          this.emitStatus(server.id, "stopped");
+        }
+        return;
       }
-      return;
-    }
 
-    const next = state === "running" ? "running" : "stopped";
-    if (next !== server.status) {
-      await this.db.update(servers).set({ status: next }).where(eq(servers.id, server.id));
-      this.emitStatus(server.id, next);
+      const processAlive = status.state === "running";
+      const hostPortsBound = processAlive ? await this.hostGamePortsBound(server) : null;
+      const decision = decideReconcileInstance({
+        processAlive,
+        hostPortsBound,
+        dbStatus: server.status,
+        startedAgoMs: this.startedAgoMs(server.id),
+        graceMs: this.portDeadGraceMs,
+      });
+
+      if (decision === "keep") return;
+
+      if (decision === "dead") {
+        await this.reapDeadInstance(server);
+        return;
+      }
+
+      if (decision === "running") this.crashRestarts.delete(server.id);
+      if (decision !== server.status) {
+        await this.db.update(servers).set({ status: decision }).where(eq(servers.id, server.id));
+        this.emitStatus(server.id, decision);
+      }
+    } finally {
+      this.reconciling.delete(server.id);
     }
   }
 
@@ -1362,8 +1513,30 @@ export class ServerService {
       }
 
       const handle = await this.openRuntime(server);
+      const runtime = await handle.status().catch(() => null);
+      const processAlive = runtime?.state === "running";
+      const hostPortsBound = await this.hostGamePortsBound(server);
+      const decision = decideStartInstance({ processAlive, hostPortsBound });
+
+      if (decision === "reuse") {
+        this.markInstanceStarted(id);
+        this.crashRestarts.delete(id);
+        await this.db.update(servers).set({ status: "running" }).where(eq(servers.id, id));
+        this.emitStatus(id, "running");
+        await this.beginRuntimeLogFollow(id, handle);
+        return (await this.getRaw(id))!;
+      }
+
+      if (decision === "reap_then_start") {
+        await handle.stop().catch(() => undefined);
+      } else if (handle.mode === "docker") {
+        // Native leftovers (skill start.sh / managed-start) must not sit beside
+        // the named container. Native start already reclaims inside the supervisor.
+        await this.reapNativeServerTree(server).catch(() => undefined);
+      }
       await handle.start();
 
+      this.markInstanceStarted(id);
       await this.db.update(servers).set({ status: "running" }).where(eq(servers.id, id));
       this.emitStatus(id, "running");
       await this.beginRuntimeLogFollow(id, handle);

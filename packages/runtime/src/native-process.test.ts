@@ -2,8 +2,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { NativeProcessSupervisor } from "./native-process.js";
+import { NativeProcessSupervisor, serverTreeRoot, cmdlineOrphanRoots } from "./native-process.js";
 import { PathJailError } from "./path-jail.js";
+import { spawn } from "node:child_process";
 
 const temps: string[] = [];
 
@@ -98,6 +99,51 @@ describe("NativeProcessSupervisor", () => {
 
     await supervisor.stop(started.id);
     await expect(supervisor.find("server-x", "game")).resolves.toBeNull();
+  });
+
+  it("derives the server tree root from a game/ launch cwd", () => {
+    expect(serverTreeRoot("/data/servers/abc/game")).toBe("/data/servers/abc");
+    expect(cmdlineOrphanRoots("/data/servers/abc/game")).toEqual([
+      "/data/servers/abc/game",
+      "/data/servers/abc/home",
+    ]);
+    expect(serverTreeRoot("/tmp/other")).toBe("/tmp/other");
+  });
+
+  it("finds and reaps a leftover whose cwd left game/ for sibling home/", async () => {
+    if (process.platform === "win32") return;
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-home-orphan-"));
+    temps.push(jail);
+    const gameDir = path.join(jail, "game");
+    const homeDir = path.join(jail, "home", "Zomboid");
+    fs.mkdirSync(gameDir, { recursive: true });
+    fs.mkdirSync(homeDir, { recursive: true });
+
+    // Stands in for a JVM that chdir'd into userdata after launch.
+    const leftover = spawn("sleep", ["30"], { cwd: homeDir, detached: true, stdio: "ignore" });
+    leftover.unref();
+    expect(leftover.pid).toBeTypeOf("number");
+
+    const supervisor = new NativeProcessSupervisor(jail);
+    const found = await supervisor.find("server-x", "game");
+    expect(found?.status).toBe("running");
+    expect(found?.pid).toBe(leftover.pid);
+
+    const started = await supervisor.start({
+      name: "server-x",
+      command: "sleep",
+      args: ["30"],
+      cwd: "game",
+    });
+    expect(started.status).toBe("running");
+    expect(started.pid).not.toBe(leftover.pid);
+    await expect(supervisor.find("server-x", "game")).resolves.toMatchObject({
+      pid: started.pid,
+      status: "running",
+    });
+    expect(() => process.kill(leftover.pid!, 0)).toThrow();
+
+    await supervisor.stop(started.id);
   });
 
   it("finds an untracked survivor by its cwd, so a lost id is not a lost process", async () => {
