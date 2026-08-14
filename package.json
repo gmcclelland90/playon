@@ -12,7 +12,7 @@
     "build": "turbo run build",
     "start": "pnpm --filter @playon/api start",
     "check": "turbo run check",
-    "test:unit": "turbo run test:unit && node scripts/lab-file-github-issues.test.mjs",
+    "test:unit": "turbo run test:unit && node scripts/lab-file-github-issues.test.mjs && node scripts/package-node-archive.test.mjs",
     "test:contract": "turbo run test:contract",
     "test:int": "turbo run test:int",
     "test:agent": "turbo run test:agent",
