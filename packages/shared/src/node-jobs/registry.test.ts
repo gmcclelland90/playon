@@ -152,6 +152,19 @@ describe("parseNodeJobArgs", () => {
       ports: [],
       binds: [],
     });
+    expect(
+      parseNodeJobArgs("container_create", {
+        name: "playon-sbox",
+        image: "har0x/sbox-server:latest",
+        tty: true,
+        isolation: "process",
+      }),
+    ).toMatchObject({
+      name: "playon-sbox",
+      image: "har0x/sbox-server:latest",
+      tty: true,
+      isolation: "process",
+    });
     expect(parseNodeJobArgs("container_logs", { id: "playon-a" })).toEqual({
       id: "playon-a",
       tail: 100,

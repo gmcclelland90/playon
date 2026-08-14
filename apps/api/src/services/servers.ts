@@ -598,6 +598,8 @@ export class ServerService {
     dockerEnv?: Record<string, string>;
     dockerArgs?: string[];
     dockerDataMount?: string;
+    dockerTty?: boolean;
+    dockerIsolation?: "process" | "hyperv";
     steamAppId?: number;
     adminDialect?: string;
   } {
@@ -610,6 +612,8 @@ export class ServerService {
       dockerEnv: raw.dockerEnv,
       dockerArgs: raw.dockerArgs,
       dockerDataMount: raw.dockerDataMount,
+      dockerTty: raw.dockerTty,
+      dockerIsolation: raw.dockerIsolation,
       steamAppId: raw.steamAppId,
       adminDialect: raw.adminDialect,
     };
@@ -623,11 +627,15 @@ export class ServerService {
     env: Record<string, string>;
     cmd: string[];
     dataMount: string;
+    tty?: boolean;
+    isolation?: "process" | "hyperv";
     ports: SkillMetadata["ports"];
   } | null {
     const live = this.resolveSkill(skillName)?.metadata;
     const image = live?.dockerImage || cached.dockerImage;
     if (!image) return null;
+    const tty = live?.dockerTty ?? cached.dockerTty;
+    const isolation = live?.dockerIsolation ?? cached.dockerIsolation;
     return {
       image,
       env: { ...(live?.dockerEnv ?? cached.dockerEnv ?? {}) },
@@ -635,6 +643,8 @@ export class ServerService {
       // Sentinel "none" skips the game/ bind (some images ship defaults under the
       // data path that empty host binds would hide — e.g. Trackmania UserData).
       dataMount: live?.dockerDataMount || cached.dockerDataMount || "/data",
+      ...(tty != null ? { tty } : {}),
+      ...(isolation ? { isolation } : {}),
       ports: live?.ports ?? [],
     };
   }
@@ -644,11 +654,12 @@ export class ServerService {
     _skillName: string,
     containerSupport?: string,
   ): boolean {
-    // Host native mode always uses process supervisor (no docker pretend).
-    if (this.config.runtimeMode === "native") return true;
     if (server.runtimeMode === "native") return true;
-    // containerSupport=none → OS process; full/partial → docker when host has docker.
+    // containerSupport=none → OS process; full/partial → docker when the node has docker.
     if (containerSupport === "none") return true;
+    // Home PLAYON_RUNTIME=native only forces process for servers that run on Home.
+    // Remote Windows nodes default to native at install but can still host Windows containers.
+    if (!this.isRemoteNode(server) && this.config.runtimeMode === "native") return true;
     return false;
   }
 
@@ -725,6 +736,8 @@ export class ServerService {
               containerPath: docker.dataMount,
             },
           ],
+      ...(docker.tty != null ? { tty: docker.tty } : {}),
+      ...(docker.isolation ? { isolation: docker.isolation } : {}),
     };
   }
 

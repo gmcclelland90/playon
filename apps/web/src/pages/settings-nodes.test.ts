@@ -47,6 +47,18 @@ describe("nodeDockerChip", () => {
       }),
     ).toEqual({ label: "Docker", tone: "live" });
   });
+
+  it("shows Docker on a Windows parent that has a Windows-container engine", () => {
+    expect(
+      nodeDockerChip({
+        pendingSetup: false,
+        docker: true,
+        isWindows: true,
+        wslSiblingOnline: true,
+        wslSiblingHasDocker: true,
+      }),
+    ).toEqual({ label: "Docker", tone: "live" });
+  });
 });
 
 describe("nodeUpdateRowMessage", () => {

@@ -18,7 +18,7 @@ const agentVersion = readAgentVersion();
 fs.mkdirSync(dataRoot, { recursive: true });
 
 async function tickHeartbeat() {
-  const payload = buildHeartbeat({ nodeId, name, dataRoot, agentVersion });
+  const payload = await buildHeartbeat({ nodeId, name, dataRoot, agentVersion });
   try {
     await postHeartbeat(apiBase, payload, nodeToken);
     console.log(

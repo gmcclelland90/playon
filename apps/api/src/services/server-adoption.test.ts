@@ -62,6 +62,16 @@ function tempEnv(): {
   return { db, config, servers, adoption, snapshots };
 }
 
+describe("ServerAdoptionService.resolveRuntimeMode", () => {
+  it("uses docker on a remote node even when Home is native", () => {
+    const { adoption, config } = tempEnv();
+    config.runtimeMode = "native";
+    expect(adoption.resolveRuntimeMode("full", { nodeId: "playon-win-1" })).toBe("docker");
+    expect(adoption.resolveRuntimeMode("none", { nodeId: "playon-win-1" })).toBe("native");
+    expect(adoption.resolveRuntimeMode("full", { nodeId: "local" })).toBe("native");
+  });
+});
+
 describe("ServerAdoptionService", () => {
   it("createFromSkill ensures game dir via File Store and writes marker", async () => {
     const { adoption } = tempEnv();

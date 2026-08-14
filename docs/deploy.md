@@ -84,6 +84,8 @@ Existing non-elevated / SYSTEM / Interactive-only Windows nodes: run once (eleva
 
 The node heartbeats capabilities (`docker`, `native`, `steamcmd`). Runtime jobs (process / container / SteamCMD / FS) execute on that host.
 
+Windows nodes install as `PLAYON_RUNTIME=native` (PE / SteamCMD). If that host also has **Docker Engine in Windows container mode** (Windows Server / Server Core, or Docker Desktop switched to Windows containers), the agent reports `docker: true` and can place Windows container images (`os: [windows]`, `containerSupport: full`). Linux container images still go to **Enable Linux runtime** (WSL sibling). Docker Desktop left in Linux-container mode does not count as Windows docker.
+
 ## Optional: Docker panel
 
 For hosts who prefer Compose for the **panel only**:

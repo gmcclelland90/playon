@@ -79,6 +79,9 @@ export const ContainerCreateArgsSchema = z
     cmd: z.array(z.string()).default([]),
     ports: z.array(ContainerPortBindingSchema).default([]),
     binds: z.array(ContainerBindSchema).default([]),
+    /** Optional; Windows-container engines default TTY on when omitted. */
+    tty: z.boolean().optional(),
+    isolation: z.enum(["process", "hyperv"]).optional(),
   })
   .strict();
 

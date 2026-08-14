@@ -1,5 +1,11 @@
 import { PassThrough } from "node:stream";
 import Docker from "dockerode";
+import { buildContainerCreateOptions } from "./docker-create-options.js";
+import {
+  inspectDockerEngine,
+  parseDockerEngineInfo,
+  type DockerEngineInfo,
+} from "./docker-engine.js";
 import { demuxDockerLogBuffer, splitLogLines } from "./docker-log-demux.js";
 import type { ContainerInfo, ContainerSpec, DockerAdapter, LogFollowHandle } from "./types.js";
 
@@ -14,6 +20,7 @@ function mapStatus(status: string | undefined): ContainerInfo["status"] {
 /** Real Docker Engine adapter via dockerode. */
 export class DockerodeAdapter implements DockerAdapter {
   private readonly docker: Docker;
+  private engine: DockerEngineInfo | null = null;
 
   constructor(options?: Docker.DockerOptions) {
     this.docker = new Docker(options);
@@ -23,18 +30,28 @@ export class DockerodeAdapter implements DockerAdapter {
     await this.docker.ping();
   }
 
+  private async ensureEngine(): Promise<DockerEngineInfo> {
+    if (this.engine) return this.engine;
+    const inspected = await inspectDockerEngine({
+      info: async () => (await this.docker.info()) as { OSType?: string; Isolation?: string },
+    });
+    this.engine = inspected ?? parseDockerEngineInfo({ OSType: "linux" })!;
+    return this.engine;
+  }
+
   /** Pull image if missing locally (createContainer does not auto-pull). */
-  private async ensureImage(image: string): Promise<void> {
+  private async ensureImage(image: string, platform?: string): Promise<void> {
     try {
       await this.docker.getImage(image).inspect();
       return;
     } catch {
       /* missing — pull below */
     }
+    const pullOpts = platform ? { platform } : {};
     await new Promise<void>((resolve, reject) => {
-      this.docker.pull(image, (err: Error | null, stream: NodeJS.ReadableStream) => {
-        if (err) {
-          reject(err);
+      this.docker.pull(image, pullOpts, (err, stream) => {
+        if (err || !stream) {
+          reject(err ?? new Error("docker_pull_no_stream"));
           return;
         }
         this.docker.modem.followProgress(stream, (progressErr: Error | null) => {
@@ -46,37 +63,11 @@ export class DockerodeAdapter implements DockerAdapter {
   }
 
   async create(spec: ContainerSpec): Promise<ContainerInfo> {
-    const exposed: Record<string, object> = {};
-    const portBindings: Record<string, Array<{ HostPort: string }>> = {};
-    for (const p of spec.ports ?? []) {
-      const proto = p.protocol ?? "tcp";
-      const key = `${p.container}/${proto}`;
-      exposed[key] = {};
-      portBindings[key] = [{ HostPort: String(p.host) }];
-    }
+    const engine = await this.ensureEngine();
+    const platform = engine.osType === "windows" ? "windows/amd64" : undefined;
+    await this.ensureImage(spec.image, platform);
 
-    const binds = (spec.binds ?? []).map((b) => `${b.hostPath}:${b.containerPath}`);
-
-    await this.ensureImage(spec.image);
-
-    const cmd = spec.cmd?.filter((a) => a.length > 0);
-    const container = await this.docker.createContainer({
-      name: spec.name,
-      Image: spec.image,
-      Env: Object.entries(spec.env ?? {}).map(([k, v]) => `${k}=${v}`),
-      ...(cmd?.length ? { Cmd: cmd } : {}),
-      // Keep stdin open so adminDialect=stdin can attach and write console commands.
-      OpenStdin: true,
-      AttachStdin: true,
-      StdinOnce: false,
-      Tty: false,
-      ExposedPorts: exposed,
-      HostConfig: {
-        PortBindings: portBindings as Docker.PortMap,
-        Binds: binds.length ? binds : undefined,
-      },
-    });
-
+    const container = await this.docker.createContainer(buildContainerCreateOptions(spec, engine));
 
     return { id: container.id, name: spec.name, status: "created" };
   }
@@ -132,6 +123,13 @@ export class DockerodeAdapter implements DockerAdapter {
     opts?: { tail?: number },
   ): Promise<LogFollowHandle> {
     const container = this.docker.getContainer(id);
+    let tty = false;
+    try {
+      const info = await container.inspect();
+      tty = Boolean(info.Config?.Tty);
+    } catch {
+      /* treat as multiplexed */
+    }
     const stream = (await container.logs({
       follow: true,
       stdout: true,
@@ -140,25 +138,40 @@ export class DockerodeAdapter implements DockerAdapter {
       timestamps: false,
     })) as NodeJS.ReadableStream;
 
-    const stdout = new PassThrough();
-    const stderr = new PassThrough();
-    container.modem.demuxStream(stream, stdout, stderr);
-
     let aborted = false;
-    const buffers = { out: "", err: "" };
-
-    const feed = (key: "out" | "err", chunk: Buffer | string) => {
+    const feedLine = (chunk: Buffer | string, carry: { value: string }) => {
       if (aborted) return;
-      buffers[key] += typeof chunk === "string" ? chunk : chunk.toString("utf8");
-      const parts = buffers[key].split(/\r?\n/);
-      buffers[key] = parts.pop() ?? "";
+      carry.value += typeof chunk === "string" ? chunk : chunk.toString("utf8");
+      const parts = carry.value.split(/\r?\n/);
+      carry.value = parts.pop() ?? "";
       for (const line of parts) {
         if (line) onLine(line);
       }
     };
 
-    const onStdout = (chunk: Buffer | string) => feed("out", chunk);
-    const onStderr = (chunk: Buffer | string) => feed("err", chunk);
+    if (tty) {
+      const carry = { value: "" };
+      const onData = (chunk: Buffer | string) => feedLine(chunk, carry);
+      stream.on("data", onData);
+      const abort = () => {
+        if (aborted) return;
+        aborted = true;
+        stream.off("data", onData);
+        const destroyable = stream as unknown as { destroy?: () => void };
+        destroyable.destroy?.();
+      };
+      stream.on("end", abort);
+      stream.on("error", abort);
+      return { abort };
+    }
+
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    container.modem.demuxStream(stream, stdout, stderr);
+
+    const buffers = { out: { value: "" }, err: { value: "" } };
+    const onStdout = (chunk: Buffer | string) => feedLine(chunk, buffers.out);
+    const onStderr = (chunk: Buffer | string) => feedLine(chunk, buffers.err);
     stdout.on("data", onStdout);
     stderr.on("data", onStderr);
 

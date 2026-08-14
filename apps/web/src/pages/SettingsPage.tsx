@@ -1259,11 +1259,17 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                 ) : null}
                 {needsDocker && isWindows && wslInstalled ? (
                   <p className="muted status-inline">
-                    Linux skills can use the WSL sibling ({wslSiblingId}). Windows-native Docker
-                    Desktop is optional for this host.
+                    Linux skills can use the WSL sibling ({wslSiblingId}). Windows container images
+                    need Docker Engine in Windows container mode on this node (not WSL).
                     {wslOfflineInstalled
                       ? " Sibling is offline — the Windows agent will wake WSL automatically, or use Repair."
                       : ""}
+                  </p>
+                ) : null}
+                {isWindows && n.docker ? (
+                  <p className="muted status-inline">
+                    This node can place Windows container images (Docker Engine in Windows container
+                    mode). Linux images still use the WSL sibling when enabled.
                   </p>
                 ) : null}
                 {updateFeedback ? (

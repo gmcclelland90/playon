@@ -108,6 +108,13 @@ export const SkillMetadataSchema = z.object({
   dockerArgs: z.array(z.string()).default([]),
   /** Container path for the server game/ bind mount. */
   dockerDataMount: z.string().min(1).default("/data"),
+  /**
+   * `docker run -t`. Windows-container engines default this on at create time
+   * even when unset (console images such as har0x/sbox-server).
+   */
+  dockerTty: z.boolean().optional(),
+  /** Windows container isolation. Omit to use the daemon default. */
+  dockerIsolation: z.enum(["process", "hyperv"]).optional(),
   /** SteamCMD dedicated-server app id (catalog Steam skills). */
   steamAppId: z.number().int().positive().optional(),
   /**

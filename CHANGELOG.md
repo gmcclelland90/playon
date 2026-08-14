@@ -4,6 +4,10 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+### Added
+
+- **Windows container runtime** — a Windows node with Docker Engine in Windows container mode (Server Core or Desktop) reports `docker` for Windows isolation, can place `os: [windows]` + `containerSupport: full` skills, and starts those images with Windows bind destinations, daemon isolation, and TTY (`docker run -t`). Linux Docker and the WSL sibling path are unchanged (`#873`).
+
 ### Fixed
 
 - **Skill scan / Paper smoke** — `native.libraryPathRelative` stringifies finite YAML numbers (unquoted Steam app ids such as `376030` used as AMP-style dirs). One invalid skill no longer aborts `listSkills` / `createFromSkill` (`#871`).

@@ -42,10 +42,11 @@ Uniform result of a Query Dialect connector (online, players, map, …). Project
 
 ## Runtime Selection
 
-How a Server starts: Docker container vs OS process. Host `PLAYON_RUNTIME` (`docker` | `native`) is authoritative for adapter construction and mode labels — native hosts never pretend to be Docker. Package `containerSupport` is colocated with that host capability:
+How a Server starts: Docker container vs OS process. Host `PLAYON_RUNTIME` (`docker` | `native`) is authoritative for adapter construction and mode labels on Linux. Package `containerSupport` is colocated with that host capability:
 
 - `containerSupport=none` → process supervisor
-- `containerSupport=full` (or `partial`) → Docker when the host is in docker mode
-- Host `PLAYON_RUNTIME=native` → always process, even for container-capable packages
+- `containerSupport=full` (or `partial`) → Docker when the target node has a matching-OS engine
+- Linux `PLAYON_RUNTIME=native` → process only, even for container-capable packages
+- Windows nodes default to `PLAYON_RUNTIME=native` (PE / SteamCMD) but still report `docker` and run containers when Docker Engine is in **Windows container mode**. Linux images stay on the WSL sibling (`{nodeId}-wsl`).
 
 See [docs/adr/0002-real-runtime-and-llm.md](docs/adr/0002-real-runtime-and-llm.md).

@@ -11,7 +11,11 @@ import {
   type NodeTunnelStatus,
   type SkillMetadata,
 } from "@playon/shared";
-import { probeHostCapabilities, type HostCapabilities } from "@playon/runtime";
+import {
+  probeHostCapabilities,
+  refineDockerCapability,
+  type HostCapabilities,
+} from "@playon/runtime";
 import type { AppConfig } from "../config.js";
 import type { Db } from "../db/client.js";
 import { nodes } from "../db/schema.js";
@@ -27,7 +31,13 @@ import {
 const MIN_DISK_BYTES = 512 * 1024 * 1024;
 
 /** Optional override for tests (e.g. simulate Windows Local on a Linux CI host). */
-export type HostCapabilityProbe = (dataRoot: string) => HostCapabilities;
+export type HostCapabilityProbe = (
+  dataRoot: string,
+) => HostCapabilities | Promise<HostCapabilities>;
+
+async function defaultHostProbe(dataRoot: string): Promise<HostCapabilities> {
+  return refineDockerCapability(probeHostCapabilities(dataRoot));
+}
 
 export type PlacementCandidate = {
   nodeId: string;
@@ -185,7 +195,7 @@ export class PlacementService {
     private readonly db: Db,
     private readonly config: AppConfig,
     private readonly net?: NetToolsService,
-    private readonly probeHost: HostCapabilityProbe = probeHostCapabilities,
+    private readonly probeHost: HostCapabilityProbe = defaultHostProbe,
   ) {}
 
   async getNodeSettings(): Promise<NodeSettings> {
@@ -200,9 +210,12 @@ export class PlacementService {
   /** Ensure a durable `local` control-plane row exists for FK placement. */
   async ensureLocalNode(): Promise<NodeCaps> {
     const now = new Date();
-    const probed = this.probeHost(this.config.dataRoot);
-    // Host PLAYON_RUNTIME=native means we will not use Docker even if the socket exists.
-    const docker = this.config.runtimeMode === "docker" && probed.docker;
+    const probed = await Promise.resolve(this.probeHost(this.config.dataRoot));
+    // Linux Home PLAYON_RUNTIME=native means we will not use Docker even if the
+    // socket exists. Windows Local still reports docker when a Windows-container
+    // engine is present — install defaults to native for PE / SteamCMD.
+    const docker =
+      probed.docker && (this.config.runtimeMode === "docker" || probed.os === "windows");
     const local: NodeCaps = {
       id: LOCAL_NODE_ID,
       name: os.hostname() || "local",

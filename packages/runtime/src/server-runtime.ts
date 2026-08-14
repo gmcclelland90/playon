@@ -140,6 +140,8 @@ export function remoteDockerTransport(
           cmd: spec.cmd ?? [],
           ports: spec.ports ?? [],
           binds: spec.binds ?? [],
+          ...(spec.tty != null ? { tty: spec.tty } : {}),
+          ...(spec.isolation ? { isolation: spec.isolation } : {}),
         },
         { timeoutMs: opts.createTimeoutMs ?? REMOTE_CREATE_TIMEOUT_MS },
       );

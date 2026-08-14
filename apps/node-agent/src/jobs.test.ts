@@ -3,7 +3,20 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { NodeJobKindSchema, type NodeJobKind } from "@playon/shared";
-import { executeJob, SUPPORTED_JOB_KINDS } from "./jobs.js";
+import { executeJob, shouldTryDockerAdapter, SUPPORTED_JOB_KINDS } from "./jobs.js";
+
+describe("shouldTryDockerAdapter", () => {
+  it("tries Docker on Windows even when PLAYON_RUNTIME=native", () => {
+    expect(shouldTryDockerAdapter({ PLAYON_RUNTIME: "native" }, "win32")).toBe(true);
+    expect(shouldTryDockerAdapter({ PLAYON_RUNTIME: "docker" }, "win32")).toBe(true);
+  });
+
+  it("respects PLAYON_RUNTIME=native on Linux SteamCMD-only hosts", () => {
+    expect(shouldTryDockerAdapter({ PLAYON_RUNTIME: "native" }, "linux")).toBe(false);
+    expect(shouldTryDockerAdapter({ PLAYON_RUNTIME: "docker" }, "linux")).toBe(true);
+    expect(shouldTryDockerAdapter({}, "linux")).toBe(true);
+  });
+});
 
 describe("SUPPORTED_JOB_KINDS", () => {
   it("advertises every protocol kind exactly once", () => {
