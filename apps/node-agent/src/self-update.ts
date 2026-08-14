@@ -1,9 +1,13 @@
 import crypto from "node:crypto";
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { assertAllowedUpdateDownloadUrl } from "@playon/shared";
+import {
+  ARCHIVE_EXTRACT_TIMEOUT_MS,
+  assertAllowedUpdateDownloadUrl,
+  buildArchiveExtractCommands,
+} from "@playon/shared";
 
 function copyTree(from: string, to: string): void {
   fs.mkdirSync(to, { recursive: true });
@@ -63,27 +67,66 @@ export function swapInstallTree(opts: {
   return { preserved };
 }
 
-export function extractArchive(archivePath: string, destDir: string): string {
+/** Async extract so heartbeats keep ticking; never spawnSync powershell with a 60s cap (#868). */
+export function runExtractCommand(
+  cmd: string,
+  args: readonly string[],
+  timeoutMs: number = ARCHIVE_EXTRACT_TIMEOUT_MS,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+      if (stderr.length > 4000) stderr = stderr.slice(-4000);
+    });
+    const finish = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (err) reject(err);
+      else resolve();
+    };
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(new Error(`update_extract_timeout: ${cmd} exceeded ${timeoutMs}ms`));
+    }, timeoutMs);
+    child.once("error", (err) => {
+      finish(err);
+    });
+    child.once("close", (code) => {
+      if (code === 0) {
+        finish();
+        return;
+      }
+      const detail = stderr.trim().slice(0, 400);
+      finish(
+        new Error(
+          detail
+            ? `update_extract_failed: ${cmd} exit ${code}: ${detail}`
+            : `update_extract_failed: ${cmd} exit ${code}`,
+        ),
+      );
+    });
+  });
+}
+
+export async function extractArchive(archivePath: string, destDir: string): Promise<string> {
   fs.rmSync(destDir, { recursive: true, force: true });
   fs.mkdirSync(destDir, { recursive: true });
-  const isZip = archivePath.toLowerCase().endsWith(".zip");
-  if (isZip) {
-    if (process.platform === "win32") {
-      execFileSync(
-        "powershell.exe",
-        [
-          "-NoProfile",
-          "-Command",
-          `Expand-Archive -Path '${archivePath.replace(/'/g, "''")}' -DestinationPath '${destDir.replace(/'/g, "''")}' -Force`,
-        ],
-        { stdio: "pipe", timeout: 60000 },
-      );
-    } else {
-      execFileSync("unzip", ["-q", archivePath, "-d", destDir], { stdio: "pipe", timeout: 60000 });
+  const commands = buildArchiveExtractCommands(archivePath, destDir, process.platform);
+  let lastErr: Error | undefined;
+  for (const { cmd, args } of commands) {
+    try {
+      await runExtractCommand(cmd, args, ARCHIVE_EXTRACT_TIMEOUT_MS);
+      lastErr = undefined;
+      break;
+    } catch (err) {
+      lastErr = err instanceof Error ? err : new Error(String(err));
     }
-  } else {
-    execFileSync("tar", ["-xzf", archivePath, "-C", destDir], { stdio: "pipe", timeout: 60000 });
   }
+  if (lastErr) throw lastErr;
   for (const name of ["playon-node", "playon"]) {
     const candidate = path.join(destDir, name);
     if (fs.existsSync(path.join(candidate, "package.json"))) return candidate;
@@ -94,6 +137,16 @@ export function extractArchive(archivePath: string, destDir: string): string {
     if (fs.existsSync(path.join(candidate, "package.json"))) return candidate;
   }
   throw new Error("update_extract_root_missing");
+}
+
+export function requireWindowsUpdateHelper(extracted: string): string {
+  const helperScript = path.join(extracted, "deploy", "windows", "apply-self-update.ps1");
+  if (!fs.existsSync(helperScript)) {
+    throw new Error(
+      "update_helper_missing: deploy/windows/apply-self-update.ps1 not found in release package",
+    );
+  }
+  return helperScript;
 }
 
 export async function performNodeSelfUpdate(args: {
@@ -134,7 +187,7 @@ export async function performNodeSelfUpdate(args: {
       throw new Error(`update_sha256_mismatch: expected ${args.sha256} got ${sha256}`);
     }
     fs.writeFileSync(archivePath, buf);
-    const extracted = extractArchive(archivePath, path.join(staging, "extracted"));
+    const extracted = await extractArchive(archivePath, path.join(staging, "extracted"));
 
     if (process.platform === "win32" && !args.skipExit) {
       const result = performWindowsSelfUpdate({
@@ -177,12 +230,7 @@ function performWindowsSelfUpdate(opts: {
   preserved: string[];
   restartRequired: boolean;
 } {
-  const helperScript = path.join(opts.extracted, "deploy", "windows", "apply-self-update.ps1");
-  if (!fs.existsSync(helperScript)) {
-    throw new Error(
-      "update_helper_missing: deploy/windows/apply-self-update.ps1 not found in release package",
-    );
-  }
+  const helperScript = requireWindowsUpdateHelper(opts.extracted);
 
   const preserveArgs = opts.preserve.flatMap((name) => ["-Preserve", name]);
   const args = [

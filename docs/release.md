@@ -82,6 +82,7 @@ Do this on `main` after the **merge bar** is green on the lab (`pnpm loop:verify
    ```bash
    curl -fsSL https://playon.games/home/latest.json
    # expect "version":"X.Y.Z" and home/node linux-x64 + windows-x64 sha256 entries
+   # Windows node downloadUrl should be playon-node-*-windows-x64.tar.gz (#868)
    gh release view vX.Y.Z --repo gmcclelland90/playon
    ```
 8. **Learn** — skim CHANGELOG Fixed; file `test-debt` issues for any `P0`/`P1` fix without a regression test ([testing-plan.md](testing-plan.md)).

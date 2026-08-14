@@ -5,7 +5,9 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import {
+  ARCHIVE_EXTRACT_TIMEOUT_MS,
   assertAllowedUpdateDownloadUrl,
+  buildArchiveExtractCommands,
   DEFAULT_UPDATE_MANIFEST_URL,
   deriveNodePresence,
   isNewerVersion,
@@ -173,24 +175,22 @@ export async function downloadAndVerifyUpdate(opts: {
 export function extractUpdateArchive(archivePath: string, destDir: string): string {
   fs.rmSync(destDir, { recursive: true, force: true });
   fs.mkdirSync(destDir, { recursive: true });
-  const isZip = archivePath.toLowerCase().endsWith(".zip");
-  if (isZip) {
-    if (process.platform === "win32") {
-      execFileSync(
-        "powershell.exe",
-        [
-          "-NoProfile",
-          "-Command",
-          `Expand-Archive -Path '${archivePath.replace(/'/g, "''")}' -DestinationPath '${destDir.replace(/'/g, "''")}' -Force`,
-        ],
-        { stdio: "pipe" },
-      );
-    } else {
-      execFileSync("unzip", ["-q", archivePath, "-d", destDir], { stdio: "pipe" });
+  const commands = buildArchiveExtractCommands(archivePath, destDir, process.platform);
+  let lastErr: unknown;
+  for (const { cmd, args } of commands) {
+    try {
+      execFileSync(cmd, args, {
+        stdio: "pipe",
+        timeout: ARCHIVE_EXTRACT_TIMEOUT_MS,
+        windowsHide: true,
+      });
+      lastErr = undefined;
+      break;
+    } catch (err) {
+      lastErr = err;
     }
-  } else {
-    execFileSync("tar", ["-xzf", archivePath, "-C", destDir], { stdio: "pipe" });
   }
+  if (lastErr) throw lastErr;
 
   const direct = ["playon", "playon-node"].map((n) => path.join(destDir, n));
   for (const d of direct) {

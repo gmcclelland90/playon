@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { UpdateManifest } from "@playon/shared";
 import {
@@ -102,6 +103,13 @@ describe("downloadAndVerifyUpdate", () => {
 });
 
 describe("extractUpdateArchive", () => {
+  it("uses the shared extract plan and a long timeout, not 60s Expand-Archive (#868)", () => {
+    const src = fs.readFileSync(fileURLToPath(new URL("./updates.ts", import.meta.url)), "utf8");
+    expect(src).toMatch(/buildArchiveExtractCommands/);
+    expect(src).toMatch(/ARCHIVE_EXTRACT_TIMEOUT_MS/);
+    expect(src).not.toMatch(/timeout:\s*60000/);
+  });
+
   it("finds playon root inside tar.gz", () => {
     if (process.platform === "win32") return;
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-tar-"));
