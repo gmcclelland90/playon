@@ -281,7 +281,7 @@ export function resolveAgentEntry(installRoot: string): string {
 
 /** True when systemd started this process (`Restart=always` will replace us). */
 export function isSystemdService(env: NodeJS.ProcessEnv = process.env): boolean {
-  return Boolean(env.INVOCATION_ID);
+  return Boolean(env.INVOCATION_ID) || env.PLAYON_AGENT_EXIT_MAINPID === "1";
 }
 
 /**

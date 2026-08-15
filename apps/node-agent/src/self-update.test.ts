@@ -268,6 +268,7 @@ describe("agent supervisor relaunch (#886)", () => {
     expect(isAgentSupervised({ [AGENT_SUPERVISED_ENV]: "1" })).toBe(true);
     expect(isAgentSupervised({})).toBe(false);
     expect(isSystemdService({ INVOCATION_ID: "abc" })).toBe(true);
+    expect(isSystemdService({ PLAYON_AGENT_EXIT_MAINPID: "1" })).toBe(true);
     expect(isSystemdService({})).toBe(false);
     expect(AGENT_RELAUNCH_EXIT_CODE).toBe(75);
   });
@@ -299,6 +300,7 @@ describe("agent supervisor relaunch (#886)", () => {
       env: {
         ...process.env,
         INVOCATION_ID: "playon-886-test",
+        PLAYON_AGENT_EXIT_MAINPID: "1",
         PLAYON_HELPER_JAIL: jail,
         PLAYON_HELPER_STATUS: status,
         PLAYON_HELPER_PID: pidFile,
@@ -307,14 +309,24 @@ describe("agent supervisor relaunch (#886)", () => {
         PLAYON_HELPER_INSTALL_ROOT: dir,
       },
     });
+    const helperExit = new Promise<number | null>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("helper_did_not_exit: relaunchUpdatedAgent must exit MAINPID")),
+        8_000,
+      );
+      helper.once("error", (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+      helper.once("close", (code) => {
+        clearTimeout(timer);
+        resolve(code);
+      });
+    });
     try {
       await waitForStatus(status, "alive");
       const childPid = Number(await waitForFile(pidFile));
-      const helperExit = await new Promise<number | null>((resolve, reject) => {
-        helper.once("error", reject);
-        helper.once("close", (code) => resolve(code));
-      });
-      expect(helperExit).toBe(0);
+      expect(await helperExit).toBe(0);
       await new Promise((r) => setTimeout(r, 400));
       expect(fs.readFileSync(status, "utf8").trim()).toBe("alive");
       expect(() => process.kill(childPid, 0)).not.toThrow();
