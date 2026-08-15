@@ -279,16 +279,25 @@ export function resolveAgentEntry(installRoot: string): string {
   return process.argv[1] || swapped;
 }
 
+/** True when systemd started this process (`Restart=always` will replace us). */
+export function isSystemdService(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(env.INVOCATION_ID);
+}
+
 /**
- * After a Linux swap, do not `process.exit` the systemd MAINPID: that restarts
- * the unit and (with default KillMode=control-group, or a unit that was never
- * rewritten by OTA) SIGTERMs every game still in the cgroup (#886).
+ * After a Linux swap, exit MAINPID when systemd is managing us. NZL-shaped
+ * units already have `KillMode=process` + `Restart=always`: only MAINPID is
+ * signaled, then a new agent starts. OTA never rewrites existing units, so
+ * this must not require MAINPID to live forever as a supervisor.
  *
- * This PID stays alive as a supervisor and forks the new agent. Game children
- * keep their parent and their stdin write ends. A child that is already
- * supervised just exits 75 so the parent loop relaunches it.
+ * Native `keepStdin` children survive because a FIFO holder keeps the write
+ * end open (agent death is not console EOF) and they are in their own pgrp.
+ * Moving them out of the agent cgroup is best-effort; `KillMode=process` is
+ * what existing hosts already have.
  *
- * Windows still exits: apply-self-update.ps1 waits for this PID, then swaps.
+ * A supervised child exits 75 so `runAgentSupervisorLoop` relaunches it.
+ * Without systemd (`pnpm dev`) the same PID becomes that supervisor.
+ * Windows exits so apply-self-update.ps1 can swap.
  */
 export function relaunchUpdatedAgent(opts: {
   installRoot: string;
@@ -303,6 +312,10 @@ export function relaunchUpdatedAgent(opts: {
   }
   if (isAgentSupervised()) {
     setTimeout(() => process.exit(AGENT_RELAUNCH_EXIT_CODE), 200);
+    return;
+  }
+  if (isSystemdService()) {
+    setTimeout(() => process.exit(0), 200);
     return;
   }
   const entry = resolveAgentEntry(opts.installRoot);

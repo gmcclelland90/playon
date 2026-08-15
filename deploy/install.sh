@@ -137,9 +137,8 @@ WorkingDirectory=${PLAYON_ROOT}
 ExecStart=${NODE_BIN} apps/api/dist/index.js
 Restart=always
 RestartSec=5
-# Only the service MAINPID — OTA helpers must outlive the API process.
+# Keep OTA/apply helpers alive when the main process exits for self-update.
 KillMode=process
-SendSIGHUP=no
 LimitNOFILE=65535
 # Prefer :80 for http://playon.local (falls back to PLAYON_PORT without this).
 AmbientCapabilities=CAP_NET_BIND_SERVICE

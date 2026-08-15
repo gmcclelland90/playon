@@ -351,7 +351,7 @@ describe("executeJob", () => {
     }
   }, 30_000);
 
-  it("node_self_update does not stop a supervised native child (#886)", async () => {
+  it("node_self_update swap (skipExit) does not call process_stop on a native child (#886)", async () => {
     if (process.platform === "win32") return;
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-ota-native-"));
     const gameRel = "servers/lab-native/game";
@@ -443,7 +443,7 @@ describe("executeJob", () => {
     }
   }, 30_000);
 
-  it("node_self_update does not stop a running docker child (#886)", async () => {
+  it("node_self_update swap (skipExit) does not call container_stop on a docker child (#886)", async () => {
     if (process.platform === "win32") return;
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-ota-docker-"));
     const name = `playon-886-${process.pid}-${Date.now()}`;

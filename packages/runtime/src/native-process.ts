@@ -77,12 +77,73 @@ export function readProcessGroupId(pid: number): number | null {
 }
 
 /**
- * Games must outlive the node-agent. Always start a new session/process group
- * (`detached: true` on Unix; new process group on Windows). GoldSrc + piped
- * stdin is the historical exception and is handled by using a FIFO, not by
- * staying in the agent's group.
+ * cgroup v2 path from `/proc/<pid>/cgroup` (`0::/system.slice/…`).
+ * `detached` is a new session/pgrp — it is not a cgroup escape.
  */
-export function supervisedChildDetached(): boolean {
+export function readCgroupRelativePath(pid: number): string | null {
+  if (process.platform === "win32") return null;
+  try {
+    const text = fs.readFileSync(`/proc/${pid}/cgroup`, "utf8");
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const parts = trimmed.split(":");
+      if (parts.length < 3) continue;
+      const rel = parts.slice(2).join(":") || "/";
+      return rel.startsWith("/") ? rel : `/${rel}`;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function cgroupProcsFile(relPath: string): string {
+  const rel = relPath === "/" ? "" : relPath;
+  return `/sys/fs/cgroup${rel}/cgroup.procs`;
+}
+
+/**
+ * Best-effort move out of the agent unit cgroup so `KillMode=control-group`
+ * (units OTA cannot rewrite) does not SIGTERM the game / FIFO holder.
+ * Often EACCES without privileges — NZL-shaped `KillMode=process` is the
+ * path that must still work when this returns false.
+ */
+export function moveProcessOutOfAgentCgroup(pid: number): boolean {
+  if (process.platform === "win32" || !pid) return false;
+  const self = readCgroupRelativePath(process.pid);
+  const dests: string[] = [];
+  if (process.ppid > 1) {
+    const parentCg = readCgroupRelativePath(process.ppid);
+    if (parentCg && parentCg !== self) dests.push(parentCg);
+  }
+  if (self && self !== "/") {
+    dests.push(self.replace(/\/[^/]+$/, "") || "/");
+  }
+  dests.push("/");
+  const seen = new Set<string>();
+  for (const dest of dests) {
+    if (!dest || seen.has(dest) || dest === self) continue;
+    seen.add(dest);
+    try {
+      fs.writeFileSync(cgroupProcsFile(dest), `${pid}\n`);
+      const now = readCgroupRelativePath(pid);
+      if (now && now !== self) return true;
+    } catch {
+      /* EACCES / ENOENT / EBUSY */
+    }
+  }
+  return false;
+}
+
+/**
+ * Linux/mac: new session so `kill(-agentPid)` misses the game.
+ * Windows: never detach — FIFO is Linux-only, and GoldSrc/HLDS segfaults
+ * with detached + piped stdin. `keepStdin` on Windows stays a pipe.
+ */
+export function supervisedChildDetached(keepStdin = false): boolean {
+  if (process.platform === "win32") return false;
+  void keepStdin;
   return true;
 }
 
@@ -103,6 +164,7 @@ function openHeldStdin(): { readFd: number; writeFd: number; holder: ChildProces
       stdio: [writeFd, "ignore", "ignore"],
     });
     holder.unref();
+    if (holder.pid) moveProcessOutOfAgentCgroup(holder.pid);
     return { readFd, writeFd, holder, dir };
   } catch {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -126,8 +188,8 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     await this.reclaim(spec.name, cwd);
 
     let logFd: number | undefined;
-    // New session/process group so stopping the agent parent cannot signal the game (#886).
-    const detached = supervisedChildDetached();
+    // Linux: new session/pgrp. Windows keepStdin stays attached (FIFO is Linux-only).
+    const detached = supervisedChildDetached(Boolean(spec.keepStdin));
     // GoldSrc/HLDS segfault with detached + piped stdin — use a FIFO holder instead of a pipe.
     const heldStdin = spec.keepStdin ? openHeldStdin() : null;
     const stdinMode: "pipe" | "ignore" | number = heldStdin
@@ -184,7 +246,10 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
       throw err;
     }
 
-    child.unref();
+    if (process.platform !== "win32") {
+      child.unref();
+    }
+    if (child.pid) moveProcessOutOfAgentCgroup(child.pid);
     if (heldStdin) {
       try {
         fs.closeSync(heldStdin.readFd);
@@ -228,6 +293,12 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
       stdinDir: heldStdin?.dir,
     });
     return { ...info };
+  }
+
+  /** FIFO holder pid when this identity was started with Linux keepStdin. */
+  stdinHolderPid(name: string, cwd: string): number | undefined {
+    const resolved = this.jailRoot ? resolveInJail(this.jailRoot, cwd) : cwd;
+    return this.findTracked(name, resolved)?.stdinHolder?.pid;
   }
 
   async stop(id: string): Promise<void> {
