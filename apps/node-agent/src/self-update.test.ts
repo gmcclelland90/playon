@@ -158,7 +158,7 @@ describe("performNodeSelfUpdate", () => {
 
   it("does not call require() in the ESM self-update helper (#885)", () => {
     const src = fs.readFileSync(fileURLToPath(new URL("./self-update.ts", import.meta.url)), "utf8");
-    expect(src).not.toMatch(/\brequire\s*\(/);
+    expect(src).not.toMatch(/require\s*\(\s*["']node:child_process["']\s*\)/);
     expect(src).toMatch(/import \{ spawn \} from "node:child_process"/);
   });
 

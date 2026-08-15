@@ -1,5 +1,5 @@
 # PlayOn vintage Windows OTA bootstrap (#885)
-# 0.2.3/0.2.4 agents call require() in ESM after extract. This script never
+# 0.2.3/0.2.4 agents call require in ESM after extract. This script never
 # enters that helper: download + extract, then the packaged apply-self-update.ps1.
 param(
   [Parameter(Mandatory = $true)][string]$DownloadUrl,

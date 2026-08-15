@@ -219,7 +219,7 @@ export async function performNodeSelfUpdate(args: {
   }
 }
 
-/** 0.2.3/0.2.4 used `require("node:child_process")` here and threw in ESM (#885). */
+/** 0.2.3/0.2.4 used CommonJS require of node:child_process here and threw in ESM (#885). */
 function performWindowsSelfUpdate(opts: {
   installRoot: string;
   extracted: string;

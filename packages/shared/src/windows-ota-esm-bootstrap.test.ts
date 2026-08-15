@@ -27,6 +27,7 @@ describe("0.2.3-shaped Windows update helper / ESM path (#885)", () => {
     try {
       execFileSync(process.execPath, ["--input-type=module", "-e", VINTAGE_023_WINDOWS_SPAWN_HELPER], {
         encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
       });
       expect.unreachable("vintage ESM helper should throw");
     } catch (err) {
@@ -85,7 +86,11 @@ describe("windowsAgentNeedsEsmOtaBootstrap", () => {
 describe("Home vintage Windows bootstrap jobs", () => {
   it("bootstrap script has no require() and launches apply-self-update.ps1", () => {
     const script = windowsOtaEsmBootstrapScript();
-    expect(script).not.toMatch(/\brequire\s*\(/);
+    const codeLines = script
+      .split("\n")
+      .filter((line) => !line.trimStart().startsWith("#"))
+      .join("\n");
+    expect(codeLines).not.toMatch(/\brequire\s*\(/);
     expect(script).toMatch(/apply-self-update\.ps1/);
     expect(script).toMatch(/--force-local/);
     expect(script).toMatch(/ParentProcessId/);
