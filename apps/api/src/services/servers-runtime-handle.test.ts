@@ -261,14 +261,12 @@ const host = vi.hoisted(() => {
 
 vi.mock("@playon/runtime", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@playon/runtime")>();
+  const { unitRuntimeDockerStubs } = await import("../test/unit-runtime-mocks.js");
   return {
     ...actual,
     // Same as setup-unit: createFromSkill needs Local docker-eligible; FakeDocker
     // stands in for the daemon. This file's mock replaces the setup mock entirely.
-    probeHostCapabilities: (dataRoot: string, env?: NodeJS.ProcessEnv) => {
-      const real = actual.probeHostCapabilities(dataRoot, env);
-      return { ...real, docker: true };
-    },
+    ...unitRuntimeDockerStubs(actual),
     createRuntime: async () => ({
       docker: fake.docker as unknown as DockerAdapter,
       process: host.supervisor,

@@ -1,4 +1,5 @@
 import { defineConfig, devices } from "@playwright/test";
+import { e2eApiChildEnv } from "./e2e/webserver-env.js";
 
 const apiPort = process.env.PLAYON_PORT ?? "8787";
 const webPort = process.env.PLAYON_WEB_PORT ?? "5173";
@@ -19,15 +20,7 @@ export default defineConfig({
       url: `http://127.0.0.1:${apiPort}/api/health`,
       reuseExistingServer: !process.env.CI,
       timeout: 120_000,
-      env: {
-        ...process.env,
-        PLAYON_HOST: "127.0.0.1",
-        PLAYON_PORT: apiPort,
-        // UI smoke does not exercise Venice or Docker lifecycle.
-        PLAYON_LLM_MODE: process.env.PLAYON_LLM_MODE ?? "openai_compatible",
-        PLAYON_RUNTIME: process.env.PLAYON_RUNTIME ?? "native",
-        PLAYON_DATA_ROOT: process.env.PLAYON_DATA_ROOT ?? "tmp/e2e-data",
-      },
+      env: e2eApiChildEnv(apiPort),
     },
     {
       command: `pnpm --filter @playon/web exec vite --host 127.0.0.1 --port ${webPort}`,
