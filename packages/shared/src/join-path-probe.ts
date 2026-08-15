@@ -109,6 +109,15 @@ export async function probeJoinPath(args: {
 /** User-facing status after the advertised join path has been evaluated. */
 export type JoinReadyStatus = "running" | "starting" | "degraded" | "stopped" | "error";
 
+/** Canary/host reasons that must not become player-panel “Not joinable”. */
+export const UDP_JOIN_UNPROVEN_REASONS = ["udp_join_unproven", "udp_not_tcp_probed"] as const;
+
+export type UdpJoinUnprovenReason = (typeof UDP_JOIN_UNPROVEN_REASONS)[number];
+
+export function isUdpJoinUnprovenReason(reason: string): boolean {
+  return (UDP_JOIN_UNPROVEN_REASONS as readonly string[]).includes(reason);
+}
+
 export type JoinReadyInput = {
   /** Process/container lifecycle from the control plane (not join-path). */
   processStatus: string;
@@ -116,6 +125,11 @@ export type JoinReadyInput = {
   /** Query against the advertised join host. null = not attempted. */
   queryOnline?: boolean | null;
   protocol: "tcp" | "udp";
+  /**
+   * Host-local advertised game-port bind. UDP player-panel Live uses this;
+   * the TCP join-path canary still requires an advertised TCP/query proof.
+   */
+  hostPortsBound?: boolean | null;
 };
 
 export type JoinReadyReport = {
@@ -125,6 +139,7 @@ export type JoinReadyReport = {
   joinPath: JoinPathProbeResult;
   queryOnline?: boolean | null;
   protocol: "tcp" | "udp";
+  hostPortsBound?: boolean | null;
 };
 
 const PROCESS_UP = new Set(["running", "starting"]);
@@ -146,10 +161,12 @@ function processStatusOf(raw: string): JoinReadyStatus {
 export function evaluateJoinReady(input: JoinReadyInput): JoinReadyReport {
   const queryOnline = input.queryOnline ?? null;
   const process = processStatusOf(input.processStatus);
+  const hostPortsBound = input.hostPortsBound ?? null;
   const base = {
     joinPath: input.joinPath,
     queryOnline,
     protocol: input.protocol,
+    hostPortsBound,
   };
 
   if (!PROCESS_UP.has(input.processStatus)) {
@@ -170,9 +187,49 @@ export function evaluateJoinReady(input: JoinReadyInput): JoinReadyReport {
   }
 
   // UDP: do not treat a TCP connect (or node listen table) as advertised proof.
+  // Canary keeps ready=false + reason codes. Players must not see “Not joinable”
+  // when the process is up and advertised UDP ports are bound (#889).
   const reason = queryOnline === false ? "query_offline" : "udp_join_unproven";
+  if (hostPortsBound === true) {
+    return {
+      ready: false,
+      status: process === "starting" ? "starting" : "running",
+      reason,
+      ...base,
+    };
+  }
   const status: JoinReadyStatus = process === "starting" ? "starting" : "degraded";
   return { ready: false, status, reason, ...base };
+}
+
+/**
+ * Public player-panel lifecycle. Host/canary keep `ready` + reason codes;
+ * `udp_join_unproven` / `udp_not_tcp_probed` never become “Not joinable”
+ * when the process is up and advertised UDP ports are bound (or query is online).
+ */
+export function playerPanelStatusFromJoinReady(
+  report: JoinReadyReport,
+  processStatus?: string,
+): JoinReadyStatus {
+  if (report.ready) {
+    return report.status === "starting" ? "starting" : "running";
+  }
+  if (report.queryOnline === true) {
+    return "running";
+  }
+  const unproven =
+    isUdpJoinUnprovenReason(report.reason) || isUdpJoinUnprovenReason(report.joinPath.reason);
+  if (!unproven) {
+    return report.status;
+  }
+  const raw = processStatus ?? (report.status === "starting" ? "starting" : "running");
+  const process = processStatusOf(raw);
+  if (!PROCESS_UP.has(raw)) {
+    return process;
+  }
+  if (process === "starting") return "starting";
+  if (report.hostPortsBound === false) return "degraded";
+  return "running";
 }
 
 /** Panel / UI status string — never “running” unless ready. */

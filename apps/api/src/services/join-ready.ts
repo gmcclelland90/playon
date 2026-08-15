@@ -148,11 +148,14 @@ export class JoinReadyService {
       queryOnline = state.online;
     }
 
+    const hostPortsBound = await this.dbServers.hostGamePortsBound(server);
+
     return evaluateJoinReady({
       processStatus: server.status,
       joinPath,
       queryOnline,
       protocol,
+      hostPortsBound,
     });
   }
 

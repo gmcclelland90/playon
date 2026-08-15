@@ -1,5 +1,5 @@
 import { queryDialectToolEnum } from "@playon/server-query";
-import type { QueryDialect } from "@playon/shared";
+import { playerPanelStatusFromJoinReady, type QueryDialect } from "@playon/shared";
 import { isPlayerPanelLiveStatus, safeQueryLive } from "../server-panel.js";
 import { loadSkillMetadata } from "../skills.js";
 import { seedWatchersForNewServer } from "../watchers.js";
@@ -103,7 +103,7 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
           server.id,
         );
         const joinReady = await plane.joinReady.probeWithRetry(server.id, POST_START_QUERY);
-        const panelStatus = joinReady.ready ? "running" : joinReady.status;
+        const panelStatus = playerPanelStatusFromJoinReady(joinReady, server.status);
         await playerPanel.publishForStatus(server.id, panelStatus, live);
         const detail = await servers.detail(server.id);
         return {
@@ -168,7 +168,7 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
           server.id,
         );
         const joinReady = await plane.joinReady.probeWithRetry(server.id, POST_START_QUERY);
-        const panelStatus = joinReady.ready ? "running" : joinReady.status;
+        const panelStatus = playerPanelStatusFromJoinReady(joinReady, server.status);
         await playerPanel.publishForStatus(server.id, panelStatus, live);
         const detail = await servers.detail(server.id);
         return {
@@ -435,11 +435,7 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
               const joinReady = await plane.joinReady.probe(serverId);
               await playerPanel.publishForStatus(
                 serverId,
-                joinReady.ready
-                  ? server.status === "starting"
-                    ? "starting"
-                    : "running"
-                  : joinReady.status,
+                playerPanelStatusFromJoinReady(joinReady, server.status),
                 state,
               );
             } catch {
