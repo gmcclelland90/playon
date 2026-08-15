@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { LOCAL_NODE_ID, SkillMetadataSchema } from "@playon/shared";
+import { refineDockerCapability } from "@playon/runtime";
 import { createDb, type Db } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
 import { nodes } from "../db/schema.js";
@@ -411,6 +412,15 @@ describe("applyWslLanPlacement", () => {
   });
 });
 
+describe("unit runtime docker stubs", () => {
+  it("does not let refineDockerCapability strip docker when the engine is absent", async () => {
+    const caps = { os: "windows" as const, docker: true, native: true, steamcmd: false };
+    await expect(refineDockerCapability(caps, async () => null)).resolves.toMatchObject({
+      docker: true,
+    });
+  });
+});
+
 describe("PlacementService.resolveNodeId", () => {
   const linuxOnlyYaml = `
 name: fixtures.linux-only-demo
@@ -425,6 +435,24 @@ ports:
     protocol: tcp
     default: 25565
 `;
+
+  it("keeps Local docker-eligible with the default host probe (no real engine)", async () => {
+    const bothOsYaml = `
+name: fixtures.linux-only-demo
+version: 1.0.0
+description: docker skill on either OS
+os: [linux, windows]
+arch: [amd64]
+containerSupport: full
+dockerImage: example/demo:latest
+ports:
+  - name: game
+    protocol: tcp
+    default: 25565
+`;
+    const { placement, skillName } = placementEnv(bothOsYaml);
+    await expect(placement.resolveNodeId(skillName)).resolves.toBe(LOCAL_NODE_ID);
+  });
 
   it("throws no_eligible_node when Local is Windows-only for a linux skill", async () => {
     // Probe override: plan() always re-syncs Local from host caps, so DB-only OS
