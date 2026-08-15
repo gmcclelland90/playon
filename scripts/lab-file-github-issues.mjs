@@ -21,6 +21,7 @@
  *   PLAYON_LAB_FILE_ISSUES=0   skip (also skipped when unset in --require-opt-in mode)
  *   PLAYON_GITHUB_REPO         default gmcclelland90/playon
  *   GH_TOKEN / gh auth         required to create issues
+ *   PLAYON_MATRIX_WIN_SKIP_ALERT_THRESHOLD  Windows PE skip alert floor (default 1; 0=off)
  */
 import { spawnSync } from "node:child_process";
 import {
@@ -32,6 +33,7 @@ import {
 } from "node:fs";
 import path, { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { summarizeWindowsCoverage } from "./lab-matrix-windows-coverage.mjs";
 
 const root = process.cwd();
 const repo = process.env.PLAYON_GITHUB_REPO || "gmcclelland90/playon";
@@ -217,6 +219,7 @@ export function groupSkillCloneIssues(items) {
   for (const item of items || []) {
     const fp = parseLabFingerprint(item?.body);
     if (fp && String(fp).startsWith("verify:")) continue;
+    if (fp && String(fp).startsWith("coverage:")) continue;
     const skill = skillFromLabIssue(item);
     if (!skill) continue;
     if (!groups.has(skill)) groups.set(skill, []);
@@ -606,6 +609,87 @@ function fileMatrixFailures(filedLedger) {
   return out;
 }
 
+/**
+ * When playon-win-1 is offline, Windows PE / depot skills skip quietly.
+ * File a standing coverage alert so green matrix sweeps are not silent (#46).
+ */
+export function windowsCoverageFingerprint() {
+  return "coverage:windows-pe";
+}
+
+export function fileWindowsCoverageAlert(filedLedger) {
+  if (!existsSync(statusMatrix)) {
+    console.log("skip windows-pe coverage: no matrix status");
+    return [];
+  }
+  let status;
+  try {
+    status = JSON.parse(readFileSync(statusMatrix, "utf8"));
+  } catch (err) {
+    console.warn(
+      `matrix status unreadable for windows coverage: ${err instanceof Error ? err.message : err}`,
+    );
+    return [];
+  }
+
+  const coverage =
+    status.windowsCoverage ||
+    summarizeWindowsCoverage(status.results || [], {
+      windowsPlacementEnabled: status.windowsPlacementEnabled,
+    });
+  if (!coverage.alert) {
+    console.log(
+      `skip windows-pe coverage alert (${coverage.summaryLine})`,
+    );
+    return [];
+  }
+
+  const fp = windowsCoverageFingerprint();
+  const title = "[chore] Windows PE / dual-place coverage skipped (playon-win-1 offline)";
+  const skillList =
+    coverage.skills.length > 0
+      ? coverage.skills.map((s) => `- \`${s}\``).join("\n")
+      : "_None listed._";
+  const body = [
+    "## Summary",
+    "Lab matrix finished with Windows PE / Steam dual-place skills skipped while Windows placement was **off/unavailable**.",
+    "This is a **coverage gap**, not a product fail — do not treat the sweep as full Windows PE coverage.",
+    "",
+    "## Classification",
+    `- fingerprint: \`${fp}\``,
+    `- ${coverage.summaryLine}`,
+    `- placement note: \`${status.windowsPlacementNote || "unknown"}\``,
+    `- threshold: \`${coverage.threshold}\``,
+    `- at: \`${status.finishedAt || new Date().toISOString()}\``,
+    "",
+    "## Skipped skills",
+    skillList,
+    "",
+    "## Done when",
+    "- [ ] `playon-win-1` online with `join_host` set (or intentional `PLAYON_MATRIX_WIN_NODE_ID=off` + documented skip)",
+    "- [ ] Next cadence/matrix run shows `windows_pe_skips=0` with `placement=on`",
+    "",
+    "See docs/lab-matrix.md (Windows PE coverage) and #46.",
+  ].join("\n");
+  const labels = [
+    "chore",
+    "needs-triage",
+    "source:lab",
+    "lab",
+    "skills",
+    "P3",
+    "test-debt",
+  ];
+  const result = createOrUpdate({
+    fingerprint: fp,
+    title,
+    body,
+    labels,
+    filedLedger,
+  });
+  return result ? [{ fingerprint: fp, ...result }] : [];
+}
+
 function closeSkillCloneIssues({ apply }) {
   const items = listOpenLabIssues();
   const groups = groupSkillCloneIssues(items);
@@ -739,7 +823,10 @@ function main() {
   const ledger = loadLedger();
   const filed = [];
   if (sources.verify) filed.push(...fileVerifyFailure());
-  if (sources.matrix) filed.push(...fileMatrixFailures(ledger));
+  if (sources.matrix) {
+    filed.push(...fileMatrixFailures(ledger));
+    filed.push(...fileWindowsCoverageAlert(ledger));
+  }
   if (sources.llmCanary) filed.push(...fileLlmCanaryFailures());
 
   for (const f of filed) {

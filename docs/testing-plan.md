@@ -91,7 +91,7 @@ After each release, skim CHANGELOG **Fixed** entries and file `test-debt` for ga
 ## Known gaps
 
 - Windows 0.2.3/0.2.4 OTA `require is not defined` is unit-covered (vintage ESM helper throw, Home bootstrap jobs, claimNext skip); live playon-win-1 OTA is not in `pnpm verify` ([#885](https://github.com/gmcclelland90/playon/issues/885))
-- Windows PE / Steam dual-place coverage still depends on `playon-win-1` online ([#46](https://github.com/gmcclelland90/playon/issues/46))
+- Windows PE / Steam dual-place: matrix reports `windows_pe_skips` and files `coverage:windows-pe` when `playon-win-1` is offline on a scheduled run ([#46](https://github.com/gmcclelland90/playon/issues/46); [lab-matrix.md](lab-matrix.md))
 - Windows container place+start is unit-covered; live `har0x/sbox-server` on Server Core needs Docker Engine in Windows container mode on the node ([#873](https://github.com/gmcclelland90/playon/issues/873))
 - Join-path live TCP on WSL sibling and Windows PE is lab-only (unit covers `resolveJoinAddress`; [lab-matrix.md](lab-matrix.md), [#843](https://github.com/gmcclelland90/playon/issues/843))
 - Managed instance liveness (leftover reap, healthy reuse, first-see port-dead, persisted start grace, docker native-tree reap, health-restart single-instance, workshop_update notify-only, existing managed Health-monitor migrate) is unit-covered in `@playon/shared` + `@playon/runtime` + api runtime-handle / health / watcher tests ([#880](https://github.com/gmcclelland90/playon/issues/880))

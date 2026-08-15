@@ -39,6 +39,7 @@ import {
   windowsPlacementConfig,
 } from "./lab-matrix-home-client.mjs";
 import { classifyMatrixErrorClass } from "./lab-file-github-issues.mjs";
+import { summarizeWindowsCoverage } from "./lab-matrix-windows-coverage.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.chdir(repoRoot);
@@ -1403,6 +1404,9 @@ async function runMatrixBody({ dataRoot, db, sqlite, skillsRoots, gamesRoot }) {
   const cp = createControlPlane(db, config);
   const winCfg = windowsPlacementConfig(repoRoot);
   let windows = { enabled: false };
+  let windowsPlacementNote = winCfg.enabled
+    ? "pending"
+    : "disabled_by_env";
   if (winCfg.enabled && tier !== "static") {
     try {
       const auth = await loadHomeAuth(winCfg);
@@ -1414,6 +1418,7 @@ async function runMatrixBody({ dataRoot, db, sqlite, skillsRoots, gamesRoot }) {
         winNodeId: winCfg.winNodeId,
         winHost: winCfg.winHost,
       };
+      windowsPlacementNote = `online:${winCfg.winNodeId}`;
       console.log(
         `lab-matrix windows placement node=${winCfg.winNodeId} host=${winCfg.winHost} status=${node.status}`,
       );
@@ -1421,7 +1426,10 @@ async function runMatrixBody({ dataRoot, db, sqlite, skillsRoots, gamesRoot }) {
       const msg = err instanceof Error ? err.message : String(err);
       console.warn(`lab-matrix windows placement disabled: ${msg}`);
       windows = { enabled: false };
+      windowsPlacementNote = `unavailable:${msg.slice(0, 160)}`;
     }
+  } else if (tier === "static") {
+    windowsPlacementNote = "n/a_static_tier";
   }
 
   const allSkills = listSkills(skillsRoots)
@@ -1563,6 +1571,8 @@ async function runMatrixBody({ dataRoot, db, sqlite, skillsRoots, gamesRoot }) {
           cursor: i,
           failedSkill: name,
           results,
+          windowsPlacementEnabled: windows.enabled,
+          windowsPlacementNote,
           nextAction: `Fix ${name}, then: pnpm lab:matrix --resume`,
         });
         console.log(
@@ -1592,6 +1602,8 @@ async function runMatrixBody({ dataRoot, db, sqlite, skillsRoots, gamesRoot }) {
       cursor: i,
       failedSkill: result.ok ? null : name,
       results,
+      windowsPlacementEnabled: windows.enabled,
+      windowsPlacementNote,
       nextAction: result.ok
         ? "Continue matrix or pick next skill."
         : `Fix ${name}, then: pnpm lab:matrix --resume`,
@@ -1640,9 +1652,28 @@ async function runMatrixBody({ dataRoot, db, sqlite, skillsRoots, gamesRoot }) {
   const skipN = results.filter((r) => r.skipped).length;
   const failN = results.filter((r) => !r.ok).length;
   console.log(`passed=${okN} skipped=${skipN} failed=${failN}`);
+  const windowsCoverage = summarizeWindowsCoverage(results, {
+    windowsPlacementEnabled: windows.enabled,
+  });
+  console.log(windowsCoverage.summaryLine);
+  if (windowsCoverage.alert) {
+    console.warn(
+      `lab-matrix Windows PE coverage alert: ${windowsCoverage.skipCount} skip(s) while placement off (${windowsPlacementNote}). Bring playon-win-1 online for weekend/daily sweeps.`,
+    );
+  }
+  if (final && typeof final === "object") {
+    final.windowsPlacementEnabled = windows.enabled;
+    final.windowsPlacementNote = windowsPlacementNote;
+    final.windowsCoverage = windowsCoverage;
+    writeStatus(final);
+  }
 
   // Close the SDLC loop: matrix failures → GitHub needs-triage (source:lab)
-  if (failN > 0 && (process.env.PLAYON_LAB_FILE_ISSUES ?? "1") !== "0") {
+  // Also files Windows PE coverage alerts when placement is off (#46).
+  if (
+    (failN > 0 || windowsCoverage.alert) &&
+    (process.env.PLAYON_LAB_FILE_ISSUES ?? "1") !== "0"
+  ) {
     try {
       execSync(`${process.execPath} scripts/lab-file-github-issues.mjs --from matrix`, {
         cwd: repoRoot,
