@@ -14,15 +14,16 @@ describe("archive extract plan (#868)", () => {
     expect(ARCHIVE_EXTRACT_TIMEOUT_MS).toBeGreaterThan(60_000);
   });
 
-  it("prefers tar --force-local for Windows zip (no Expand-Archive first)", () => {
+  it("prefers tar for Windows zip without --force-local (no Expand-Archive first)", () => {
     const zip = "C:\\Temp\\playon-node-0.2.5-windows-x64.zip";
     const dest = "C:\\Temp\\extracted";
     const commands = buildArchiveExtractCommands(zip, dest, "win32");
     expect(commands[0]).toEqual({
       cmd: "tar",
-      args: ["--force-local", "-xf", zip, "-C", dest],
+      args: ["-xf", zip, "-C", dest],
     });
     expect(windowsTarExtractArgs(zip, dest)).toEqual(commands[0]?.args);
+    expect(windowsTarExtractArgs(zip, dest)).not.toContain("--force-local");
     expect(commands[1]?.cmd).toBe("powershell.exe");
     const ps = commands[1]?.args.join(" ") ?? "";
     expect(ps).toContain("ProgressPreference");
@@ -33,13 +34,14 @@ describe("archive extract plan (#868)", () => {
     expect(windowsPowerShellExpandArchiveArgs(zip, dest).join(" ")).toContain("SilentlyContinue");
   });
 
-  it("does not use PowerShell for Windows tar.gz (0.2.3 agents already have this branch)", () => {
+  it("does not use PowerShell or --force-local for Windows tar.gz", () => {
     const archive = "C:\\Temp\\playon-node-0.2.6-windows-x64.tar.gz";
     const dest = "C:\\Temp\\extracted";
     const commands = buildArchiveExtractCommands(archive, dest, "win32");
     expect(commands).toEqual([
-      { cmd: "tar", args: ["--force-local", "-xzf", archive, "-C", dest] },
+      { cmd: "tar", args: ["-xzf", archive, "-C", dest] },
     ]);
+    expect(windowsTarExtractArgs(archive, dest)).not.toContain("--force-local");
   });
 
   it("keeps Linux zip/tar paths off PowerShell", () => {
