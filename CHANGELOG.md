@@ -4,6 +4,10 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+### Fixed
+
+- **Windows node OTA extract** — `windowsTarExtractArgs()` no longer passes GNU `--force-local`. Official 0.2.8→0.2.9 tar.gz OTA on playon-win-1 failed with `update_extract_failed: tar --force-local is not supported`. Create-side already dropped that flag in #876 / #878 (`#895`).
+
 ## [0.2.9] — 2026-08-15
 
 ### Added

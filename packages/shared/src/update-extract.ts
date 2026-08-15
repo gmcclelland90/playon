@@ -19,12 +19,17 @@ export function psSingleQuote(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
-/** Windows `tar` treats `C:` as host:file unless forced local. */
+/**
+ * Windows extract args. Do not pass GNU `--force-local`: playon-win-1 0.2.8→0.2.9
+ * official tar.gz OTA failed with `update_extract_failed: tar --force-local is not
+ * supported`. Create-side already dropped that flag for the same Windows tar
+ * (#876 / #878).
+ */
 export function windowsTarExtractArgs(archivePath: string, destDir: string): string[] {
   const isZip = archivePath.toLowerCase().endsWith(".zip");
   return isZip
-    ? ["--force-local", "-xf", archivePath, "-C", destDir]
-    : ["--force-local", "-xzf", archivePath, "-C", destDir];
+    ? ["-xf", archivePath, "-C", destDir]
+    : ["-xzf", archivePath, "-C", destDir];
 }
 
 export function windowsPowerShellExpandArchiveArgs(archivePath: string, destDir: string): string[] {
