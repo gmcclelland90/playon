@@ -4,9 +4,11 @@ import {
   evaluateJoinPathProbe,
   evaluateJoinReady,
   isLoopbackJoinHost,
+  isUdpJoinUnprovenReason,
   JOIN_HOST_NOT_REACHABLE,
   JOIN_PATH_CANARY_SKILL,
   joinHostNotReachableResult,
+  playerPanelStatusFromJoinReady,
   probeJoinPath,
 } from "./join-path-probe.js";
 
@@ -235,6 +237,99 @@ describe("evaluateJoinReady", () => {
     expect(result.ready).toBe(false);
     expect(result.reason).toBe("udp_join_unproven");
     expect(result.status).toBe("degraded");
+  });
+
+  it("keeps UDP canary reason codes when advertised host ports are bound", () => {
+    const result = evaluateJoinReady({
+      processStatus: "running",
+      joinPath: advertisedOpen,
+      protocol: "udp",
+      hostPortsBound: true,
+    });
+    expect(result.ready).toBe(false);
+    expect(result.reason).toBe("udp_join_unproven");
+    expect(result.status).toBe("running");
+    expect(result.hostPortsBound).toBe(true);
+  });
+
+  it("stays degraded for UDP when advertised host ports are unbound", () => {
+    const result = evaluateJoinReady({
+      processStatus: "running",
+      joinPath: advertisedOpen,
+      protocol: "udp",
+      hostPortsBound: false,
+    });
+    expect(result.ready).toBe(false);
+    expect(result.reason).toBe("udp_join_unproven");
+    expect(result.status).toBe("degraded");
+  });
+});
+
+describe("playerPanelStatusFromJoinReady", () => {
+  const udpUnproven = evaluateJoinReady({
+    processStatus: "running",
+    joinPath: {
+      ok: false,
+      reason: "udp_not_tcp_probed",
+      joinHost: "172.16.0.109",
+      port: 16261,
+      loopbackState: "closed",
+      joinHostState: "closed",
+    },
+    protocol: "udp",
+  });
+
+  it("does not map udp_join_unproven / udp_not_tcp_probed to Not joinable when ports are bound", () => {
+    expect(isUdpJoinUnprovenReason("udp_join_unproven")).toBe(true);
+    expect(isUdpJoinUnprovenReason("udp_not_tcp_probed")).toBe(true);
+    expect(udpUnproven.reason).toBe("udp_join_unproven");
+    expect(udpUnproven.joinPath.reason).toBe("udp_not_tcp_probed");
+    expect(udpUnproven.status).toBe("degraded");
+    expect(
+      playerPanelStatusFromJoinReady({ ...udpUnproven, hostPortsBound: true }, "running"),
+    ).toBe("running");
+    expect(
+      playerPanelStatusFromJoinReady(
+        { ...udpUnproven, reason: "udp_not_tcp_probed", hostPortsBound: true },
+        "running",
+      ),
+    ).toBe("running");
+  });
+
+  it("stays Live when process is up and advertised UDP ports are bound", () => {
+    const bound = evaluateJoinReady({
+      processStatus: "running",
+      joinPath: udpUnproven.joinPath,
+      protocol: "udp",
+      hostPortsBound: true,
+    });
+    expect(playerPanelStatusFromJoinReady(bound, "running")).toBe("running");
+    expect(playerPanelStatusFromJoinReady(bound)).not.toBe("degraded");
+  });
+
+  it("uses query online as player Live even without a TCP join-path", () => {
+    const online = evaluateJoinReady({
+      processStatus: "running",
+      joinPath: udpUnproven.joinPath,
+      queryOnline: true,
+      protocol: "udp",
+    });
+    expect(online.ready).toBe(true);
+    expect(playerPanelStatusFromJoinReady(online, "running")).toBe("running");
+  });
+
+  it("keeps TCP join-path failures as degraded for players", () => {
+    const closed = evaluateJoinReady({
+      processStatus: "running",
+      joinPath: evaluateJoinPathProbe({
+        joinHost: "172.16.0.94",
+        port: 25565,
+        loopbackState: "open",
+        joinHostState: "closed",
+      }),
+      protocol: "tcp",
+    });
+    expect(playerPanelStatusFromJoinReady(closed, "running")).toBe("degraded");
   });
 });
 

@@ -48,6 +48,7 @@ import {
   can,
   deriveNodePresence,
   messageFromError,
+  playerPanelStatusFromJoinReady,
   placementBadge,
   placementFromNodeKind,
   type NodeKind,
@@ -268,7 +269,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
             );
           }
           const joinReady = await joinReadyService.probe(event.serverId);
-          const panelStatus = joinReady.ready ? event.status : joinReady.status;
+          const panelStatus = playerPanelStatusFromJoinReady(joinReady, event.status);
           await playerPanel.publishForStatus(event.serverId, panelStatus, live);
         } else if (event.status === "stopped" || event.status === "error") {
           await playerPanel.publishForStatus(event.serverId, event.status);
@@ -1731,7 +1732,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       attempts: 5,
       delayMs: 1200,
     });
-    const panelStatus = joinReady.ready ? "running" : joinReady.status;
+    const panelStatus = playerPanelStatusFromJoinReady(joinReady, "running");
     await playerPanel.publishForStatus(server.id, panelStatus, live);
     const detail = await serverService.detail(server.id);
     return {
@@ -1799,7 +1800,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         const joinReady = await joinReadyService.probeWithRetry(result.server.id);
         await playerPanel.publishForStatus(
           result.server.id,
-          joinReady.ready ? "running" : joinReady.status,
+          playerPanelStatusFromJoinReady(joinReady, result.server.status),
         );
       } else {
         await playerPanel.publishForStatus(result.server.id, "stopped");

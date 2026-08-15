@@ -1,3 +1,4 @@
+import { playerPanelStatusFromJoinReady } from "@playon/shared";
 import type { JoinReadyService } from "./join-ready.js";
 import type { PlayerPanel } from "./player-panel.js";
 import type { ServerQueryService } from "./server-query.js";
@@ -47,11 +48,7 @@ export class LiveQueryScheduler {
             ? await this.joinReady.probe(server.id)
             : null;
           const panelStatus = joinReady
-            ? joinReady.ready
-              ? server.status === "starting"
-                ? "starting"
-                : "running"
-              : joinReady.status
+            ? playerPanelStatusFromJoinReady(joinReady, server.status)
             : server.status === "starting"
               ? "starting"
               : "running";

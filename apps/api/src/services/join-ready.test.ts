@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
-import { JOIN_PATH_CANARY_SKILL } from "@playon/shared";
+import { JOIN_PATH_CANARY_SKILL, playerPanelStatusFromJoinReady } from "@playon/shared";
 import { createDb } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
 import { nodes, servers as serversTable } from "../db/schema.js";
@@ -221,6 +221,82 @@ describe("JoinReadyService", () => {
     } finally {
       await closeServer(server);
     }
+  });
+
+  it("UDP-only + host-ports bound is not canary-ready but player status is running", async () => {
+    const { db, config, root } = tempConfig();
+    const skillDir = path.join(root, "skills", "udp-only");
+    fs.mkdirSync(path.join(skillDir, "guides"), { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, "metadata.yaml"),
+      [
+        "name: fixtures.udp-only",
+        "version: 0.1.0",
+        "game: UDP Only",
+        "description: udp fixture",
+        "containerSupport: none",
+        "queryDialect: none",
+        "ports:",
+        "  - name: game",
+        "    protocol: udp",
+        "    default: 16261",
+        "dependencies: []",
+        "requiredTools: []",
+        "",
+      ].join("\n"),
+    );
+    fs.writeFileSync(path.join(skillDir, "guides", "INSTALL.md"), "# udp\n");
+    config.skillsRoots = [path.join(root, "skills"), ...config.skillsRoots];
+
+    const servers = new ServerService(db, config);
+    const net = new NetToolsService(servers);
+    const joinReady = new JoinReadyService(servers, net, config);
+    servers.portsBoundOverride = async () => true;
+
+    await insertNode(db, { id: "local", name: "local", os: "linux" });
+    const id = "srv-udp-only";
+    const dataPath = path.join(root, "servers", id);
+    writeSkillMarker(dataPath, {
+      skillName: "fixtures.udp-only",
+      version: "0.1.0",
+      runtimeMode: "native",
+      containerSupport: "none",
+      queryDialect: "none",
+      nodeId: "local",
+    });
+    await db.insert(serversTable).values({
+      id,
+      name: "UDP Only",
+      game: "UDP Only",
+      nodeId: "local",
+      runtimeMode: "native",
+      status: "running",
+      dataPath,
+      createdAt: new Date(),
+    });
+    servers.get = async (serverId: string) =>
+      serverId === id
+        ? {
+            id,
+            name: "UDP Only",
+            game: "UDP Only",
+            nodeId: "local",
+            runtimeMode: "native",
+            status: "running",
+            dataPath,
+            createdAt: new Date(),
+          }
+        : null;
+    servers.joinInfoFor = async () => ({ address: "172.16.0.109", port: 16261 });
+
+    const report = await joinReady.probe(id);
+    expect(report.protocol).toBe("udp");
+    expect(report.ready).toBe(false);
+    expect(report.reason).toBe("udp_join_unproven");
+    expect(report.joinPath.reason).toBe("udp_not_tcp_probed");
+    expect(report.hostPortsBound).toBe(true);
+    expect(report.status).toBe("running");
+    expect(playerPanelStatusFromJoinReady(report, "running")).toBe("running");
   });
 
   it("advertised-open is ready", async () => {

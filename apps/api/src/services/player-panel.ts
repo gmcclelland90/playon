@@ -1,4 +1,9 @@
-import { PanelBlockTypeSchema, type LiveServerState, type PanelBlockType } from "@playon/shared";
+import {
+  PanelBlockTypeSchema,
+  playerPanelStatusFromJoinReady,
+  type LiveServerState,
+  type PanelBlockType,
+} from "@playon/shared";
 import type { AppConfig } from "../config.js";
 import type { PanelBlockRecord, PanelService } from "./panel.js";
 import {
@@ -158,7 +163,7 @@ export class PlayerPanel {
     serverStatus = detail?.server.status;
     const joinReady = this.joinReady ? await this.joinReady.probe(serverId) : null;
     if (joinReady && (detail?.server.status === "running" || detail?.server.status === "starting")) {
-      serverStatus = joinReady.ready ? "running" : joinReady.status;
+      serverStatus = playerPanelStatusFromJoinReady(joinReady, detail.server.status);
     }
     const join = detail?.runtime.join;
     if (join && detail) {
