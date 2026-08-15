@@ -2,8 +2,13 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { NodeJobError } from "@playon/shared";
-import { NodeJobService, shouldAbandonRunningJobOnReclaim } from "./node-jobs.js";
+import {
+  NODE_SELF_UPDATE_VIA_ESM_BOOTSTRAP,
+  NodeJobError,
+  WINDOWS_OTA_ESM_BOOTSTRAP_PROCESS_NAME,
+  WINDOWS_OTA_ESM_BOOTSTRAP_REL,
+} from "@playon/shared";
+import { isDurableOtaBootstrapJob, NodeJobService, shouldAbandonRunningJobOnReclaim } from "./node-jobs.js";
 
 const SELF_UPDATE_ARGS = {
   downloadUrl: "https://example.com/playon-node-0.1.11-linux-x64.tar.gz",
@@ -179,6 +184,47 @@ describe("NodeJobService", () => {
     expect((await svc.waitFor(job.id, { timeoutMs: 1000 })).status).toBe("done");
   });
 
+  it("lets the vintage Windows agent claim bootstrap jobs while a tracked ESM self-update is running (#885)", () => {
+    const svc = new NodeJobService();
+    const tracked = svc.enqueue(
+      "win-1",
+      "node_self_update",
+      { ...SELF_UPDATE_ARGS, via: NODE_SELF_UPDATE_VIA_ESM_BOOTSTRAP },
+      { status: "running" },
+    );
+    const write = svc.enqueue("win-1", "fs_write_text", {
+      path: WINDOWS_OTA_ESM_BOOTSTRAP_REL,
+      content: "Write-Host bootstrap",
+    });
+    const start = svc.enqueue("win-1", "process_start", {
+      name: WINDOWS_OTA_ESM_BOOTSTRAP_PROCESS_NAME,
+      command: "powershell.exe",
+      args: ["-File", WINDOWS_OTA_ESM_BOOTSTRAP_REL],
+      cwd: ".",
+    });
+    expect(isDurableOtaBootstrapJob(write)).toBe(true);
+    expect(isDurableOtaBootstrapJob(start)).toBe(true);
+    expect(svc.claimNext("win-1")?.id).toBe(write.id);
+    expect(svc.get(tracked.id)?.status).toBe("running");
+    svc.complete(write.id, { path: WINDOWS_OTA_ESM_BOOTSTRAP_REL, bytes: 8 });
+    expect(svc.claimNext("win-1")?.id).toBe(start.id);
+    expect(svc.claimNext("win-1")).toBeNull();
+    const done = svc.reconcileSelfUpdateOnHeartbeat("win-1", "0.1.11");
+    expect(done?.status).toBe("done");
+    expect(svc.get(tracked.id)?.status).toBe("done");
+  });
+
+  it("never hands an esm-bootstrap node_self_update to the agent", () => {
+    const svc = new NodeJobService();
+    svc.enqueue(
+      "win-1",
+      "node_self_update",
+      { ...SELF_UPDATE_ARGS, via: NODE_SELF_UPDATE_VIA_ESM_BOOTSTRAP },
+    );
+    expect(svc.claimNext("win-1")).toBeNull();
+    expect(svc.findActive("win-1", "node_self_update")?.args.via).toBe("esm-bootstrap");
+  });
+
   it("does not abandon a running node_self_update when the agent reconnects", () => {
     expect(shouldAbandonRunningJobOnReclaim("ping")).toBe(true);
     expect(shouldAbandonRunningJobOnReclaim("node_self_update")).toBe(false);
@@ -239,6 +285,34 @@ describe("NodeJobService", () => {
       status: "failed",
       error: "update_sha256_mismatch",
     });
+  });
+
+  it("persists vintage Windows OTA bootstrap helpers with the tracked self-update (#885)", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "playon-jobs-esm-"));
+    const file = path.join(dir, "node-self-update-jobs.json");
+    try {
+      const a = new NodeJobService();
+      a.attachPersistFile(file);
+      a.enqueue(
+        "win-1",
+        "node_self_update",
+        { ...SELF_UPDATE_ARGS, via: NODE_SELF_UPDATE_VIA_ESM_BOOTSTRAP },
+        { status: "running" },
+      );
+      a.enqueue("win-1", "fs_write_text", {
+        path: WINDOWS_OTA_ESM_BOOTSTRAP_REL,
+        content: "Write-Host bootstrap",
+      });
+      a.enqueue("win-1", "ping");
+      const dumped = JSON.parse(fs.readFileSync(file, "utf8")) as Array<{ kind: string }>;
+      expect(dumped.map((row) => row.kind).sort()).toEqual(["fs_write_text", "node_self_update"]);
+      const b = new NodeJobService();
+      b.attachPersistFile(file);
+      expect(b.findActive("win-1", "node_self_update")?.args.via).toBe("esm-bootstrap");
+      expect(b.claimNext("win-1")?.kind).toBe("fs_write_text");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("persists node_self_update jobs across a new service instance", () => {

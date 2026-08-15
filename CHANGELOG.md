@@ -4,6 +4,10 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+### Fixed
+
+- **Windows node OTA from 0.2.3** — 0.2.3/0.2.4 `performWindowsSelfUpdate` called `require("node:child_process")` in an ESM package (`require is not defined` right after extract). Current agents keep the ESM `import { spawn }`. Home detects that vintage on Windows and drives official OTA with a CommonJS-safe / PowerShell bootstrap (`fs_write_text` + `process_start`) so the old agent never claims `node_self_update`. Ships `deploy/windows/ota-esm-bootstrap.ps1` and `spawn-apply-update.cjs` (`#885`).
+
 ## [0.2.8] — 2026-08-14
 
 ### Fixed
