@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SkillMetadataSchema } from "./skill.js";
+import { resolveQueryDialect, SkillMetadataSchema } from "./skill.js";
 
 describe("SkillMetadataSchema contract", () => {
   it("accepts a minimal fixture skill", () => {
@@ -32,6 +32,24 @@ describe("SkillMetadataSchema contract", () => {
     expect(parsed.healthChecks).toHaveLength(3);
     expect(parsed.healthChecks[0]?.onFail).toBe("restart");
     expect(parsed.healthChecks[2]?.type).toBe("query_responding");
+  });
+
+  it("accepts project_zomboid query dialect", () => {
+    const parsed = SkillMetadataSchema.parse({
+      name: "games.project-zomboid",
+      version: "0.1.2",
+      queryDialect: "project_zomboid",
+      ports: [{ name: "game", protocol: "udp", default: 16261 }],
+    });
+    expect(parsed.queryDialect).toBe("project_zomboid");
+  });
+
+  it("defaults games.project-zomboid to project_zomboid when metadata says none", () => {
+    // Live-query mapping only. Join-ready must not treat this as wantsQuery.
+    expect(resolveQueryDialect("games.project-zomboid", "none")).toBe("project_zomboid");
+    expect(resolveQueryDialect("games.project-zomboid", undefined)).toBe("project_zomboid");
+    expect(resolveQueryDialect("games.minecraft-paper", "none")).toBe("none");
+    expect(resolveQueryDialect("games.project-zomboid", "skill_module")).toBe("skill_module");
   });
 
   it("accepts queryDialect and skill_module connector path", () => {

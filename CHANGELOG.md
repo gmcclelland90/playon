@@ -4,6 +4,10 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+### Added
+
+- **Project Zomboid live query** — built-in `project_zomboid` dialect. A real dedicated `UNCONNECTED_PONG` is a 33-byte empty-identifier frame (liveness only). Player counts come from Steam `A2S_INFO` on the Steam-facing port (gamePort, then queryPort). Catalog `games.project-zomboid` + `queryDialect: none` still maps for live query; join-ready uses an explicit dialect only and treats `query_online` as extra UDP proof — a failed query stays `udp_join_unproven` (`#890`).
+
 ### Fixed
 
 - **Player view UDP “Not joinable”** — UDP-only servers that are process-up with advertised host ports bound (or a live query) stay **Live** / `running` on the player panel. `udp_join_unproven` / `udp_not_tcp_probed` remain canary/host reason codes and no longer map to `degraded` / “Not joinable” (`#889`).

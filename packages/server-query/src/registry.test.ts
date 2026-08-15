@@ -20,6 +20,7 @@ describe("ConnectorRegistry", () => {
     expect(dialects).toContain("unreal");
     expect(dialects).toContain("terraria");
     expect(dialects).toContain("factorio");
+    expect(dialects).toContain("project_zomboid");
     expect(dialects).not.toContain("none");
     expect(dialects).not.toContain("skill_module");
   });
@@ -31,6 +32,7 @@ describe("ConnectorRegistry", () => {
     expect(list.find((d) => d.id === "valheim")?.portPreference).toBe("query");
     expect(list.find((d) => d.id === "unreal")?.portPreference).toBe("query");
     expect(list.find((d) => d.id === "a2s")?.portPreference).toBe("query");
+    expect(list.find((d) => d.id === "project_zomboid")?.portPreference).toBe("game");
   });
 
   it("resolves primary port from descriptor preference", () => {
@@ -42,6 +44,9 @@ describe("ConnectorRegistry", () => {
       25565,
     );
     expect(primaryPortForDialect("valheim", { gamePort: 2456, queryPort: 2457 })).toBe(2457);
+    expect(primaryPortForDialect("project_zomboid", { gamePort: 16261, queryPort: 16262 })).toBe(
+      16261,
+    );
   });
 
   it("builds tool enum from built-ins plus special cases", () => {

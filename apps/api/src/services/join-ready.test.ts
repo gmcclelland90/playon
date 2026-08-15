@@ -5,6 +5,7 @@ import path from "node:path";
 import type Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 import { JOIN_PATH_CANARY_SKILL, playerPanelStatusFromJoinReady } from "@playon/shared";
+import type { LiveServerState } from "@playon/shared";
 import { createDb } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
 import { nodes, servers as serversTable } from "../db/schema.js";
@@ -12,6 +13,7 @@ import type { AppConfig } from "../config.js";
 import { resolveFixturesRoot } from "../lab-games-root.js";
 import { JoinReadyService } from "./join-ready.js";
 import { NetToolsService } from "./net-tools.js";
+import type { ServerQueryService } from "./server-query.js";
 import { ServerService } from "./servers.js";
 import { writeSkillMarker } from "./skill-marker.js";
 
@@ -335,5 +337,155 @@ describe("JoinReadyService", () => {
     } finally {
       await closeServer(server);
     }
+  });
+
+  async function seedPzUdp(args: {
+    db: ReturnType<typeof createDb>["db"];
+    config: AppConfig;
+    root: string;
+    queryDialect: "none" | "project_zomboid";
+    queries?: ServerQueryService;
+  }) {
+    const skillDir = path.join(args.root, "skills", "games", "project-zomboid");
+    fs.mkdirSync(path.join(skillDir, "guides"), { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, "metadata.yaml"),
+      [
+        "name: games.project-zomboid",
+        "version: 0.1.0",
+        "game: Project Zomboid",
+        "containerSupport: none",
+        `queryDialect: ${args.queryDialect}`,
+        "ports:",
+        "  - name: game",
+        "    protocol: udp",
+        "    default: 16261",
+        "healthChecks: []",
+        "dependencies: []",
+        "requiredTools: []",
+        "",
+      ].join("\n"),
+    );
+    fs.writeFileSync(path.join(skillDir, "guides", "INSTALL.md"), "# PZ\n");
+    args.config.skillsRoots = [path.join(args.root, "skills"), ...args.config.skillsRoots];
+
+    const servers = new ServerService(args.db, args.config);
+    const net = new NetToolsService(servers);
+    const joinReady = new JoinReadyService(servers, net, args.config, args.queries);
+    servers.portsBoundOverride = async () => true;
+
+    await insertNode(args.db, { id: "local", name: "home", os: "linux" });
+    const id = "srv-pz-query";
+    const dataPath = path.join(args.root, "servers", id);
+    writeSkillMarker(dataPath, {
+      skillName: "games.project-zomboid",
+      version: "0.1.0",
+      runtimeMode: "native",
+      containerSupport: "none",
+      queryDialect: args.queryDialect,
+      nodeId: "local",
+    });
+    await args.db.insert(serversTable).values({
+      id,
+      name: "PZ Lab",
+      game: "Project Zomboid",
+      nodeId: "local",
+      runtimeMode: "native",
+      status: "running",
+      dataPath,
+      createdAt: new Date(),
+    });
+    servers.get = async (sid: string) =>
+      sid === id
+        ? {
+            id,
+            name: "PZ Lab",
+            game: "Project Zomboid",
+            nodeId: "local",
+            runtimeMode: "native",
+            status: "running",
+            dataPath,
+            createdAt: new Date(),
+          }
+        : null;
+    servers.joinInfoFor = async () => ({ address: "127.0.0.1", port: 16261 });
+    servers.gamePortProtocolForSkill = () => "udp";
+    return { joinReady, id };
+  }
+
+  it("uses query_online as extra UDP proof when the PZ dialect answers", async () => {
+    const { db, config, root } = tempConfig();
+    const queries = {
+      queryServer: async () =>
+        ({
+          online: true,
+          players: 64,
+          maxPlayers: 80,
+          game: "Project Zomboid",
+        }) satisfies LiveServerState,
+    } as Pick<ServerQueryService, "queryServer"> as ServerQueryService;
+    const { joinReady, id } = await seedPzUdp({
+      db,
+      config,
+      root,
+      queryDialect: "project_zomboid",
+      queries,
+    });
+
+    const report = await joinReady.probe(id);
+    expect(report.ready).toBe(true);
+    expect(report.reason).toBe("query_online");
+    expect(report.protocol).toBe("udp");
+    expect(report.queryOnline).toBe(true);
+  });
+
+  it("does not force query_offline over udp_join_unproven when PZ query fails", async () => {
+    const { db, config, root } = tempConfig();
+    let queried = 0;
+    const queries = {
+      queryServer: async () => {
+        queried += 1;
+        return { online: false, error: "pz_query_failed" } satisfies LiveServerState;
+      },
+    } as Pick<ServerQueryService, "queryServer"> as ServerQueryService;
+    const { joinReady, id } = await seedPzUdp({
+      db,
+      config,
+      root,
+      queryDialect: "project_zomboid",
+      queries,
+    });
+
+    const report = await joinReady.probe(id);
+    expect(queried).toBe(1);
+    expect(report.ready).toBe(false);
+    expect(report.reason).toBe("udp_join_unproven");
+    expect(report.reason).not.toBe("query_offline");
+    expect(report.queryOnline).toBeNull();
+    expect(report.hostPortsBound).toBe(true);
+    expect(playerPanelStatusFromJoinReady(report, "running")).toBe("running");
+  });
+
+  it("does not treat catalog queryDialect none as wantsQuery for games.project-zomboid", async () => {
+    const { db, config, root } = tempConfig();
+    let queried = 0;
+    const queries = {
+      queryServer: async () => {
+        queried += 1;
+        return { online: false, error: "should_not_run" } satisfies LiveServerState;
+      },
+    } as Pick<ServerQueryService, "queryServer"> as ServerQueryService;
+    const { joinReady, id } = await seedPzUdp({
+      db,
+      config,
+      root,
+      queryDialect: "none",
+      queries,
+    });
+
+    const report = await joinReady.probe(id);
+    expect(queried).toBe(0);
+    expect(report.reason).toBe("udp_join_unproven");
+    expect(report.queryOnline).toBeNull();
   });
 });

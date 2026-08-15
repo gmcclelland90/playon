@@ -263,6 +263,39 @@ describe("evaluateJoinReady", () => {
     expect(result.reason).toBe("udp_join_unproven");
     expect(result.status).toBe("degraded");
   });
+
+  it("treats query success as extra UDP proof, not the only joinable path", () => {
+    const withQuery = evaluateJoinReady({
+      processStatus: "running",
+      joinPath: advertisedOpen,
+      queryOnline: true,
+      protocol: "udp",
+    });
+    expect(withQuery.ready).toBe(true);
+    expect(withQuery.reason).toBe("query_online");
+
+    const withoutQuery = evaluateJoinReady({
+      processStatus: "running",
+      joinPath: advertisedOpen,
+      queryOnline: null,
+      protocol: "udp",
+    });
+    expect(withoutQuery.reason).toBe("udp_join_unproven");
+    expect(withoutQuery.ready).toBe(false);
+  });
+
+  it("does not let a failed query override udp_join_unproven when queryOnline is null", () => {
+    const result = evaluateJoinReady({
+      processStatus: "running",
+      joinPath: advertisedOpen,
+      queryOnline: null,
+      protocol: "udp",
+      hostPortsBound: true,
+    });
+    expect(result.reason).toBe("udp_join_unproven");
+    expect(result.reason).not.toBe("query_offline");
+    expect(result.ready).toBe(false);
+  });
 });
 
 describe("playerPanelStatusFromJoinReady", () => {

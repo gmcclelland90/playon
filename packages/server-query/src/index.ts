@@ -15,6 +15,15 @@ export {
 } from "./registry.js";
 export { minecraftStatusConnector, parseMinecraftStatusJson, writeVarInt } from "./connectors/minecraft-status.js";
 export { factorioConnector, probeFactorioRcon } from "./connectors/factorio.js";
+export {
+  projectZomboidConnector,
+  parseRakNetUnconnectedPong,
+  encodeRakNetUnconnectedPong,
+  liveStateFromPzPong,
+  parseA2sInfo,
+  buildA2sInfoRequest,
+  liveStateFromA2s,
+} from "./connectors/project-zomboid.js";
 export { fromGamedig, validateLiveState, offlineState } from "./normalize.js";
 export { createGamedigConnector } from "./gamedig-adapter.js";
 export {

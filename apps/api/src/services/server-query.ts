@@ -7,7 +7,7 @@ import {
   type QueryTarget,
 } from "@playon/server-query";
 import type { LiveServerState, QueryDialect, SkillMetadata } from "@playon/shared";
-import { offlineState } from "@playon/shared";
+import { offlineState, resolveQueryDialect } from "@playon/shared";
 import type { AppConfig } from "../config.js";
 import { readSkillMarker } from "./skill-marker.js";
 import { loadSkillMetadata, skillsRootsForWorkspace } from "./skills.js";
@@ -66,10 +66,11 @@ export class ServerQueryService {
     );
     const entry = skillName ? loadSkillMetadata(roots, skillName) : null;
     const meta = entry?.metadata ?? null;
-    const dialect: QueryDialect =
+    const dialect = resolveQueryDialect(
+      skillName,
       (meta?.queryDialect && meta.queryDialect !== "none" ? meta.queryDialect : undefined) ??
-      (marker.queryDialect && marker.queryDialect !== "none" ? marker.queryDialect : undefined) ??
-      "none";
+        (marker.queryDialect && marker.queryDialect !== "none" ? marker.queryDialect : undefined),
+    );
     if (dialect === "none") {
       return offlineState("query_dialect_none");
     }
@@ -147,7 +148,10 @@ export class ServerQueryService {
       if (!entry) return offlineState(`unknown_skill: ${args.skillName}`);
       skillDir = entry.path;
       meta = entry.metadata;
-      dialect = args.queryDialect ?? meta.queryDialect ?? "skill_module";
+      dialect = resolveQueryDialect(
+        String(args.skillName),
+        args.queryDialect ?? meta.queryDialect,
+      );
       connectorRel = meta.queryConnector ?? DEFAULT_QUERY_CONNECTOR;
     }
 

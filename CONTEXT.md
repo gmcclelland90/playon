@@ -34,7 +34,7 @@ Canonical catalog of agent tools. A **Tool Entry** colocates the LLM definition,
 
 ## Query Dialect
 
-Read-only live discovery protocol for a Game or Platform package (`minecraft_status`, `a2s`, `skill_module`, …). Owned by the Connector registry (`DialectDescriptor` + `builtInDialectIds`); distinct from admin/RCON dialects. Built-ins carry `portPreference` (`game` | `query`); `none` and `skill_module` stay outside the built-in set.
+Read-only live discovery protocol for a Game or Platform package (`minecraft_status`, `a2s`, `project_zomboid`, `skill_module`, …). Owned by the Connector registry (`DialectDescriptor` + `builtInDialectIds`); distinct from admin/RCON dialects. Built-ins carry `portPreference` (`game` | `query`); `none` and `skill_module` stay outside the built-in set.
 
 ## Live Server State
 

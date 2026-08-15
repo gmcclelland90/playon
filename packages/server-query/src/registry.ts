@@ -2,6 +2,7 @@ import type { QueryDialect } from "@playon/shared";
 import { createGamedigConnector } from "./gamedig-adapter.js";
 import { factorioConnector } from "./connectors/factorio.js";
 import { minecraftStatusConnector } from "./connectors/minecraft-status.js";
+import { projectZomboidConnector } from "./connectors/project-zomboid.js";
 import { createSkillModuleConnector } from "./skill-module/loader.js";
 import type { Connector, SkillModuleResolve } from "./types.js";
 
@@ -67,6 +68,12 @@ const descriptors: DialectDescriptor[] = [
     // Prefer skill queryPortName=rcon (TCP). gamedig factorio is public-API-only.
     portPreference: "query",
     connector: factorioConnector,
+  },
+  {
+    id: "project_zomboid",
+    // Steam-facing game UDP (16261) speaks A2S; direct RakNet UDPPort is often +1.
+    portPreference: "game",
+    connector: projectZomboidConnector,
   },
 ];
 

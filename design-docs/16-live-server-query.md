@@ -38,6 +38,7 @@ Connectors must not invent missing data.
 | `unreal` | UT99 | Prefer skill `query` port |
 | `terraria` | Terraria | GameDig-class |
 | `factorio` | Factorio | UDP query |
+| `project_zomboid` | Project Zomboid | Steam A2S_INFO on game UDP (player counts); RakNet pong is empty-identifier liveness |
 | `skill_module` | Agent-authored | Load `query/connector.mjs` from the skill |
 | `none` | No live query | Lifecycle / TCP health only |
 

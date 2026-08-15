@@ -1,6 +1,6 @@
 # Authoring query connectors
 
-PlayOn normalizes live stats into `LiveServerState` (`online`, `players`, `maxPlayers`, `map`, `mode`, `playerList`, …). Prefer a **built-in** `queryDialect` (`minecraft_status`, `a2s`, `valheim`, `unreal`, `terraria`, `factorio`) when it matches the game.
+PlayOn normalizes live stats into `LiveServerState` (`online`, `players`, `maxPlayers`, `map`, `mode`, `playerList`, …). Prefer a **built-in** `queryDialect` (`minecraft_status`, `a2s`, `valheim`, `unreal`, `terraria`, `factorio`, `project_zomboid`) when it matches the game.
 
 ## When to use `skill_module`
 
