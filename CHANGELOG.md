@@ -4,18 +4,23 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+## [0.2.9] — 2026-08-15
+
 ### Added
 
-- **Project Zomboid live query** — built-in `project_zomboid` dialect. A real dedicated `UNCONNECTED_PONG` is a 33-byte empty-identifier frame (liveness only). Player counts come from Steam `A2S_INFO` on the Steam-facing port (gamePort, then queryPort). Catalog `games.project-zomboid` + `queryDialect: none` still maps for live query; join-ready uses an explicit dialect only and treats `query_online` as extra UDP proof — a failed query stays `udp_join_unproven` (`#890`).
+- **Project Zomboid live query** — built-in `project_zomboid` dialect. A real dedicated `UNCONNECTED_PONG` is a 33-byte empty-identifier frame (liveness only). Player counts come from Steam `A2S_INFO` on the Steam-facing port (gamePort, then queryPort). Catalog `games.project-zomboid` + `queryDialect: none` still maps for live query; join-ready uses an explicit dialect only and treats `query_online` as extra UDP proof — a failed query stays `udp_join_unproven` (`#890` / `#893`).
 
 ### Fixed
 
-- **Player view UDP “Not joinable”** — UDP-only servers that are process-up with advertised host ports bound (or a live query) stay **Live** / `running` on the player panel. `udp_join_unproven` / `udp_not_tcp_probed` remain canary/host reason codes and no longer map to `degraded` / “Not joinable” (`#889`).
-- **Windows node OTA from 0.2.3** — 0.2.3/0.2.4 `performWindowsSelfUpdate` called `require("node:child_process")` in an ESM package (`require is not defined` right after extract). Current agents keep the ESM `import { spawn }`. Home detects that vintage on Windows and drives official OTA with a CommonJS-safe / PowerShell bootstrap (`fs_write_text` + `process_start`) so the old agent never claims `node_self_update`. Ships `deploy/windows/ota-esm-bootstrap.ps1` and `spawn-apply-update.cjs` (`#885`).
-- **Node-agent OTA / restart must not stop game servers** — After a Linux swap, systemd MAINPID exits so `Restart=always` starts the new binary. NZL-shaped units already use `KillMode=process` (OTA never rewrites `/etc/systemd`): only MAINPID is signaled; games and the Linux FIFO stdin holder stay in the unit cgroup and keep running. `keepStdin` uses a FIFO holder so agent death is not console EOF (Project Zomboid “Shutdown handling started”). Linux spawn uses a new session/pgrp; Windows `keepStdin` stays attached (FIFO is Linux-only). Node unit templates add `SendSIGHUP=no`. Best-effort cgroup move for hosts still on `KillMode=control-group`. Docker containers were never in the agent cgroup (`#886`).
+- **Player view UDP “Not joinable”** — UDP-only servers that are process-up with advertised host ports bound (or a live query) stay **Live** / `running` on the player panel. `udp_join_unproven` / `udp_not_tcp_probed` remain canary/host reason codes and no longer map to `degraded` / “Not joinable” (`#889` / `#891`).
+- **Windows node OTA from 0.2.3** — 0.2.3/0.2.4 `performWindowsSelfUpdate` called `require("node:child_process")` in an ESM package (`require is not defined` right after extract). Current agents keep the ESM `import { spawn }`. Home detects that vintage on Windows and drives official OTA with a CommonJS-safe / PowerShell bootstrap (`fs_write_text` + `process_start`) so the old agent never claims `node_self_update`. Ships `deploy/windows/ota-esm-bootstrap.ps1` and `spawn-apply-update.cjs` (`#885` / `#887`).
+- **Node-agent OTA / restart must not stop game servers** — After a Linux swap, systemd MAINPID exits so `Restart=always` starts the new binary. NZL-shaped units already use `KillMode=process` (OTA never rewrites `/etc/systemd`): only MAINPID is signaled; games and the Linux FIFO stdin holder stay in the unit cgroup and keep running. `keepStdin` uses a FIFO holder so agent death is not console EOF (Project Zomboid “Shutdown handling started”). Linux spawn uses a new session/pgrp; Windows `keepStdin` stays attached (FIFO is Linux-only). Node unit templates add `SendSIGHUP=no`. Best-effort cgroup move for hosts still on `KillMode=control-group`. Docker containers were never in the agent cgroup (`#886` / `#888`).
+- **e2e / Windows isolation** — `pnpm test:e2e` always builds first so Playwright has workspace `dist/`. API unit mocks stub `refineDockerCapability` so Windows CI does not clear `docker:true` and throw `no_eligible_node` (`#865` / `#44`).
 
 ### Notes
 
+- Update Home via OTA (**Settings → About / Updates → Update & restart**).
+- Update nodes from **Settings → Nodes** (Playon Ops applies node OTA; not part of this cut’s operator steps).
 - Existing hosts keep their installed unit. `KillMode=process` + FIFO is the NZL path; a supervisor loop is only for non-systemd (`pnpm dev`).
 - Home `playon.service` (API) is unchanged.
 - Friend / production game servers are not the repro — lab native fixture + unit tests only.
