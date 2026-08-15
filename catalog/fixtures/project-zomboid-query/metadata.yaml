@@ -1,0 +1,19 @@
+name: fixtures.project-zomboid-query
+version: 0.1.0
+game: Project Zomboid Query Fixture
+description: Fixture skill that declares the project_zomboid RakNet query dialect for unit tests.
+tags:
+  - fixture
+  - query
+  - ci
+containerSupport: none
+adminDialect: none
+queryDialect: project_zomboid
+ports:
+  - name: game
+    protocol: udp
+    default: 16261
+healthChecks:
+  - id: query
+    type: query_responding
+    onFail: escalate

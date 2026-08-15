@@ -26,9 +26,32 @@ export const QueryDialectSchema = z.enum([
   "unreal",
   "terraria",
   "factorio",
+  "project_zomboid",
   "skill_module",
 ]);
 export type QueryDialect = z.infer<typeof QueryDialectSchema>;
+
+/**
+ * Catalog skills may still ship `queryDialect: none` after a platform dialect
+ * lands. Map those known titles so *live query* (player counts) works before
+ * the next catalog bump. Join-ready must not use this for `wantsQuery` —
+ * a mapped miss must not become `query_offline` over `udp_join_unproven`.
+ */
+const SKILL_QUERY_DIALECT_DEFAULTS: Record<string, QueryDialect> = {
+  "games.project-zomboid": "project_zomboid",
+};
+
+/** Prefer an explicit skill dialect; otherwise apply a known-title default. */
+export function resolveQueryDialect(
+  skillName: string | undefined,
+  declared: QueryDialect | undefined | null,
+): QueryDialect {
+  if (declared && declared !== "none") return declared;
+  if (skillName && SKILL_QUERY_DIALECT_DEFAULTS[skillName]) {
+    return SKILL_QUERY_DIALECT_DEFAULTS[skillName]!;
+  }
+  return declared ?? "none";
+}
 
 export const SkillThemeIdSchema = z.enum(["default", "grass", "ember", "steel", "paper"]);
 export type SkillThemeId = z.infer<typeof SkillThemeIdSchema>;

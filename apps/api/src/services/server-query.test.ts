@@ -1,8 +1,10 @@
+import dgram from "node:dgram";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
+import { parseA2sInfo } from "@playon/server-query";
 import { createDb } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
 import type { AppConfig } from "../config.js";
@@ -72,5 +74,41 @@ describe("ServerQueryService", () => {
     expect(state.online).toBe(true);
     expect(state.map).toBe("testmap");
     expect(state.maxPlayers).toBe(4);
+  });
+
+  it("queryTest parses a fake PZ Steam A2S reply via project_zomboid dialect", async () => {
+    const { db, config } = tempConfig();
+    const servers = new ServerService(db, config);
+    const queries = new ServerQueryService(servers, config);
+    // Same captured A2S_INFO hex as packages/server-query project-zomboid tests.
+    const reply = Buffer.from(
+      "ffffffff49115468697320697320686f7720796f752064696564004d756c6472617567682c204b59007a6f6d626f69640050726f6a656374205a6f6d626f6964000000405000646c0001312e302e302e3000b1853f1438207224c740013b6d6f646465643b7076703b56455253494f4e3a34322e32300038a8010000000000",
+      "hex",
+    );
+    expect(parseA2sInfo(reply).players).toBe(64);
+    const socket = dgram.createSocket("udp4");
+    await new Promise<void>((resolve, reject) => {
+      socket.once("error", reject);
+      socket.on("message", (_msg, rinfo) => {
+        socket.send(reply, rinfo.port, rinfo.address);
+      });
+      socket.bind(0, "127.0.0.1", () => resolve());
+    });
+    const port = socket.address().port;
+    try {
+      const state = await queries.queryTest({
+        host: "127.0.0.1",
+        port,
+        gamePort: port,
+        queryDialect: "project_zomboid",
+        timeoutMs: 1000,
+      });
+      expect(state.online).toBe(true);
+      expect(state.players).toBe(64);
+      expect(state.maxPlayers).toBe(80);
+      expect(state.name).toBe("This is how you died");
+    } finally {
+      await new Promise<void>((resolve) => socket.close(() => resolve()));
+    }
   });
 });

@@ -109,6 +109,8 @@ export class JoinReadyService {
     const meta = skillName ? loadSkillMetadata(this.config.skillsRoots, skillName)?.metadata : null;
     const protocol = this.dbServers.gamePortProtocolForSkill(skillName);
     const join = await this.dbServers.joinInfoFor(server);
+    // Explicit skill dialect only. Do not map catalog `none` → a built-in:
+    // a failed/wrong query must not become query_offline over udp_join_unproven.
     const wantsQuery = Boolean(meta?.queryDialect && meta.queryDialect !== "none");
 
     if (server.status !== "running" && server.status !== "starting") {
@@ -145,7 +147,8 @@ export class JoinReadyService {
     let queryOnline: boolean | null = null;
     if (wantsQuery && this.queries) {
       const state = await this.queries.queryServer(server.id);
-      queryOnline = state.online;
+      // Extra UDP proof on success only. A miss stays null → udp_join_unproven.
+      queryOnline = state.online === true ? true : null;
     }
 
     const hostPortsBound = await this.dbServers.hostGamePortsBound(server);
