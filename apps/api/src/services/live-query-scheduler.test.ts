@@ -54,9 +54,11 @@ describe("LiveQueryScheduler player panel status", () => {
     const updated = await scheduler.tick();
     expect(updated).toBe(1);
     expect(publishForStatus).toHaveBeenCalledTimes(1);
-    expect(publishForStatus.mock.calls[0]?.[0]).toBe("srv-udp");
-    expect(publishForStatus.mock.calls[0]?.[1]).toBe("running");
-    expect(publishForStatus.mock.calls[0]?.[1]).not.toBe("degraded");
+    expect(publishForStatus).toHaveBeenCalledWith(
+      "srv-udp",
+      "running",
+      expect.objectContaining({ online: false }),
+    );
   });
 
   it("does not publish Not-joinable degraded for udp_not_tcp_probed when ports are bound", async () => {
@@ -79,6 +81,10 @@ describe("LiveQueryScheduler player panel status", () => {
       0,
     );
     await scheduler.tick();
-    expect(publishForStatus.mock.calls[0]?.[1]).toBe("running");
+    expect(publishForStatus).toHaveBeenCalledWith(
+      "srv-udp",
+      "running",
+      expect.objectContaining({ online: false }),
+    );
   });
 });
