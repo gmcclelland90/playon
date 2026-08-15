@@ -86,6 +86,14 @@ describe("parseNodeJobArgs", () => {
       version: "0.1.11",
       preserve: ["data", "node.env"],
     });
+    expect(
+      parseNodeJobArgs("node_self_update", {
+        downloadUrl: "https://example.com/playon-node-0.2.8-windows-x64.tar.gz",
+        sha256: "a".repeat(64),
+        version: "0.2.8",
+        via: "esm-bootstrap",
+      }).via,
+    ).toBe("esm-bootstrap");
   });
 
   it("fails with a typed validation error", () => {

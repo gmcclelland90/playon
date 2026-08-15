@@ -12,7 +12,11 @@ import {
   deriveNodePresence,
   isNewerVersion,
   LOCAL_NODE_ID,
+  NODE_SELF_UPDATE_VIA_ESM_BOOTSTRAP,
   UpdateManifestSchema,
+  windowsAgentNeedsEsmOtaBootstrap,
+  windowsOtaEsmBootstrapStartArgs,
+  windowsOtaEsmBootstrapWriteArgs,
   type UpdateAsset,
   type UpdateManifest,
   type UpdatePlatform,
@@ -541,11 +545,53 @@ export class UpdateService {
       };
     }
 
+    const preserve = ["data", "env", "node.env", "node.env.cmd"];
+    const vintageWindows = windowsAgentNeedsEsmOtaBootstrap({
+      os: row.os || "linux",
+      agentVersion: row.agentVersion || "0.0.0",
+    });
+
+    if (vintageWindows) {
+      // 0.2.3/0.2.4 Windows `require()`s spawn in ESM after extract (#885).
+      // Track the update for Settings / heartbeat, but never let that vintage
+      // claim node_self_update. Drive the swap with fs_write_text + process_start.
+      const job = nodeJobService.enqueue(
+        nodeId,
+        "node_self_update",
+        {
+          downloadUrl: asset.downloadUrl,
+          sha256: asset.sha256,
+          version: manifest.version,
+          preserve,
+          via: NODE_SELF_UPDATE_VIA_ESM_BOOTSTRAP,
+        },
+        { status: "running" },
+      );
+      nodeJobService.enqueue(nodeId, "fs_write_text", windowsOtaEsmBootstrapWriteArgs());
+      nodeJobService.enqueue(
+        nodeId,
+        "process_start",
+        windowsOtaEsmBootstrapStartArgs({
+          downloadUrl: asset.downloadUrl,
+          sha256: asset.sha256,
+          version: manifest.version,
+        }),
+      );
+      this.publishProgress(
+        "node",
+        "downloading",
+        `Queued ESM bootstrap update to ${manifest.version} for ${row.name}`,
+        nodeId,
+        0,
+      );
+      return { jobId: job.id, version: manifest.version };
+    }
+
     const job = nodeJobService.enqueue(nodeId, "node_self_update", {
       downloadUrl: asset.downloadUrl,
       sha256: asset.sha256,
       version: manifest.version,
-      preserve: ["data", "env", "node.env", "node.env.cmd"],
+      preserve,
     });
 
     this.publishProgress(

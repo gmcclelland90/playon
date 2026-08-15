@@ -11,7 +11,12 @@ import { hashPassword } from "../auth/password.js";
 import { createSession, SESSION_COOKIE } from "../auth/session.js";
 import { users, nodes } from "../db/schema.js";
 import { readAppVersion } from "./app-version.js";
-import { attachNodeJobPersist, NodeJobService } from "./node-jobs.js";
+import {
+  NODE_SELF_UPDATE_VIA_ESM_BOOTSTRAP,
+  WINDOWS_OTA_ESM_BOOTSTRAP_PROCESS_NAME,
+  WINDOWS_OTA_ESM_BOOTSTRAP_REL,
+} from "@playon/shared";
+import { attachNodeJobPersist, nodeJobService, NodeJobService } from "./node-jobs.js";
 import { clearUpdateManifestCacheForTests } from "./updates.js";
 
 function testConfig(dataRoot: string): AppConfig {
@@ -238,17 +243,80 @@ describe("updates API", () => {
     const zomboid = body.nodes.find((n) => n.nodeId === "upd-zomboid");
     expect(win?.updateJob).toMatchObject({
       jobId: queuedBody.jobId,
-      status: "queued",
+      status: "running",
       version: homeVer,
     });
     expect(wsl?.updateJob).toBeNull();
     expect(zomboid?.updateJob).toBeNull();
 
+    const tracked = nodeJobService.get(queuedBody.jobId);
+    expect(tracked?.args.via).toBe(NODE_SELF_UPDATE_VIA_ESM_BOOTSTRAP);
+    expect(nodeJobService.findActive("upd-win-parent", "fs_write_text")?.args.path).toBe(
+      WINDOWS_OTA_ESM_BOOTSTRAP_REL,
+    );
+    expect(nodeJobService.findActive("upd-win-parent", "process_start")?.args.name).toBe(
+      WINDOWS_OTA_ESM_BOOTSTRAP_PROCESS_NAME,
+    );
+    expect(nodeJobService.claimNext("upd-win-parent")?.kind).toBe("fs_write_text");
+
     const persistFile = path.join(root, "node-self-update-jobs.json");
     expect(fs.existsSync(persistFile)).toBe(true);
     const restored = new NodeJobService();
     restored.attachPersistFile(persistFile);
-    expect(restored.get(queuedBody.jobId)?.status).toBe("queued");
+    expect(restored.get(queuedBody.jobId)?.status).toBe("running");
     expect(restored.get(queuedBody.jobId)?.nodeId).toBe("upd-win-parent");
+    expect(restored.get(queuedBody.jobId)?.args.via).toBe(NODE_SELF_UPDATE_VIA_ESM_BOOTSTRAP);
+    expect(restored.claimNext("upd-win-parent")?.kind).toBe("fs_write_text");
+  });
+
+  it("queues a claimable node_self_update for Windows agents that already import spawn", async () => {
+    const homeVer = readAppVersion();
+    const sha = "c".repeat(64);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("latest.json")) {
+          return {
+            ok: true,
+            json: async () => ({
+              version: homeVer,
+              channel: "stable",
+              notesUrl: "https://playon.games/docs/changelog",
+              home: {},
+              node: {
+                "windows-x64": {
+                  downloadUrl: `https://github.com/gmcclelland90/playon/releases/download/v${homeVer}/playon-node-${homeVer}-windows-x64.tar.gz`,
+                  sha256: sha,
+                },
+              },
+            }),
+          };
+        }
+        return { ok: false, status: 404 };
+      }),
+    );
+    await db.insert(nodes).values({
+      id: "upd-win-current",
+      name: "playon-win-current",
+      os: "windows",
+      docker: false,
+      native: true,
+      lastSeenAt: new Date(),
+      kind: "lan",
+      agentVersion: "0.2.5",
+      tunnelStatus: "none",
+    });
+    const app = createApp(db, testConfig(root));
+    attachNodeJobPersist(root);
+    const queued = await app.request("/api/nodes/upd-win-current/update", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(queued.status).toBe(200);
+    const body = (await queued.json()) as { jobId: string };
+    expect(nodeJobService.get(body.jobId)?.args.via).toBeUndefined();
+    expect(nodeJobService.findActive("upd-win-current", "fs_write_text")).toBeNull();
+    expect(nodeJobService.claimNext("upd-win-current")?.kind).toBe("node_self_update");
   });
 });

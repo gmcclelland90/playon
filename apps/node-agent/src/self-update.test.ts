@@ -156,6 +156,12 @@ describe("performNodeSelfUpdate", () => {
     expect(src).toMatch(/buildArchiveExtractCommands/);
   });
 
+  it("does not call require() in the ESM self-update helper (#885)", () => {
+    const src = fs.readFileSync(fileURLToPath(new URL("./self-update.ts", import.meta.url)), "utf8");
+    expect(src).not.toMatch(/\brequire\s*\(/);
+    expect(src).toMatch(/import \{ spawn \} from "node:child_process"/);
+  });
+
   it("swapInstallTree does not delete sibling processes under data tree (#837 regression)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-sibling-"));
     try {
@@ -225,6 +231,7 @@ describe("apply-self-update.ps1", () => {
     expect(src).toMatch(/CREATE_BREAKAWAY_FROM_JOB/);
     expect(src.indexOf("Disable-ScheduledTask")).toBeLessThan(src.indexOf("Waiting for node-agent"));
     expect(src.indexOf("Register-ScheduledTask")).toBeLessThan(src.indexOf("Waiting for node-agent"));
+    expect(src).not.toMatch(/\brequire\s*\(/);
   });
 });
 

@@ -4,6 +4,9 @@ import { nanoid } from "nanoid";
 import {
   NodeJobError,
   NodeJobKindSchema,
+  WINDOWS_OTA_ESM_BOOTSTRAP_PROCESS_NAME,
+  WINDOWS_OTA_ESM_BOOTSTRAP_REL,
+  isEsmBootstrapSelfUpdateArgs,
   isNewerVersion,
   parseNodeJobArgs,
   type NodeJobKind,
@@ -27,6 +30,15 @@ export interface NodeJob {
 
 /** Kinds that survive a Home process restart (JSON file, not sqlite). */
 const DURABLE_JOB_KINDS = new Set<NodeJobKind>(["node_self_update"]);
+
+/** Vintage Windows OTA helpers must persist with the tracked self-update (#885). */
+export function isDurableOtaBootstrapJob(job: Pick<NodeJob, "kind" | "args">): boolean {
+  if (job.kind === "fs_write_text" && job.args.path === WINDOWS_OTA_ESM_BOOTSTRAP_REL) return true;
+  if (job.kind === "process_start" && job.args.name === WINDOWS_OTA_ESM_BOOTSTRAP_PROCESS_NAME) {
+    return true;
+  }
+  return false;
+}
 
 /** Running self-update is not abandoned on jobs/next — the Windows helper swaps after the agent exits. */
 export function shouldAbandonRunningJobOnReclaim(kind: NodeJobKind): boolean {
@@ -86,7 +98,9 @@ export class NodeJobService {
 
   private durableJobs(): NodeJob[] {
     return [...this.jobs.values()].filter(
-      (j) => DURABLE_JOB_KINDS.has(j.kind) && (j.status === "queued" || j.status === "running"),
+      (j) =>
+        (j.status === "queued" || j.status === "running") &&
+        (DURABLE_JOB_KINDS.has(j.kind) || isDurableOtaBootstrapJob(j)),
     );
   }
 
@@ -125,7 +139,12 @@ export class NodeJobService {
     }
   }
 
-  enqueue(nodeId: string, kind: NodeJobKind, args: Record<string, unknown> = {}): NodeJob {
+  enqueue(
+    nodeId: string,
+    kind: NodeJobKind,
+    args: Record<string, unknown> = {},
+    opts?: { status?: "queued" | "running" },
+  ): NodeJob {
     NodeJobKindSchema.parse(kind);
     if (!this.supportsKind(nodeId, kind)) {
       throw new NodeJobError("unsupported_job_kind", {
@@ -140,12 +159,13 @@ export class NodeJobService {
       this.forgetJobKinds(nodeId);
     }
     const now = new Date().toISOString();
+    const status = opts?.status ?? "queued";
     const job: NodeJob = {
       id: nanoid(),
       nodeId,
       kind,
       args: validated,
-      status: "queued",
+      status,
       createdAt: now,
       updatedAt: now,
     };
@@ -198,14 +218,23 @@ export class NodeJobService {
       j.updatedAt = now;
     }
     const selfUpdateInFlight = [...this.jobs.values()].some(
-      (j) => j.nodeId === nodeId && j.kind === "node_self_update" && j.status === "running",
+      (j) =>
+        j.nodeId === nodeId &&
+        j.kind === "node_self_update" &&
+        j.status === "running" &&
+        !isEsmBootstrapSelfUpdateArgs(j.args),
     );
     if (selfUpdateInFlight) {
       this.writePersist();
       return null;
     }
     const queued = [...this.jobs.values()]
-      .filter((j) => j.nodeId === nodeId && j.status === "queued")
+      .filter(
+        (j) =>
+          j.nodeId === nodeId &&
+          j.status === "queued" &&
+          !isEsmBootstrapSelfUpdateArgs(j.args),
+      )
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const job = queued[0];
     if (!job) {
@@ -339,7 +368,7 @@ function isPersistedDurableJob(raw: unknown): raw is NodeJob {
     j.id.length > 0 &&
     typeof j.nodeId === "string" &&
     j.nodeId.length > 0 &&
-    DURABLE_JOB_KINDS.has(j.kind) &&
+    (DURABLE_JOB_KINDS.has(j.kind) || isDurableOtaBootstrapJob(j)) &&
     (j.status === "queued" || j.status === "running") &&
     typeof j.args === "object" &&
     j.args !== null &&

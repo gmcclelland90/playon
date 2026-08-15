@@ -90,6 +90,7 @@ After each release, skim CHANGELOG **Fixed** entries and file `test-debt` for ga
 
 ## Known gaps
 
+- Windows 0.2.3/0.2.4 OTA `require is not defined` is unit-covered (vintage ESM helper throw, Home bootstrap jobs, claimNext skip); live playon-win-1 OTA is not in `pnpm verify` ([#885](https://github.com/gmcclelland90/playon/issues/885))
 - Windows PE / Steam dual-place coverage still depends on `playon-win-1` online ([#46](https://github.com/gmcclelland90/playon/issues/46))
 - Windows container place+start is unit-covered; live `har0x/sbox-server` on Server Core needs Docker Engine in Windows container mode on the node ([#873](https://github.com/gmcclelland90/playon/issues/873))
 - Join-path live TCP on WSL sibling and Windows PE is lab-only (unit covers `resolveJoinAddress`; [lab-matrix.md](lab-matrix.md), [#843](https://github.com/gmcclelland90/playon/issues/843))
