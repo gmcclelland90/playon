@@ -1,5 +1,6 @@
 import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { resolveInJail } from "./path-jail.js";
 import type { ProcessInfo, ProcessSpec, ProcessSupervisor } from "./types.js";
@@ -295,9 +296,7 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     }
     const line = data.endsWith("\n") ? data : `${data}\n`;
     if (tracked.stdinWriteFd != null) {
-      await new Promise<void>((resolve, reject) => {
-        fs.write(tracked.stdinWriteFd!, line, "utf8", (err) => (err ? reject(err) : resolve()));
-      });
+      fs.writeSync(tracked.stdinWriteFd, line);
       return;
     }
     const stdin = tracked.child.stdin;
