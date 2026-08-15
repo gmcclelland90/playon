@@ -13,8 +13,9 @@ WorkingDirectory=/home/playon/src/playon
 ExecStart=/usr/bin/pnpm start
 Restart=always
 RestartSec=5
-# Keep OTA/apply helpers alive when the main process exits for self-update.
+# Only the service MAINPID — OTA helpers and (on the node unit) game children (#886).
 KillMode=process
+SendSIGHUP=no
 # Give Paper / Docker-backed starts room to breathe under memory pressure.
 LimitNOFILE=65535
 # Prefer :80 for http://playon.local (falls back to PLAYON_PORT without this).

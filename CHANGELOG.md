@@ -12,6 +12,12 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 - **Player view UDP “Not joinable”** — UDP-only servers that are process-up with advertised host ports bound (or a live query) stay **Live** / `running` on the player panel. `udp_join_unproven` / `udp_not_tcp_probed` remain canary/host reason codes and no longer map to `degraded` / “Not joinable” (`#889`).
 - **Windows node OTA from 0.2.3** — 0.2.3/0.2.4 `performWindowsSelfUpdate` called `require("node:child_process")` in an ESM package (`require is not defined` right after extract). Current agents keep the ESM `import { spawn }`. Home detects that vintage on Windows and drives official OTA with a CommonJS-safe / PowerShell bootstrap (`fs_write_text` + `process_start`) so the old agent never claims `node_self_update`. Ships `deploy/windows/ota-esm-bootstrap.ps1` and `spawn-apply-update.cjs` (`#885`).
+- **Node-agent OTA / restart must not stop game servers** — Linux self-update no longer `process.exit`s the systemd MAINPID (that path SIGTERMs every process still in the unit cgroup when `KillMode` is the default `control-group`, and OTA never rewrites `/etc/systemd`). After the swap, the same PID becomes a supervisor and forks the new agent so native children and their stdin/ports stay up. Native spawn always uses a new session/process group (Windows included) and `keepStdin` uses a FIFO holder so agent death is not console EOF. Unit templates set `KillMode=process` + `SendSIGHUP=no`. Docker containers were never in the agent cgroup; tests assert update does not stop them either (`#886`).
+
+### Notes
+
+- Existing hosts keep their installed unit until the next `install-node.sh` / installer run. The in-process supervisor covers OTA on those units without a root unit rewrite.
+- Friend / production game servers are not the repro — lab native fixture + unit tests only.
 
 ## [0.2.8] — 2026-08-14
 

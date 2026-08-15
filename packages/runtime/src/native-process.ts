@@ -9,6 +9,10 @@ interface TrackedProcess {
   child: ChildProcess;
   cwdJail: string;
   logFd?: number;
+  /** Extra write end so agent exit does not EOF a keepStdin console. */
+  stdinWriteFd?: number;
+  stdinHolder?: ChildProcess;
+  stdinDir?: string;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -53,6 +57,59 @@ export function cmdlineOrphanRoots(cwd: string): string[] {
 }
 
 /**
+ * `/proc/<pid>/stat` pgrp (field 5). Used to prove a game is not in the
+ * agent's process group — `kill(-agentPid)` / systemd session teardown
+ * must not land on the dedicated server (#886).
+ */
+export function readProcessGroupId(pid: number): number | null {
+  if (process.platform === "win32") return null;
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const close = stat.lastIndexOf(")");
+    if (close < 0) return null;
+    const rest = stat.slice(close + 2).split(" ");
+    const pgrp = Number(rest[2]);
+    return Number.isInteger(pgrp) && pgrp > 0 ? pgrp : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Games must outlive the node-agent. Always start a new session/process group
+ * (`detached: true` on Unix; new process group on Windows). GoldSrc + piped
+ * stdin is the historical exception and is handled by using a FIFO, not by
+ * staying in the agent's group.
+ */
+export function supervisedChildDetached(): boolean {
+  return true;
+}
+
+/**
+ * Hold a write end on a FIFO so `keepStdin` games do not see EOF when the
+ * agent process exits (systemd restart / crash). The agent also writes here.
+ */
+function openHeldStdin(): { readFd: number; writeFd: number; holder: ChildProcess; dir: string } | null {
+  if (process.platform === "win32") return null;
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "playon-stdin-"));
+  const fifo = path.join(dir, "in");
+  try {
+    execFileSync("mkfifo", [fifo], { stdio: "ignore" });
+    const writeFd = fs.openSync(fifo, "r+");
+    const readFd = fs.openSync(fifo, "r");
+    const holder = spawn("sleep", ["infinity"], {
+      detached: true,
+      stdio: [writeFd, "ignore", "ignore"],
+    });
+    holder.unref();
+    return { readFd, writeFd, holder, dir };
+  } catch {
+    fs.rmSync(dir, { recursive: true, force: true });
+    return null;
+  }
+}
+
+/**
  * Spawns OS processes with cwd constrained to an optional jail root.
  * When `jailRoot` is set on the supervisor, `spec.cwd` must resolve inside it.
  */
@@ -68,11 +125,15 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     await this.reclaim(spec.name, cwd);
 
     let logFd: number | undefined;
-    // Detach long-running game servers so start() cannot stall on child I/O/session.
-    const detached = process.platform !== "win32";
-    // GoldSrc/HLDS (and some other native dedi) segfault with detached + piped stdin.
-    // Only keep a stdin pipe when the skill explicitly needs console admin.
-    const stdinMode: "pipe" | "ignore" = spec.keepStdin ? "pipe" : "ignore";
+    // New session/process group so stopping the agent parent cannot signal the game (#886).
+    const detached = supervisedChildDetached();
+    // GoldSrc/HLDS segfault with detached + piped stdin — use a FIFO holder instead of a pipe.
+    const heldStdin = spec.keepStdin ? openHeldStdin() : null;
+    const stdinMode: "pipe" | "ignore" | number = heldStdin
+      ? heldStdin.readFd
+      : spec.keepStdin
+        ? "pipe"
+        : "ignore";
     let stdio: Array<"pipe" | "ignore" | number> = [stdinMode, "ignore", "ignore"];
     if (spec.logFile) {
       const logPath = path.isAbsolute(spec.logFile)
@@ -118,11 +179,17 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
           /* ignore */
         }
       }
+      this.releaseHeldStdin(heldStdin);
       throw err;
     }
 
-    if (process.platform !== "win32") {
-      child.unref();
+    child.unref();
+    if (heldStdin) {
+      try {
+        fs.closeSync(heldStdin.readFd);
+      } catch {
+        /* child holds the read end */
+      }
     }
     if (child.stdin) {
       // A game that exits first must turn a late console write into a rejected
@@ -150,7 +217,15 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     // Keep a listener so late spawn failures never become unhandled.
     child.on("error", () => undefined);
 
-    this.procs.set(id, { info, child, cwdJail: cwd, logFd });
+    this.procs.set(id, {
+      info,
+      child,
+      cwdJail: cwd,
+      logFd,
+      stdinWriteFd: heldStdin?.writeFd,
+      stdinHolder: heldStdin?.holder,
+      stdinDir: heldStdin?.dir,
+    });
     return { ...info };
   }
 
@@ -218,11 +293,17 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     if (!tracked) {
       throw new Error("stdin_unavailable: no supervised process for this identity");
     }
+    const line = data.endsWith("\n") ? data : `${data}\n`;
+    if (tracked.stdinWriteFd != null) {
+      await new Promise<void>((resolve, reject) => {
+        fs.write(tracked.stdinWriteFd!, line, "utf8", (err) => (err ? reject(err) : resolve()));
+      });
+      return;
+    }
     const stdin = tracked.child.stdin;
     if (!stdin || stdin.destroyed) {
       throw new Error("stdin_unavailable: process console is closed");
     }
-    const line = data.endsWith("\n") ? data : `${data}\n`;
     await new Promise<void>((resolve, reject) => {
       stdin.write(line, (err) => (err ? reject(err) : resolve()));
     });
@@ -238,13 +319,50 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
   }
 
   private closeLogFd(tracked: TrackedProcess): void {
-    if (tracked.logFd == null) return;
-    try {
-      fs.closeSync(tracked.logFd);
-    } catch {
-      // already closed
+    if (tracked.logFd != null) {
+      try {
+        fs.closeSync(tracked.logFd);
+      } catch {
+        // already closed
+      }
+      tracked.logFd = undefined;
     }
-    tracked.logFd = undefined;
+    this.releaseHeldStdin({
+      readFd: undefined,
+      writeFd: tracked.stdinWriteFd,
+      holder: tracked.stdinHolder,
+      dir: tracked.stdinDir,
+    });
+    tracked.stdinWriteFd = undefined;
+    tracked.stdinHolder = undefined;
+    tracked.stdinDir = undefined;
+  }
+
+  private releaseHeldStdin(held?: {
+    readFd?: number;
+    writeFd?: number;
+    holder?: ChildProcess;
+    dir?: string;
+  } | null): void {
+    if (!held) return;
+    if (held.holder) {
+      try {
+        held.holder.kill("SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    }
+    for (const fd of [held.readFd, held.writeFd]) {
+      if (fd == null) continue;
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* already closed */
+      }
+    }
+    if (held.dir) {
+      fs.rmSync(held.dir, { recursive: true, force: true });
+    }
   }
 
   private signalTracked(tracked: TrackedProcess): void {

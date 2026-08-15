@@ -137,8 +137,9 @@ WorkingDirectory=${PLAYON_ROOT}
 ExecStart=${NODE_BIN} apps/api/dist/index.js
 Restart=always
 RestartSec=5
-# Keep OTA/apply helpers alive when the main process exits for self-update.
+# Only the service MAINPID — OTA helpers must outlive the API process.
 KillMode=process
+SendSIGHUP=no
 LimitNOFILE=65535
 # Prefer :80 for http://playon.local (falls back to PLAYON_PORT without this).
 AmbientCapabilities=CAP_NET_BIND_SERVICE
@@ -167,7 +168,9 @@ WorkingDirectory=${PLAYON_ROOT}
 ExecStart=${NODE_BIN} apps/node-agent/dist/index.js
 Restart=always
 RestartSec=5
+# Only the agent MAINPID — never SIGTERM the supervised game tree on OTA/restart (#886).
 KillMode=process
+SendSIGHUP=no
 
 [Install]
 WantedBy=multi-user.target

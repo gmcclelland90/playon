@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +8,15 @@ import {
   assertAllowedUpdateDownloadUrl,
   buildArchiveExtractCommands,
 } from "@playon/shared";
+
+/** Child exit that means "swap is on disk; relaunch me" — not a crash. */
+export const AGENT_RELAUNCH_EXIT_CODE = 75;
+
+export const AGENT_SUPERVISED_ENV = "PLAYON_AGENT_SUPERVISED";
+
+export function isAgentSupervised(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[AGENT_SUPERVISED_ENV] === "1";
+}
 
 function copyTree(from: string, to: string): void {
   fs.mkdirSync(to, { recursive: true });
@@ -262,4 +271,82 @@ function performWindowsSelfUpdate(opts: {
     preserved: opts.preserve,
     restartRequired: true,
   };
+}
+
+export function resolveAgentEntry(installRoot: string): string {
+  const swapped = path.join(installRoot, "apps", "node-agent", "dist", "index.js");
+  if (fs.existsSync(swapped)) return swapped;
+  return process.argv[1] || swapped;
+}
+
+/**
+ * After a Linux swap, do not `process.exit` the systemd MAINPID: that restarts
+ * the unit and (with default KillMode=control-group, or a unit that was never
+ * rewritten by OTA) SIGTERMs every game still in the cgroup (#886).
+ *
+ * This PID stays alive as a supervisor and forks the new agent. Game children
+ * keep their parent and their stdin write ends. A child that is already
+ * supervised just exits 75 so the parent loop relaunches it.
+ *
+ * Windows still exits: apply-self-update.ps1 waits for this PID, then swaps.
+ */
+export function relaunchUpdatedAgent(opts: {
+  installRoot: string;
+  skipExit?: boolean;
+  /** Tests: do not take over this process. */
+  spawnOnly?: boolean;
+}): ChildProcess | void {
+  if (opts.skipExit) return;
+  if (process.platform === "win32") {
+    setTimeout(() => process.exit(0), 200);
+    return;
+  }
+  if (isAgentSupervised()) {
+    setTimeout(() => process.exit(AGENT_RELAUNCH_EXIT_CODE), 200);
+    return;
+  }
+  const entry = resolveAgentEntry(opts.installRoot);
+  return runAgentSupervisorLoop({
+    nodeBin: process.execPath,
+    argv: [entry],
+    env: process.env,
+    spawnOnly: opts.spawnOnly,
+  });
+}
+
+export function runAgentSupervisorLoop(opts: {
+  nodeBin: string;
+  argv: string[];
+  env?: NodeJS.ProcessEnv;
+  spawnOnly?: boolean;
+  /** Tests: relaunch on 75 but do not exit the test runner. */
+  exitProcess?: boolean;
+  onSpawn?: (child: ChildProcess) => void;
+}): ChildProcess {
+  const env = { ...opts.env, [AGENT_SUPERVISED_ENV]: "1" };
+  const spawnChild = (): ChildProcess => {
+    const next = spawn(opts.nodeBin, opts.argv, {
+      stdio: "inherit",
+      env,
+      detached: false,
+    });
+    opts.onSpawn?.(next);
+    return next;
+  };
+
+  const child = spawnChild();
+  if (opts.spawnOnly) return child;
+
+  const loop = (current: ChildProcess) => {
+    current.once("exit", (code, signal) => {
+      if (code === AGENT_RELAUNCH_EXIT_CODE) {
+        loop(spawnChild());
+        return;
+      }
+      if (opts.exitProcess === false) return;
+      process.exit(code ?? (signal ? 1 : 0));
+    });
+  };
+  loop(child);
+  return child;
 }

@@ -5,8 +5,13 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  AGENT_RELAUNCH_EXIT_CODE,
+  AGENT_SUPERVISED_ENV,
+  isAgentSupervised,
   performNodeSelfUpdate,
   requireWindowsUpdateHelper,
+  resolveAgentEntry,
+  runAgentSupervisorLoop,
   runExtractCommand,
   swapInstallTree,
 } from "./self-update.js";
@@ -209,6 +214,96 @@ describe("performNodeSelfUpdate", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("agent supervisor relaunch (#886)", () => {
+  it("treats PLAYON_AGENT_SUPERVISED=1 as already supervised", () => {
+    expect(isAgentSupervised({ [AGENT_SUPERVISED_ENV]: "1" })).toBe(true);
+    expect(isAgentSupervised({})).toBe(false);
+    expect(AGENT_RELAUNCH_EXIT_CODE).toBe(75);
+  });
+
+  it("resolves the swapped agent entry when present", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-entry-"));
+    try {
+      const dest = path.join(root, "apps", "node-agent", "dist");
+      fs.mkdirSync(dest, { recursive: true });
+      fs.writeFileSync(path.join(dest, "index.js"), "// new");
+      expect(resolveAgentEntry(root)).toBe(path.join(dest, "index.js"));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("relaunch loop does not stop a sibling process", async () => {
+    if (process.platform === "win32") return;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "playon-sup-"));
+    const stamp = path.join(dir, "n");
+    const ready = path.join(dir, "ready");
+    fs.writeFileSync(stamp, "0");
+    const sibling = spawn("sleep", ["30"], { detached: true, stdio: "ignore" });
+    sibling.unref();
+    const children: import("node:child_process").ChildProcess[] = [];
+    try {
+      expect(sibling.pid).toBeTypeOf("number");
+      runAgentSupervisorLoop({
+        nodeBin: process.execPath,
+        argv: [
+          "-e",
+          `
+            const fs = require("node:fs");
+            const n = Number(fs.readFileSync(process.env.STAMP, "utf8"));
+            fs.writeFileSync(process.env.STAMP, String(n + 1));
+            if (n === 0) process.exit(${AGENT_RELAUNCH_EXIT_CODE});
+            fs.writeFileSync(process.env.READY, "1");
+            setTimeout(() => {}, 60_000);
+          `,
+        ],
+        env: { ...process.env, STAMP: stamp, READY: ready },
+        exitProcess: false,
+        onSpawn: (child) => children.push(child),
+      });
+      const deadline = Date.now() + 8_000;
+      while (!fs.existsSync(ready) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(fs.existsSync(ready)).toBe(true);
+      expect(fs.readFileSync(stamp, "utf8")).toBe("2");
+      expect(() => process.kill(sibling.pid!, 0)).not.toThrow();
+    } finally {
+      for (const child of children) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          /* gone */
+        }
+      }
+      try {
+        process.kill(sibling.pid!, "SIGKILL");
+      } catch {
+        /* gone */
+      }
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("OTA path does not process.exit the MAINPID on Linux and never stops servers", () => {
+    const src = fs.readFileSync(fileURLToPath(new URL("./self-update.ts", import.meta.url)), "utf8");
+    const index = fs.readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8");
+    expect(src).toMatch(/runAgentSupervisorLoop/);
+    expect(src).toMatch(/AGENT_RELAUNCH_EXIT_CODE/);
+    expect(src).not.toMatch(/process_stop|container_stop|reclaim\(/);
+    expect(index).toMatch(/relaunchUpdatedAgent/);
+    expect(index).toMatch(/stopAgentLoops/);
+    expect(index).not.toMatch(/process\.exit\(0\)/);
+    const unit = fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "deploy", "install-node.sh"),
+      "utf8",
+    );
+    expect(unit).toMatch(/KillMode=process/);
+    expect(unit).toMatch(/SendSIGHUP=no/);
+    expect(unit).toMatch(/#886/);
   });
 });
 

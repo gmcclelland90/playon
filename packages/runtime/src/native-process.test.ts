@@ -2,7 +2,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { NativeProcessSupervisor, serverTreeRoot, cmdlineOrphanRoots } from "./native-process.js";
+import {
+  NativeProcessSupervisor,
+  serverTreeRoot,
+  cmdlineOrphanRoots,
+  readProcessGroupId,
+  supervisedChildDetached,
+} from "./native-process.js";
 import { PathJailError } from "./path-jail.js";
 import { spawn } from "node:child_process";
 
@@ -209,6 +215,89 @@ describe("NativeProcessSupervisor", () => {
     await expect(supervisor.writeStdin("server-x", ".", "say hi")).rejects.toThrow(
       /stdin_unavailable/,
     );
+  });
+
+  it("places a native child in its own process group so an agent SIGTERM misses it (#886)", async () => {
+    if (process.platform === "win32") return;
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-pgrp-"));
+    temps.push(jail);
+    const supervisor = new NativeProcessSupervisor(jail);
+    const info = await supervisor.start({
+      name: "server-pgrp",
+      command: "sleep",
+      args: ["30"],
+      cwd: ".",
+    });
+    expect(supervisedChildDetached()).toBe(true);
+    expect(info.pid).toBeTypeOf("number");
+    const childPgrp = readProcessGroupId(info.pid!);
+    const agentPgrp = readProcessGroupId(process.pid);
+    expect(childPgrp).toBeTypeOf("number");
+    expect(agentPgrp).toBeTypeOf("number");
+    expect(childPgrp).not.toBe(agentPgrp);
+    expect(childPgrp).toBe(info.pid);
+    await supervisor.stop(info.id);
+  });
+
+  it("supervised spawn options leave a child running after the parent exits (#886)", async () => {
+    if (process.platform === "win32") return;
+    const helper = spawn(
+      process.execPath,
+      [
+        "-e",
+        `
+          const { spawn } = require("node:child_process");
+          const child = spawn("sleep", ["30"], { detached: true, stdio: "ignore" });
+          child.unref();
+          process.stdout.write(String(child.pid));
+          setTimeout(() => process.exit(0), 80);
+        `,
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    const pidText = await new Promise<string>((resolve, reject) => {
+      let out = "";
+      helper.stdout?.on("data", (chunk: Buffer) => {
+        out += chunk.toString("utf8");
+      });
+      helper.once("error", reject);
+      helper.once("close", (code) => {
+        if (code === 0 && out.trim()) resolve(out.trim());
+        else reject(new Error(`helper exit ${code}: ${out}`));
+      });
+    });
+    const childPid = Number(pidText);
+    expect(childPid).toBeGreaterThan(0);
+    expect(() => process.kill(childPid, 0)).not.toThrow();
+    try {
+      process.kill(childPid, "SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  });
+
+  it("keepStdin console still works when stdin is a held FIFO (#886)", async () => {
+    if (process.platform === "win32") return;
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-fifo-"));
+    temps.push(jail);
+    const gameDir = path.join(jail, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+
+    const supervisor = new NativeProcessSupervisor(jail);
+    const info = await supervisor.start({
+      name: "server-x",
+      command: "sh",
+      args: ["-c", "while read line; do echo \"ran:$line\"; done"],
+      cwd: "game",
+      logFile: "logs/console.log",
+      keepStdin: true,
+    });
+
+    await supervisor.writeStdin("server-x", "game", "say hi");
+    await new Promise((r) => setTimeout(r, 400));
+
+    expect(fs.readFileSync(path.join(jail, "logs", "console.log"), "utf8")).toContain("ran:say hi");
+    await supervisor.stop(info.id);
   });
 
   it("redirects stdout to logFile when provided", async () => {
