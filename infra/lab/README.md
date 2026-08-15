@@ -29,3 +29,7 @@ journalctl -u playon-lab-cadence.service -n 100 --no-pager
 Disable filing without stopping the bar: `PLAYON_LAB_FILE_ISSUES=0` in the env file.
 
 Live visibility: [#52 Lab now](https://github.com/gmcclelland90/playon/issues/52) (short card) + cadence history comments / Actions `lab-report` HTML artifacts for detail.
+
+## Windows PE / dual-place expectation
+
+Daily cadence and weekend catalog sweeps assume **`playon-win-1` is online** with `join_host` set. If that node is down (or `PLAYON_MATRIX_WIN_NODE_ID=off`), matrix will skip Windows PE / depot skills and file a `coverage:windows-pe` alert when skip count ≥ `PLAYON_MATRIX_WIN_SKIP_ALERT_THRESHOLD` (default 1). See [docs/lab-matrix.md](../../docs/lab-matrix.md).

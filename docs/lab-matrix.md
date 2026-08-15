@@ -98,6 +98,14 @@ Wire the script into Playon Ops `playon-polish-canary` ([#835](https://github.co
 
 Everything else must pass E2E or be fixed.
 
+## Windows PE coverage (playon-win-1)
+
+**Minimum online expectation for daily cadence and weekend sweeps:** `playon-win-1` must be online with `join_host` set so Windows PE and Steam dual-place skills actually run. A green Linux-only sweep with PE skips is a **coverage gap**, not full catalog pass.
+
+Matrix status / `lab-report` print `windows_pe_skips=N` broken down by `windows_only_pe` / `windows_only_depot` / `unsupported_host_os`, plus `placement=on|off`. When placement is off/unavailable and that skip count meets `PLAYON_MATRIX_WIN_SKIP_ALERT_THRESHOLD` (default **1**; `0` disables), `lab-file-github-issues` opens/updates fingerprint `coverage:windows-pe` (`source:lab`, `test-debt`).
+
+Force skips intentionally: `PLAYON_MATRIX_WIN_NODE_ID=off` (still alerts on cadence unless threshold is `0`).
+
 ## Relation to merge bar
 
 Not part of `pnpm loop:verify`. Use after the merge bar is green when validating catalog skills.
