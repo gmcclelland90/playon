@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -8,6 +8,15 @@ import {
   assertAllowedUpdateDownloadUrl,
   buildArchiveExtractCommands,
 } from "@playon/shared";
+
+/** Child exit that means "swap is on disk; relaunch me" — not a crash. */
+export const AGENT_RELAUNCH_EXIT_CODE = 75;
+
+export const AGENT_SUPERVISED_ENV = "PLAYON_AGENT_SUPERVISED";
+
+export function isAgentSupervised(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env[AGENT_SUPERVISED_ENV] === "1";
+}
 
 function copyTree(from: string, to: string): void {
   fs.mkdirSync(to, { recursive: true });
@@ -262,4 +271,95 @@ function performWindowsSelfUpdate(opts: {
     preserved: opts.preserve,
     restartRequired: true,
   };
+}
+
+export function resolveAgentEntry(installRoot: string): string {
+  const swapped = path.join(installRoot, "apps", "node-agent", "dist", "index.js");
+  if (fs.existsSync(swapped)) return swapped;
+  return process.argv[1] || swapped;
+}
+
+/** True when systemd started this process (`Restart=always` will replace us). */
+export function isSystemdService(env: NodeJS.ProcessEnv = process.env): boolean {
+  return Boolean(env.INVOCATION_ID) || env.PLAYON_AGENT_EXIT_MAINPID === "1";
+}
+
+/**
+ * After a Linux swap, exit MAINPID when systemd is managing us. NZL-shaped
+ * units already have `KillMode=process` + `Restart=always`: only MAINPID is
+ * signaled, then a new agent starts. OTA never rewrites existing units, so
+ * this must not require MAINPID to live forever as a supervisor.
+ *
+ * Native `keepStdin` children survive because a FIFO holder keeps the write
+ * end open (agent death is not console EOF) and they are in their own pgrp.
+ * Moving them out of the agent cgroup is best-effort; `KillMode=process` is
+ * what existing hosts already have.
+ *
+ * A supervised child exits 75 so `runAgentSupervisorLoop` relaunches it.
+ * Without systemd (`pnpm dev`) the same PID becomes that supervisor.
+ * Windows exits so apply-self-update.ps1 can swap.
+ */
+export function relaunchUpdatedAgent(opts: {
+  installRoot: string;
+  skipExit?: boolean;
+  /** Tests: do not take over this process. */
+  spawnOnly?: boolean;
+}): ChildProcess | void {
+  if (opts.skipExit) return;
+  if (process.platform === "win32") {
+    setTimeout(() => process.exit(0), 200);
+    return;
+  }
+  if (isAgentSupervised()) {
+    setTimeout(() => process.exit(AGENT_RELAUNCH_EXIT_CODE), 200);
+    return;
+  }
+  if (isSystemdService()) {
+    setTimeout(() => process.exit(0), 200);
+    return;
+  }
+  const entry = resolveAgentEntry(opts.installRoot);
+  return runAgentSupervisorLoop({
+    nodeBin: process.execPath,
+    argv: [entry],
+    env: process.env,
+    spawnOnly: opts.spawnOnly,
+  });
+}
+
+export function runAgentSupervisorLoop(opts: {
+  nodeBin: string;
+  argv: string[];
+  env?: NodeJS.ProcessEnv;
+  spawnOnly?: boolean;
+  /** Tests: relaunch on 75 but do not exit the test runner. */
+  exitProcess?: boolean;
+  onSpawn?: (child: ChildProcess) => void;
+}): ChildProcess {
+  const env = { ...opts.env, [AGENT_SUPERVISED_ENV]: "1" };
+  const spawnChild = (): ChildProcess => {
+    const next = spawn(opts.nodeBin, opts.argv, {
+      stdio: "inherit",
+      env,
+      detached: false,
+    });
+    opts.onSpawn?.(next);
+    return next;
+  };
+
+  const child = spawnChild();
+  if (opts.spawnOnly) return child;
+
+  const loop = (current: ChildProcess) => {
+    current.once("exit", (code, signal) => {
+      if (code === AGENT_RELAUNCH_EXIT_CODE) {
+        loop(spawnChild());
+        return;
+      }
+      if (opts.exitProcess === false) return;
+      process.exit(code ?? (signal ? 1 : 0));
+    });
+  };
+  loop(child);
+  return child;
 }

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { buildHeartbeat, postHeartbeat } from "./heartbeat.js";
 import { claimNextJob, executeJob, reportJobProgress, reportJobResult } from "./jobs.js";
+import { relaunchUpdatedAgent } from "./self-update.js";
 import { readAgentVersion } from "./version.js";
 import { startWslKeepalive } from "./wsl-keepalive.js";
 
@@ -17,7 +18,10 @@ const agentVersion = readAgentVersion();
 
 fs.mkdirSync(dataRoot, { recursive: true });
 
+let agentStopped = false;
+
 async function tickHeartbeat() {
+  if (agentStopped) return;
   const payload = await buildHeartbeat({ nodeId, name, dataRoot, agentVersion });
   try {
     await postHeartbeat(apiBase, payload, nodeToken);
@@ -52,7 +56,12 @@ async function tickJobs() {
         (result as { restartRequired?: boolean }).restartRequired === true
       ) {
         console.log(`[node-agent] restarting after self-update`);
-        setTimeout(() => process.exit(0), 200);
+        stopAgentLoops();
+        const installRoot =
+          typeof (result as { installRoot?: unknown }).installRoot === "string"
+            ? (result as { installRoot: string }).installRoot
+            : process.env.PLAYON_INSTALL_ROOT || process.cwd();
+        relaunchUpdatedAgent({ installRoot });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "job_failed";
@@ -66,9 +75,15 @@ async function tickJobs() {
 
 /** Serialize jobs so long seeds don't overlap; heartbeats keep firing while a job awaits I/O. */
 let jobBusy = false;
+const agentTimers: ReturnType<typeof setInterval>[] = [];
+
+function stopAgentLoops(): void {
+  agentStopped = true;
+  for (const timer of agentTimers.splice(0)) clearInterval(timer);
+}
 
 async function tickJobsGuarded() {
-  if (jobBusy) return;
+  if (agentStopped || jobBusy) return;
   jobBusy = true;
   try {
     await tickJobs();
@@ -79,12 +94,16 @@ async function tickJobsGuarded() {
 
 console.log(`PlayOn node-agent starting → ${apiBase}`);
 await tickHeartbeat();
-setInterval(() => {
-  void tickHeartbeat();
-}, intervalMs);
-setInterval(() => {
-  void tickJobsGuarded();
-}, jobPollMs);
+agentTimers.push(
+  setInterval(() => {
+    if (!agentStopped) void tickHeartbeat();
+  }, intervalMs),
+);
+agentTimers.push(
+  setInterval(() => {
+    void tickJobsGuarded();
+  }, jobPollMs),
+);
 // Immediate job poll so int tests don't wait a full interval.
 void tickJobsGuarded();
 // Windows parent agent: keep playon-linux awake so the sibling keeps heartbeating.

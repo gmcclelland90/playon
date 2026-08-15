@@ -1,10 +1,61 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { NativeProcessSupervisor, serverTreeRoot, cmdlineOrphanRoots } from "./native-process.js";
+import {
+  NativeProcessSupervisor,
+  serverTreeRoot,
+  cmdlineOrphanRoots,
+  readProcessGroupId,
+  readCgroupRelativePath,
+  supervisedChildDetached,
+} from "./native-process.js";
 import { PathJailError } from "./path-jail.js";
 import { spawn } from "node:child_process";
+
+function repoRootFromHere(): string {
+  return path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+}
+
+function resolveTsx(): string {
+  const root = repoRootFromHere();
+  const names = process.platform === "win32" ? ["tsx.cmd", "tsx"] : ["tsx"];
+  for (const base of [
+    path.join(root, "apps", "node-agent", "node_modules", ".bin"),
+    path.join(root, "node_modules", ".bin"),
+  ]) {
+    for (const name of names) {
+      const candidate = path.join(base, name);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+  throw new Error("tsx_missing: workspace deps required for #886 parent-exit helper");
+}
+
+async function waitForFile(file: string, timeoutMs = 8_000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(file) && fs.readFileSync(file, "utf8").trim()) {
+      return fs.readFileSync(file, "utf8").trim();
+    }
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  throw new Error(`timeout waiting for ${file}`);
+}
+
+async function waitForStatus(file: string, want: string, timeoutMs = 8_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let last = "";
+  while (Date.now() < deadline) {
+    if (fs.existsSync(file)) {
+      last = fs.readFileSync(file, "utf8").trim();
+      if (last === want) return;
+    }
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  throw new Error(`timeout waiting for ${file} === ${want} (last=${last})`);
+}
 
 const temps: string[] = [];
 
@@ -209,6 +260,174 @@ describe("NativeProcessSupervisor", () => {
     await expect(supervisor.writeStdin("server-x", ".", "say hi")).rejects.toThrow(
       /stdin_unavailable/,
     );
+  });
+
+  it("places a native child in its own process group so an agent SIGTERM misses it (#886)", async () => {
+    if (process.platform === "win32") return;
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-pgrp-"));
+    temps.push(jail);
+    const supervisor = new NativeProcessSupervisor(jail);
+    const info = await supervisor.start({
+      name: "server-pgrp",
+      command: "sleep",
+      args: ["30"],
+      cwd: ".",
+    });
+    expect(supervisedChildDetached()).toBe(true);
+    expect(info.pid).toBeTypeOf("number");
+    const childPgrp = readProcessGroupId(info.pid!);
+    const agentPgrp = readProcessGroupId(process.pid);
+    expect(childPgrp).toBeTypeOf("number");
+    expect(agentPgrp).toBeTypeOf("number");
+    expect(childPgrp).not.toBe(agentPgrp);
+    expect(childPgrp).toBe(info.pid);
+    await supervisor.stop(info.id);
+  });
+
+  it("keepStdin child stays alive and does not see EOF when the agent parent exits (#886)", async () => {
+    if (process.platform === "win32") return;
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-parent-exit-"));
+    temps.push(jail);
+    const status = path.join(jail, "status");
+    const pidFile = path.join(jail, "child.pid");
+    const holderFile = path.join(jail, "holder.pid");
+    const helperSrc = fileURLToPath(new URL("./native-parent-exit.helper.ts", import.meta.url));
+    const helper = spawn(resolveTsx(), [helperSrc], {
+      stdio: ["ignore", "inherit", "inherit"],
+      env: {
+        ...process.env,
+        PLAYON_HELPER_JAIL: jail,
+        PLAYON_HELPER_STATUS: status,
+        PLAYON_HELPER_PID: pidFile,
+        PLAYON_HELPER_HOLDER_PID: holderFile,
+        PLAYON_HELPER_MODE: "exit",
+      },
+    });
+    const helperExit = new Promise<number | null>((resolve, reject) => {
+      helper.once("error", reject);
+      helper.once("close", (code) => resolve(code));
+    });
+    await waitForStatus(status, "alive");
+    const childPid = Number(await waitForFile(pidFile));
+    expect(childPid).toBeGreaterThan(0);
+    expect(await helperExit).toBe(0);
+    await new Promise((r) => setTimeout(r, 400));
+    expect(fs.readFileSync(status, "utf8").trim()).toBe("alive");
+    expect(() => process.kill(childPid, 0)).not.toThrow();
+    if (fs.existsSync(holderFile)) {
+      const holderPid = Number(fs.readFileSync(holderFile, "utf8").trim());
+      if (holderPid > 0) expect(() => process.kill(holderPid, 0)).not.toThrow();
+    }
+    try {
+      process.kill(childPid, "SIGKILL");
+    } catch {
+      /* gone */
+    }
+    if (fs.existsSync(holderFile)) {
+      try {
+        process.kill(Number(fs.readFileSync(holderFile, "utf8").trim()), "SIGKILL");
+      } catch {
+        /* gone */
+      }
+    }
+  }, 20_000);
+
+  it("KillMode=process SIGTERM of MAINPID leaves keepStdin + FIFO holder running (#886)", async () => {
+    if (process.platform === "win32") return;
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-killmode-"));
+    temps.push(jail);
+    const status = path.join(jail, "status");
+    const pidFile = path.join(jail, "child.pid");
+    const holderFile = path.join(jail, "holder.pid");
+    const helperSrc = fileURLToPath(new URL("./native-parent-exit.helper.ts", import.meta.url));
+    const helper = spawn(resolveTsx(), [helperSrc], {
+      stdio: ["ignore", "inherit", "inherit"],
+      env: {
+        ...process.env,
+        PLAYON_HELPER_JAIL: jail,
+        PLAYON_HELPER_STATUS: status,
+        PLAYON_HELPER_PID: pidFile,
+        PLAYON_HELPER_HOLDER_PID: holderFile,
+        PLAYON_HELPER_MODE: "wait",
+      },
+    });
+    await waitForStatus(status, "alive");
+    const childPid = Number(await waitForFile(pidFile));
+    const holderPid = Number(await waitForFile(holderFile));
+    expect(helper.pid).toBeTypeOf("number");
+    helper.kill("SIGTERM");
+    await new Promise<void>((resolve) => helper.once("close", () => resolve()));
+    await new Promise((r) => setTimeout(r, 400));
+    expect(fs.readFileSync(status, "utf8").trim()).toBe("alive");
+    expect(() => process.kill(childPid, 0)).not.toThrow();
+    expect(() => process.kill(holderPid, 0)).not.toThrow();
+    try {
+      process.kill(childPid, "SIGKILL");
+    } catch {
+      /* gone */
+    }
+    try {
+      process.kill(holderPid, "SIGKILL");
+    } catch {
+      /* gone */
+    }
+  }, 20_000);
+
+  it("does not detach Windows keepStdin (FIFO is Linux-only)", () => {
+    const src = fs.readFileSync(fileURLToPath(new URL("./native-process.ts", import.meta.url)), "utf8");
+    expect(src).toMatch(/if \(process\.platform === "win32"\) return false;/);
+    expect(src).toMatch(/supervisedChildDetached\(Boolean\(spec\.keepStdin\)\)/);
+    expect(src).not.toMatch(/export function supervisedChildDetached\(\): boolean \{\s*return true;/);
+  });
+
+  it("records cgroup membership and does not treat detached as an escape (#886)", async () => {
+    if (process.platform === "win32") return;
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-cgroup-"));
+    temps.push(jail);
+    const supervisor = new NativeProcessSupervisor(jail);
+    const info = await supervisor.start({
+      name: "server-cg",
+      command: "sleep",
+      args: ["30"],
+      cwd: ".",
+      keepStdin: true,
+    });
+    const agentCg = readCgroupRelativePath(process.pid);
+    const childCg = info.pid ? readCgroupRelativePath(info.pid) : null;
+    const holderPid = supervisor.stdinHolderPid("server-cg", ".");
+    const holderCg = holderPid ? readCgroupRelativePath(holderPid) : null;
+    expect(agentCg).toBeTypeOf("string");
+    expect(childCg).toBeTypeOf("string");
+    // Move is best-effort (often EACCES). Either they left the agent cgroup,
+    // or NZL-shaped KillMode=process must keep them alive — covered above.
+    if (childCg === agentCg) {
+      expect(holderCg === agentCg || holderCg == null).toBe(true);
+    }
+    await supervisor.stop(info.id);
+  });
+
+  it("keepStdin console still works when stdin is a held FIFO (#886)", async () => {
+    if (process.platform === "win32") return;
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-fifo-"));
+    temps.push(jail);
+    const gameDir = path.join(jail, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+
+    const supervisor = new NativeProcessSupervisor(jail);
+    const info = await supervisor.start({
+      name: "server-x",
+      command: "sh",
+      args: ["-c", "while read line; do echo \"ran:$line\"; done"],
+      cwd: "game",
+      logFile: "logs/console.log",
+      keepStdin: true,
+    });
+
+    await supervisor.writeStdin("server-x", "game", "say hi");
+    await new Promise((r) => setTimeout(r, 400));
+
+    expect(fs.readFileSync(path.join(jail, "logs", "console.log"), "utf8")).toContain("ran:say hi");
+    await supervisor.stop(info.id);
   });
 
   it("redirects stdout to logFile when provided", async () => {

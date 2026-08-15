@@ -351,6 +351,186 @@ describe("executeJob", () => {
     }
   }, 30_000);
 
+  it("node_self_update swap (skipExit) does not call process_stop on a native child (#886)", async () => {
+    if (process.platform === "win32") return;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-ota-native-"));
+    const gameRel = "servers/lab-native/game";
+    fs.mkdirSync(path.join(root, gameRel), { recursive: true });
+    try {
+      const started = (await executeJob(
+        {
+          id: "ota-native-start",
+          nodeId: "n1",
+          kind: "process_start",
+          args: {
+            name: "server-lab-native",
+            command: process.execPath,
+            args: ["-e", "setTimeout(() => {}, 60_000)"],
+            cwd: gameRel,
+          },
+        },
+        root,
+      )) as { id: string; pid?: number; status: string };
+      expect(started.status).toBe("running");
+      expect(started.pid).toBeGreaterThan(0);
+
+      const installRoot = path.join(root, "install");
+      fs.mkdirSync(path.join(installRoot, "data"), { recursive: true });
+      const pkgDir = path.join(root, "pkg");
+      const playonNode = path.join(pkgDir, "playon-node");
+      fs.mkdirSync(path.join(playonNode, "apps", "node-agent", "dist"), { recursive: true });
+      fs.writeFileSync(path.join(playonNode, "package.json"), JSON.stringify({ version: "0.2.9" }));
+      fs.writeFileSync(path.join(playonNode, "apps", "node-agent", "dist", "index.js"), "// agent");
+      const archive = path.join(root, "playon-node.tar.gz");
+      const { execFileSync } = await import("node:child_process");
+      const crypto = await import("node:crypto");
+      execFileSync("tar", ["-czf", archive, "-C", pkgDir, "playon-node"]);
+      const bytes = fs.readFileSync(archive);
+      const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+      const { vi } = await import("vitest");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({
+          ok: true,
+          arrayBuffer: async () =>
+            bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+        })),
+      );
+      try {
+        await executeJob(
+          {
+            id: "ota-native-update",
+            nodeId: "n1",
+            kind: "node_self_update",
+            args: {
+              downloadUrl: "https://playon.games/home/packages/playon-node-0.2.9-linux-x64.tar.gz",
+              sha256,
+              version: "0.2.9",
+              installRoot,
+              skipExit: true,
+            },
+          },
+          root,
+        );
+      } finally {
+        vi.unstubAllGlobals();
+      }
+
+      expect(() => process.kill(started.pid!, 0)).not.toThrow();
+      expect(
+        await executeJob(
+          {
+            id: "ota-native-status",
+            nodeId: "n1",
+            kind: "process_status",
+            args: { name: "server-lab-native", cwd: gameRel },
+          },
+          root,
+        ),
+      ).toMatchObject({ status: "running", pid: started.pid });
+
+      await executeJob(
+        {
+          id: "ota-native-stop",
+          nodeId: "n1",
+          kind: "process_stop",
+          args: { id: started.id, name: "server-lab-native", cwd: gameRel },
+        },
+        root,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it("node_self_update swap (skipExit) does not call container_stop on a docker child (#886)", async () => {
+    if (process.platform === "win32") return;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-ota-docker-"));
+    const name = `playon-886-${process.pid}-${Date.now()}`;
+    let createdId: string | undefined;
+    try {
+      let created: { id: string; status: string };
+      try {
+        created = (await executeJob(
+          {
+            id: "ota-docker-create",
+            nodeId: "n1",
+            kind: "container_create",
+            args: { name, image: "busybox:1.36", cmd: ["sleep", "60"] },
+          },
+          root,
+        )) as { id: string; status: string };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (/docker_unavailable|docker_not_configured|connect|ENOENT|EACCES/i.test(message)) {
+          return;
+        }
+        throw err;
+      }
+      createdId = created.id;
+      await executeJob(
+        { id: "ota-docker-start", nodeId: "n1", kind: "container_start", args: { id: created.id } },
+        root,
+      );
+
+      const installRoot = path.join(root, "install");
+      fs.mkdirSync(installRoot, { recursive: true });
+      const pkgDir = path.join(root, "pkg");
+      const playonNode = path.join(pkgDir, "playon-node");
+      fs.mkdirSync(path.join(playonNode, "apps", "node-agent", "dist"), { recursive: true });
+      fs.writeFileSync(path.join(playonNode, "package.json"), JSON.stringify({ version: "0.2.9" }));
+      fs.writeFileSync(path.join(playonNode, "apps", "node-agent", "dist", "index.js"), "// agent");
+      const archive = path.join(root, "playon-node.tar.gz");
+      const { execFileSync } = await import("node:child_process");
+      const crypto = await import("node:crypto");
+      execFileSync("tar", ["-czf", archive, "-C", pkgDir, "playon-node"]);
+      const bytes = fs.readFileSync(archive);
+      const sha256 = crypto.createHash("sha256").update(bytes).digest("hex");
+      const { vi } = await import("vitest");
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => ({
+          ok: true,
+          arrayBuffer: async () =>
+            bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+        })),
+      );
+      try {
+        await executeJob(
+          {
+            id: "ota-docker-update",
+            nodeId: "n1",
+            kind: "node_self_update",
+            args: {
+              downloadUrl: "https://playon.games/home/packages/playon-node-0.2.9-linux-x64.tar.gz",
+              sha256,
+              version: "0.2.9",
+              installRoot,
+              skipExit: true,
+            },
+          },
+          root,
+        );
+      } finally {
+        vi.unstubAllGlobals();
+      }
+
+      const inspected = (await executeJob(
+        { id: "ota-docker-inspect", nodeId: "n1", kind: "container_inspect", args: { id: created.id } },
+        root,
+      )) as { status: string };
+      expect(inspected.status).toBe("running");
+    } finally {
+      if (createdId) {
+        await executeJob(
+          { id: "ota-docker-rm", nodeId: "n1", kind: "container_remove", args: { id: createdId } },
+          root,
+        ).catch(() => undefined);
+      }
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 60_000);
+
   /** SteamCMD may be absent here, so only the contract gate is asserted. */
   it("validates steamcmd args before shelling out", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-steam-"));

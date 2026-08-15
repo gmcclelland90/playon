@@ -32,8 +32,9 @@ export interface ProcessSpec {
    */
   logFile?: string;
   /**
-   * Keep a writable stdin pipe (adminDialect=stdin). Default is ignore when the
-   * supervisor detaches on Linux — GoldSrc/HLDS segfaults with detached+piped stdin.
+   * Keep a writable stdin (adminDialect=stdin). Linux uses a FIFO holder so
+   * agent exit is not console EOF (GoldSrc/HLDS segfaults with detached+piped
+   * stdin). Default is ignore.
    */
   keepStdin?: boolean;
 }

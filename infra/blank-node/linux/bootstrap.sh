@@ -72,6 +72,9 @@ WorkingDirectory=${PLAYON_REPO}
 ExecStart=$(command -v pnpm) --filter @playon/node-agent start
 Restart=always
 RestartSec=5
+# Only the agent MAINPID — never SIGTERM the supervised game tree on OTA/restart (#886).
+KillMode=process
+SendSIGHUP=no
 
 [Install]
 WantedBy=multi-user.target

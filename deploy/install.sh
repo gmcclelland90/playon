@@ -167,7 +167,9 @@ WorkingDirectory=${PLAYON_ROOT}
 ExecStart=${NODE_BIN} apps/node-agent/dist/index.js
 Restart=always
 RestartSec=5
+# Only the agent MAINPID — never SIGTERM the supervised game tree on OTA/restart (#886).
 KillMode=process
+SendSIGHUP=no
 
 [Install]
 WantedBy=multi-user.target

@@ -187,7 +187,9 @@ WorkingDirectory=${PLAYON_ROOT}
 ExecStart=${EXEC_START}
 Restart=always
 RestartSec=5
+# Only the agent MAINPID — never SIGTERM the supervised game tree on OTA/restart (#886).
 KillMode=process
+SendSIGHUP=no
 
 [Install]
 WantedBy=multi-user.target

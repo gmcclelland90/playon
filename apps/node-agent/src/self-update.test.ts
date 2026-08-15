@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -5,11 +6,61 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  AGENT_RELAUNCH_EXIT_CODE,
+  AGENT_SUPERVISED_ENV,
+  isAgentSupervised,
+  isSystemdService,
   performNodeSelfUpdate,
+  relaunchUpdatedAgent,
   requireWindowsUpdateHelper,
+  resolveAgentEntry,
+  runAgentSupervisorLoop,
   runExtractCommand,
   swapInstallTree,
 } from "./self-update.js";
+
+function repoRootFromHere(): string {
+  return path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
+}
+
+function resolveTsx(): string {
+  const root = repoRootFromHere();
+  const names = process.platform === "win32" ? ["tsx.cmd", "tsx"] : ["tsx"];
+  for (const base of [
+    path.join(root, "apps", "node-agent", "node_modules", ".bin"),
+    path.join(root, "node_modules", ".bin"),
+  ]) {
+    for (const name of names) {
+      const candidate = path.join(base, name);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+  throw new Error("tsx_missing: workspace deps required for #886 relaunch helper");
+}
+
+async function waitForFile(file: string, timeoutMs = 8_000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(file) && fs.readFileSync(file, "utf8").trim()) {
+      return fs.readFileSync(file, "utf8").trim();
+    }
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  throw new Error(`timeout waiting for ${file}`);
+}
+
+async function waitForStatus(file: string, want: string, timeoutMs = 8_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let last = "";
+  while (Date.now() < deadline) {
+    if (fs.existsSync(file)) {
+      last = fs.readFileSync(file, "utf8").trim();
+      if (last === want) return;
+    }
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  throw new Error(`timeout waiting for ${file} === ${want} (last=${last})`);
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -159,7 +210,7 @@ describe("performNodeSelfUpdate", () => {
   it("does not call require() in the ESM self-update helper (#885)", () => {
     const src = fs.readFileSync(fileURLToPath(new URL("./self-update.ts", import.meta.url)), "utf8");
     expect(src).not.toMatch(/require\s*\(\s*["']node:child_process["']\s*\)/);
-    expect(src).toMatch(/import \{ spawn \} from "node:child_process"/);
+    expect(src).toMatch(/import \{ spawn(?:, type ChildProcess)? \} from "node:child_process"/);
   });
 
   it("swapInstallTree does not delete sibling processes under data tree (#837 regression)", () => {
@@ -209,6 +260,169 @@ describe("performNodeSelfUpdate", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("agent supervisor relaunch (#886)", () => {
+  it("treats PLAYON_AGENT_SUPERVISED=1 as already supervised", () => {
+    expect(isAgentSupervised({ [AGENT_SUPERVISED_ENV]: "1" })).toBe(true);
+    expect(isAgentSupervised({})).toBe(false);
+    expect(isSystemdService({ INVOCATION_ID: "abc" })).toBe(true);
+    expect(isSystemdService({ PLAYON_AGENT_EXIT_MAINPID: "1" })).toBe(true);
+    expect(isSystemdService({})).toBe(false);
+    expect(AGENT_RELAUNCH_EXIT_CODE).toBe(75);
+  });
+
+  it("resolves the swapped agent entry when present", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-entry-"));
+    try {
+      const dest = path.join(root, "apps", "node-agent", "dist");
+      fs.mkdirSync(dest, { recursive: true });
+      fs.writeFileSync(path.join(dest, "index.js"), "// new");
+      expect(resolveAgentEntry(root)).toBe(path.join(dest, "index.js"));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("relaunchUpdatedAgent under systemd exits MAINPID; keepStdin child sees no EOF", async () => {
+    if (process.platform === "win32") return;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "playon-relaunch-exit-"));
+    const jail = path.join(dir, "jail");
+    fs.mkdirSync(jail, { recursive: true });
+    const status = path.join(dir, "status");
+    const pidFile = path.join(dir, "child.pid");
+    const stamp = path.join(dir, "n");
+    fs.writeFileSync(stamp, "0");
+    const helperSrc = fileURLToPath(new URL("./relaunch-keep-stdin.helper.ts", import.meta.url));
+    const helper = spawn(resolveTsx(), [helperSrc], {
+      stdio: ["ignore", "inherit", "inherit"],
+      env: {
+        ...process.env,
+        INVOCATION_ID: "playon-886-test",
+        PLAYON_AGENT_EXIT_MAINPID: "1",
+        PLAYON_HELPER_JAIL: jail,
+        PLAYON_HELPER_STATUS: status,
+        PLAYON_HELPER_PID: pidFile,
+        PLAYON_HELPER_STAMP: stamp,
+        PLAYON_HELPER_MODE: "exit-mainpid",
+        PLAYON_HELPER_INSTALL_ROOT: dir,
+      },
+    });
+    const helperExit = new Promise<number | null>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("helper_did_not_exit: relaunchUpdatedAgent must exit MAINPID")),
+        8_000,
+      );
+      helper.once("error", (err) => {
+        clearTimeout(timer);
+        reject(err);
+      });
+      helper.once("close", (code) => {
+        clearTimeout(timer);
+        resolve(code);
+      });
+    });
+    try {
+      await waitForStatus(status, "alive");
+      const childPid = Number(await waitForFile(pidFile));
+      expect(await helperExit).toBe(0);
+      await new Promise((r) => setTimeout(r, 400));
+      expect(fs.readFileSync(status, "utf8").trim()).toBe("alive");
+      expect(() => process.kill(childPid, 0)).not.toThrow();
+      try {
+        process.kill(childPid, "SIGKILL");
+      } catch {
+        /* gone */
+      }
+    } finally {
+      try {
+        helper.kill("SIGKILL");
+      } catch {
+        /* gone */
+      }
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it("runAgentSupervisorLoop relaunches on 75 without EOF on a keepStdin child", async () => {
+    if (process.platform === "win32") return;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "playon-sup-keepstdin-"));
+    const jail = path.join(dir, "jail");
+    fs.mkdirSync(jail, { recursive: true });
+    const status = path.join(dir, "status");
+    const pidFile = path.join(dir, "child.pid");
+    const stamp = path.join(dir, "n");
+    const ready = path.join(dir, "ready");
+    fs.writeFileSync(stamp, "0");
+    const helperSrc = fileURLToPath(new URL("./relaunch-keep-stdin.helper.ts", import.meta.url));
+    const children: import("node:child_process").ChildProcess[] = [];
+    try {
+      runAgentSupervisorLoop({
+        nodeBin: resolveTsx(),
+        argv: [helperSrc],
+        env: {
+          ...process.env,
+          PLAYON_HELPER_JAIL: jail,
+          PLAYON_HELPER_STATUS: status,
+          PLAYON_HELPER_PID: pidFile,
+          PLAYON_HELPER_STAMP: stamp,
+          PLAYON_HELPER_READY: ready,
+          PLAYON_HELPER_MODE: "supervised",
+        },
+        exitProcess: false,
+        onSpawn: (child) => children.push(child),
+      });
+      await waitForStatus(status, "alive");
+      const childPid = Number(await waitForFile(pidFile));
+      await waitForFile(ready);
+      expect(fs.readFileSync(stamp, "utf8")).toBe("2");
+      expect(fs.readFileSync(status, "utf8").trim()).toBe("alive");
+      expect(() => process.kill(childPid, 0)).not.toThrow();
+      try {
+        process.kill(childPid, "SIGKILL");
+      } catch {
+        /* gone */
+      }
+    } finally {
+      for (const child of children) {
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          /* gone */
+        }
+      }
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
+
+  it("relaunchUpdatedAgent skipExit is a no-op (not the NZL path)", () => {
+    expect(relaunchUpdatedAgent({ installRoot: process.cwd(), skipExit: true })).toBeUndefined();
+  });
+
+  it("systemd OTA exits MAINPID; node units stay KillMode=process; Home API unit is untouched", () => {
+    const src = fs.readFileSync(fileURLToPath(new URL("./self-update.ts", import.meta.url)), "utf8");
+    const index = fs.readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8");
+    expect(src).toMatch(/isSystemdService/);
+    expect(src).toMatch(/INVOCATION_ID/);
+    expect(src).toMatch(/runAgentSupervisorLoop/);
+    expect(src).toMatch(/AGENT_RELAUNCH_EXIT_CODE/);
+    expect(src).not.toMatch(/process_stop|container_stop|reclaim\(/);
+    expect(index).toMatch(/relaunchUpdatedAgent/);
+    expect(index).toMatch(/stopAgentLoops/);
+    expect(index).not.toMatch(/process\.exit\(0\)/);
+    const repo = path.dirname(fileURLToPath(new URL("../../../deploy/install-node.sh", import.meta.url)));
+    const unit = fs.readFileSync(path.join(repo, "install-node.sh"), "utf8");
+    expect(unit).toMatch(/KillMode=process/);
+    expect(unit).toMatch(/SendSIGHUP=no/);
+    expect(unit).toMatch(/#886/);
+    const homeUnit = fs.readFileSync(
+      path.join(repo, "..", "infra", "control-plane", "linux", "playon.service"),
+      "utf8",
+    );
+    expect(homeUnit).toMatch(/Keep OTA\/apply helpers alive when the main process exits for self-update/);
+    expect(homeUnit).not.toMatch(/#886/);
+    expect(homeUnit).not.toMatch(/SendSIGHUP=no/);
   });
 });
 
