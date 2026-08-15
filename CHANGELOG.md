@@ -6,6 +6,7 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ### Fixed
 
+- **Windows node engine inventory** — a Windows node-agent talks to the Windows Docker named pipe (`dockerDesktopWindowsEngine` / `docker_engine` with `OSType=windows`) and ignores `DOCKER_HOST` / Docker Desktop’s Linux engine. Heartbeats include a read-only `docker ps` inventory so host containers such as `lab-sbox` appear on the playon-win-1 map pad without being created or started. The WSL sibling still lists the Linux engine (`#897`).
 - **Windows node OTA extract** — `windowsTarExtractArgs()` no longer passes GNU `--force-local`. Official 0.2.8→0.2.9 tar.gz OTA on playon-win-1 failed with `update_extract_failed: tar --force-local is not supported`. Create-side already dropped that flag in #876 / #878 (`#895`).
 
 ## [0.2.9] — 2026-08-15

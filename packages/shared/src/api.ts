@@ -83,6 +83,20 @@ export const NodeCapabilitiesSchema = z.object({
 
 export const NodeKindSchema = z.enum(["local", "lan", "cloud"]);
 
+const NodeContainerPortSchema = z.object({
+  host: z.number().int().min(1).max(65535).optional(),
+  container: z.number().int().min(1).max(65535),
+  protocol: z.enum(["tcp", "udp"]).optional(),
+});
+
+/** Read-only `docker ps` row from a node heartbeat. Never a create/start request. */
+export const NodeContainerInventorySchema = z.object({
+  name: z.string().min(1).max(256),
+  image: z.string().min(1).max(512),
+  status: z.string().min(1).max(64),
+  ports: z.array(NodeContainerPortSchema).max(32).optional(),
+});
+
 export const NodeHeartbeatSchema = z.object({
   nodeId: z.string().min(1),
   name: z.string().min(1),
@@ -96,6 +110,11 @@ export const NodeHeartbeatSchema = z.object({
   kind: NodeKindSchema.optional(),
   /** Protocol support advertisement; see `NodeCapabilitiesSchema.jobKinds`. */
   jobKinds: z.array(NodeJobKindSchema).optional(),
+  /**
+   * Containers on this node's own engine (Windows named pipe on win32, Linux
+   * socket on WSL/Linux). Omitted by older agents. Read-only inventory.
+   */
+  containers: z.array(NodeContainerInventorySchema).max(80).optional(),
 });
 
 export type SetupStatus = z.infer<typeof SetupStatusSchema>;
@@ -104,4 +123,5 @@ export type LoginInput = z.infer<typeof LoginSchema>;
 export type PublicUser = z.infer<typeof PublicUserSchema>;
 export type NodeCapabilities = z.infer<typeof NodeCapabilitiesSchema>;
 export type NodeHeartbeat = z.infer<typeof NodeHeartbeatSchema>;
+export type NodeContainerInventory = z.infer<typeof NodeContainerInventorySchema>;
 export type NodeJobKind = z.infer<typeof NodeJobKindSchema>;

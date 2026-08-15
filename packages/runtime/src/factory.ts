@@ -1,3 +1,4 @@
+import { resolveDockerClientOptions } from "./docker-engine.js";
 import { DockerodeAdapter } from "./dockerode-adapter.js";
 import { NativeProcessSupervisor } from "./native-process.js";
 import type { ContainerInfo, ContainerSpec, DockerAdapter, ProcessSupervisor } from "./types.js";
@@ -59,7 +60,12 @@ export async function createRuntimeAdapters(mode: RuntimeAdapterMode): Promise<R
   }
 
   try {
-    const docker = new DockerodeAdapter();
+    const options =
+      process.platform === "win32" ? await resolveDockerClientOptions() : undefined;
+    if (process.platform === "win32" && !options) {
+      throw new Error("no Windows-container engine (named pipe OSType=windows)");
+    }
+    const docker = new DockerodeAdapter(options);
     await docker.ping();
     return {
       docker,

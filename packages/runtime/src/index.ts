@@ -4,6 +4,7 @@ export * from "./native-process.js";
 export * from "./file-log-tail.js";
 export * from "./docker-log-demux.js";
 export * from "./docker-engine.js";
+export * from "./docker-inventory.js";
 export * from "./docker-create-options.js";
 export * from "./dockerode-adapter.js";
 export * from "./factory.js";

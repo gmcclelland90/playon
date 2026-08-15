@@ -701,8 +701,8 @@ export function AgentCanvas({
         if (!node) {
           const root = new Container();
           root.zIndex = 2;
-          root.eventMode = "static";
-          root.cursor = "pointer";
+          root.eventMode = server.unmanaged ? "none" : "static";
+          root.cursor = server.unmanaged ? "default" : "pointer";
 
           const crate = new Graphics();
           crate.label = "crate";
@@ -726,10 +726,12 @@ export function AgentCanvas({
           status.label = "status";
           root.addChild(status);
 
-          root.on("pointertap", (e) => {
-            e.stopPropagation();
-            onSelectRef.current(server.id);
-          });
+          if (!server.unmanaged) {
+            root.on("pointertap", (e) => {
+              e.stopPropagation();
+              onSelectRef.current(server.id);
+            });
+          }
 
           world.addChild(root);
           node = { id: server.id, x: pos.x, y: pos.y, root };
@@ -752,9 +754,13 @@ export function AgentCanvas({
         const shown = displayServerStatus(server.status, server.ready);
         drawCrate(crate, selected, shown === "running");
         name.text = shortDisplayName(server.name, 18);
-        status.text = busyHere
-          ? `${statusLabel(shown)} · ${busyHere.label || busyHere.verb}`
-          : statusLabel(shown);
+        status.text = server.unmanaged
+          ? shown === "running"
+            ? "host engine"
+            : statusLabel(shown)
+          : busyHere
+            ? `${statusLabel(shown)} · ${busyHere.label || busyHere.verb}`
+            : statusLabel(shown);
       });
     }
 

@@ -1,4 +1,5 @@
 import Docker from "dockerode";
+import { WINDOWS_DOCKER_PIPES } from "./host-capabilities.js";
 import type { HostCapabilities } from "./host-capabilities.js";
 
 export type DockerEngineOs = "linux" | "windows";
@@ -18,6 +19,11 @@ export type DockerInfoLike = {
   isolation?: string;
 };
 
+/** dockerode constructor options we set ourselves (never inherit a Linux DOCKER_HOST). */
+export type DockerConnectOptions = {
+  socketPath?: string;
+};
+
 const DEFAULT_INFO_TIMEOUT_MS = 2_000;
 
 export function parseDockerEngineInfo(raw: DockerInfoLike | null | undefined): DockerEngineInfo | null {
@@ -30,6 +36,62 @@ export function parseDockerEngineInfo(raw: DockerInfoLike | null | undefined): D
   return { osType, isolation };
 }
 
+/** `\\.\pipe\foo` → `//./pipe/foo` (dockerode's win32 socketPath form). */
+export function toDockerodePipePath(windowsPipe: string): string {
+  const prefix = "\\\\.\\pipe\\";
+  if (windowsPipe.toLowerCase().startsWith(prefix.toLowerCase())) {
+    return `//./pipe/${windowsPipe.slice(prefix.length)}`;
+  }
+  return windowsPipe;
+}
+
+/**
+ * Named-pipe clients for a Windows-container engine, most specific first.
+ * Passing `socketPath` makes dockerode ignore `DOCKER_HOST` (often the Linux/WSL engine).
+ */
+export function windowsDockerEngineConnectOptions(): DockerConnectOptions[] {
+  return WINDOWS_DOCKER_PIPES.map((pipe) => ({ socketPath: toDockerodePipePath(pipe) }));
+}
+
+async function withTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
+  return Promise.race([
+    work,
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("docker_info_timeout")), timeoutMs);
+    }),
+  ]);
+}
+
+/**
+ * Windows: first pipe whose `docker info` OSType is windows.
+ * Linux: `undefined` so dockerode uses the unix socket / DOCKER_HOST (WSL sibling).
+ */
+export async function resolveDockerClientOptions(opts?: {
+  platform?: NodeJS.Platform;
+  probe?: (options: DockerConnectOptions) => Promise<DockerInfoLike>;
+  timeoutMs?: number;
+}): Promise<DockerConnectOptions | undefined> {
+  const platform = opts?.platform ?? process.platform;
+  if (platform !== "win32") return undefined;
+  const timeoutMs = opts?.timeoutMs ?? DEFAULT_INFO_TIMEOUT_MS;
+  const probe =
+    opts?.probe ??
+    (async (options) => {
+      const docker = new Docker(options);
+      await docker.ping();
+      return (await docker.info()) as DockerInfoLike;
+    });
+  for (const options of windowsDockerEngineConnectOptions()) {
+    try {
+      const raw = await withTimeout(probe(options), timeoutMs);
+      if (parseDockerEngineInfo(raw)?.osType === "windows") return options;
+    } catch {
+      /* try the next pipe — docker_engine may be Desktop's Linux engine */
+    }
+  }
+  return undefined;
+}
+
 /**
  * Talk to the local Docker Engine. On Windows this is the source of truth for
  * "Windows container mode" — a named pipe can exist for Docker Desktop's Linux
@@ -40,20 +102,22 @@ export async function inspectDockerEngine(opts?: {
   timeoutMs?: number;
 }): Promise<DockerEngineInfo | null> {
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_INFO_TIMEOUT_MS;
-  const infoFn =
-    opts?.info ??
-    (async () => {
-      const docker = new Docker();
-      return (await docker.info()) as DockerInfoLike;
-    });
   try {
-    const raw = await Promise.race([
-      infoFn(),
-      new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error("docker_info_timeout")), timeoutMs);
-      }),
-    ]);
-    return parseDockerEngineInfo(raw);
+    if (opts?.info) {
+      return parseDockerEngineInfo(await withTimeout(opts.info(), timeoutMs));
+    }
+    if (process.platform === "win32") {
+      const options = await resolveDockerClientOptions({ timeoutMs });
+      if (!options) return null;
+      const docker = new Docker(options);
+      return parseDockerEngineInfo(
+        await withTimeout(docker.info() as Promise<DockerInfoLike>, timeoutMs),
+      );
+    }
+    const docker = new Docker();
+    return parseDockerEngineInfo(
+      await withTimeout(docker.info() as Promise<DockerInfoLike>, timeoutMs),
+    );
   } catch {
     return null;
   }

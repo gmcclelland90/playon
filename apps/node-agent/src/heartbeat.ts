@@ -1,3 +1,4 @@
+import { listHostContainers, type HostContainer } from "@playon/runtime";
 import type { NodeHeartbeat } from "@playon/shared";
 import { probeCapabilitiesForHeartbeat } from "./capabilities.js";
 import { SUPPORTED_JOB_KINDS } from "./jobs.js";
@@ -7,8 +8,10 @@ export async function buildHeartbeat(opts: {
   name: string;
   dataRoot: string;
   agentVersion?: string;
+  listContainers?: () => Promise<HostContainer[]>;
 }): Promise<NodeHeartbeat> {
   const caps = await probeCapabilitiesForHeartbeat(opts.dataRoot);
+  const containers = await (opts.listContainers ?? listHostContainers)().catch(() => []);
   return {
     nodeId: opts.nodeId,
     name: opts.name,
@@ -20,6 +23,7 @@ export async function buildHeartbeat(opts: {
     agentVersion: opts.agentVersion ?? "0.1.0",
     // Protocol advertisement so the control plane can refuse kinds we cannot run.
     jobKinds: [...SUPPORTED_JOB_KINDS],
+    ...(containers.length ? { containers } : {}),
   };
 }
 

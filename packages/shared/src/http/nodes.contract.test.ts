@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { NodeHeartbeatSchema } from "../api.js";
 import {
   AddNodeRequestSchema,
   InstallDockerRequestSchema,
@@ -51,5 +52,31 @@ describe("node route request contracts", () => {
     const parsed = InstallDockerRequestSchema.parse({ host: "10.0.0.4", username: "ops" });
     expect(parsed).toEqual({ host: "10.0.0.4", username: "ops" });
     expect(InstallDockerRequestSchema.safeParse({ username: "ops" }).success).toBe(false);
+  });
+
+  it("accepts an optional read-only container inventory on heartbeat", () => {
+    const parsed = NodeHeartbeatSchema.parse({
+      nodeId: "playon-win-1",
+      name: "playon-win-1",
+      os: "windows",
+      docker: true,
+      containers: [
+        {
+          name: "lab-sbox",
+          image: "har0x/sbox-server:public",
+          status: "running",
+          ports: [{ host: 27150, container: 27150, protocol: "udp" }],
+        },
+      ],
+    });
+    expect(parsed.containers?.[0]?.name).toBe("lab-sbox");
+    expect(
+      NodeHeartbeatSchema.parse({
+        nodeId: "n1",
+        name: "n1",
+        os: "linux",
+        docker: true,
+      }).containers,
+    ).toBeUndefined();
   });
 });

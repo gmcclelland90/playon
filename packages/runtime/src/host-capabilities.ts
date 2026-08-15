@@ -16,10 +16,10 @@ export function detectHostOs(): HostOs {
   return process.platform === "win32" ? "windows" : "linux";
 }
 
-/** Named pipes a Windows-container engine may expose. */
+/** Named pipes a Windows-container engine may expose (explicit Windows engine first). */
 export const WINDOWS_DOCKER_PIPES = [
-  "\\\\.\\pipe\\docker_engine",
   "\\\\.\\pipe\\dockerDesktopWindowsEngine",
+  "\\\\.\\pipe\\docker_engine",
 ] as const;
 
 /** True when a Docker Engine socket/pipe appears present. */

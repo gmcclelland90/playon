@@ -32,6 +32,13 @@ export type LlmPublic = {
   hasApiKey: boolean;
 };
 
+export type NodeContainerRow = {
+  name: string;
+  image: string;
+  status: string;
+  ports?: Array<{ host?: number; container: number; protocol?: "tcp" | "udp" }>;
+};
+
 export type ServerRow = {
   id: string;
   name: string;
@@ -42,6 +49,8 @@ export type ServerRow = {
   ready?: boolean;
   runtimeMode: string;
   dataPath: string;
+  /** Engine inventory crate — not a PlayOn server; never Start/create. */
+  unmanaged?: boolean;
 };
 
 export type PlacementPlan = {
@@ -341,6 +350,7 @@ export const api = {
         overlayIp?: string | null;
         tunnelEndpoint?: string | null;
         joinHost?: string | null;
+        containers?: NodeContainerRow[];
       }>;
     }>("/api/nodes"),
   getNodeSettings: () =>

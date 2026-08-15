@@ -152,6 +152,7 @@ import { EventHub } from "./services/event-hub.js";
 import { safeQueryLive } from "./services/server-panel.js";
 import { execConsoleCommand } from "./services/server-console.js";
 import { nodeJobService } from "./services/node-jobs.js";
+import { nodeContainers, recordNodeContainers } from "./services/node-inventory.js";
 import {
   authenticateAccessToken,
   bearerFromAuthorization,
@@ -1901,6 +1902,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           overlayIp: n.overlayIp,
           tunnelEndpoint: n.tunnelEndpoint,
           joinHost: n.joinHost ?? null,
+          containers: nodeContainers(n.id),
         };
       }),
     });
@@ -2408,6 +2410,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     const body = await jsonBody(c, NodeHeartbeatSchema);
     // Protocol skew guard: remember what this agent says it can execute.
     nodeJobService.advertiseJobKinds(body.nodeId, body.jobKinds);
+    recordNodeContainers(body.nodeId, body.containers);
     if (body.agentVersion) {
       nodeJobService.reconcileSelfUpdateOnHeartbeat(body.nodeId, body.agentVersion);
     }
