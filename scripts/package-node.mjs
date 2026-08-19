@@ -16,6 +16,7 @@ import https from "node:https";
 import { createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { linuxNodeTarCreate, windowsNodeTarCreate } from "./package-node-archive.mjs";
+import { bundledWindowsStartNodeCmd } from "../packages/shared/dist/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -256,16 +257,18 @@ fs.writeFileSync(
   path.join(stage, "start-node.ps1"),
   `$ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$envCmd = Join-Path $Root "node.env.cmd"
+if (Test-Path $envCmd) {
+  Get-Content $envCmd | ForEach-Object {
+    if ($_ -match '^\\s*set\\s+([^=]+)=(.*)$') {
+      Set-Item -Path ("Env:" + $Matches[1].Trim()) -Value $Matches[2].Trim()
+    }
+  }
+}
 & (Join-Path $Root "runtime\\node\\node.exe") (Join-Path $Root "apps\\node-agent\\dist\\index.js")
 `,
 );
-fs.writeFileSync(
-  path.join(stage, "start-node.cmd"),
-  `@echo off
-cd /d "%~dp0"
-"%~dp0runtime\\node\\node.exe" "%~dp0apps\\node-agent\\dist\\index.js"
-`,
-);
+fs.writeFileSync(path.join(stage, "start-node.cmd"), bundledWindowsStartNodeCmd());
 if (!isWin) {
   try {
     fs.chmodSync(path.join(stage, "start-node.sh"), 0o755);

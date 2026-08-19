@@ -5,8 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import {
   ARCHIVE_EXTRACT_TIMEOUT_MS,
+  WINDOWS_START_NODE_CMD,
   assertAllowedUpdateDownloadUrl,
   buildArchiveExtractCommands,
+  bundledWindowsStartNodeCmd,
+  startNodeCmdLoadsNodeEnv,
 } from "@playon/shared";
 
 /** Child exit that means "swap is on disk; relaunch me" — not a crash. */
@@ -74,6 +77,29 @@ export function swapInstallTree(opts: {
     else fs.copyFileSync(src, dest);
   }
   return { preserved };
+}
+
+/**
+ * After a tree swap, restore Home wiring if the tarball's start-node.cmd
+ * omitted `call node.env.cmd` (0.2.3–0.2.9 package-node.mjs).
+ */
+export function ensureWindowsStartNodeCmd(installRoot: string): { repaired: boolean } {
+  const dest = path.join(installRoot, WINDOWS_START_NODE_CMD);
+  const current = fs.existsSync(dest) ? fs.readFileSync(dest, "utf8") : "";
+  if (startNodeCmdLoadsNodeEnv(current)) return { repaired: false };
+  fs.writeFileSync(dest, bundledWindowsStartNodeCmd(), "utf8");
+  return { repaired: true };
+}
+
+/** Extract apply: swap the package tree, then keep start-node.cmd pointing at Home. */
+export function applyNodeInstallSwap(opts: {
+  target: string;
+  source: string;
+  preserve: string[];
+}): { preserved: string[]; startNodeRepaired: boolean } {
+  const { preserved } = swapInstallTree(opts);
+  const { repaired } = ensureWindowsStartNodeCmd(opts.target);
+  return { preserved, startNodeRepaired: repaired };
 }
 
 /** Async extract so heartbeats keep ticking; never spawnSync powershell with a 60s cap (#868). */
@@ -209,7 +235,7 @@ export async function performNodeSelfUpdate(args: {
       return result;
     }
 
-    const { preserved } = swapInstallTree({
+    const { preserved } = applyNodeInstallSwap({
       target: installRoot,
       source: extracted,
       preserve,

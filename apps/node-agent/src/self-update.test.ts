@@ -8,6 +8,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AGENT_RELAUNCH_EXIT_CODE,
   AGENT_SUPERVISED_ENV,
+  applyNodeInstallSwap,
+  ensureWindowsStartNodeCmd,
+  extractArchive,
   isAgentSupervised,
   isSystemdService,
   performNodeSelfUpdate,
@@ -18,6 +21,11 @@ import {
   runExtractCommand,
   swapInstallTree,
 } from "./self-update.js";
+import {
+  VINTAGE_PACKAGED_WINDOWS_START_NODE_CMD,
+  bundledWindowsStartNodeCmd,
+  startNodeCmdLoadsNodeEnv,
+} from "@playon/shared";
 
 function repoRootFromHere(): string {
   return path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -429,6 +437,136 @@ describe("agent supervisor relaunch (#886)", () => {
   });
 });
 
+describe("Windows OTA start-node.cmd Home wiring", () => {
+  it("repairs a vintage packaged launcher that omitted call node.env.cmd", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-start-node-"));
+    try {
+      fs.writeFileSync(path.join(root, "start-node.cmd"), VINTAGE_PACKAGED_WINDOWS_START_NODE_CMD);
+      fs.writeFileSync(
+        path.join(root, "node.env.cmd"),
+        "set PLAYON_API_URL=https://home.example:8787\n",
+      );
+      expect(startNodeCmdLoadsNodeEnv(fs.readFileSync(path.join(root, "start-node.cmd"), "utf8"))).toBe(
+        false,
+      );
+      const { repaired } = ensureWindowsStartNodeCmd(root);
+      expect(repaired).toBe(true);
+      const after = fs.readFileSync(path.join(root, "start-node.cmd"), "utf8");
+      expect(startNodeCmdLoadsNodeEnv(after)).toBe(true);
+      expect(after).toBe(bundledWindowsStartNodeCmd());
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("after simulated Windows extract/apply still calls node.env.cmd", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-win-ota-env-"));
+    try {
+      const installRoot = path.join(root, "install");
+      fs.mkdirSync(path.join(installRoot, "data"), { recursive: true });
+      fs.writeFileSync(
+        path.join(installRoot, "node.env.cmd"),
+        [
+          "set PLAYON_API_URL=https://home.example:8787",
+          "set PLAYON_NODE_TOKEN=secret-token",
+          "set PLAYON_NODE_ID=playon-win-1",
+          `set PLAYON_DATA_ROOT=${path.join(installRoot, "data")}`,
+          "",
+        ].join("\n"),
+      );
+      fs.writeFileSync(
+        path.join(installRoot, "start-node.cmd"),
+        [
+          "@echo off",
+          `call "${path.join(installRoot, "node.env.cmd")}"`,
+          `cd /d "${installRoot}"`,
+          `"${path.join(installRoot, "runtime", "node", "node.exe")}" "${path.join(installRoot, "apps", "node-agent", "dist", "index.js")}" >> "${path.join(installRoot, "data", "agent-stdout.log")}" 2>&1`,
+          "",
+        ].join("\n"),
+      );
+      fs.writeFileSync(path.join(installRoot, "data", "state.db"), "db");
+
+      const pkgDir = path.join(root, "pkg");
+      const playonNode = path.join(pkgDir, "playon-node");
+      fs.mkdirSync(path.join(playonNode, "apps", "node-agent", "dist"), { recursive: true });
+      fs.mkdirSync(path.join(playonNode, "deploy", "windows"), { recursive: true });
+      fs.writeFileSync(
+        path.join(playonNode, "package.json"),
+        JSON.stringify({ name: "playon-node", version: "0.2.10" }),
+      );
+      fs.writeFileSync(path.join(playonNode, "apps", "node-agent", "dist", "index.js"), "// agent");
+      fs.writeFileSync(
+        path.join(playonNode, "start-node.cmd"),
+        VINTAGE_PACKAGED_WINDOWS_START_NODE_CMD,
+      );
+      fs.writeFileSync(
+        path.join(playonNode, "deploy", "windows", "apply-self-update.ps1"),
+        "# helper\n",
+      );
+
+      const archive = path.join(root, "playon-node-0.2.10-windows-x64.tar.gz");
+      const { execFileSync } = await import("node:child_process");
+      execFileSync("tar", ["-czf", archive, "-C", pkgDir, "playon-node"]);
+
+      const extracted = await extractArchive(archive, path.join(root, "extracted"));
+      expect(fs.readFileSync(path.join(extracted, "start-node.cmd"), "utf8")).toBe(
+        VINTAGE_PACKAGED_WINDOWS_START_NODE_CMD,
+      );
+
+      const result = applyNodeInstallSwap({
+        target: installRoot,
+        source: extracted,
+        preserve: ["data", "env", "node.env", "node.env.cmd"],
+      });
+      expect(result.preserved).toContain("data");
+      expect(result.preserved).toContain("node.env.cmd");
+      expect(result.startNodeRepaired).toBe(true);
+
+      const startCmd = fs.readFileSync(path.join(installRoot, "start-node.cmd"), "utf8");
+      expect(startNodeCmdLoadsNodeEnv(startCmd)).toBe(true);
+      expect(startCmd).toMatch(/call "%~dp0node\.env\.cmd"/);
+      expect(fs.readFileSync(path.join(installRoot, "node.env.cmd"), "utf8")).toContain(
+        "https://home.example:8787",
+      );
+      expect(fs.readFileSync(path.join(installRoot, "data", "state.db"), "utf8")).toBe("db");
+      expect(fs.existsSync(path.join(installRoot, "apps", "node-agent", "dist", "index.js"))).toBe(
+        true,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("swap of the current bundled launcher keeps Home wiring without a rewrite", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-bundled-cmd-"));
+    try {
+      const target = path.join(root, "target");
+      const source = path.join(root, "source");
+      fs.mkdirSync(target, { recursive: true });
+      fs.writeFileSync(path.join(target, "node.env.cmd"), "set PLAYON_API_URL=https://home.example:8787\n");
+      fs.writeFileSync(
+        path.join(target, "start-node.cmd"),
+        `call "${path.join(target, "node.env.cmd")}"\n`,
+      );
+      fs.mkdirSync(source, { recursive: true });
+      fs.writeFileSync(path.join(source, "package.json"), "{}");
+      fs.writeFileSync(path.join(source, "start-node.cmd"), bundledWindowsStartNodeCmd());
+
+      const result = applyNodeInstallSwap({
+        target,
+        source,
+        preserve: ["data", "env", "node.env", "node.env.cmd"],
+      });
+      expect(result.startNodeRepaired).toBe(false);
+      expect(startNodeCmdLoadsNodeEnv(fs.readFileSync(path.join(target, "start-node.cmd"), "utf8"))).toBe(
+        true,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("apply-self-update.ps1", () => {
   it("detaches from the agent Job object and disables RestartCount before swapping", () => {
     const helper = path.join(
@@ -449,6 +587,19 @@ describe("apply-self-update.ps1", () => {
     expect(src.indexOf("Disable-ScheduledTask")).toBeLessThan(src.indexOf("Waiting for node-agent"));
     expect(src.indexOf("Register-ScheduledTask")).toBeLessThan(src.indexOf("Waiting for node-agent"));
     expect(src).not.toMatch(/\brequire\s*\(/);
+    expect(src).toMatch(/function Write-PortableStartNodeCmd/);
+    expect(src).toMatch(/if exist "%~dp0node\.env\.cmd" call "%~dp0node\.env\.cmd"/);
+    expect(src.indexOf("Write-PortableStartNodeCmd -Dir $TargetDir")).toBeGreaterThan(
+      src.indexOf("Copying:"),
+    );
+    expect(src.indexOf("Write-PortableStartNodeCmd -Dir $TargetDir")).toBeLessThan(
+      src.indexOf("Agent missing after swap"),
+    );
+    const portable = src.match(
+      /function Write-PortableStartNodeCmd[\s\S]*?@"\r?\n([\s\S]*?)\r?\n"@/,
+    );
+    expect(portable?.[1]).toBeTruthy();
+    expect(startNodeCmdLoadsNodeEnv(portable![1])).toBe(true);
   });
 });
 

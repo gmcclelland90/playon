@@ -23,6 +23,25 @@ function Write-Log {
   }
 }
 
+# Tarball start-node.cmd (0.2.3–0.2.9) omitted `call node.env.cmd`. Write this
+# immediately after swap so a later failure cannot leave localhost wiring.
+function Write-PortableStartNodeCmd {
+  param([string]$Dir)
+  $portable = Join-Path $Dir "start-node.cmd"
+  @"
+@echo off
+cd /d "%~dp0"
+if exist "%~dp0node.env.cmd" call "%~dp0node.env.cmd"
+if defined PLAYON_DATA_ROOT if not exist "%PLAYON_DATA_ROOT%" mkdir "%PLAYON_DATA_ROOT%"
+if defined PLAYON_DATA_ROOT (
+  "%~dp0runtime\node\node.exe" "%~dp0apps\node-agent\dist\index.js" >> "%PLAYON_DATA_ROOT%\agent-stdout.log" 2>&1
+) else (
+  "%~dp0runtime\node\node.exe" "%~dp0apps\node-agent\dist\index.js"
+)
+"@ | Set-Content -Path $portable -Encoding ASCII
+  Write-Log "Wrote start-node.cmd with node.env.cmd wiring"
+}
+
 function Format-ProcessArgs {
   param([string[]]$Parts)
   return ($Parts | ForEach-Object {
@@ -210,6 +229,8 @@ foreach ($item in Get-ChildItem -Path $SourceDir) {
   Copy-Item -Path $item.FullName -Destination $dest -Recurse -Force
 }
 
+Write-PortableStartNodeCmd -Dir $TargetDir
+
 $nodeExe = Join-Path $TargetDir "runtime\node\node.exe"
 $agentJs = Join-Path $TargetDir "apps\node-agent\dist\index.js"
 $useBundled = Test-Path $nodeExe
@@ -223,7 +244,7 @@ if (-not (Test-Path $agentJs)) {
 
 $envFile = Join-Path $TargetDir "node.env.cmd"
 if (-not (Test-Path $envFile)) {
-  Write-Log "ERROR: node.env.cmd missing — cannot regenerate start-node.cmd without environment"
+  Write-Log "ERROR: node.env.cmd missing — cannot regenerate installer start-node.cmd; portable launcher already written"
   try { Enable-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Out-Null } catch {}
   Unregister-ApplyUpdateTask
   exit 1
