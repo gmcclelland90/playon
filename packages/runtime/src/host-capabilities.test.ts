@@ -11,8 +11,8 @@ import {
 
 describe("host-capabilities", () => {
   it("lists the Windows docker named pipes the probe checks", () => {
+    expect(WINDOWS_DOCKER_PIPES[0]).toBe("\\\\.\\pipe\\dockerDesktopWindowsEngine");
     expect(WINDOWS_DOCKER_PIPES).toContain("\\\\.\\pipe\\docker_engine");
-    expect(WINDOWS_DOCKER_PIPES).toContain("\\\\.\\pipe\\dockerDesktopWindowsEngine");
   });
 
   it("reports os and native always true", () => {

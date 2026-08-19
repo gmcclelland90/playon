@@ -1,4 +1,5 @@
 import { LOCAL_NODE_ID } from "@playon/shared";
+import type { NodeContainerRow, ServerRow } from "../../api";
 import { isPendingNodeSetup } from "../../status";
 
 export type MapNodeInput = {
@@ -102,6 +103,50 @@ export function crateOffsetInCluster(indexInCluster: number): { x: number; y: nu
     x: (col - (CRATES_PER_COL - 1) / 2) * 120,
     y: 28 + row * ROW_GAP,
   };
+}
+
+export function inventoryCrateId(nodeId: string, containerName: string): string {
+  return `ext:${nodeId}:${containerName}`;
+}
+
+export function playonContainerName(serverId: string): string {
+  return `playon-${serverId}`;
+}
+
+/**
+ * Add read-only engine inventory crates that are not already PlayOn servers.
+ * Does not create, start, or adopt anything.
+ */
+export function mergeNodeContainerInventory(
+  servers: ServerRow[],
+  nodes: Array<{ id: string; containers?: NodeContainerRow[] }>,
+): ServerRow[] {
+  const extra: ServerRow[] = [];
+  const seen = new Set(servers.map((s) => s.id));
+  const playonNames = new Set(servers.map((s) => playonContainerName(s.id)));
+  const namedOnNode = new Set(
+    servers.map((s) => `${s.nodeId ?? ""}:${s.name}`),
+  );
+  for (const node of nodes) {
+    for (const c of node.containers ?? []) {
+      if (playonNames.has(c.name)) continue;
+      if (namedOnNode.has(`${node.id}:${c.name}`)) continue;
+      const id = inventoryCrateId(node.id, c.name);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      extra.push({
+        id,
+        name: c.name,
+        game: c.image,
+        nodeId: node.id,
+        status: /running/i.test(c.status) ? "running" : "stopped",
+        runtimeMode: "docker",
+        dataPath: "",
+        unmanaged: true,
+      });
+    }
+  }
+  return extra.length ? [...servers, ...extra] : servers;
 }
 
 export function padPresenceClass(node: MapNodeInput): string {

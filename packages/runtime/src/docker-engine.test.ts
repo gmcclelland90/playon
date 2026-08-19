@@ -3,6 +3,9 @@ import {
   parseDockerEngineInfo,
   refineDockerCapability,
   inspectDockerEngine,
+  resolveDockerClientOptions,
+  toDockerodePipePath,
+  windowsDockerEngineConnectOptions,
 } from "./docker-engine.js";
 
 describe("parseDockerEngineInfo", () => {
@@ -57,6 +60,52 @@ describe("refineDockerCapability", () => {
     await expect(refineDockerCapability(windowsCaps, async () => null)).resolves.toMatchObject({
       docker: false,
     });
+  });
+});
+
+describe("windows docker client options", () => {
+  it("maps named pipes to dockerode socketPath and prefers the Windows engine pipe", () => {
+    expect(toDockerodePipePath("\\\\.\\pipe\\dockerDesktopWindowsEngine")).toBe(
+      "//./pipe/dockerDesktopWindowsEngine",
+    );
+    expect(toDockerodePipePath("\\\\.\\pipe\\docker_engine")).toBe("//./pipe/docker_engine");
+    const opts = windowsDockerEngineConnectOptions();
+    expect(opts[0]?.socketPath).toBe("//./pipe/dockerDesktopWindowsEngine");
+    expect(opts.map((o) => o.socketPath)).toContain("//./pipe/docker_engine");
+    expect(opts.every((o) => o.socketPath)).toBe(true);
+  });
+
+  it("skips a Linux-engine pipe and selects the Windows OSType pipe", async () => {
+    const seen: string[] = [];
+    const resolved = await resolveDockerClientOptions({
+      platform: "win32",
+      probe: async (options) => {
+        seen.push(options.socketPath ?? "");
+        if (options.socketPath?.endsWith("dockerDesktopWindowsEngine")) {
+          return { OSType: "windows", Isolation: "process" };
+        }
+        return { OSType: "linux" };
+      },
+    });
+    expect(resolved?.socketPath).toBe("//./pipe/dockerDesktopWindowsEngine");
+    expect(seen.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("does not fall back to empty options (DOCKER_HOST / Linux engine) on Windows", async () => {
+    await expect(
+      resolveDockerClientOptions({
+        platform: "win32",
+        probe: async () => ({ OSType: "linux" }),
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      resolveDockerClientOptions({
+        platform: "linux",
+        probe: async () => {
+          throw new Error("linux must not probe Windows pipes");
+        },
+      }),
+    ).resolves.toBeUndefined();
   });
 });
 

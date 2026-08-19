@@ -25,5 +25,30 @@ describe("buildHeartbeat", () => {
     // The control plane parses heartbeats with this schema before trusting them.
     expect(NodeHeartbeatSchema.parse(hb).jobKinds).toEqual([...SUPPORTED_JOB_KINDS]);
   });
+
+  it("includes a read-only engine inventory when the list succeeds", async () => {
+    const hb = await buildHeartbeat({
+      nodeId: "playon-win-1",
+      name: "win-1",
+      dataRoot: process.cwd(),
+      listContainers: async () => [
+        {
+          name: "lab-sbox",
+          image: "har0x/sbox-server:public",
+          status: "running",
+          ports: [{ host: 27150, container: 27150, protocol: "tcp" }],
+        },
+      ],
+    });
+    expect(hb.containers).toEqual([
+      {
+        name: "lab-sbox",
+        image: "har0x/sbox-server:public",
+        status: "running",
+        ports: [{ host: 27150, container: 27150, protocol: "tcp" }],
+      },
+    ]);
+    expect(NodeHeartbeatSchema.parse(hb).containers?.[0]?.name).toBe("lab-sbox");
+  });
 });
 

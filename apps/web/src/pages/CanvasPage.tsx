@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
@@ -22,6 +23,7 @@ import {
   type SelectedAnchor,
 } from "../components/agent-canvas/AgentCanvas";
 import { ChatMarkdown } from "../components/ChatMarkdown";
+import { mergeNodeContainerInventory } from "../components/agent-canvas/map-node-layout";
 import { MapAddNodePanel } from "../components/MapAddNodePanel";
 import { MapManageSuggestPanel } from "../components/MapManageSuggestPanel";
 import { ServerConsoleBubble } from "../components/ServerConsoleBubble";
@@ -627,6 +629,10 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     confirmApproveRef.current?.focus();
   }, [pendingConfirm]);
 
+  const mapServers = useMemo(
+    () => mergeNodeContainerInventory(servers.data?.servers ?? [], nodes.data?.nodes ?? []),
+    [servers.data?.servers, nodes.data?.nodes],
+  );
   const selected = servers.data?.servers.find((s) => s.id === selectedId);
   const processStatus = detail.data?.server.status ?? selected?.status ?? "unknown";
   const ready = detail.data?.runtime.ready ?? detail.data?.server.ready ?? selected?.ready;
@@ -658,7 +664,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   return (
     <div className={pageClass}>
       <AgentCanvas
-        servers={servers.data?.servers ?? []}
+        servers={mapServers}
         nodes={(nodes.data?.nodes ?? []).map((n) => ({
           id: n.id,
           name: n.name,
