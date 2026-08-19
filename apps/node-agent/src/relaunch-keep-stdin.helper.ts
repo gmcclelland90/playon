@@ -41,7 +41,11 @@ if (n === 0) {
         process.stdin.resume();
         const status = process.env.STATUS;
         setInterval(() => {
-          try { fs.writeFileSync(status, eof ? "eof" : "alive"); } catch { /* ignore */ }
+          try {
+            const tmp = status + ".tmp";
+            fs.writeFileSync(tmp, eof ? "eof" : "alive");
+            fs.renameSync(tmp, status);
+          } catch { /* ignore */ }
         }, 80);
       `,
     ],
