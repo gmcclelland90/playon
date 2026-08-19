@@ -38,6 +38,14 @@ assert.deepEqual(linuxPlan.args, ["-czf", linuxPath, "-C", "/workspace/dist-node
 const src = fs.readFileSync(fileURLToPath(new URL("./package-node.mjs", import.meta.url)), "utf8");
 assert.ok(src.includes("windowsNodeTarCreate"), "package-node.mjs must use windowsNodeTarCreate");
 assert.ok(
+  src.includes("bundledWindowsStartNodeCmd"),
+  "package-node.mjs must ship start-node.cmd from bundledWindowsStartNodeCmd (call node.env.cmd)",
+);
+assert.ok(
+  !src.includes('"%~dp0runtime\\\\node\\\\node.exe" "%~dp0apps\\\\node-agent\\\\dist\\\\index.js"'),
+  "package-node.mjs must not ship the vintage start-node.cmd that skipped node.env.cmd",
+);
+assert.ok(
   !/execFileSync\(\s*["']tar["'][\s\S]*--force-local/.test(src),
   "package-node.mjs must not pass --force-local to tar",
 );
