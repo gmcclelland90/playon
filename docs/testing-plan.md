@@ -90,6 +90,7 @@ After each release, skim CHANGELOG **Fixed** entries and file `test-debt` for ga
 
 ## Known gaps
 
+- Windows vitest 3.x + tinypool forks can pass every assertion then crash the runner on teardown (`emitter.removeListener is not a function`). Unit configs share `vitest.windows.mjs` (serialize workers; `threads` unless a native addon). This is runner isolation, not a product assertion ([vitest#8164](https://github.com/vitest-dev/vitest/issues/8164)).
 - Windows 0.2.3/0.2.4 OTA `require is not defined` is unit-covered (vintage ESM helper throw, Home bootstrap jobs, claimNext skip); live playon-win-1 OTA is not in `pnpm verify` ([#885](https://github.com/gmcclelland90/playon/issues/885))
 - Windows PE / Steam dual-place coverage still depends on `playon-win-1` online ([#46](https://github.com/gmcclelland90/playon/issues/46))
 - Windows container place+start is unit-covered; live `har0x/sbox-server` on Server Core needs Docker Engine in Windows container mode on the node ([#873](https://github.com/gmcclelland90/playon/issues/873))

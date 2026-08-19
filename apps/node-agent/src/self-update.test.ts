@@ -327,8 +327,11 @@ describe("agent supervisor relaunch (#886)", () => {
       await waitForStatus(status, "alive");
       const childPid = Number(await waitForFile(pidFile));
       expect(await helperExit).toBe(0);
+      // Settle so an EOF from MAINPID death would show up, then poll — a
+      // single read can catch writeFileSync's truncate-before-write window
+      // (`''` instead of `alive`) on a loaded ubuntu-latest runner.
       await new Promise((r) => setTimeout(r, 400));
-      expect(fs.readFileSync(status, "utf8").trim()).toBe("alive");
+      await waitForStatus(status, "alive");
       expect(() => process.kill(childPid, 0)).not.toThrow();
       try {
         process.kill(childPid, "SIGKILL");
