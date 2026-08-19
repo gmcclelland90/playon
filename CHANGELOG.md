@@ -4,12 +4,20 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+## [0.2.10] — 2026-08-19
+
 ### Fixed
 
-- **Windows node OTA Home wiring** — `package-node.mjs` 0.2.3–0.2.9 shipped a `start-node.cmd` that exec'd bundled Node without `call node.env.cmd`. Extract/apply overwrote the installer launcher, so PlayOnNodeAgent heartbeated to `127.0.0.1:8787` and Home showed the host offline (playon-win-1 after the 2026-08-15 update). The tarball launcher now loads `node.env.cmd` when present; `apply-self-update.ps1` writes that wiring immediately after swap (before later failure exits); `applyNodeInstallSwap` repairs a vintage launcher after extract.
-- **Windows CI vitest teardown** — `pnpm verify` on windows-latest can finish every `@playon/agent-core` assertion green, then crash tinypool (`emitter.removeListener is not a function` / `ChildProcess.onUnexpectedExit`). Unit configs serialize workers on win32; packages without native addons use `pool: "threads"` so teardown does not go through ChildProcess. API stays on forks (`better-sqlite3`). The #886 keepStdin helper writes status via rename so ubuntu-latest does not read a truncated `''`.
-- **Windows node engine inventory** — a Windows node-agent talks to the Windows Docker named pipe (`dockerDesktopWindowsEngine` / `docker_engine` with `OSType=windows`) and ignores `DOCKER_HOST` / Docker Desktop’s Linux engine. Heartbeats include a read-only `docker ps` inventory so host containers such as `lab-sbox` appear on the playon-win-1 map pad without being created or started. The WSL sibling still lists the Linux engine (`#897`).
-- **Windows node OTA extract** — `windowsTarExtractArgs()` no longer passes GNU `--force-local`. Official 0.2.8→0.2.9 tar.gz OTA on playon-win-1 failed with `update_extract_failed: tar --force-local is not supported`. Create-side already dropped that flag in #876 / #878 (`#895`).
+- **Windows node OTA Home wiring** — `package-node.mjs` 0.2.3–0.2.9 shipped a `start-node.cmd` that exec'd bundled Node without `call node.env.cmd`. Extract/apply overwrote the installer launcher, so PlayOnNodeAgent heartbeated to `127.0.0.1:8787` and Home showed the host offline (playon-win-1 after the 2026-08-15 update). The tarball launcher now loads `node.env.cmd` when present; `apply-self-update.ps1` writes that wiring immediately after swap (before later failure exits); `applyNodeInstallSwap` repairs a vintage launcher after extract (`#907` / `#906`).
+- **Windows CI vitest teardown** — `pnpm verify` on windows-latest can finish every `@playon/agent-core` assertion green, then crash tinypool (`emitter.removeListener is not a function` / `ChildProcess.onUnexpectedExit`). Unit configs serialize workers on win32; packages without native addons use `pool: "threads"` so teardown does not go through ChildProcess. API stays on forks (`better-sqlite3`). The #886 keepStdin helper writes status via rename so ubuntu-latest does not read a truncated `''` (`#905`).
+- **Windows node engine inventory** — a Windows node-agent talks to the Windows Docker named pipe (`dockerDesktopWindowsEngine` / `docker_engine` with `OSType=windows`) and ignores `DOCKER_HOST` / Docker Desktop’s Linux engine. Heartbeats include a read-only `docker ps` inventory so host containers such as `lab-sbox` appear on the playon-win-1 map pad without being created or started. The WSL sibling still lists the Linux engine (`#897` / `#898`).
+- **Windows node OTA extract** — `windowsTarExtractArgs()` no longer passes GNU `--force-local`. Official 0.2.8→0.2.9 tar.gz OTA on playon-win-1 failed with `update_extract_failed: tar --force-local is not supported`. Create-side already dropped that flag in #876 / #878 (`#895` / `#896`).
+
+### Notes
+
+- **P0 ship:** Update Home via OTA, then Update Windows nodes from **Settings → Nodes** so playon-win-1 gets the fixed `start-node.cmd` / apply repair. Until hosts update, matrix `windows_node_offline` can still appear from the vintage 0.2.9 launcher.
+- Lab merge bar tip `#52` `2026-08-19T04:07Z` was red on `int` (not this OTA class). Deferred: wait for green `pnpm loop:verify` before non-fire releases; this cut is the Windows OTA Home-env fix.
+- No open `P1` at prepare time.
 
 ## [0.2.9] — 2026-08-15
 
