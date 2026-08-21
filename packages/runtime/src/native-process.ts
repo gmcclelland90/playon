@@ -332,12 +332,15 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     const tracked = this.require(id);
     if (tracked.info.status !== "running") return;
     const cwd = tracked.cwdJail;
+    const name = tracked.info.name;
     this.signalTracked(tracked);
     tracked.info.status = "stopped";
     tracked.info.pid = undefined;
     this.closeLogFd(tracked);
     // Children may re-parent outside the process group after detach.
-    if (process.platform !== "win32") {
+    // Only the server identity may tree-reap — a diagnostic stop with
+    // cwd under the game jail must not SIGTERM the JVM (#909).
+    if (process.platform !== "win32" && shouldReapServerTreeOrphans(name, cwd)) {
       await this.killOrphansByCwd(cwd);
     }
   }

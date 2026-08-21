@@ -211,17 +211,19 @@ describe("performNodeSelfUpdate", () => {
 
   it("does not unpack with execFileSync powershell and a 60s timeout", () => {
     const src = fs.readFileSync(fileURLToPath(new URL("./self-update.ts", import.meta.url)), "utf8");
-    expect(src).not.toMatch(/execFileSync/);
+    expect(src).not.toMatch(/execFileSync\(\s*["']powershell/);
     expect(src).not.toMatch(/timeout:\s*60000/);
     expect(src).toMatch(/runExtractCommand/);
     expect(src).toMatch(/update_extract_timeout/);
     expect(src).toMatch(/buildArchiveExtractCommands/);
+    // systemctl show KillMode only — never archive extract (#868 / #909).
+    expect(src).toMatch(/execFileSync\("systemctl"/);
   });
 
   it("does not call require() in the ESM self-update helper (#885)", () => {
     const src = fs.readFileSync(fileURLToPath(new URL("./self-update.ts", import.meta.url)), "utf8");
     expect(src).not.toMatch(/require\s*\(\s*["']node:child_process["']\s*\)/);
-    expect(src).toMatch(/import \{ spawn(?:, type ChildProcess)? \} from "node:child_process"/);
+    expect(src).toMatch(/import \{ execFileSync, spawn, type ChildProcess \} from "node:child_process"/);
   });
 
   it("swapInstallTree does not delete sibling processes under data tree (#837 regression)", () => {
