@@ -249,6 +249,10 @@ describe("NativeProcessSupervisor", () => {
       supervisor.find("server-B4KR", path.join("servers", "B4KR", "game")),
     ).resolves.toMatchObject({ pid: game.pid, status: "running" });
 
+    await supervisor.stop(diag.id);
+    expect(() => process.kill(game.pid!, 0)).not.toThrow();
+    expect(() => process.kill(jvm.pid!, 0)).not.toThrow();
+
     await supervisor.reclaim("playon-diag-stop", path.join(jail, "servers", "B4KR", "game"));
     expect(() => process.kill(game.pid!, 0)).not.toThrow();
     expect(() => process.kill(jvm.pid!, 0)).not.toThrow();
