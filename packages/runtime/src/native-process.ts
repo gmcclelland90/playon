@@ -58,6 +58,19 @@ export function cmdlineOrphanRoots(cwd: string): string[] {
 }
 
 /**
+ * Tree-wide orphan reap is only for the control-plane server identity
+ * (`server-<instanceId>`) launched from `…/game`. A diagnostic
+ * `process_start` / `process_stop` whose cwd happens to sit under that
+ * jail must not SIGTERM the dedicated server / JVM (#909).
+ */
+export function shouldReapServerTreeOrphans(name: string, cwd: string): boolean {
+  if (!name || name === "server-unknown") return false;
+  if (!name.startsWith("server-")) return false;
+  const normalized = cwd.replace(/[\\/]+$/, "");
+  return pathBasename(normalized) === "game";
+}
+
+/**
  * `/proc/<pid>/stat` pgrp (field 5). Used to prove a game is not in the
  * agent's process group — `kill(-agentPid)` / systemd session teardown
  * must not land on the dedicated server (#886).
@@ -301,6 +314,20 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     return this.findTracked(name, resolved)?.stdinHolder?.pid;
   }
 
+  /**
+   * True when a running child still has a Node pipe write-end (FIFO holder
+   * failed or Windows). Agent MAINPID exit would EOF that console (#909).
+   */
+  hasPipeStdinChildren(): boolean {
+    for (const tracked of this.procs.values()) {
+      if (tracked.info.status !== "running") continue;
+      if (tracked.stdinHolder) continue;
+      const stdin = tracked.child.stdin;
+      if (stdin && !stdin.destroyed) return true;
+    }
+    return false;
+  }
+
   async stop(id: string): Promise<void> {
     const tracked = this.require(id);
     if (tracked.info.status !== "running") return;
@@ -336,21 +363,21 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
   }
 
   async reclaim(name: string, cwd: string): Promise<void> {
-    const tree = serverTreeRoot(cwd);
+    const excludePids = new Set<number>();
     for (const tracked of this.procs.values()) {
-      const sameTree =
-        tracked.cwdJail === cwd ||
-        tracked.cwdJail === tree ||
-        tracked.cwdJail.startsWith(`${tree}${path.sep}`);
-      if (tracked.info.name !== name && !sameTree) continue;
       if (tracked.info.status !== "running") continue;
+      if (tracked.info.name !== name) {
+        if (tracked.child.pid) excludePids.add(tracked.child.pid);
+        if (tracked.stdinHolder?.pid) excludePids.add(tracked.stdinHolder.pid);
+        continue;
+      }
       this.signalTracked(tracked);
       tracked.info.status = "stopped";
       tracked.info.pid = undefined;
       this.closeLogFd(tracked);
     }
-    if (process.platform !== "win32") {
-      await this.killOrphansByCwd(cwd);
+    if (process.platform !== "win32" && shouldReapServerTreeOrphans(name, cwd)) {
+      await this.killOrphansByCwd(cwd, excludePids);
     }
   }
 
@@ -457,12 +484,12 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
   }
 
   /** SIGTERM then SIGKILL any process whose /proc cwd is under this server tree. */
-  private async killOrphansByCwd(cwd: string): Promise<void> {
+  private async killOrphansByCwd(cwd: string, excludePids?: Set<number>): Promise<void> {
     const target = serverTreeRoot(cwd.replace(/\/+$/, ""));
     if (!target || target === "/") return;
     const cmdlineRoots = cmdlineOrphanRoots(cwd);
 
-    const pids = listPidsWithCwdUnder(target);
+    const pids = listPidsWithCwdUnder(target).filter((pid) => !excludePids?.has(pid));
     // Fallback: pkill -f for start scripts under game/ or home/ (covers races
     // where /proc/cwd is unreadable to the agent user). Never pkill the parent
     // server-id path — that can match unrelated node-agent job cmdlines.
@@ -483,7 +510,7 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
 
     // Brief poll: if nothing survived SIGTERM, skip the long sleep.
     await sleep(100);
-    const surviving = listPidsWithCwdUnder(target);
+    const surviving = listPidsWithCwdUnder(target).filter((pid) => !excludePids?.has(pid));
     const pkillStillMatches = pkillFoundAny && pgrepMatchingRoots(cmdlineRoots);
 
     if (surviving.length === 0 && !pkillStillMatches) {
@@ -492,7 +519,7 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
 
     // Stubborn survivors: wait longer then SIGKILL.
     await sleep(1400);
-    for (const pid of listPidsWithCwdUnder(target)) {
+    for (const pid of listPidsWithCwdUnder(target).filter((pid) => !excludePids?.has(pid))) {
       try {
         process.kill(pid, "SIGKILL");
       } catch {

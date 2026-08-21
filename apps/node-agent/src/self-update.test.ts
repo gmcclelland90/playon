@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  AGENT_KILL_MODE_ENV,
   AGENT_RELAUNCH_EXIT_CODE,
   AGENT_SUPERVISED_ENV,
   applyNodeInstallSwap,
@@ -14,11 +15,13 @@ import {
   isAgentSupervised,
   isSystemdService,
   performNodeSelfUpdate,
+  readSystemdKillMode,
   relaunchUpdatedAgent,
   requireWindowsUpdateHelper,
   resolveAgentEntry,
   runAgentSupervisorLoop,
   runExtractCommand,
+  shouldExitSystemdMainPid,
   swapInstallTree,
 } from "./self-update.js";
 import {
@@ -279,6 +282,12 @@ describe("agent supervisor relaunch (#886)", () => {
     expect(isSystemdService({ PLAYON_AGENT_EXIT_MAINPID: "1" })).toBe(true);
     expect(isSystemdService({})).toBe(false);
     expect(AGENT_RELAUNCH_EXIT_CODE).toBe(75);
+    expect(shouldExitSystemdMainPid({ killMode: "process" })).toBe(true);
+    expect(shouldExitSystemdMainPid({ killMode: "process", hasPipeStdin: true })).toBe(false);
+    expect(shouldExitSystemdMainPid({ killMode: "control-group" })).toBe(false);
+    expect(shouldExitSystemdMainPid({ killMode: "mixed" })).toBe(false);
+    expect(shouldExitSystemdMainPid({ killMode: null })).toBe(false);
+    expect(readSystemdKillMode({ [AGENT_KILL_MODE_ENV]: "control-group" })).toBe("control-group");
   });
 
   it("resolves the swapped agent entry when present", () => {
@@ -309,6 +318,7 @@ describe("agent supervisor relaunch (#886)", () => {
         ...process.env,
         INVOCATION_ID: "playon-886-test",
         PLAYON_AGENT_EXIT_MAINPID: "1",
+        [AGENT_KILL_MODE_ENV]: "process",
         PLAYON_HELPER_JAIL: jail,
         PLAYON_HELPER_STATUS: status,
         PLAYON_HELPER_PID: pidFile,
@@ -411,15 +421,18 @@ describe("agent supervisor relaunch (#886)", () => {
     expect(relaunchUpdatedAgent({ installRoot: process.cwd(), skipExit: true })).toBeUndefined();
   });
 
-  it("systemd OTA exits MAINPID; node units stay KillMode=process; Home API unit is untouched", () => {
+  it("systemd OTA exits MAINPID only when KillMode=process; node units stay KillMode=process; Home API unit is untouched", () => {
     const src = fs.readFileSync(fileURLToPath(new URL("./self-update.ts", import.meta.url)), "utf8");
     const index = fs.readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8");
     expect(src).toMatch(/isSystemdService/);
     expect(src).toMatch(/INVOCATION_ID/);
+    expect(src).toMatch(/shouldExitSystemdMainPid/);
+    expect(src).toMatch(/readSystemdKillMode/);
     expect(src).toMatch(/runAgentSupervisorLoop/);
     expect(src).toMatch(/AGENT_RELAUNCH_EXIT_CODE/);
     expect(src).not.toMatch(/process_stop|container_stop|reclaim\(/);
     expect(index).toMatch(/relaunchUpdatedAgent/);
+    expect(index).toMatch(/hasPipeStdin/);
     expect(index).toMatch(/stopAgentLoops/);
     expect(index).not.toMatch(/process\.exit\(0\)/);
     const repo = path.dirname(fileURLToPath(new URL("../../../deploy/install-node.sh", import.meta.url)));
@@ -435,6 +448,85 @@ describe("agent supervisor relaunch (#886)", () => {
     expect(homeUnit).not.toMatch(/#886/);
     expect(homeUnit).not.toMatch(/SendSIGHUP=no/);
   });
+
+  it("KillMode=control-group keeps MAINPID; native child outside the install tree is not signaled (#909)", async () => {
+    if (process.platform === "win32") return;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "playon-relaunch-cg-"));
+    const installRoot = path.join(dir, "opt-playon-node");
+    const jail = path.join(dir, "var-lib-playon-node", "servers", "nzl", "game");
+    fs.mkdirSync(path.join(installRoot, "apps", "node-agent", "dist"), { recursive: true });
+    fs.writeFileSync(
+      path.join(installRoot, "apps", "node-agent", "dist", "index.js"),
+      "setInterval(() => {}, 60_000);\n",
+    );
+    fs.mkdirSync(jail, { recursive: true });
+    const status = path.join(dir, "status");
+    const pidFile = path.join(dir, "child.pid");
+    const stamp = path.join(dir, "n");
+    fs.writeFileSync(stamp, "0");
+    const helperSrc = fileURLToPath(new URL("./relaunch-keep-stdin.helper.ts", import.meta.url));
+    const helper = spawn(resolveTsx(), [helperSrc], {
+      stdio: ["ignore", "inherit", "inherit"],
+      env: {
+        ...process.env,
+        INVOCATION_ID: "playon-909-test",
+        PLAYON_AGENT_EXIT_MAINPID: "1",
+        [AGENT_KILL_MODE_ENV]: "control-group",
+        PLAYON_HELPER_JAIL: jail,
+        PLAYON_HELPER_STATUS: status,
+        PLAYON_HELPER_PID: pidFile,
+        PLAYON_HELPER_STAMP: stamp,
+        PLAYON_HELPER_MODE: "exit-mainpid",
+        PLAYON_HELPER_INSTALL_ROOT: installRoot,
+      },
+    });
+    try {
+      await waitForStatus(status, "alive");
+      const childPid = Number(await waitForFile(pidFile));
+      expect(childPid).toBeGreaterThan(0);
+      // MAINPID must stay — exiting would let systemd KillMode=control-group
+      // SIGTERM every leftover in the unit cgroup, including this game.
+      await new Promise((r) => setTimeout(r, 600));
+      expect(helper.exitCode).toBeNull();
+      expect(() => process.kill(helper.pid!, 0)).not.toThrow();
+      expect(fs.readFileSync(status, "utf8").trim()).toBe("alive");
+      expect(() => process.kill(childPid, 0)).not.toThrow();
+      const childCwd = fs.readlinkSync(`/proc/${childPid}/cwd`);
+      expect(childCwd.startsWith(installRoot)).toBe(false);
+      try {
+        process.kill(childPid, "SIGKILL");
+      } catch {
+        /* gone */
+      }
+    } finally {
+      try {
+        helper.kill("SIGKILL");
+      } catch {
+        /* gone */
+      }
+      try {
+        const { execFileSync } = await import("node:child_process");
+        const out = execFileSync(
+          "pgrep",
+          ["-f", path.join(installRoot, "apps", "node-agent", "dist", "index.js")],
+          { encoding: "utf8" },
+        );
+        for (const line of out.trim().split("\n")) {
+          const pid = Number(line.trim());
+          if (Number.isInteger(pid) && pid > 0) {
+            try {
+              process.kill(pid, "SIGKILL");
+            } catch {
+              /* gone */
+            }
+          }
+        }
+      } catch {
+        /* no leftover supervisor child */
+      }
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
 });
 
 describe("Windows OTA start-node.cmd Home wiring", () => {

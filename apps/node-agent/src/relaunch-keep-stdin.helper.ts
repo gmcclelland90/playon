@@ -8,7 +8,9 @@ import fs from "node:fs";
 import { NativeProcessSupervisor } from "../../../packages/runtime/src/native-process.js";
 import {
   AGENT_RELAUNCH_EXIT_CODE,
+  readSystemdKillMode,
   relaunchUpdatedAgent,
+  shouldExitSystemdMainPid,
 } from "./self-update.js";
 
 const jail = process.env.PLAYON_HELPER_JAIL;
@@ -59,10 +61,19 @@ if (n === 0) {
   }
   fs.writeFileSync(pidFile, String(info.pid));
   if (mode === "exit-mainpid") {
-    relaunchUpdatedAgent({ installRoot });
+    const hasPipeStdin = supervisor.hasPipeStdinChildren();
+    relaunchUpdatedAgent({ installRoot, hasPipeStdin });
     // FIFO write ends / tsx loaders can hold the event loop so the 200ms
-    // scheduled exit never runs on GitHub-hosted runners. MAINPID must die.
-    setImmediate(() => process.exit(0));
+    // scheduled exit never runs. Only force-exit when KillMode=process
+    // made relaunch schedule MAINPID death (#909).
+    if (
+      shouldExitSystemdMainPid({
+        killMode: readSystemdKillMode(),
+        hasPipeStdin,
+      })
+    ) {
+      setImmediate(() => process.exit(0));
+    }
   } else {
     setTimeout(() => process.exit(AGENT_RELAUNCH_EXIT_CODE), 120);
   }
