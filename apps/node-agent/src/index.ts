@@ -2,7 +2,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { buildHeartbeat, postHeartbeat } from "./heartbeat.js";
-import { claimNextJob, executeJob, reportJobProgress, reportJobResult } from "./jobs.js";
+import {
+  claimNextJob,
+  executeJob,
+  nativeSupervisorHasPipeStdin,
+  reportJobProgress,
+  reportJobResult,
+} from "./jobs.js";
 import { relaunchUpdatedAgent } from "./self-update.js";
 import { readAgentVersion } from "./version.js";
 import { startWslKeepalive } from "./wsl-keepalive.js";
@@ -61,7 +67,10 @@ async function tickJobs() {
           typeof (result as { installRoot?: unknown }).installRoot === "string"
             ? (result as { installRoot: string }).installRoot
             : process.env.PLAYON_INSTALL_ROOT || process.cwd();
-        relaunchUpdatedAgent({ installRoot });
+        relaunchUpdatedAgent({
+          installRoot,
+          hasPipeStdin: nativeSupervisorHasPipeStdin(),
+        });
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "job_failed";

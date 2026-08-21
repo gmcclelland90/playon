@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -348,16 +348,59 @@ export function isSystemdService(env: NodeJS.ProcessEnv = process.env): boolean 
   return Boolean(env.INVOCATION_ID) || env.PLAYON_AGENT_EXIT_MAINPID === "1";
 }
 
+/** Test / unit-file override. Prefer this over `systemctl show` in helpers. */
+export const AGENT_KILL_MODE_ENV = "PLAYON_AGENT_KILL_MODE";
+
 /**
- * After a Linux swap, exit MAINPID when systemd is managing us. NZL-shaped
- * units already have `KillMode=process` + `Restart=always`: only MAINPID is
- * signaled, then a new agent starts. OTA never rewrites existing units, so
- * this must not require MAINPID to live forever as a supervisor.
+ * systemd KillMode for the unit that owns `pid`. `control-group` (the default)
+ * SIGTERMs leftover cgroup members on MAINPID exit + Restart=always.
+ * `process` only signals MAINPID — games and the FIFO holder stay up.
  *
- * Native `keepStdin` children survive because a FIFO holder keeps the write
- * end open (agent death is not console EOF) and they are in their own pgrp.
- * Moving them out of the agent cgroup is best-effort; `KillMode=process` is
- * what existing hosts already have.
+ * #888 assumed existing hosts already had `KillMode=process`. OTA never
+ * rewrites `/etc/systemd`, so this must be read, not assumed (#909).
+ */
+export function readSystemdKillMode(
+  env: NodeJS.ProcessEnv = process.env,
+  pid: number = process.pid,
+): string | null {
+  const override = env[AGENT_KILL_MODE_ENV]?.trim();
+  if (override) return override;
+  if (process.platform === "win32") return null;
+  try {
+    const out = execFileSync("systemctl", ["show", String(pid), "-p", "KillMode", "--value"], {
+      encoding: "utf8",
+      timeout: 2_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Only exit systemd MAINPID when leftover cgroup members will not be
+ * signaled and keepStdin consoles will not see pipe EOF.
+ * Unknown KillMode is unsafe — keep MAINPID and supervisor-loop.
+ */
+export function shouldExitSystemdMainPid(opts: {
+  killMode: string | null | undefined;
+  hasPipeStdin?: boolean;
+}): boolean {
+  if (opts.hasPipeStdin) return false;
+  return opts.killMode === "process";
+}
+
+/**
+ * After a Linux swap, exit MAINPID only when systemd `KillMode=process` and
+ * no pipe-based `keepStdin` child is still attached. Otherwise become a
+ * supervisor: MAINPID stays, so `Restart=always` does not tear down the
+ * cgroup (`control-group` units OTA cannot rewrite) and a pre-FIFO pipe
+ * does not EOF (#909 / NZL 0.2.9→0.2.10).
+ *
+ * Native FIFO `keepStdin` children survive a *safe* MAINPID exit because a
+ * holder keeps the write end open and they are in their own pgrp.
+ * Moving them out of the agent cgroup is best-effort.
  *
  * A supervised child exits 75 so `runAgentSupervisorLoop` relaunches it.
  * Without systemd (`pnpm dev`) the same PID becomes that supervisor.
@@ -368,6 +411,11 @@ export function relaunchUpdatedAgent(opts: {
   skipExit?: boolean;
   /** Tests: do not take over this process. */
   spawnOnly?: boolean;
+  /**
+   * A running native child still has a Node pipe write-end (FIFO missing).
+   * Exit would EOF Project Zomboid / other stdin consoles.
+   */
+  hasPipeStdin?: boolean;
 }): ChildProcess | void {
   if (opts.skipExit) return;
   if (process.platform === "win32") {
@@ -378,7 +426,13 @@ export function relaunchUpdatedAgent(opts: {
     setTimeout(() => process.exit(AGENT_RELAUNCH_EXIT_CODE), 200);
     return;
   }
-  if (isSystemdService()) {
+  if (
+    isSystemdService() &&
+    shouldExitSystemdMainPid({
+      killMode: readSystemdKillMode(),
+      hasPipeStdin: opts.hasPipeStdin,
+    })
+  ) {
     setTimeout(() => process.exit(0), 200);
     return;
   }

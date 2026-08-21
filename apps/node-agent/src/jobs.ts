@@ -205,6 +205,11 @@ export function listSupervisedProcesses(): import("@playon/runtime").ProcessInfo
   return processSupervisor?.list?.() ?? [];
 }
 
+/** True when a supervised native child would see EOF if this process exited. */
+export function nativeSupervisorHasPipeStdin(): boolean {
+  return processSupervisor?.hasPipeStdinChildren?.() === true;
+}
+
 export async function claimNextJob(
   apiBase: string,
   nodeId: string,
@@ -615,10 +620,12 @@ export async function executeJob(
     if (id) {
       await proc.stop(id).catch(() => undefined);
     }
-    // Always reclaim by cwd/name so stop works after node-agent restart (lost map).
+    // Reclaim by identity so stop works after node-agent restart (lost map).
+    // Empty name must not become `server-unknown` — that would tree-reap a
+    // JVM whose cwd sits under the game jail (#909).
     if (cwdRel && typeof proc.reclaim === "function") {
       const cwd = resolveInJail(dataRoot, cwdRel);
-      await proc.reclaim(name || `server-unknown`, cwd);
+      await proc.reclaim(name || "", cwd);
     }
     return parseNodeJobResult("process_stop", { ok: true });
   }

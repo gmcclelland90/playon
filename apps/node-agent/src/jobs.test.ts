@@ -443,6 +443,100 @@ describe("executeJob", () => {
     }
   }, 30_000);
 
+  it("process_start/stop with game cwd and another name does not reap the server; status is find-only (#909)", async () => {
+    if (process.platform === "win32") return;
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-cwd-footgun-"));
+    const gameRel = "servers/B4KR2xjZnLFZjqrtqqvvL/game";
+    const homeDir = path.join(root, "servers", "B4KR2xjZnLFZjqrtqqvvL", "home", "Zomboid");
+    fs.mkdirSync(path.join(root, gameRel), { recursive: true });
+    fs.mkdirSync(homeDir, { recursive: true });
+    const { spawn } = await import("node:child_process");
+    let jvm: ReturnType<typeof spawn> | undefined;
+    try {
+      const started = (await executeJob(
+        {
+          id: "footgun-start",
+          nodeId: "n1",
+          kind: "process_start",
+          args: {
+            name: "server-B4KR2xjZnLFZjqrtqqvvL",
+            command: process.execPath,
+            args: ["-e", "setTimeout(() => {}, 60_000)"],
+            cwd: gameRel,
+          },
+        },
+        root,
+      )) as { id: string; pid?: number; status: string };
+      expect(started.status).toBe("running");
+      expect(started.pid).toBeGreaterThan(0);
+
+      jvm = spawn("sleep", ["30"], { cwd: homeDir, detached: true, stdio: "ignore" });
+      jvm.unref();
+      expect(jvm.pid).toBeTypeOf("number");
+
+      expect(
+        await executeJob(
+          {
+            id: "footgun-status",
+            nodeId: "n1",
+            kind: "process_status",
+            args: { name: "server-B4KR2xjZnLFZjqrtqqvvL", cwd: gameRel },
+          },
+          root,
+        ),
+      ).toMatchObject({ status: "running", pid: started.pid });
+      expect(() => process.kill(started.pid!, 0)).not.toThrow();
+      expect(() => process.kill(jvm.pid!, 0)).not.toThrow();
+
+      const diag = (await executeJob(
+        {
+          id: "footgun-diag-start",
+          nodeId: "n1",
+          kind: "process_start",
+          args: {
+            name: "playon-diag",
+            command: process.execPath,
+            args: ["-e", "setTimeout(() => {}, 60_000)"],
+            cwd: gameRel,
+          },
+        },
+        root,
+      )) as { id: string; pid?: number };
+      expect(diag.pid).not.toBe(started.pid);
+      expect(() => process.kill(started.pid!, 0)).not.toThrow();
+      expect(() => process.kill(jvm.pid!, 0)).not.toThrow();
+
+      await executeJob(
+        {
+          id: "footgun-diag-stop",
+          nodeId: "n1",
+          kind: "process_stop",
+          args: { id: diag.id, name: "playon-diag", cwd: gameRel },
+        },
+        root,
+      );
+      expect(() => process.kill(started.pid!, 0)).not.toThrow();
+      expect(() => process.kill(jvm.pid!, 0)).not.toThrow();
+
+      await executeJob(
+        {
+          id: "footgun-stop",
+          nodeId: "n1",
+          kind: "process_stop",
+          args: { id: started.id, name: "server-B4KR2xjZnLFZjqrtqqvvL", cwd: gameRel },
+        },
+        root,
+      );
+    } finally {
+      try {
+        if (jvm?.pid) process.kill(jvm.pid, "SIGKILL");
+      } catch {
+        /* gone */
+      }
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("node_self_update swap (skipExit) does not call container_stop on a docker child (#886)", async () => {
     if (process.platform === "win32") return;
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-ota-docker-"));
