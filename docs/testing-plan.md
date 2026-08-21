@@ -100,7 +100,7 @@ After each release, skim CHANGELOG **Fixed** entries and file `test-debt` for ga
 - Managed instance liveness (leftover reap, healthy reuse, first-see port-dead, persisted start grace, docker native-tree reap, health-restart single-instance, workshop_update notify-only, existing managed Health-monitor migrate) is unit-covered in `@playon/shared` + `@playon/runtime` + api runtime-handle / health / watcher tests ([#880](https://github.com/gmcclelland90/playon/issues/880))
 - Node-agent OTA / parent restart must not stop a supervised native (or docker) child — keepStdin parent-exit (no EOF), `relaunchUpdatedAgent` / supervisor, and `KillMode=process` MAINPID-only SIGTERM are unit-covered in `@playon/runtime` + `@playon/node-agent` (not `skipExit`-only) ([#886](https://github.com/gmcclelland90/playon/issues/886))
 - Weekly e2e is scheduled (`e2e-weekly.yml`) and `pnpm test:e2e` always builds workspace packages first; not yet in every-PR CI ([#44](https://github.com/gmcclelland90/playon/issues/44))
-- Lab cadence timer must be installed once on playon-dev ([infra/lab](../infra/lab/README.md), [#45](https://github.com/gmcclelland90/playon/issues/45))
+- Lab cadence timer is live on playon-dev (daily verify → matrix → `source:lab` Issues; history on [#52](https://github.com/gmcclelland90/playon/issues/52) / [infra/lab](../infra/lab/README.md)); reinstall only if the host is rebuilt
 
 ## Human gates for testing
 

@@ -1,12 +1,14 @@
 # Lab cadence (playon-dev)
 
-Standing loop on the 24/7 Linux lab:
+Standing loop on the 24/7 Linux lab (timer already enabled on the current playon-dev host):
 
 1. `git pull` + `pnpm loop:verify`
 2. On green: `pnpm lab:matrix --continue-on-fail`
 3. File/update GitHub Issues from failures (`source:lab` → PlayOn Ops → triage)
 
-## Install (once on playon-dev)
+Live tick history: [#52 Lab now](https://github.com/gmcclelland90/playon/issues/52).
+
+## Install / reinstall (once per host, or after rebuild)
 
 ```bash
 cd /home/playon/src/playon-git
