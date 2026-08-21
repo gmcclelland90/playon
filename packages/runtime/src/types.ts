@@ -91,6 +91,11 @@ export interface ProcessSupervisor {
    */
   reclaim?(name: string, cwd: string): Promise<void>;
   /**
+   * True when a running child still has a Node pipe write-end (not a FIFO
+   * holder). Agent MAINPID exit would EOF that console (#909).
+   */
+  hasPipeStdinChildren?(): boolean;
+  /**
    * Write a console line to the process behind an identity (adminDialect=stdin).
    * Only a process this supervisor still holds a stdin pipe for can be written
    * to: an OS orphan it merely re-resolved has no console left to address.

@@ -9,6 +9,7 @@ import {
   cmdlineOrphanRoots,
   readProcessGroupId,
   readCgroupRelativePath,
+  shouldReapServerTreeOrphans,
   supervisedChildDetached,
 } from "./native-process.js";
 import { PathJailError } from "./path-jail.js";
@@ -164,6 +165,11 @@ describe("NativeProcessSupervisor", () => {
       "C:\\data\\servers\\abc\\home",
     ]);
     expect(serverTreeRoot("/tmp/other")).toBe("/tmp/other");
+    expect(shouldReapServerTreeOrphans("server-abc", "/data/servers/abc/game")).toBe(true);
+    expect(shouldReapServerTreeOrphans("diag", "/data/servers/abc/game")).toBe(false);
+    expect(shouldReapServerTreeOrphans("server-unknown", "/data/servers/abc/game")).toBe(false);
+    expect(shouldReapServerTreeOrphans("server-abc", "/var/lib/playon-node")).toBe(false);
+    expect(shouldReapServerTreeOrphans("", "/data/servers/abc/game")).toBe(false);
   });
 
   it("finds and reaps a leftover whose cwd left game/ for sibling home/", async () => {
@@ -200,6 +206,59 @@ describe("NativeProcessSupervisor", () => {
     expect(() => process.kill(leftover.pid!, 0)).toThrow();
 
     await supervisor.stop(started.id);
+  });
+
+  it("does not tree-reap a JVM when process_start/stop uses the game cwd with another name (#909)", async () => {
+    if (process.platform === "win32") return;
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-cwd-footgun-"));
+    temps.push(jail);
+    const gameDir = path.join(jail, "servers", "B4KR", "game");
+    const homeDir = path.join(jail, "servers", "B4KR", "home", "Zomboid");
+    fs.mkdirSync(gameDir, { recursive: true });
+    fs.mkdirSync(homeDir, { recursive: true });
+
+    const supervisor = new NativeProcessSupervisor(jail);
+    const game = await supervisor.start({
+      name: "server-B4KR",
+      command: "sleep",
+      args: ["30"],
+      cwd: path.join("servers", "B4KR", "game"),
+    });
+    expect(game.pid).toBeTypeOf("number");
+
+    // JVM-shaped leftover that left game/ for sibling home/.
+    const jvm = spawn("sleep", ["30"], { cwd: homeDir, detached: true, stdio: "ignore" });
+    jvm.unref();
+    expect(jvm.pid).toBeTypeOf("number");
+
+    const diag = await supervisor.start({
+      name: "playon-diag-stop",
+      command: "sleep",
+      args: ["30"],
+      cwd: path.join("servers", "B4KR", "game"),
+    });
+    expect(diag.pid).not.toBe(game.pid);
+    expect(() => process.kill(game.pid!, 0)).not.toThrow();
+    expect(() => process.kill(jvm.pid!, 0)).not.toThrow();
+
+    await expect(
+      supervisor.find("server-B4KR", path.join("servers", "B4KR", "game")),
+    ).resolves.toMatchObject({ pid: game.pid, status: "running" });
+
+    await supervisor.stop(diag.id);
+    expect(() => process.kill(game.pid!, 0)).not.toThrow();
+    expect(() => process.kill(jvm.pid!, 0)).not.toThrow();
+
+    await supervisor.reclaim("playon-diag-stop", path.join(jail, "servers", "B4KR", "game"));
+    expect(() => process.kill(game.pid!, 0)).not.toThrow();
+    expect(() => process.kill(jvm.pid!, 0)).not.toThrow();
+
+    await supervisor.stop(game.id);
+    try {
+      process.kill(jvm.pid!, "SIGKILL");
+    } catch {
+      /* gone */
+    }
   });
 
   it("finds an untracked survivor by its cwd, so a lost id is not a lost process", async () => {
