@@ -18,8 +18,10 @@ export default defineConfig({
      *
      * 60s test budget: a loaded windows-latest runner routinely spends 10–18s
      * on SQLite/skill I/O; 30s still false-timed-out after the #882 hang was
-     * removed (tool-registry-parity + onTaskUpdate). Pool isolation stays on
-     * forks (nativeAddon) — better-sqlite3 Access-Violates under threads.
+     * removed (tool-registry-parity + onTaskUpdate). Pool stays on forks
+     * (nativeAddon) — better-sqlite3 Access-Violates under threads. #912 also
+     * splits long snapshot files and serializes Windows CI turbo so birpc does
+     * not miss onTaskUpdate after a fully green suite.
      */
     testTimeout: isWin ? 60_000 : 30_000,
     hookTimeout: isWin ? 60_000 : 30_000,

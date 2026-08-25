@@ -21,7 +21,12 @@ jobs:
           cache: pnpm
       - run: pnpm install
       # Full loop:verify (int/agent + Venice) stays on the Linux lab host.
-      - run: pnpm verify
+      # Windows: serialize turbo so parallel package vitest forks do not starve
+      # birpc onTaskUpdate under load (#912 / vitest#6511).
+      - name: Verify
+        run: pnpm verify
+        env:
+          TURBO_CONCURRENCY: ${{ matrix.os == 'windows-latest' && '1' || '10' }}
 
   packaging-smoke:
     strategy:

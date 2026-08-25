@@ -1,16 +1,16 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type Database from "better-sqlite3";
-import { NODE_AUTHORITATIVE_MARKER } from "@playon/shared";
-import { createDb, type Db } from "../db/client.js";
-import { applyBootstrap } from "../db/migrate.js";
-import { nodes, servers } from "../db/schema.js";
-import type { AppConfig } from "../config.js";
-import { ServerService } from "./servers.js";
-import { SnapshotService } from "./snapshots.js";
+import {
+  cleanupSnapshotTemps,
+  insertServer,
+  tempEnv,
+} from "./snapshots-test-helpers.js";
 
+/**
+ * Split from snapshots-node-sync.test.ts so no single Windows CI file sits near
+ * the ~60s vitest birpc onTaskUpdate cliff (#912 / vitest#6511).
+ */
 const sync = vi.hoisted(() => ({
   pulls: [] as string[],
   pushes: [] as string[],
@@ -27,84 +27,13 @@ vi.mock("./node-sync.js", () => ({
   },
 }));
 
-const temps: Array<{ root: string; sqlite: Database.Database }> = [];
-
-function tempEnv(): {
-  db: Db;
-  config: AppConfig;
-  servers: ServerService;
-  snapshots: SnapshotService;
-} {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-snap-"));
-  const dbPath = path.join(root, "playon.db");
-  applyBootstrap(dbPath);
-  const config: AppConfig = {
-    port: 0,
-    dataRoot: root,
-    dbPath,
-    sessionSecret: "test",
-    llmMode: "openai_compatible",
-    runtimeMode: "docker",
-    advertiseHost: "127.0.0.1",
-    skillsRoots: [path.join(root, "skills")],
-  };
-  const { db, sqlite } = createDb(dbPath);
-  temps.push({ root, sqlite });
-  const serverService = new ServerService(db, config);
-  const snapshotService = new SnapshotService(db, config, serverService);
-  return { db, config, servers: serverService, snapshots: snapshotService };
-}
-
-async function insertServer(
-  db: Db,
-  config: AppConfig,
-  id: string,
-  contents: Record<string, string>,
-  opts?: { nodeId?: string; nodeAuthoritative?: boolean },
-): Promise<string> {
-  const dataPath = path.join(config.dataRoot, "servers", id);
-  fs.mkdirSync(dataPath, { recursive: true });
-  for (const [name, body] of Object.entries(contents)) {
-    fs.writeFileSync(path.join(dataPath, name), body);
-  }
-  if (opts?.nodeAuthoritative) {
-    fs.writeFileSync(path.join(dataPath, NODE_AUTHORITATIVE_MARKER), `${opts.nodeId ?? "node-z"}\n`);
-  }
-  if (opts?.nodeId) {
-    await db.insert(nodes).values({
-      id: opts.nodeId,
-      name: "lab-node",
-      os: "linux",
-      docker: true,
-      native: true,
-      steamcmd: false,
-      lastSeenAt: new Date(),
-      kind: "lan",
-    });
-  }
-  await db.insert(servers).values({
-    id,
-    name: `Server ${id}`,
-    game: "test",
-    nodeId: opts?.nodeId ?? null,
-    runtimeMode: "docker",
-    status: "stopped",
-    dataPath,
-    createdAt: new Date(),
-  });
-  return dataPath;
-}
-
 afterEach(() => {
   sync.pulls.length = 0;
   sync.pushes.length = 0;
-  for (const entry of temps.splice(0)) {
-    entry.sqlite.close();
-    fs.rmSync(entry.root, { recursive: true, force: true });
-  }
+  cleanupSnapshotTemps();
 });
 
-describe("SnapshotService", () => {
+describe("SnapshotService local", () => {
   it("enforces retention on scheduled snapshots but keeps baselines", async () => {
     const { db, config, snapshots } = tempEnv();
     await insertServer(db, config, "srv-ret", { "a.txt": "1" });
@@ -151,36 +80,5 @@ describe("SnapshotService", () => {
 
     const listed = await snapshots.list("srv2");
     expect(listed.map((s) => s.label).sort()).toEqual(["one", "two"]);
-  });
-
-  it("pulls node-authoritative trees before create", async () => {
-    const { db, config, snapshots } = tempEnv();
-    await insertServer(db, config, "srv-na", { "stale.txt": "home" }, {
-      nodeId: "node-z",
-      nodeAuthoritative: true,
-    });
-
-    const created = await snapshots.create("srv-na", "from-node");
-
-    expect(sync.pulls).toEqual(["srv-na"]);
-    expect(fs.readFileSync(path.join(created.path, "files", "from-node.txt"), "utf8")).toBe(
-      "node-bytes",
-    );
-  });
-
-  it("pushes restored trees to remote nodes", async () => {
-    const { db, config, snapshots } = tempEnv();
-    const dataPath = await insertServer(db, config, "srv-r", { "config.txt": "v1" }, {
-      nodeId: "node-z",
-    });
-
-    const created = await snapshots.create("srv-r", "pre");
-    expect(sync.pushes).toEqual([]);
-
-    fs.writeFileSync(path.join(dataPath, "config.txt"), "v2");
-    await snapshots.restore(created.id);
-
-    expect(sync.pushes).toEqual(["srv-r"]);
-    expect(fs.readFileSync(path.join(dataPath, "config.txt"), "utf8")).toBe("v1");
   });
 });
