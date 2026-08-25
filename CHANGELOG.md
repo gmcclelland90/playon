@@ -4,6 +4,18 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+## [0.2.11] — 2026-08-25
+
+### Added
+
+- **Authenticator MFA** — optional TOTP (Aegis / Google Authenticator / Authy) at owner setup or Settings → Accounts. When enrolled, sign-in is password plus a 6-digit app code (or a one-time backup code). QR is rendered locally from `otpauth://`; the secret is never sent to an online QR API.
+- **Host-file password reset** — Sign in → **Forgot password?** writes `password-reset.txt` in `PLAYON_DATA_ROOT`. After TOTP is on, host-file recovery can be turned off; reset then uses the authenticator or a backup code.
+
+### Notes
+
+- Update Home via OTA. Existing hosts keep one-step login until an owner enrolls an authenticator.
+- Deferred: `#911` lab Windows node `disk_low`; `#909` node-agent OTA still stopping a running native Zomboid server.
+
 ## [0.2.10] — 2026-08-19
 
 ### Fixed
