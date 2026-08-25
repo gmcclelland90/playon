@@ -78,6 +78,7 @@ docker ps   # game containers may need a Start from the Map if they exited
 ```
 
 - **Data:** `PLAYON_DATA_ROOT` (default under `apps/api/data`) — DB, server dirs, snapshots.
+- **Forgot owner password:** Sign in → **Forgot password?** If host-file recovery is on, enter the username (`host` if you kept the default) → read `password-reset.txt` in `PLAYON_DATA_ROOT` → paste the code and set a new password. If you enrolled an authenticator at setup (or Settings → Accounts), you can reset with the 6-digit app code or a backup code instead. Host-file recovery can be turned off once TOTP is on. Anyone on the LAN can start a reset; finishing it still needs the file, the authenticator, or a backup code.
 - **Restore a world:** Map/chat → snapshot restore (confirm-gated), or restore from `PLAYON_BACKUP_ROOT` if configured.
 - **Logs:** `journalctl -u playon -u playon-node -e` (look for JSON `playon_start` / `[node-agent] heartbeat ok`).
 

@@ -17,6 +17,69 @@ export const LoginSchema = z.object({
   password: z.string().min(1),
 });
 
+/** Start a host-file password reset. The code is never returned on the wire. */
+export const PasswordResetStartSchema = z.object({
+  username: z.string().min(1).max(64),
+});
+
+export const PasswordResetCompleteSchema = z
+  .object({
+    username: z.string().min(1).max(64),
+    password: z.string().min(8).max(128),
+    /** Host-file code (alias of hostFileCode). */
+    code: z.string().min(1).max(128).optional(),
+    hostFileCode: z.string().min(1).max(128).optional(),
+    totpCode: z.string().min(1).max(128).optional(),
+    backupCode: z.string().min(1).max(128).optional(),
+  })
+  .superRefine((value, ctx) => {
+    const proofs = [value.code, value.hostFileCode, value.totpCode, value.backupCode].filter(
+      (item) => Boolean(item && item.length > 0),
+    );
+    if (proofs.length !== 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "exactly_one_reset_proof",
+        path: ["code"],
+      });
+    }
+  });
+
+export const PasswordResetStartResponseSchema = z.object({
+  ok: z.literal(true),
+  methods: z.array(z.enum(["host_file", "totp"])).min(1),
+  fileName: z.string().min(1).optional(),
+  expiresAt: z.string().min(1).optional(),
+  /** Absolute data directory, only when the request is on loopback. */
+  dataRoot: z.string().min(1).optional(),
+});
+
+export const LoginTotpSchema = z.object({
+  mfaToken: z.string().min(1),
+  code: z.string().min(1).max(128),
+});
+
+export const MfaEnrollConfirmSchema = z.object({
+  code: z.string().min(1).max(128),
+  disableHostFileReset: z.boolean().optional(),
+});
+
+export const MfaCodeSchema = z.object({
+  code: z.string().min(1).max(128),
+});
+
+export const MfaHostFileResetSchema = z.object({
+  enabled: z.boolean(),
+  code: z.string().min(1).max(128),
+});
+
+export const MfaStatusSchema = z.object({
+  totpEnabled: z.boolean(),
+  hostFileResetEnabled: z.boolean(),
+});
+
+export const PASSWORD_RESET_FILE_NAME = "password-reset.txt";
+
 export const PublicUserSchema = z.object({
   id: z.string(),
   username: z.string(),
@@ -120,6 +183,11 @@ export const NodeHeartbeatSchema = z.object({
 export type SetupStatus = z.infer<typeof SetupStatusSchema>;
 export type BootstrapOwner = z.infer<typeof BootstrapOwnerSchema>;
 export type LoginInput = z.infer<typeof LoginSchema>;
+export type PasswordResetStart = z.infer<typeof PasswordResetStartSchema>;
+export type PasswordResetComplete = z.infer<typeof PasswordResetCompleteSchema>;
+export type PasswordResetStartResponse = z.infer<typeof PasswordResetStartResponseSchema>;
+export type LoginTotpInput = z.infer<typeof LoginTotpSchema>;
+export type MfaStatus = z.infer<typeof MfaStatusSchema>;
 export type PublicUser = z.infer<typeof PublicUserSchema>;
 export type NodeCapabilities = z.infer<typeof NodeCapabilitiesSchema>;
 export type NodeHeartbeat = z.infer<typeof NodeHeartbeatSchema>;

@@ -165,6 +165,81 @@ describe("transport error envelope on migrated routes", () => {
     expect(await res.json()).toEqual({ error: "already_setup", code: "already_setup" });
   });
 
+  it("starts a host-file password reset without putting the code on the wire", async () => {
+    const app = createApp(db, config);
+    const started = await app.request("/api/auth/password-reset/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "owner" }),
+    });
+    expect(started.status).toBe(200);
+    const startedBody = (await started.json()) as {
+      ok: boolean;
+      fileName: string;
+      expiresAt: string;
+      dataRoot?: string;
+      code?: string;
+    };
+    expect(startedBody.ok).toBe(true);
+    expect(startedBody.fileName).toBe("password-reset.txt");
+    expect(startedBody.code).toBeUndefined();
+    expect(JSON.stringify(startedBody)).not.toMatch(/Code:/);
+
+    const file = fs.readFileSync(path.join(root, "password-reset.txt"), "utf8");
+    const code = /^Code:\s+(\S+)\s*$/m.exec(file)?.[1];
+    expect(code).toBeTruthy();
+
+    const bad = await app.request("/api/auth/password-reset/complete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "owner", code: "NOPE-NOPE-NOPE-NOPE", password: "password123" }),
+    });
+    expect(bad.status).toBe(401);
+    expect(await bad.json()).toEqual({ error: "invalid_reset", code: "invalid_reset" });
+
+    const ok = await app.request("/api/auth/password-reset/complete", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "owner", code, password: "password456" }),
+    });
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as { user: { username: string } }).user.username).toBe("owner");
+    expect(ok.headers.get("set-cookie")).toMatch(/playon_session=/);
+    expect(fs.existsSync(path.join(root, "password-reset.txt"))).toBe(false);
+
+    const malformed = await app.request("/api/auth/password-reset/start", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(malformed.status).toBe(400);
+    expect(((await malformed.json()) as Envelope).code).toBe("invalid_request");
+  });
+
+  it("asks for a TOTP after password when authenticator MFA is on", async () => {
+    const { seedTotpForTests } = await import("./services/mfa.js");
+    await seedTotpForTests(db, { userId: "owner-1", sessionSecret: config.sessionSecret });
+    const app = createApp(db, config);
+    const res = await app.request("/api/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "owner", password: "password123" }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("set-cookie")).toBeNull();
+    const body = (await res.json()) as { mfaRequired?: boolean; mfaToken?: string };
+    expect(body.mfaRequired).toBe(true);
+    expect(body.mfaToken).toBeTruthy();
+
+    const totp = await app.request("/api/auth/login/totp", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mfaToken: body.mfaToken, code: "000000" }),
+    });
+    expect(totp.status).toBe(401);
+    expect(await totp.json()).toEqual({ error: "invalid_totp", code: "invalid_totp" });
+  });
+
   it("keeps servers list/detail behaviour and adds codes", async () => {
     const app = createApp(db, config);
 

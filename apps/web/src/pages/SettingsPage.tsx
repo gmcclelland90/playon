@@ -18,6 +18,7 @@ import {
 } from "../status";
 import { playonSocket } from "../ws";
 import { McpAccessTokensSection } from "./settings/McpAccessTokensSection";
+import { MfaSettingsSection } from "./settings/MfaSettingsSection";
 import {
   SETTINGS_NODE_HEADER_CLASS,
   SETTINGS_NODE_ITEM_CLASS,
@@ -1253,7 +1254,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                 </div>
                 <div className={SETTINGS_NODE_NOTES_CLASS}>
                 {homeBlocksNodeUpdate && needsAgentUpdate ? (
-                  <p className="muted status-inline">
+                  <p className="muted status-inline settings-node-note">
                     Update PlayOn Home first, then update this node.
                   </p>
                 ) : null}
@@ -1288,7 +1289,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                 ) : null}
                 </div>
                 {isWindows && wslPanelOpen ? (
-                  <div className="stack tight" style={{ marginTop: "0.5rem" }}>
+                  <div className="stack tight settings-node-note">
                     <p className="muted status-inline">
                       Enable a sibling Linux node via WSL2 on this Windows host (id{" "}
                       <code>{wslSiblingId}</code>). PlayOn runs setup through the node agent when
@@ -1759,6 +1760,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
             Create operator or admin logins. Operators can start/stop servers and watch logs. Admins also
             get chat, LLM settings, and host confirms.
           </p>
+          <MfaSettingsSection />
           <div className="settings-two-col">
             <div className="stack tight">
               <label className="field">

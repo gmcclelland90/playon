@@ -4,7 +4,13 @@ CREATE TABLE IF NOT EXISTS users (
   display_name TEXT NOT NULL,
   password_hash TEXT NOT NULL,
   role TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  totp_secret_encrypted TEXT,
+  totp_enabled INTEGER NOT NULL DEFAULT 0,
+  totp_enrolled_at INTEGER,
+  totp_last_step INTEGER,
+  host_file_reset_enabled INTEGER NOT NULL DEFAULT 1,
+  mfa_backup_hashes_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -12,6 +18,14 @@ CREATE TABLE IF NOT EXISTS sessions (
   user_id TEXT NOT NULL REFERENCES users(id),
   created_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS mfa_pending (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id),
+  expires_at INTEGER NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS nodes (

@@ -103,6 +103,41 @@ function ensureServerInstanceStartedAt(raw: Database.Database) {
   }
 }
 
+function ensureUserMfaColumns(raw: Database.Database) {
+  const cols = raw.prepare(`PRAGMA table_info(users)`).all() as Array<{ name: string }>;
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has("totp_secret_encrypted")) {
+    raw.exec(`ALTER TABLE users ADD COLUMN totp_secret_encrypted TEXT`);
+  }
+  if (!names.has("totp_enabled")) {
+    raw.exec(`ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0`);
+  }
+  if (!names.has("totp_enrolled_at")) {
+    raw.exec(`ALTER TABLE users ADD COLUMN totp_enrolled_at INTEGER`);
+  }
+  if (!names.has("totp_last_step")) {
+    raw.exec(`ALTER TABLE users ADD COLUMN totp_last_step INTEGER`);
+  }
+  if (!names.has("host_file_reset_enabled")) {
+    raw.exec(`ALTER TABLE users ADD COLUMN host_file_reset_enabled INTEGER NOT NULL DEFAULT 1`);
+  }
+  if (!names.has("mfa_backup_hashes_json")) {
+    raw.exec(`ALTER TABLE users ADD COLUMN mfa_backup_hashes_json TEXT`);
+  }
+}
+
+function ensureMfaPendingTable(raw: Database.Database) {
+  raw.exec(`
+    CREATE TABLE IF NOT EXISTS mfa_pending (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      expires_at INTEGER NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    )
+  `);
+}
+
 function ensureWatchersTables(raw: Database.Database) {
   raw.exec(`
     CREATE TABLE IF NOT EXISTS watchers (
@@ -149,6 +184,8 @@ export function applyBootstrap(dbPath: string) {
   ensureAccessTokensTable(raw);
   ensureWatchersTables(raw);
   ensureServerInstanceStartedAt(raw);
+  ensureUserMfaColumns(raw);
+  ensureMfaPendingTable(raw);
   raw.close();
 }
 

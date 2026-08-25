@@ -157,6 +157,75 @@ a.brand-mark:hover {
   margin: 0;
 }
 
+.auth-text-action {
+  justify-self: start;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+
+.auth-text-action:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.auth-text-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.auth-steps {
+  margin: 0;
+  padding-left: 1.2rem;
+  display: grid;
+  gap: 0.45rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.auth-steps code,
+.auth-panel .field-hint code,
+.auth-panel .status-inline code {
+  font-size: 0.85em;
+}
+
+.totp-qr {
+  width: min(100%, 14rem);
+  justify-self: center;
+  background: #fff;
+  padding: 0.5rem;
+  border-radius: var(--radius);
+}
+
+.totp-qr svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.totp-secret {
+  display: inline-block;
+  margin-top: 0.2rem;
+  word-break: break-all;
+}
+
+.backup-codes {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  list-style: none;
+  display: grid;
+  gap: 0.35rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--surface-2, var(--surface));
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
 .field-hint {
   font-size: 0.8rem;
   color: var(--muted);

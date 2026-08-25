@@ -7,6 +7,14 @@ export const users = sqliteTable("users", {
   passwordHash: text("password_hash").notNull(),
   role: text("role").notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  totpSecretEncrypted: text("totp_secret_encrypted"),
+  totpEnabled: integer("totp_enabled", { mode: "boolean" }).notNull().default(false),
+  totpEnrolledAt: integer("totp_enrolled_at", { mode: "timestamp_ms" }),
+  totpLastStep: integer("totp_last_step"),
+  hostFileResetEnabled: integer("host_file_reset_enabled", { mode: "boolean" })
+    .notNull()
+    .default(true),
+  mfaBackupHashesJson: text("mfa_backup_hashes_json"),
 });
 
 export const sessions = sqliteTable("sessions", {
@@ -16,6 +24,17 @@ export const sessions = sqliteTable("sessions", {
     .references(() => users.id),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+/** Password-ok, waiting on a TOTP/backup code. Token on the wire is hashed here. */
+export const mfaPending = sqliteTable("mfa_pending", {
+  tokenHash: text("token_hash").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
 
 export const nodes = sqliteTable("nodes", {

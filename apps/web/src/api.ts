@@ -262,10 +262,57 @@ export const api = {
       body: JSON.stringify(body),
     }),
   login: (body: { username: string; password: string }) =>
-    request<{ user: PublicUser }>("/api/auth/login", {
+    request<{ user: PublicUser } | { mfaRequired: true; mfaToken: string }>("/api/auth/login", {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  loginTotp: (body: { mfaToken: string; code: string }) =>
+    request<{ user: PublicUser }>("/api/auth/login/totp", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  startPasswordReset: (body: { username: string }) =>
+    request<{
+      ok: true;
+      methods: Array<"host_file" | "totp">;
+      fileName?: string;
+      expiresAt?: string;
+      dataRoot?: string;
+    }>("/api/auth/password-reset/start", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  completePasswordReset: (body: {
+    username: string;
+    password: string;
+    code?: string;
+    hostFileCode?: string;
+    totpCode?: string;
+    backupCode?: string;
+  }) =>
+    request<{ user: PublicUser }>("/api/auth/password-reset/complete", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  mfaStatus: () => request<{ totpEnabled: boolean; hostFileResetEnabled: boolean }>("/api/auth/mfa"),
+  startMfaEnroll: () =>
+    request<{ otpauthUrl: string; secret: string }>("/api/auth/mfa/enroll", { method: "POST" }),
+  confirmMfaEnroll: (body: { code: string; disableHostFileReset?: boolean }) =>
+    request<{ backupCodes: string[]; totpEnabled: true; hostFileResetEnabled: boolean }>(
+      "/api/auth/mfa/enroll/confirm",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  cancelMfaEnroll: () => request<{ ok: true }>("/api/auth/mfa/enroll/cancel", { method: "POST" }),
+  disableMfa: (body: { code: string }) =>
+    request<{ totpEnabled: boolean; hostFileResetEnabled: boolean }>("/api/auth/mfa/disable", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  setHostFileReset: (body: { enabled: boolean; code: string }) =>
+    request<{ totpEnabled: boolean; hostFileResetEnabled: boolean }>(
+      "/api/auth/mfa/host-file-reset",
+      { method: "POST", body: JSON.stringify(body) },
+    ),
   me: () => request<{ user: PublicUser }>("/api/auth/me"),
   logout: () => request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   chat: (

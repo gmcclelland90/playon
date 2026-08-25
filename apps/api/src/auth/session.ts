@@ -59,3 +59,7 @@ export async function destroySession(db: Db, sessionId: string | undefined) {
   if (!sessionId) return;
   await db.delete(sessions).where(eq(sessions.id, sessionId));
 }
+
+export async function destroySessionsForUser(db: Db, userId: string) {
+  await db.delete(sessions).where(eq(sessions.userId, userId));
+}

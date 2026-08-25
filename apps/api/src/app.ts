@@ -29,6 +29,7 @@ import {
   LOCAL_WSL_NODE_ID,
   LlmSettingsPutRequestSchema,
   LoginSchema,
+  LoginTotpSchema,
   ManageNodeServerRequestSchema,
   NodeBootstrapTokenRequestSchema,
   NodeHeartbeatSchema,
@@ -38,6 +39,11 @@ import {
   OllamaInstallRequestSchema,
   OllamaPullRequestSchema,
   PanelInputRequestSchema,
+  PasswordResetCompleteSchema,
+  PasswordResetStartSchema,
+  MfaCodeSchema,
+  MfaEnrollConfirmSchema,
+  MfaHostFileResetSchema,
   PromoteServerSkillRequestSchema,
   RelocateServerRequestSchema,
   RestoreOffNodeBackupRequestSchema,
@@ -89,6 +95,21 @@ import {
 } from "./services/home-hostname.js";
 
 import { hashPassword, verifyPassword } from "./auth/password.js";
+import {
+  completePasswordReset,
+  requestIsOnBox,
+  startPasswordReset,
+} from "./services/password-reset.js";
+import {
+  cancelTotpEnroll,
+  completeMfaPending,
+  confirmTotpEnroll,
+  createMfaPending,
+  disableTotp,
+  mfaStatusFor,
+  setHostFileResetEnabled,
+  startTotpEnroll,
+} from "./services/mfa.js";
 import {
   SESSION_COOKIE,
   createSession,
@@ -173,6 +194,21 @@ import {
   startOllamaPull,
 } from "./services/ollama.js";
 
+function mfaRouteError(err: unknown): HttpError {
+  const message = err instanceof Error ? err.message : "";
+  if (message === "mfa_already_enabled") {
+    return HttpError.conflict("mfa_already_enabled", { code: "mfa_already_enabled" });
+  }
+  if (message === "mfa_enroll_required" || message === "mfa_not_enabled" || message === "mfa_required") {
+    return HttpError.conflict(message, { code: message });
+  }
+  if (message === "invalid_totp" || message === "unauthorized") {
+    return HttpError.unauthorized(message === "unauthorized" ? "unauthorized" : "invalid_totp", {
+      code: message === "unauthorized" ? "unauthorized" : "invalid_totp",
+    });
+  }
+  return serviceHttpError(err, { fallback: "mfa_failed", code: "mfa_failed" });
+}
 
 type Vars = {
   user: AuthUser | null;
@@ -610,6 +646,10 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     if (!user || !verifyPassword(body.password, user.passwordHash)) {
       throw HttpError.unauthorized("invalid_credentials", { code: "invalid_credentials" });
     }
+    if (user.totpEnabled) {
+      const mfaToken = await createMfaPending(db, { userId: user.id });
+      return c.json({ mfaRequired: true as const, mfaToken });
+    }
     const sessionId = await createSession(db, user.id);
     setCookie(c, SESSION_COOKIE, sessionId, sessionCookieOpts(c));
     return c.json({
@@ -620,6 +660,152 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         role: user.role as Role,
       },
     });
+  });
+
+  app.post("/api/auth/password-reset/start", async (c) => {
+    const body = await jsonBody(c, PasswordResetStartSchema);
+    try {
+      return c.json(
+        await startPasswordReset({
+          db,
+          dataRoot: config.dataRoot,
+          username: body.username,
+          onBox: requestIsOnBox(c.req.url),
+        }),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "";
+      if (message === "not_setup") {
+        throw HttpError.conflict("not_setup", { code: "not_setup" });
+      }
+      throw serviceHttpError(err, {
+        fallback: "password_reset_failed",
+        code: "password_reset_failed",
+      });
+    }
+  });
+
+  app.post("/api/auth/password-reset/complete", async (c) => {
+    const body = await jsonBody(c, PasswordResetCompleteSchema);
+    try {
+      const user = await completePasswordReset({
+        db,
+        dataRoot: config.dataRoot,
+        username: body.username,
+        password: body.password,
+        sessionSecret: config.sessionSecret,
+        hostFileCode: body.hostFileCode ?? body.code,
+        totpCode: body.totpCode,
+        backupCode: body.backupCode,
+      });
+      const sessionId = await createSession(db, user.id);
+      setCookie(c, SESSION_COOKIE, sessionId, sessionCookieOpts(c));
+      return c.json({ user });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "";
+      if (message === "invalid_reset") {
+        throw HttpError.unauthorized("invalid_reset", { code: "invalid_reset" });
+      }
+      throw serviceHttpError(err, {
+        fallback: "invalid_reset",
+        code: "invalid_reset",
+      });
+    }
+  });
+
+  app.post("/api/auth/login/totp", async (c) => {
+    const body = await jsonBody(c, LoginTotpSchema);
+    try {
+      const user = await completeMfaPending(db, {
+        sessionSecret: config.sessionSecret,
+        mfaToken: body.mfaToken,
+        code: body.code,
+      });
+      const sessionId = await createSession(db, user.id);
+      setCookie(c, SESSION_COOKIE, sessionId, sessionCookieOpts(c));
+      return c.json({ user });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "";
+      if (message === "invalid_totp") {
+        throw HttpError.unauthorized("invalid_totp", { code: "invalid_totp" });
+      }
+      throw serviceHttpError(err, { fallback: "invalid_totp", code: "invalid_totp" });
+    }
+  });
+
+  app.get("/api/auth/mfa", async (c) => {
+    const session = requireSession(c);
+    const rows = await db.select().from(users).where(eq(users.id, session.id)).limit(1);
+    const row = rows[0];
+    if (!row) throw HttpError.unauthorized("unauthorized");
+    return c.json(mfaStatusFor(row));
+  });
+
+  app.post("/api/auth/mfa/enroll", async (c) => {
+    const session = requireSession(c);
+    try {
+      return c.json(
+        await startTotpEnroll(db, { userId: session.id, sessionSecret: config.sessionSecret }),
+      );
+    } catch (err) {
+      throw mfaRouteError(err);
+    }
+  });
+
+  app.post("/api/auth/mfa/enroll/confirm", async (c) => {
+    const session = requireSession(c);
+    const body = await jsonBody(c, MfaEnrollConfirmSchema);
+    try {
+      return c.json(
+        await confirmTotpEnroll(db, {
+          userId: session.id,
+          sessionSecret: config.sessionSecret,
+          code: body.code,
+          disableHostFileReset: body.disableHostFileReset,
+        }),
+      );
+    } catch (err) {
+      throw mfaRouteError(err);
+    }
+  });
+
+  app.post("/api/auth/mfa/enroll/cancel", async (c) => {
+    const session = requireSession(c);
+    await cancelTotpEnroll(db, session.id);
+    return c.json({ ok: true });
+  });
+
+  app.post("/api/auth/mfa/disable", async (c) => {
+    const session = requireSession(c);
+    const body = await jsonBody(c, MfaCodeSchema);
+    try {
+      return c.json(
+        await disableTotp(db, {
+          userId: session.id,
+          sessionSecret: config.sessionSecret,
+          code: body.code,
+        }),
+      );
+    } catch (err) {
+      throw mfaRouteError(err);
+    }
+  });
+
+  app.post("/api/auth/mfa/host-file-reset", async (c) => {
+    const session = requireSession(c);
+    const body = await jsonBody(c, MfaHostFileResetSchema);
+    try {
+      return c.json(
+        await setHostFileResetEnabled(db, {
+          userId: session.id,
+          sessionSecret: config.sessionSecret,
+          enabled: body.enabled,
+          code: body.code,
+        }),
+      );
+    } catch (err) {
+      throw mfaRouteError(err);
+    }
   });
 
   app.post("/api/auth/logout", async (c) => {
