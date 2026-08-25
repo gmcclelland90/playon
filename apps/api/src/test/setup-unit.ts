@@ -1,8 +1,19 @@
-import { vi } from "vitest";
+import { afterEach, vi } from "vitest";
 import { unitRuntimeDockerStubs } from "./unit-runtime-mocks.js";
 
 /** Skip live TCP/UDP probes on the CI host; tests set portsBoundOverride when they need bind evidence. */
 process.env.PLAYON_SKIP_HOST_PORT_PROBE = "1";
+
+/*
+ * Windows CI: vitest 3.x birpc can miss onTaskUpdate when a fork stays busy on
+ * sync SQLite/fs without yielding (#912 / vitest#6511). A tick after each test
+ * lets the worker flush RPC before the next file. Harmless on other platforms.
+ */
+if (process.platform === "win32") {
+  afterEach(async () => {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  });
+}
 
 /**
  * Unit tests use FakeDocker / mocked runtimes — they must not depend on a real
