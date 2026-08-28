@@ -26,6 +26,7 @@ import {
   nodeDockerChip,
   nodeUpdateInFlight,
   nodeUpdateRowMessage,
+  nodeUsageChips,
 } from "./settings-nodes";
 
 type SettingsSectionId =
@@ -1102,6 +1103,11 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                       {n.tunnelStatus && n.tunnelStatus !== "none" ? (
                         <span className="status-chip">Tunnel {n.tunnelStatus}</span>
                       ) : null}
+                      {nodeUsageChips(n).map((chip) => (
+                        <span key={chip.label} className="status-chip">
+                          {chip.label}
+                        </span>
+                      ))}
                       {dockerWaitingId === n.id ? (
                         <span className="status-chip warn">Waiting for Docker…</span>
                       ) : null}

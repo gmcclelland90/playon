@@ -37,6 +37,8 @@ export type NodeContainerRow = {
   image: string;
   status: string;
   ports?: Array<{ host?: number; container: number; protocol?: "tcp" | "udp" }>;
+  cpuPercent?: number;
+  memUsedBytes?: number;
 };
 
 export type ServerRow = {
@@ -51,6 +53,8 @@ export type ServerRow = {
   dataPath: string;
   /** Engine inventory crate — not a PlayOn server; never Start/create. */
   unmanaged?: boolean;
+  cpuPercent?: number | null;
+  memUsedBytes?: number | null;
 };
 
 export type PlacementPlan = {
@@ -387,6 +391,9 @@ export const api = {
         native?: boolean;
         steamcmd?: boolean;
         freeDiskBytes?: number | null;
+        cpuPercent?: number | null;
+        memUsedBytes?: number | null;
+        memTotalBytes?: number | null;
         agentVersion?: string | null;
         lastSeenAt: string | number;
         status: "online" | "stale" | "offline";

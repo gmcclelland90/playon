@@ -45,6 +45,9 @@ export const nodes = sqliteTable("nodes", {
   native: integer("native", { mode: "boolean" }).notNull().default(true),
   steamcmd: integer("steamcmd", { mode: "boolean" }).notNull().default(false),
   freeDiskBytes: integer("free_disk_bytes"),
+  cpuPercent: integer("cpu_percent"),
+  memUsedBytes: integer("mem_used_bytes"),
+  memTotalBytes: integer("mem_total_bytes"),
   agentVersion: text("agent_version"),
   lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }).notNull(),
   /** local | lan | cloud */

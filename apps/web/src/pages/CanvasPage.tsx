@@ -27,6 +27,7 @@ import { mergeNodeContainerInventory } from "../components/agent-canvas/map-node
 import { MapAddNodePanel } from "../components/MapAddNodePanel";
 import { MapManageSuggestPanel } from "../components/MapManageSuggestPanel";
 import { ServerConsoleBubble } from "../components/ServerConsoleBubble";
+import { formatServerUsage } from "../format-usage";
 import { displayServerStatus, runtimeErrorHint, statusHint, statusLabel } from "../status";
 import { playonSocket } from "../ws";
 
@@ -673,6 +674,10 @@ export function CanvasPage({ user }: { user: PublicUser }) {
           agentVersion: n.agentVersion,
           joinHost: n.joinHost,
           badge: n.badge,
+          cpuPercent: n.cpuPercent,
+          memUsedBytes: n.memUsedBytes,
+          memTotalBytes: n.memTotalBytes,
+          freeDiskBytes: n.freeDiskBytes,
         }))}
         serversLoading={servers.isLoading || (servers.isFetching && !servers.data)}
         selectedId={selectedId}
@@ -787,6 +792,9 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                 <div className="canvas-status-row">
                   <span className={`server-status-pill status-${status}`}>{statusLabel(status)}</span>
                   {selected.game ? <span className="muted">{selected.game}</span> : null}
+                  {formatServerUsage(selected) ? (
+                    <span className="muted">{formatServerUsage(selected)}</span>
+                  ) : null}
                   {activityOnSelected ? (
                     <span className="muted canvas-busy-hint">
                       {skillShortLabel(activityOnSelected.skill)} ·{" "}

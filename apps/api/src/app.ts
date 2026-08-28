@@ -173,7 +173,12 @@ import { EventHub } from "./services/event-hub.js";
 import { safeQueryLive } from "./services/server-panel.js";
 import { execConsoleCommand } from "./services/server-console.js";
 import { nodeJobService } from "./services/node-jobs.js";
-import { nodeContainers, recordNodeContainers } from "./services/node-inventory.js";
+import {
+  nodeContainers,
+  recordNodeContainers,
+  recordNodeProcesses,
+  serverUsageFromInventory,
+} from "./services/node-inventory.js";
 import {
   authenticateAccessToken,
   bearerFromAuthorization,
@@ -1606,7 +1611,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     return c.json({
       servers: list.map((s) => {
         const cached = joinReadyService.cached(s.id);
-        return { ...s, ready: cached?.ready };
+        const usage = serverUsageFromInventory(s.id, s.nodeId, s.runtimeMode);
+        return { ...s, ready: cached?.ready, ...usage };
       }),
       advertiseHost: config.advertiseHost,
       runtimeMode: config.runtimeMode,
@@ -2073,6 +2079,9 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           native: n.native ?? true,
           steamcmd: n.steamcmd ?? false,
           freeDiskBytes: n.freeDiskBytes,
+          cpuPercent: n.cpuPercent,
+          memUsedBytes: n.memUsedBytes,
+          memTotalBytes: n.memTotalBytes,
           agentVersion: n.agentVersion,
           lastSeenAt: n.lastSeenAt.toISOString(),
           status: deriveNodePresence(n.lastSeenAt, now),
@@ -2597,6 +2606,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     // Protocol skew guard: remember what this agent says it can execute.
     nodeJobService.advertiseJobKinds(body.nodeId, body.jobKinds);
     recordNodeContainers(body.nodeId, body.containers);
+    recordNodeProcesses(body.nodeId, body.processes);
     if (body.agentVersion) {
       nodeJobService.reconcileSelfUpdateOnHeartbeat(body.nodeId, body.agentVersion);
     }
@@ -2622,6 +2632,9 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           native: body.native ?? true,
           steamcmd: body.steamcmd ?? false,
           freeDiskBytes: body.freeDiskBytes ?? null,
+          cpuPercent: body.cpuPercent ?? null,
+          memUsedBytes: body.memUsedBytes ?? null,
+          memTotalBytes: body.memTotalBytes ?? null,
           agentVersion: body.agentVersion,
           lastSeenAt: now,
           kind,
@@ -2640,6 +2653,9 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         native: body.native ?? true,
         steamcmd: body.steamcmd ?? false,
         freeDiskBytes: body.freeDiskBytes ?? null,
+        cpuPercent: body.cpuPercent ?? null,
+        memUsedBytes: body.memUsedBytes ?? null,
+        memTotalBytes: body.memTotalBytes ?? null,
         agentVersion: body.agentVersion,
         lastSeenAt: now,
         kind,
@@ -2658,11 +2674,21 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         freeDiskBytes: body.freeDiskBytes,
       },
     });
-    if (body.freeDiskBytes != null) {
+    if (
+      body.freeDiskBytes != null ||
+      body.cpuPercent != null ||
+      body.memUsedBytes != null ||
+      body.memTotalBytes != null
+    ) {
       eventHub.publish({
         type: "node.metrics",
         nodeId: body.nodeId,
-        metrics: { freeDiskBytes: body.freeDiskBytes },
+        metrics: {
+          freeDiskBytes: body.freeDiskBytes,
+          cpuPercent: body.cpuPercent,
+          memUsedBytes: body.memUsedBytes,
+          memTotalBytes: body.memTotalBytes,
+        },
       });
     }
 
@@ -2703,6 +2729,23 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         memTotalBytes: z.number().nonnegative().optional(),
       }),
     );
+
+    if (
+      body.freeDiskBytes != null ||
+      body.cpuPercent != null ||
+      body.memUsedBytes != null ||
+      body.memTotalBytes != null
+    ) {
+      await db
+        .update(nodes)
+        .set({
+          ...(body.freeDiskBytes != null ? { freeDiskBytes: body.freeDiskBytes } : {}),
+          ...(body.cpuPercent != null ? { cpuPercent: body.cpuPercent } : {}),
+          ...(body.memUsedBytes != null ? { memUsedBytes: body.memUsedBytes } : {}),
+          ...(body.memTotalBytes != null ? { memTotalBytes: body.memTotalBytes } : {}),
+        })
+        .where(eq(nodes.id, nodeId));
+    }
 
     eventHub.publish({
       type: "node.metrics",

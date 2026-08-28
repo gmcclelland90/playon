@@ -60,6 +60,15 @@ function ensureNodeCapabilityColumns(raw: Database.Database) {
   if (!names.has("join_host")) {
     raw.exec(`ALTER TABLE nodes ADD COLUMN join_host TEXT`);
   }
+  if (!names.has("cpu_percent")) {
+    raw.exec(`ALTER TABLE nodes ADD COLUMN cpu_percent INTEGER`);
+  }
+  if (!names.has("mem_used_bytes")) {
+    raw.exec(`ALTER TABLE nodes ADD COLUMN mem_used_bytes INTEGER`);
+  }
+  if (!names.has("mem_total_bytes")) {
+    raw.exec(`ALTER TABLE nodes ADD COLUMN mem_total_bytes INTEGER`);
+  }
 }
 
 /** Dev reset: replace legacy persona/per-server progress with skill-keyed table. */

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { can, type PublicUser } from "@playon/shared";
 import { api } from "../api";
+import { formatHostUsage, formatServerUsage } from "../format-usage";
 import {
   nodePresenceHint,
   nodePresenceLabel,
@@ -42,14 +43,6 @@ function openServerOnMap(serverId: string) {
   } catch {
     /* ignore */
   }
-}
-
-function formatBytes(bytes: number | null | undefined): string {
-  if (bytes == null || !Number.isFinite(bytes)) return "—";
-  const gib = bytes / 1024 ** 3;
-  if (gib >= 1) return `${gib.toFixed(1)} GiB`;
-  const mib = bytes / 1024 ** 2;
-  return `${mib.toFixed(0)} MiB`;
 }
 
 function relativeTime(iso: string): string {
@@ -325,6 +318,9 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                         <span title={s.runtimeMode ? `${s.game ?? ""} · ${s.runtimeMode}` : s.game ?? undefined}>
                           {s.game ?? "—"}
                         </span>
+                        {formatServerUsage(s) ? (
+                          <span title="Resource usage">{formatServerUsage(s)}</span>
+                        ) : null}
                       </div>
                     </div>
                     <div className="btn-row">
@@ -482,7 +478,7 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                             agentVersion: n.agentVersion,
                           })}
                         </span>
-                        <span>{formatBytes(n.freeDiskBytes)} free</span>
+                        <span>{formatHostUsage(n) ?? "No usage yet"}</span>
                         <span>Seen {relativeTime(String(n.lastSeenAt))}</span>
                       </div>
                       {presenceHint ? (

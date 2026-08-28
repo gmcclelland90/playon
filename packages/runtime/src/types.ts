@@ -96,4 +96,6 @@ export interface ProcessSupervisor {
    * to: an OS orphan it merely re-resolved has no console left to address.
    */
   writeStdin?(name: string, cwd: string, data: string): Promise<void>;
+  /** Tracked (and still running) processes — used for cheap heartbeat usage. */
+  list?(): ProcessInfo[];
 }

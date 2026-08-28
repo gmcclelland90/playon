@@ -379,6 +379,15 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     });
   }
 
+  list(): ProcessInfo[] {
+    const out: ProcessInfo[] = [];
+    for (const tracked of this.procs.values()) {
+      if (tracked.info.status !== "running") continue;
+      out.push({ ...tracked.info });
+    }
+    return out;
+  }
+
   /** Tracked process for an identity: supervisor name first, then jailed cwd. */
   private findTracked(name: string, resolvedCwd: string): TrackedProcess | null {
     for (const tracked of this.procs.values()) {

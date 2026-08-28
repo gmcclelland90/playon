@@ -137,6 +137,9 @@ export const NodeCapabilitiesSchema = z.object({
   /** SteamCMD binary present or auto-provisionable on this node. */
   steamcmd: z.boolean().default(false),
   freeDiskBytes: z.number().nonnegative().optional(),
+  cpuPercent: z.number().min(0).max(100).optional(),
+  memUsedBytes: z.number().nonnegative().optional(),
+  memTotalBytes: z.number().nonnegative().optional(),
   /**
    * Job kinds this agent can execute. Absent on agents older than the typed
    * protocol; the control plane then falls back to optimistic dispatch.
@@ -158,6 +161,17 @@ export const NodeContainerInventorySchema = z.object({
   image: z.string().min(1).max(512),
   status: z.string().min(1).max(64),
   ports: z.array(NodeContainerPortSchema).max(32).optional(),
+  cpuPercent: z.number().min(0).max(10_000).optional(),
+  memUsedBytes: z.number().nonnegative().optional(),
+});
+
+/** Read-only native supervisor row from a node heartbeat. */
+export const NodeProcessInventorySchema = z.object({
+  name: z.string().min(1).max(256),
+  pid: z.number().int().positive().optional(),
+  status: z.string().min(1).max(64).optional(),
+  cpuPercent: z.number().min(0).max(100).optional(),
+  memUsedBytes: z.number().nonnegative().optional(),
 });
 
 export const NodeHeartbeatSchema = z.object({
@@ -168,6 +182,9 @@ export const NodeHeartbeatSchema = z.object({
   native: z.boolean().default(true),
   steamcmd: z.boolean().default(false),
   freeDiskBytes: z.number().nonnegative().optional(),
+  cpuPercent: z.number().min(0).max(100).optional(),
+  memUsedBytes: z.number().nonnegative().optional(),
+  memTotalBytes: z.number().nonnegative().optional(),
   agentVersion: z.string().default("0.1.0"),
   /** Optional; control plane preserves kind set at Add-node time when omitted. */
   kind: NodeKindSchema.optional(),
@@ -178,6 +195,11 @@ export const NodeHeartbeatSchema = z.object({
    * socket on WSL/Linux). Omitted by older agents. Read-only inventory.
    */
   containers: z.array(NodeContainerInventorySchema).max(80).optional(),
+  /**
+   * Supervised native processes on this node. Omitted by older agents.
+   * Read-only usage inventory — not a start/stop request.
+   */
+  processes: z.array(NodeProcessInventorySchema).max(80).optional(),
 });
 
 export type SetupStatus = z.infer<typeof SetupStatusSchema>;
@@ -192,4 +214,5 @@ export type PublicUser = z.infer<typeof PublicUserSchema>;
 export type NodeCapabilities = z.infer<typeof NodeCapabilitiesSchema>;
 export type NodeHeartbeat = z.infer<typeof NodeHeartbeatSchema>;
 export type NodeContainerInventory = z.infer<typeof NodeContainerInventorySchema>;
+export type NodeProcessInventory = z.infer<typeof NodeProcessInventorySchema>;
 export type NodeJobKind = z.infer<typeof NodeJobKindSchema>;

@@ -9,6 +9,7 @@ import {
   nodeDockerChip,
   nodeUpdateInFlight,
   nodeUpdateRowMessage,
+  nodeUsageChips,
 } from "./settings-nodes";
 
 describe("nodeDockerChip", () => {
@@ -95,6 +96,19 @@ describe("nodeUpdateRowMessage", () => {
   it("treats queued and running as in-flight", () => {
     expect(nodeUpdateInFlight({ jobId: "j", status: "queued" })).toBe(true);
     expect(nodeUpdateInFlight({ jobId: "j", status: "failed" })).toBe(false);
+  });
+});
+
+describe("nodeUsageChips", () => {
+  it("adds CPU / RAM / disk chips when a heartbeat sent them", () => {
+    expect(
+      nodeUsageChips({
+        cpuPercent: 12,
+        memUsedBytes: 4 * 1024 ** 3,
+        memTotalBytes: 16 * 1024 ** 3,
+        freeDiskBytes: 20 * 1024 ** 3,
+      }).map((c) => c.label),
+    ).toEqual(["CPU 12%", "4.0 GiB / 16.0 GiB", "20.0 GiB free"]);
   });
 });
 
