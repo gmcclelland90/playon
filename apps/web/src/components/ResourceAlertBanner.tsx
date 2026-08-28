@@ -48,18 +48,16 @@ export function ResourceAlertBanner() {
   }, [nodes.data, dismissed]);
 
   if (!alerts.length) return null;
+  const lead = alerts[0]!;
   const worst = alerts.some((a) => a.tone === "danger") ? "danger" : "warn";
+  const extra = alerts.length - 1;
 
   return (
     <div className={`resource-alert-banner tone-${worst}`} role="alert">
-      <div className="resource-alert-copy">
-        <strong>{worst === "danger" ? "Host needs attention" : "Usage warning"}</strong>
-        <ul>
-          {alerts.slice(0, 4).map((a) => (
-            <li key={alertKey(a)}>{a.message}</li>
-          ))}
-        </ul>
-      </div>
+      <p className="resource-alert-copy">
+        {lead.message}
+        {extra > 0 ? <span className="muted"> · {extra} more</span> : null}
+      </p>
       <div className="btn-row">
         <Link className="btn btn-ghost btn-compact" to="/settings#settings-nodes">
           Nodes

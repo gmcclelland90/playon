@@ -1103,23 +1103,6 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                       {n.tunnelStatus && n.tunnelStatus !== "none" ? (
                         <span className="status-chip">Tunnel {n.tunnelStatus}</span>
                       ) : null}
-                      {(n.alerts ?? [])
-                        .filter((a) => a.scope === "host")
-                        .map((a) => (
-                          <span
-                            key={`${a.kind}-${a.tone}`}
-                            className={`status-chip ${a.tone === "danger" ? "danger" : "warn"}`}
-                            title={a.message}
-                          >
-                            {a.kind === "disk_low"
-                              ? a.tone === "danger"
-                                ? "Disk low"
-                                : "Disk tight"
-                              : a.kind === "cpu_high"
-                                ? "CPU high"
-                                : "RAM high"}
-                          </span>
-                        ))}
                       {dockerWaitingId === n.id ? (
                         <span className="status-chip warn">Waiting for Docker…</span>
                       ) : null}

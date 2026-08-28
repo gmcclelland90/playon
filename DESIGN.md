@@ -11,6 +11,7 @@ colors:
   primary: "oklch(0.62 0.16 353)"
   primary-ink: "oklch(0.98 0.01 353)"
   accent: "oklch(0.78 0.12 185)"
+  warn: "oklch(0.78 0.12 85)"
   danger: "oklch(0.68 0.18 25)"
   line: "oklch(0.96 0.01 353 / 0.12)"
   focus: "oklch(0.78 0.12 185)"
@@ -44,6 +45,12 @@ typography:
   label:
     fontFamily: "DM Sans, system-ui, sans-serif"
     fontSize: "0.875rem"
+    fontWeight: 600
+    lineHeight: 1.3
+    letterSpacing: "normal"
+  instrument:
+    fontFamily: "DM Sans, system-ui, sans-serif"
+    fontSize: "0.75rem"
     fontWeight: 600
     lineHeight: 1.3
     letterSpacing: "normal"
@@ -140,7 +147,8 @@ OKLCH is canonical. Rose carries brand and primary actions; cyan marks live/onli
 - **Live Cyan** (`oklch(0.78 0.12 185)`): Online/live status, selection accents, focus rings. Same token as `--focus`.
 
 ### Tertiary
-- **Alert Ember** (`oklch(0.68 0.18 25)`): Danger actions and error emphasis only.
+- **Lamp Amber** (`oklch(0.78 0.12 85)`): Caution — disk getting tight, a single CPU spike. A booth lamp, not a brand color.
+- **Alert Ember** (`oklch(0.68 0.18 25)`): Danger actions, disk_low, and held-high CPU/RAM only.
 
 ### Neutral
 - **Booth Black** (`oklch(0.11 0 0)`): Page background.
@@ -154,7 +162,7 @@ OKLCH is canonical. Rose carries brand and primary actions; cyan marks live/onli
 - **Map Deep** (`oklch(0.12 0.02 350)`): Agent canvas stage fill.
 
 ### Named Rules
-**The Stage-Light Rule.** Rose and cyan are arcade hits, not atmosphere. Keep saturated color on CTAs, status, focus, and brand marks — roughly ≤10–15% of any host screen. If the whole surface glows, turn it down.
+**The Stage-Light Rule.** Rose, cyan, amber, and ember are arcade hits, not atmosphere. Keep saturated color on CTAs, live state, focus, brand marks, and a host that is actually loaded — roughly ≤10–15% of any host screen. If the whole surface glows, turn it down.
 
 **The AA Mute Rule.** Never drop muted body text below AA against `--bg`. If it feels elegant but hard to read, brighten `--muted` toward ink.
 
@@ -172,6 +180,7 @@ OKLCH is canonical. Rose carries brand and primary actions; cyan marks live/onli
 - **Title** (700, 1.125rem): Panel headings.
 - **Body** (400, 1rem, 1.5): Prose and chat; lede lines cap ~36–42ch.
 - **Label** (600, 0.875rem): Field labels; rail labels may go 0.75rem uppercase with light tracking.
+- **Instrument** (600, 0.75rem): Host/server usage meters — CPU / RAM / Disk values. Not a chip.
 - **Mono** (400, ~0.85rem): Logs and technical strings.
 
 ### Named Rules
@@ -201,6 +210,13 @@ Playful arcade energy lives in chroma and CTA weight; structure stays booth-tigh
 ### Chips
 - **Style:** Pill chips for roles/status; small type (~0.7–0.85rem); muted or accent-tinted fills for live state.
 - **State:** Selected list rows may use a cyan-tinted border/wash (`accent` at low alpha).
+- **Not for usage.** CPU / RAM / disk are instruments (bars), never extra status chips.
+
+### Usage instruments
+- **Cluster (Settings, Dashboard):** three rows — quiet label, tonal bar, tabular value. History sits *inside* the bar as a faint trail, not a fourth column.
+- **Strip (map rail):** three ticks in one row. Values appear only when a tick is warn/danger.
+- **Board (Pixi):** the same bars on the host pad and running-game crates. Quiet hosts stay thin cyan; a filling disk or hot CPU thickens and flips to amber/ember.
+- **Alert:** one Home line when a threshold is actually crossed. Do not also chip the same fact on the node row.
 
 ### Cards / Containers
 - **Corner Style:** Panels at 12px; nested controls often 10px.
@@ -239,3 +255,4 @@ Full-bleed Pixi map under a matte left rail and right chat dock. Empty state cen
 - **Don't** pair `1px` decorative borders with wide soft drop shadows on the same element.
 - **Don't** put Syne (or any display face) on buttons, labels, or data.
 - **Don't** paint large surfaces in saturated rose/cyan — hits, not wallpaper.
+- **Don't** encode host load as a status-chip string (`CPU 5.9%`) beside the meters.

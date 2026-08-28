@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Application, Container, Graphics, Text } from "pixi.js";
-import { hostMeterRows, serverMeterRows, worstTone, type UsageTone } from "@playon/shared";
+import { hostMeterRows, serverMeterRows, type UsageTone } from "@playon/shared";
 import type { ServerRow } from "../../api";
 import { HostUsageMeters, ServerUsageMeters } from "../UsageMeters";
 import {
@@ -439,15 +439,18 @@ function drawUsageStrip(
 ): void {
   g.clear();
   if (!rows.length) return;
-  const rowH = 5;
-  const gap = 3;
   const x = -width / 2;
   let y = 0;
   for (const row of rows) {
-    g.roundRect(x, y, width, rowH, 2).fill({ color: 0x000000, alpha: 0.38 });
+    const hot = row.tone !== "ok";
+    const rowH = hot ? 6 : 4;
+    g.roundRect(x, y, width, rowH, 2).fill({ color: 0x000000, alpha: 0.32 });
     const w = Math.max(3, width * Math.min(1, Math.max(0, row.fill)));
-    g.roundRect(x, y, w, rowH, 2).fill({ color: USAGE_TONE_COLOR[row.tone], alpha: 0.95 });
-    y += rowH + gap;
+    g.roundRect(x, y, w, rowH, 2).fill({
+      color: USAGE_TONE_COLOR[row.tone],
+      alpha: hot ? 0.95 : 0.62,
+    });
+    y += rowH + 3;
   }
 }
 
@@ -789,9 +792,6 @@ export function AgentCanvas({
       const bits = [cluster.node.badge || cluster.node.kind || "", presenceLabel];
       if (cluster.node.joinHost) bits.push(cluster.node.joinHost);
       const hostMeters = hostMeterRows(cluster.node, cluster.node.usageHistory ?? []);
-      const hostLoad = worstTone(hostMeters.map((r) => r.tone));
-      if (hostLoad === "danger") bits.push("loaded");
-      else if (hostLoad === "warn") bits.push("busy");
       sub.text = bits.filter(Boolean).join(" · ");
       sub.y = title.y + 16;
       drawUsageStrip(
@@ -1181,17 +1181,12 @@ export function AgentCanvas({
                           status: n.status,
                           agentVersion: n.agentVersion,
                         })}
-                        {n.alerts?.some((a) => a.tone === "danger")
-                          ? " · loaded"
-                          : n.alerts?.some((a) => a.tone === "warn")
-                            ? " · busy"
-                            : ""}
                         {n.id === "local" || n.status === "online"
                           ? " · Scan for installs"
                           : ""}
                       </span>
                       <HostUsageMeters
-                        compact
+                        variant="strip"
                         cpuPercent={n.cpuPercent}
                         memUsedBytes={n.memUsedBytes}
                         memTotalBytes={n.memTotalBytes}
@@ -1260,7 +1255,7 @@ export function AgentCanvas({
                           </span>
                           <span className="muted">{busyLabel || boardCrateStatusText(server)}</span>
                           <ServerUsageMeters
-                            compact
+                            variant="strip"
                             cpuPercent={server.cpuPercent}
                             memUsedBytes={server.memUsedBytes}
                             history={server.usageHistory}
