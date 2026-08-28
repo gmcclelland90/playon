@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Application, Container, Graphics, Text } from "pixi.js";
+import { hostMeterRows, serverMeterRows, worstTone, type UsageTone } from "@playon/shared";
 import type { ServerRow } from "../../api";
-import { formatHostUsage, formatServerUsage } from "../../format-usage";
+import { HostUsageMeters, ServerUsageMeters } from "../UsageMeters";
 import {
   isPendingNodeSetup,
   nodePresenceLabel,
@@ -425,6 +426,31 @@ function drawAgentBody(
   }
 }
 
+const USAGE_TONE_COLOR: Record<UsageTone, number> = {
+  ok: 0x5ed4c8,
+  warn: 0xe0b44a,
+  danger: 0xe25b4a,
+};
+
+function drawUsageStrip(
+  g: Graphics,
+  rows: Array<{ fill: number; tone: UsageTone }>,
+  width: number,
+): void {
+  g.clear();
+  if (!rows.length) return;
+  const rowH = 5;
+  const gap = 3;
+  const x = -width / 2;
+  let y = 0;
+  for (const row of rows) {
+    g.roundRect(x, y, width, rowH, 2).fill({ color: 0x000000, alpha: 0.38 });
+    const w = Math.max(3, width * Math.min(1, Math.max(0, row.fill)));
+    g.roundRect(x, y, w, rowH, 2).fill({ color: USAGE_TONE_COLOR[row.tone], alpha: 0.95 });
+    y += rowH + gap;
+  }
+}
+
 function prefersReducedMotion(): boolean {
   try {
     return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -713,6 +739,9 @@ export function AgentCanvas({
         sub.y = -42;
         sub.label = "sub";
         pad.addChild(sub);
+        const usage = new Graphics();
+        usage.label = "usage";
+        pad.addChild(usage);
         pad.eventMode = "static";
         pad.cursor = "pointer";
         const nodeId = cluster.node.id;
@@ -741,6 +770,12 @@ export function AgentCanvas({
       const g = pad.getChildByLabel("pad") as Graphics;
       const title = pad.getChildByLabel("title") as Text;
       const sub = pad.getChildByLabel("sub") as Text;
+      let usageG = pad.getChildByLabel("usage") as Graphics | null;
+      if (!usageG) {
+        usageG = new Graphics();
+        usageG.label = "usage";
+        pad.addChild(usageG);
+      }
       const hostSelected = cluster.node.id === selectedHostId;
       drawHostPad(g, presence, cluster.node.name, "", padW, padH, hostSelected);
       title.text = cluster.node.name;
@@ -753,10 +788,18 @@ export function AgentCanvas({
       });
       const bits = [cluster.node.badge || cluster.node.kind || "", presenceLabel];
       if (cluster.node.joinHost) bits.push(cluster.node.joinHost);
-      const hostUsage = formatHostUsage(cluster.node);
-      if (hostUsage) bits.push(hostUsage);
+      const hostMeters = hostMeterRows(cluster.node, cluster.node.usageHistory ?? []);
+      const hostLoad = worstTone(hostMeters.map((r) => r.tone));
+      if (hostLoad === "danger") bits.push("loaded");
+      else if (hostLoad === "warn") bits.push("busy");
       sub.text = bits.filter(Boolean).join(" · ");
       sub.y = title.y + 16;
+      drawUsageStrip(
+        usageG,
+        hostMeters.map((r) => ({ fill: r.fill, tone: r.tone })),
+        Math.min(168, Math.max(110, padW * 0.55)),
+      );
+      usageG.y = sub.y + 8;
 
       for (const placement of placements) {
         seenCrates.add(placement.serverId);
@@ -805,6 +848,10 @@ export function AgentCanvas({
           status.label = "status";
           root.addChild(status);
 
+          const usage = new Graphics();
+          usage.label = "usage";
+          root.addChild(usage);
+
           if (isStack) {
             const nodeId = cluster.node.id;
             root.on("pointertap", (e) => {
@@ -833,6 +880,12 @@ export function AgentCanvas({
         const crate = node.root.getChildByLabel("crate") as Graphics;
         const name = node.root.getChildByLabel("name") as Text;
         const status = node.root.getChildByLabel("status") as Text;
+        let crateUsage = node.root.getChildByLabel("usage") as Graphics | null;
+        if (!crateUsage) {
+          crateUsage = new Graphics();
+          crateUsage.label = "usage";
+          node.root.addChild(crateUsage);
+        }
         const selected = !isStack && server?.id === selectedId;
         const size =
           placement.role === "hero" ? "hero" : placement.role === "other" ? "other" : "player";
@@ -851,6 +904,7 @@ export function AgentCanvas({
           drawStackCrate(crate, false);
           name.text = otherServicesStackLabel(placement.stackCount ?? 0);
           status.text = "Tap to show";
+          crateUsage.clear();
         } else if (server) {
           const kind = boardCrateKind(server);
           const shown = displayServerStatus(server.status, server.ready);
@@ -866,14 +920,20 @@ export function AgentCanvas({
           const nameMax = size === "hero" ? 32 : size === "other" ? 16 : 24;
           name.text = shortDisplayName(server.name, nameMax);
           const baseStatus = boardCrateStatusText(server);
-          const usage = formatServerUsage(server);
-          const labeled = usage ? `${baseStatus} · ${usage}` : baseStatus;
           status.text =
             busyHere && kind === "player"
-              ? `${labeled} · ${busyHere.label || busyHere.verb}`
-              : labeled;
+              ? `${baseStatus} · ${busyHere.label || busyHere.verb}`
+              : baseStatus;
+          const serverMeters =
+            size === "other" ? [] : serverMeterRows(server, server.usageHistory ?? []);
+          drawUsageStrip(
+            crateUsage,
+            serverMeters.map((r) => ({ fill: r.fill, tone: r.tone })),
+            size === "hero" ? 72 : 56,
+          );
         }
         status.y = name.y + Math.max(name.height, fontSize + 2) + 2;
+        crateUsage.y = status.y + Math.max(status.height, 12) + 3;
       }
     }
 
@@ -1121,11 +1181,23 @@ export function AgentCanvas({
                           status: n.status,
                           agentVersion: n.agentVersion,
                         })}
-                        {formatHostUsage(n) ? ` · ${formatHostUsage(n)}` : ""}
+                        {n.alerts?.some((a) => a.tone === "danger")
+                          ? " · loaded"
+                          : n.alerts?.some((a) => a.tone === "warn")
+                            ? " · busy"
+                            : ""}
                         {n.id === "local" || n.status === "online"
                           ? " · Scan for installs"
                           : ""}
                       </span>
+                      <HostUsageMeters
+                        compact
+                        cpuPercent={n.cpuPercent}
+                        memUsedBytes={n.memUsedBytes}
+                        memTotalBytes={n.memTotalBytes}
+                        freeDiskBytes={n.freeDiskBytes}
+                        history={n.usageHistory}
+                      />
                     </button>
                   </li>
                 );
@@ -1186,12 +1258,13 @@ export function AgentCanvas({
                           <span className="agent-canvas-list-name" title={server.name}>
                             {server.name}
                           </span>
-                          <span className="muted">
-                            {busyLabel ||
-                              [boardCrateStatusText(server), formatServerUsage(server)]
-                                .filter(Boolean)
-                                .join(" · ")}
-                          </span>
+                          <span className="muted">{busyLabel || boardCrateStatusText(server)}</span>
+                          <ServerUsageMeters
+                            compact
+                            cpuPercent={server.cpuPercent}
+                            memUsedBytes={server.memUsedBytes}
+                            history={server.usageHistory}
+                          />
                         </button>
                       </li>
                     );

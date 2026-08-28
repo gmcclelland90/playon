@@ -64,6 +64,8 @@ export const nodes = sqliteTable("nodes", {
   tunnelStatus: text("tunnel_status").notNull().default("none"),
   /** SSH / public host used when adding this node (LAN IP or cloud endpoint). */
   joinHost: text("join_host"),
+  /** Short host + per-server usage ring (JSON). Missing on older Homes. */
+  usageHistoryJson: text("usage_history_json"),
 });
 
 export const servers = sqliteTable("servers", {

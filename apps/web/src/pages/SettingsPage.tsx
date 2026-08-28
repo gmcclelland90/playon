@@ -26,8 +26,8 @@ import {
   nodeDockerChip,
   nodeUpdateInFlight,
   nodeUpdateRowMessage,
-  nodeUsageChips,
 } from "./settings-nodes";
+import { HostUsageMeters } from "../components/UsageMeters";
 
 type SettingsSectionId =
   | "about"
@@ -1103,11 +1103,23 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                       {n.tunnelStatus && n.tunnelStatus !== "none" ? (
                         <span className="status-chip">Tunnel {n.tunnelStatus}</span>
                       ) : null}
-                      {nodeUsageChips(n).map((chip) => (
-                        <span key={chip.label} className="status-chip">
-                          {chip.label}
-                        </span>
-                      ))}
+                      {(n.alerts ?? [])
+                        .filter((a) => a.scope === "host")
+                        .map((a) => (
+                          <span
+                            key={`${a.kind}-${a.tone}`}
+                            className={`status-chip ${a.tone === "danger" ? "danger" : "warn"}`}
+                            title={a.message}
+                          >
+                            {a.kind === "disk_low"
+                              ? a.tone === "danger"
+                                ? "Disk low"
+                                : "Disk tight"
+                              : a.kind === "cpu_high"
+                                ? "CPU high"
+                                : "RAM high"}
+                          </span>
+                        ))}
                       {dockerWaitingId === n.id ? (
                         <span className="status-chip warn">Waiting for Docker…</span>
                       ) : null}
@@ -1127,6 +1139,15 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                             : "Waiting for WSL…"}
                         </span>
                       ) : null}
+                    </div>
+                    <div className="settings-node-usage">
+                      <HostUsageMeters
+                        cpuPercent={n.cpuPercent}
+                        memUsedBytes={n.memUsedBytes}
+                        memTotalBytes={n.memTotalBytes}
+                        freeDiskBytes={n.freeDiskBytes}
+                        history={n.usageHistory}
+                      />
                     </div>
                     {presenceHint ? (
                       <p className="muted status-inline">{presenceHint}</p>

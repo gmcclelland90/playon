@@ -55,6 +55,7 @@ export type ServerRow = {
   unmanaged?: boolean;
   cpuPercent?: number | null;
   memUsedBytes?: number | null;
+  usageHistory?: Array<{ t: number; cpuPercent?: number; memUsedBytes?: number }>;
 };
 
 export type PlacementPlan = {
@@ -394,6 +395,23 @@ export const api = {
         cpuPercent?: number | null;
         memUsedBytes?: number | null;
         memTotalBytes?: number | null;
+        usageHistory?: Array<{
+          t: number;
+          cpuPercent?: number;
+          memUsedBytes?: number;
+          memTotalBytes?: number;
+          freeDiskBytes?: number;
+        }>;
+        alerts?: Array<{
+          kind: "disk_low" | "cpu_high" | "ram_high";
+          tone: "warn" | "danger";
+          scope: "host" | "server";
+          nodeId: string;
+          nodeName: string;
+          serverId?: string;
+          serverName?: string;
+          message: string;
+        }>;
         agentVersion?: string | null;
         lastSeenAt: string | number;
         status: "online" | "stale" | "offline";

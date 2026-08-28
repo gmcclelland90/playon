@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { can, type PublicUser } from "@playon/shared";
 import { api } from "../api";
-import { formatHostUsage, formatServerUsage } from "../format-usage";
+import { HostUsageMeters, ServerUsageMeters } from "../components/UsageMeters";
 import {
   nodePresenceHint,
   nodePresenceLabel,
@@ -318,10 +318,13 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                         <span title={s.runtimeMode ? `${s.game ?? ""} · ${s.runtimeMode}` : s.game ?? undefined}>
                           {s.game ?? "—"}
                         </span>
-                        {formatServerUsage(s) ? (
-                          <span title="Resource usage">{formatServerUsage(s)}</span>
-                        ) : null}
                       </div>
+                      <ServerUsageMeters
+                        compact
+                        cpuPercent={s.cpuPercent}
+                        memUsedBytes={s.memUsedBytes}
+                        history={s.usageHistory}
+                      />
                     </div>
                     <div className="btn-row">
                       {canMap ? (
@@ -478,9 +481,21 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                             agentVersion: n.agentVersion,
                           })}
                         </span>
-                        <span>{formatHostUsage(n) ?? "No usage yet"}</span>
+                        {n.cpuPercent == null &&
+                        n.memUsedBytes == null &&
+                        n.freeDiskBytes == null ? (
+                          <span>No usage yet</span>
+                        ) : null}
                         <span>Seen {relativeTime(String(n.lastSeenAt))}</span>
                       </div>
+                      <HostUsageMeters
+                        compact
+                        cpuPercent={n.cpuPercent}
+                        memUsedBytes={n.memUsedBytes}
+                        memTotalBytes={n.memTotalBytes}
+                        freeDiskBytes={n.freeDiskBytes}
+                        history={n.usageHistory}
+                      />
                       {presenceHint ? (
                         <p className="muted status-inline">{presenceHint}</p>
                       ) : null}
