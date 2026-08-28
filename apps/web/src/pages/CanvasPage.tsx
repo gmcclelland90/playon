@@ -850,14 +850,16 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     includeCompose: Boolean(channels[COMPOSE_CHANNEL_KEY]?.pending),
   });
   const agentByKey = Object.fromEntries(serverAgents.map((row) => [row.key, row]));
+  const selectedActivity = activeKey ? activityByKey[activeKey] : undefined;
+  const selectedPhase = selectedActivity?.phase;
   const activityOnSelected =
-    activeKey && activityByKey[activeKey] && activityByKey[activeKey]!.phase !== "idle"
+    selectedPhase && selectedPhase !== "idle"
       ? {
           serverId: selectedId ?? "",
-          skill: activityByKey[activeKey]!.skill ?? "orchestrator",
-          phase: activityByKey[activeKey]!.phase ?? "thinking",
+          skill: selectedActivity?.skill ?? "orchestrator",
+          phase: selectedPhase,
           verb: "other",
-          label: activityByKey[activeKey]!.label,
+          label: selectedActivity?.label,
         }
       : undefined;
   const skills = agents.data?.skills ?? [];
