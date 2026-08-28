@@ -269,10 +269,10 @@ describe("updates API", () => {
     expect(restored.claimNext("upd-win-parent")?.kind).toBe("fs_write_text");
   });
 
-  it("queues a claimable node_self_update for Windows agents on 0.2.12+", async () => {
+  it("queues a claimable cache-busted node_self_update for Linux agents", async () => {
     const homeVer = readAppVersion();
     const sha = "c".repeat(64);
-    const assetUrl = `https://github.com/gmcclelland90/playon/releases/download/v${homeVer}/playon-node-${homeVer}-windows-x64.tar.gz`;
+    const assetUrl = `https://github.com/gmcclelland90/playon/releases/download/v${homeVer}/playon-node-${homeVer}-linux-x64.tar.gz`;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) => {
@@ -285,7 +285,7 @@ describe("updates API", () => {
               notesUrl: "https://playon.games/docs/changelog",
               home: {},
               node: {
-                "windows-x64": {
+                "linux-x64": {
                   downloadUrl: assetUrl,
                   sha256: sha,
                 },
@@ -297,19 +297,19 @@ describe("updates API", () => {
       }),
     );
     await db.insert(nodes).values({
-      id: "upd-win-current",
-      name: "playon-win-current",
-      os: "windows",
-      docker: false,
+      id: "upd-linux-current",
+      name: "playon-linux",
+      os: "linux",
+      docker: true,
       native: true,
       lastSeenAt: new Date(),
       kind: "lan",
-      agentVersion: "0.2.12",
+      agentVersion: "0.2.10",
       tunnelStatus: "none",
     });
     const app = createApp(db, testConfig(root));
     attachNodeJobPersist(root);
-    const queued = await app.request("/api/nodes/upd-win-current/update", {
+    const queued = await app.request("/api/nodes/upd-linux-current/update", {
       method: "POST",
       headers: { cookie, "content-type": "application/json" },
       body: "{}",
@@ -320,8 +320,8 @@ describe("updates API", () => {
     expect(job?.args.via).toBeUndefined();
     expect(String(job?.args.downloadUrl)).toContain("playon_sha256=");
     expect(String(job?.args.downloadUrl)).toContain(sha);
-    expect(nodeJobService.findActive("upd-win-current", "fs_write_text")).toBeNull();
-    expect(nodeJobService.claimNext("upd-win-current")?.kind).toBe("node_self_update");
+    expect(nodeJobService.findActive("upd-linux-current", "fs_write_text")).toBeNull();
+    expect(nodeJobService.claimNext("upd-linux-current")?.kind).toBe("node_self_update");
   });
 
   it("drives Windows 0.2.10 OTA via PowerShell with size + cache-busted URL (#917)", async () => {
