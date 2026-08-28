@@ -15,6 +15,8 @@ import {
   ramTone,
   serverMeterRows,
   serverResourceAlerts,
+  usageSparkGeometry,
+  usageValueVisible,
 } from "./resource-usage.js";
 
 describe("usage history ring", () => {
@@ -146,5 +148,37 @@ describe("operator alerts", () => {
   it("formats compact byte labels", () => {
     expect(formatBytesShort(5.2 * 1024 ** 3)).toBe("5.2 GiB");
     expect(formatBytesShort(1030 * 1024 ** 3)).toBe("1030 GiB");
+  });
+});
+
+describe("usage spark geometry", () => {
+  it("hugs the floor for a quiet series and fills high when loaded", () => {
+    const lineYs = (line: string) =>
+      [...line.matchAll(/[ML]([\d.]+) ([\d.]+)/g)].map((m) => Number(m[2]));
+    const quiet = usageSparkGeometry([0.06, 0.05, 0.07, 0.04], 0.06, 100, 28);
+    const loaded = usageSparkGeometry([0.2, 0.55, 0.82, 0.94], 0.94, 100, 28);
+    expect(Math.min(...lineYs(quiet.line))).toBeGreaterThan(20);
+    expect(Math.min(...lineYs(loaded.line))).toBeLessThan(10);
+    expect(quiet.area.endsWith("Z")).toBe(true);
+    expect(loaded.area.startsWith(loaded.line)).toBe(true);
+  });
+
+  it("draws a plateau from current fill when the ring is empty", () => {
+    const geo = usageSparkGeometry([], 0.9, 100, 20);
+    expect(geo.line).toMatch(/^M0\.0 /);
+    expect(geo.line).toContain("L100.0 ");
+  });
+
+  it("skips null samples instead of inventing zeros", () => {
+    const geo = usageSparkGeometry([0.8, null, 0.8], 0.8, 100, 20);
+    const points = geo.line.match(/[ML][\d.]+ [\d.]+/g) ?? [];
+    expect(points).toHaveLength(2);
+  });
+
+  it("keeps numbers off the face until hover or hot", () => {
+    expect(usageValueVisible("ok")).toBe(false);
+    expect(usageValueVisible("ok", true)).toBe(true);
+    expect(usageValueVisible("warn")).toBe(true);
+    expect(usageValueVisible("danger")).toBe(true);
   });
 });

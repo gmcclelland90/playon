@@ -393,3 +393,52 @@ export function worstTone(tones: Array<UsageTone | undefined>): UsageTone | unde
   if (tones.includes("ok")) return "ok";
   return undefined;
 }
+
+/** Numbers stay off the face until hover or the sample is actually hot. */
+export function usageValueVisible(tone: UsageTone, hovered = false): boolean {
+  return hovered || tone === "warn" || tone === "danger";
+}
+
+export type SparkGeometry = {
+  line: string;
+  area: string;
+  width: number;
+  height: number;
+};
+
+/**
+ * SVG paths for a 0–1 usage series. Empty / single-sample rings still
+ * draw a plateau at `fallback` so quiet vs loaded is visible without history.
+ */
+export function usageSparkGeometry(
+  series: Array<number | null | undefined>,
+  fallback: number,
+  width = 100,
+  height = 28,
+): SparkGeometry {
+  const indexed = series
+    .map((v, i) => (finiteNumber(v) ? { i, v: clamp01(v) } : null))
+    .filter((p): p is { i: number; v: number } => p != null);
+  const pts =
+    indexed.length >= 2
+      ? indexed
+      : [
+          { i: 0, v: clamp01(fallback) },
+          { i: 1, v: clamp01(fallback) },
+        ];
+  const maxI = indexed.length >= 2 ? Math.max(series.length - 1, 1) : 1;
+  const top = 1.5;
+  const bot = height - 1.5;
+  const span = Math.max(1, bot - top);
+  const coords = pts.map((p) => ({
+    x: (p.i / maxI) * width,
+    y: bot - p.v * span,
+  }));
+  const line = coords
+    .map((p, idx) => `${idx === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`)
+    .join(" ");
+  const first = coords[0]!;
+  const last = coords[coords.length - 1]!;
+  const area = `${line} L${last.x.toFixed(1)} ${height.toFixed(1)} L${first.x.toFixed(1)} ${height.toFixed(1)} Z`;
+  return { line, area, width, height };
+}

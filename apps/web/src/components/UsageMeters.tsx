@@ -1,39 +1,43 @@
 import type { HostUsageSample, ServerUsageSample, UsageMeterRow, UsageTone } from "@playon/shared";
-import { hostMeterRows, serverMeterRows, worstTone } from "@playon/shared";
+import { hostMeterRows, serverMeterRows, usageSparkGeometry, worstTone } from "@playon/shared";
 
-function Sparkline({ series, tone }: { series: Array<number | null>; tone: UsageTone }) {
-  const pts = series
-    .map((v, i) => (v == null ? null : { i, v }))
-    .filter((p): p is { i: number; v: number } => p != null);
-  if (pts.length < 3) return null;
-  const w = 100;
-  const h = 12;
-  const maxI = Math.max(series.length - 1, 1);
-  const d = pts
-    .map((p, idx) => {
-      const x = (p.i / maxI) * w;
-      const y = h - 1 - p.v * (h - 2);
-      return `${idx === 0 ? "M" : "L"}${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(" ");
+function AreaChart({
+  series,
+  fallback,
+  tone,
+  height,
+}: {
+  series: Array<number | null>;
+  fallback: number;
+  tone: UsageTone;
+  height: number;
+}) {
+  const geo = usageSparkGeometry(series, fallback, 100, height);
   return (
-    <svg className={`usage-spark tone-${tone}`} viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" aria-hidden>
-      <path d={d} fill="none" stroke="currentColor" strokeWidth="1.2" />
+    <svg
+      className={`usage-spark tone-${tone}`}
+      viewBox={`0 0 ${geo.width} ${geo.height}`}
+      preserveAspectRatio="none"
+      aria-hidden
+    >
+      <path className="usage-spark-area" d={geo.area} />
+      <path className="usage-spark-line" d={geo.line} />
     </svg>
   );
 }
 
-function MeterRowView({ row, showHistory }: { row: UsageMeterRow; showHistory: boolean }) {
+function MeterRowView({ row, compact }: { row: UsageMeterRow; compact?: boolean }) {
   return (
     <div
       className={`usage-meter-row tone-${row.tone}`}
       data-meter={row.key}
+      title={`${row.label} ${row.value}`}
       aria-label={`${row.label} ${row.value}`}
+      tabIndex={0}
     >
       <span className="usage-meter-label">{row.label}</span>
       <span className="usage-meter-track" aria-hidden>
-        <span className="usage-meter-fill" style={{ width: `${Math.max(4, row.fill * 100)}%` }} />
-        {showHistory ? <Sparkline series={row.series} tone={row.tone} /> : null}
+        <AreaChart series={row.series} fallback={row.fill} tone={row.tone} height={compact ? 28 : 36} />
       </span>
       <span className="usage-meter-value">{row.value}</span>
     </div>
@@ -57,7 +61,7 @@ function UsageCluster({
       aria-label={label}
     >
       {rows.map((row) => (
-        <MeterRowView key={row.key} row={row} showHistory={!compact} />
+        <MeterRowView key={row.key} row={row} compact={compact} />
       ))}
     </div>
   );
@@ -74,7 +78,7 @@ function UsageStrip({ rows, label }: { rows: UsageMeterRow[]; label: string }) {
           className={`usage-strip-seg tone-${row.tone}`}
           title={`${row.label} ${row.value}`}
         >
-          <span className="usage-strip-fill" style={{ width: `${Math.max(8, row.fill * 100)}%` }} />
+          <AreaChart series={row.series} fallback={row.fill} tone={row.tone} height={20} />
         </span>
       ))}
       {hot ? <span className={`usage-strip-note tone-${hot.tone}`}>{hot.value}</span> : null}
