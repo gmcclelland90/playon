@@ -6,12 +6,18 @@ import {
   nodePresenceLabel,
   shortDisplayName,
   displayServerStatus,
-  statusLabel,
 } from "../../status";
 import {
+  boardCrateKind,
+  boardCrateStatusText,
+  boardCrateTone,
+  clusterPadSize,
   clusterServersByNode,
-  crateOffsetInCluster,
+  isPlayerGameCrate,
+  OTHER_SERVICES_COLLAPSE_AT,
+  otherServicesStackLabel,
   padPresenceClass,
+  placeClusterCrates,
   type MapNodeInput,
 } from "./map-node-layout";
 
@@ -294,39 +300,87 @@ function drawFloorGrid(g: Graphics) {
   g.ellipse(90, -10, 300, 110).fill({ color: 0x3a8a84, alpha: 0.035 });
 }
 
-function drawCrate(g: Graphics, selected: boolean, running: boolean) {
+type CrateTone = "live" | "idle" | "inventory" | "lab";
+type CrateSize = "hero" | "player" | "other";
+
+const CRATE_TONES: Record<CrateTone, { fill: number; top: number; stroke: number }> = {
+  live: { fill: 0x2f6f6c, top: 0x3d8f8a, stroke: 0x6ab8b0 },
+  idle: { fill: 0x3a4048, top: 0x4a5058, stroke: 0x6a7080 },
+  inventory: { fill: 0x3a3840, top: 0x4a4650, stroke: 0x6a6670 },
+  lab: { fill: 0x3a3540, top: 0x4a4050, stroke: 0x7a6880 },
+};
+
+function crateMetrics(size: CrateSize): { hw: number; hd: number; extrude: number } {
+  if (size === "hero") return { hw: 44, hd: 24, extrude: 54 };
+  if (size === "other") return { hw: 22, hd: 12, extrude: 26 };
+  return { hw: 36, hd: 20, extrude: 44 };
+}
+
+function drawCrate(
+  g: Graphics,
+  opts: { selected: boolean; tone: CrateTone; size: CrateSize },
+) {
   g.clear();
-  const fill = running ? 0x2f6f6c : 0x4a3548;
-  const topFill = running ? 0x3d8f8a : 0x5a4054;
-  const stroke = selected ? 0x5ed4c8 : running ? 0x6ab8b0 : 0x8a6078;
-  const hw = 36;
-  const hd = 20;
-  const extrude = 44;
+  const { hw, hd, extrude } = crateMetrics(opts.size);
+  const colors = CRATE_TONES[opts.tone];
+  const fill = colors.fill;
+  const topFill = colors.top;
+  const stroke = opts.selected ? 0x5ed4c8 : colors.stroke;
   const top = isoFootprint(hw, hd).map((p) => ({ x: p.x, y: p.y - extrude * 0.35 }));
   const bottom = top.map((p) => ({ x: p.x, y: p.y + extrude }));
-  // Shadow on the pad
-  g.ellipse(6, bottom[2]!.y + 4, hw * 0.95, hd * 0.55).fill({ color: 0x000000, alpha: 0.3 });
-  // Walls
+  g.ellipse(6, bottom[2]!.y + 4, hw * 0.95, hd * 0.55).fill({
+    color: 0x000000,
+    alpha: opts.size === "other" ? 0.2 : 0.3,
+  });
   fillPoly(g, [top[3]!, top[2]!, bottom[2]!, bottom[3]!], shade(fill, 0.55));
   fillPoly(g, [top[1]!, top[2]!, bottom[2]!, bottom[1]!], shade(fill, 0.72));
-  // Top lid
   fillPoly(g, top, topFill, 0.96);
-  strokePoly(g, top, stroke, selected ? 2.5 : 1.5, selected ? 1 : 0.9);
-  // Band across the near faces
+  strokePoly(g, top, stroke, opts.selected ? 2.5 : 1.5, opts.selected ? 1 : 0.9);
   const midY = (top[2]!.y + bottom[2]!.y) / 2;
   g.moveTo(top[3]!.x, midY - 3)
     .lineTo(top[2]!.x, midY + hd * 0.15)
     .lineTo(top[1]!.x, midY - 3)
-    .stroke({ width: 5, color: 0x2a1f28, alpha: 0.45 });
-  if (running) {
-    g.circle(top[1]!.x - 8, top[1]!.y + 6, 3.5).fill({ color: 0x5ed4c8, alpha: 0.95 });
+    .stroke({ width: opts.size === "other" ? 3 : 5, color: 0x2a1f28, alpha: 0.45 });
+  if (opts.tone === "live") {
+    g.circle(top[1]!.x - 8, top[1]!.y + 6, opts.size === "hero" ? 4 : 3.5).fill({
+      color: 0x5ed4c8,
+      alpha: 0.95,
+    });
   }
-  if (selected) {
+  if (opts.selected) {
     const halo = isoFootprint(hw + 10, hd + 6).map((p) => ({
       x: p.x,
       y: p.y - extrude * 0.35 - 4,
     }));
     strokePoly(g, halo, 0x5ed4c8, 1.5, 0.4);
+  }
+}
+
+function drawStackCrate(g: Graphics, selected: boolean) {
+  g.clear();
+  const offsets = [
+    { x: -14, y: 8, alpha: 0.45 },
+    { x: 12, y: -4, alpha: 0.6 },
+    { x: 0, y: 0, alpha: 0.95 },
+  ];
+  for (const off of offsets) {
+    const { hw, hd, extrude } = crateMetrics("other");
+    const fill = 0x3a3840;
+    const topFill = 0x4a4650;
+    const stroke = selected ? 0x5ed4c8 : 0x6a6670;
+    const top = isoFootprint(hw, hd).map((p) => ({
+      x: p.x + off.x,
+      y: p.y - extrude * 0.35 + off.y,
+    }));
+    const bottom = top.map((p) => ({ x: p.x, y: p.y + extrude }));
+    g.ellipse(off.x + 4, bottom[2]!.y + 3, hw * 0.9, hd * 0.5).fill({
+      color: 0x000000,
+      alpha: 0.16 * off.alpha,
+    });
+    fillPoly(g, [top[3]!, top[2]!, bottom[2]!, bottom[3]!], shade(fill, 0.55), off.alpha);
+    fillPoly(g, [top[1]!, top[2]!, bottom[2]!, bottom[1]!], shade(fill, 0.72), off.alpha);
+    fillPoly(g, top, topFill, 0.92 * off.alpha);
+    strokePoly(g, top, stroke, selected ? 2 : 1.25, 0.85 * off.alpha);
   }
 }
 
@@ -417,6 +471,8 @@ export function AgentCanvas({
   const lastAnchorRef = useRef<SelectedAnchor | null>(null);
   const [stageReady, setStageReady] = useState(false);
   const [pendingRemoveNodeId, setPendingRemoveNodeId] = useState<string | null>(null);
+  const [expandedOtherNodes, setExpandedOtherNodes] = useState<Record<string, boolean>>({});
+  const [railOthersOpen, setRailOthersOpen] = useState(false);
   onSelectRef.current = onSelect;
   onDescribeRef.current = onDescribe;
   onAddServerRef.current = onAddServer;
@@ -613,14 +669,25 @@ export function AgentCanvas({
 
     const clusters = clusterServersByNode(hostNodes, servers);
     const serverById = new Map(servers.map((s) => [s.id, s]));
+    const selectedServer = selectedId ? serverById.get(selectedId) : undefined;
     const seenPads = new Set<string>();
     const seenCrates = new Set<string>();
 
     for (const cluster of clusters) {
       seenPads.add(cluster.node.id);
       const presence = padPresenceClass(cluster.node);
-      const padW = Math.max(300, 180 + cluster.serverIds.length * 36);
-      const padH = Math.max(170, 110 + Math.ceil(Math.max(cluster.serverIds.length, 1) / 2) * 130);
+      const clusterServers = cluster.serverIds
+        .map((id) => serverById.get(id))
+        .filter((s): s is ServerRow => Boolean(s));
+      const othersExpanded =
+        Boolean(expandedOtherNodes[cluster.node.id]) ||
+        Boolean(
+          selectedServer &&
+            (selectedServer.nodeId ?? "") === cluster.node.id &&
+            !isPlayerGameCrate(selectedServer),
+        );
+      const placements = placeClusterCrates(clusterServers, { othersExpanded });
+      const { w: padW, h: padH } = clusterPadSize(placements);
 
       let pad = padsRef.current.get(cluster.node.id);
       if (!pad) {
@@ -688,29 +755,38 @@ export function AgentCanvas({
       sub.text = bits.filter(Boolean).join(" · ");
       sub.y = title.y + 16;
 
-      cluster.serverIds.forEach((serverId, index) => {
-        const server = serverById.get(serverId);
-        if (!server) return;
-        seenCrates.add(server.id);
-        const offset = crateOffsetInCluster(index);
+      for (const placement of placements) {
+        seenCrates.add(placement.serverId);
         const pos = {
-          x: cluster.origin.x + offset.x,
-          y: cluster.origin.y + offset.y,
+          x: cluster.origin.x + placement.offset.x,
+          y: cluster.origin.y + placement.offset.y,
         };
-        let node = nodesRef.current.get(server.id);
+        const isStack = placement.role === "stack";
+        const server = isStack ? undefined : serverById.get(placement.serverId);
+        if (!isStack && !server) continue;
+
+        let node = nodesRef.current.get(placement.serverId);
         if (!node) {
           const root = new Container();
           root.zIndex = 2;
-          root.eventMode = server.unmanaged ? "none" : "static";
-          root.cursor = server.unmanaged ? "default" : "pointer";
+          const clickable = isStack || Boolean(server && !server.unmanaged);
+          root.eventMode = clickable ? "static" : "none";
+          root.cursor = clickable ? "pointer" : "default";
 
           const crate = new Graphics();
           crate.label = "crate";
           root.addChild(crate);
 
           const label = new Text({
-            text: server.name,
-            style: { fill: 0xf2e8ee, fontSize: 12, fontFamily: "DM Sans, sans-serif" },
+            text: "",
+            style: {
+              fill: 0xf2e8ee,
+              fontSize: 12,
+              fontFamily: "DM Sans, sans-serif",
+              wordWrap: true,
+              wordWrapWidth: 128,
+              align: "center",
+            },
           });
           label.anchor.set(0.5, 0);
           label.y = 36;
@@ -719,23 +795,31 @@ export function AgentCanvas({
 
           const status = new Text({
             text: "",
-            style: { fill: 0xa898a0, fontSize: 11, fontFamily: "DM Sans, sans-serif" },
+            style: { fill: 0xa898a0, fontSize: 11, fontFamily: "DM Sans, sans-serif", align: "center" },
           });
           status.anchor.set(0.5, 0);
           status.y = 52;
           status.label = "status";
           root.addChild(status);
 
-          if (!server.unmanaged) {
+          if (isStack) {
+            const nodeId = cluster.node.id;
             root.on("pointertap", (e) => {
               e.stopPropagation();
-              onSelectRef.current(server.id);
+              setExpandedOtherNodes((prev) => ({ ...prev, [nodeId]: true }));
+              setRailOthersOpen(true);
+            });
+          } else if (server && !server.unmanaged) {
+            const sid = server.id;
+            root.on("pointertap", (e) => {
+              e.stopPropagation();
+              onSelectRef.current(sid);
             });
           }
 
           world.addChild(root);
-          node = { id: server.id, x: pos.x, y: pos.y, root };
-          nodesRef.current.set(server.id, node);
+          node = { id: placement.serverId, x: pos.x, y: pos.y, root };
+          nodesRef.current.set(placement.serverId, node);
         }
 
         node.x = pos.x;
@@ -746,22 +830,46 @@ export function AgentCanvas({
         const crate = node.root.getChildByLabel("crate") as Graphics;
         const name = node.root.getChildByLabel("name") as Text;
         const status = node.root.getChildByLabel("status") as Text;
-        const selected = server.id === selectedId;
-        const busyHere =
-          activity && activity.serverId === server.id && activity.phase !== "idle"
-            ? activity
-            : undefined;
-        const shown = displayServerStatus(server.status, server.ready);
-        drawCrate(crate, selected, shown === "running");
-        name.text = shortDisplayName(server.name, 18);
-        status.text = server.unmanaged
-          ? shown === "running"
-            ? "host engine"
-            : statusLabel(shown)
-          : busyHere
-            ? `${statusLabel(shown)} · ${busyHere.label || busyHere.verb}`
-            : statusLabel(shown);
-      });
+        const selected = !isStack && server?.id === selectedId;
+        const size =
+          placement.role === "hero" ? "hero" : placement.role === "other" ? "other" : "player";
+        const wrapWidth = size === "hero" ? 156 : size === "other" ? 86 : 128;
+        const fontSize = size === "hero" ? 13 : size === "other" ? 10 : 12;
+        name.style.fontSize = fontSize;
+        name.style.fontWeight = placement.role === "hero" ? "600" : "400";
+        name.style.wordWrap = true;
+        name.style.wordWrapWidth = wrapWidth;
+        name.style.align = "center";
+        name.style.fill = placement.role === "hero" ? 0xf2e8ee : 0xd8c8d0;
+        status.style.fontSize = size === "other" || isStack ? 9 : 11;
+        name.y = size === "hero" ? 42 : size === "other" || isStack ? 22 : 36;
+
+        if (isStack) {
+          drawStackCrate(crate, false);
+          name.text = otherServicesStackLabel(placement.stackCount ?? 0);
+          status.text = "Tap to show";
+        } else if (server) {
+          const kind = boardCrateKind(server);
+          const shown = displayServerStatus(server.status, server.ready);
+          const busyHere =
+            activity && activity.serverId === server.id && activity.phase !== "idle"
+              ? activity
+              : undefined;
+          drawCrate(crate, {
+            selected: Boolean(selected),
+            tone: boardCrateTone(kind, shown),
+            size,
+          });
+          const nameMax = size === "hero" ? 32 : size === "other" ? 16 : 24;
+          name.text = shortDisplayName(server.name, nameMax);
+          const baseStatus = boardCrateStatusText(server);
+          status.text =
+            busyHere && kind === "player"
+              ? `${baseStatus} · ${busyHere.label || busyHere.verb}`
+              : baseStatus;
+        }
+        status.y = name.y + Math.max(name.height, fontSize + 2) + 2;
+      }
     }
 
     for (const [id, pad] of padsRef.current) {
@@ -778,7 +886,7 @@ export function AgentCanvas({
         nodesRef.current.delete(id);
       }
     }
-  }, [servers, hostNodes, selectedId, selectedHostId, activity, stageReady]);
+  }, [servers, hostNodes, selectedId, selectedHostId, activity, stageReady, expandedOtherNodes]);
 
   // Sync single agent sprite
   useEffect(() => {
@@ -881,6 +989,13 @@ export function AgentCanvas({
 
   const liveBusy = activity && activity.phase !== "idle" ? activity : undefined;
   const mapEmpty = servers.length === 0 && hostNodes.length === 0;
+  const playerServers = servers.filter(isPlayerGameCrate);
+  const otherServers = servers.filter((s) => !isPlayerGameCrate(s));
+  const othersCollapsed =
+    otherServers.length >= OTHER_SERVICES_COLLAPSE_AT && !railOthersOpen;
+  const railServers = othersCollapsed
+    ? playerServers
+    : [...playerServers, ...otherServers];
 
   return (
     <div className="agent-canvas-host">
@@ -933,7 +1048,7 @@ export function AgentCanvas({
           <p className="agent-canvas-map-hint muted" id="map-gesture-hint">
             <span className="hint-full">
               Drag to pan · Scroll to zoom · Esc clear · A add · N node · S start · X stop ·
-              Hosts/pad: scan · Crates: chat
+              Hosts/pad: scan · Games: chat · Other services: tap stack
               {hostNodes.some((n) => n.id !== "local")
                 ? " · Pending pad: remove setup"
                 : ""}
@@ -1010,7 +1125,7 @@ export function AgentCanvas({
                 );
               })}
             </ul>
-            {servers.length ? (
+            {playerServers.length || otherServers.length ? (
               <>
                 <p className="agent-canvas-rail-label" id="server-list-label">
                   Servers
@@ -1021,50 +1136,85 @@ export function AgentCanvas({
                   aria-labelledby="server-list-label"
                   tabIndex={0}
                   onKeyDown={(e) => {
-                    if (!servers.length) return;
+                    if (!railServers.length) return;
                     const idx = Math.max(
                       0,
-                      servers.findIndex((s) => s.id === selectedId),
+                      railServers.findIndex((s) => s.id === selectedId),
                     );
                     if (e.key === "ArrowDown" || e.key === "ArrowRight") {
                       e.preventDefault();
-                      const next = servers[(idx + 1) % servers.length]!;
-                      onSelectRef.current(next.id);
+                      const next = railServers[(idx + 1) % railServers.length]!;
+                      if (!next.unmanaged) onSelectRef.current(next.id);
                     } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
                       e.preventDefault();
-                      const prev = servers[(idx - 1 + servers.length) % servers.length]!;
-                      onSelectRef.current(prev.id);
+                      const prev =
+                        railServers[(idx - 1 + railServers.length) % railServers.length]!;
+                      if (!prev.unmanaged) onSelectRef.current(prev.id);
                     } else if (e.key === "Escape") {
                       e.preventDefault();
                       onSelectRef.current(undefined);
                     }
                   }}
                 >
-                  {servers.map((server) => {
+                  {railServers.map((server) => {
                     const selected = server.id === selectedId;
                     const busyLabel = serverBusyLabel(server.id);
+                    const secondary = !isPlayerGameCrate(server);
                     return (
                       <li key={server.id} role="option" aria-selected={selected}>
                         <button
                           type="button"
-                          className={
-                            selected
-                              ? "agent-canvas-list-item selected"
-                              : "agent-canvas-list-item"
-                          }
-                          onClick={() => onSelectRef.current(server.id)}
+                          disabled={Boolean(server.unmanaged)}
+                          className={[
+                            "agent-canvas-list-item",
+                            selected ? "selected" : "",
+                            secondary ? "secondary" : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" ")}
+                          onClick={() => {
+                            if (server.unmanaged) return;
+                            onSelectRef.current(server.id);
+                          }}
                         >
                           <span className="agent-canvas-list-name" title={server.name}>
-                            {shortDisplayName(server.name)}
+                            {server.name}
                           </span>
                           <span className="muted">
-                            {busyLabel || statusLabel(server.status)}
+                            {busyLabel || boardCrateStatusText(server)}
                           </span>
                         </button>
                       </li>
                     );
                   })}
                 </ul>
+                {otherServers.length >= OTHER_SERVICES_COLLAPSE_AT ? (
+                  <button
+                    type="button"
+                    className="agent-canvas-others-toggle"
+                    aria-expanded={!othersCollapsed}
+                    onClick={() => {
+                      const next = othersCollapsed;
+                      setRailOthersOpen(next);
+                      if (next) {
+                        const nodeIds = new Set(
+                          otherServers.map((s) => s.nodeId).filter((id): id is string => Boolean(id)),
+                        );
+                        setExpandedOtherNodes((prev) => {
+                          const copy = { ...prev };
+                          for (const id of nodeIds) copy[id] = true;
+                          return copy;
+                        });
+                      } else {
+                        setExpandedOtherNodes({});
+                      }
+                    }}
+                  >
+                    {othersCollapsed
+                      ? `Show ${otherServicesStackLabel(otherServers.length)}`
+                      : `Hide ${otherServicesStackLabel(otherServers.length)}`}
+                  </button>
+                ) : null}
               </>
             ) : null}
           </div>
