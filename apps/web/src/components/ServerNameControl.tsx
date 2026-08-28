@@ -9,7 +9,7 @@ type Props = {
   /** Controlled edit mode. Omit to keep it internal. */
   editing?: boolean;
   onEditingChange?: (editing: boolean) => void;
-  onSave: (name: string) => void | Promise<void>;
+  onSave: (name: string) => void | Promise<unknown>;
   /** When false, idle state is only a Rename control (tile chip). */
   showName?: boolean;
   as?: "h3" | "strong";
