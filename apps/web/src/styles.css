@@ -1305,6 +1305,45 @@ body.server-console-resizing iframe {
   text-align: center;
 }
 
+.chat-channels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: var(--space-2);
+}
+
+.chat-channel-chip {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-weight: 650;
+  font-size: 0.75rem;
+  padding: 0.28rem 0.6rem;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: 100%;
+}
+
+.chat-channel-chip.selected {
+  color: var(--ink);
+  background: var(--surface-2);
+  border-color: oklch(0.78 0.12 185 / 0.35);
+}
+
+.chat-channel-pip {
+  width: 0.4rem;
+  height: 0.4rem;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px oklch(0.78 0.12 185 / 0.2);
+  flex-shrink: 0;
+}
+
 .canvas-dock-tabs {
   display: flex;
   gap: 0.35rem;

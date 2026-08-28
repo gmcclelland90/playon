@@ -1,9 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
+  channelKeyForConversation,
+  COMPOSE_CHANNEL_KEY,
+  serverChannelKey,
+} from "../chat-channels.js";
+import {
   ChatRequestSchema,
   ConfirmRequestSchema,
   CreateConversationRequestSchema,
 } from "./chat.js";
+
+describe("conversation identity contract", () => {
+  it("keys unbound add-server separately from a bound serverId", () => {
+    expect(channelKeyForConversation(undefined)).toBe(COMPOSE_CHANNEL_KEY);
+    expect(channelKeyForConversation(null)).toBe(COMPOSE_CHANNEL_KEY);
+    expect(channelKeyForConversation("srv-1")).toBe(serverChannelKey("srv-1"));
+    expect(serverChannelKey("srv-1")).not.toBe(COMPOSE_CHANNEL_KEY);
+  });
+});
 
 describe("conversation request contract", () => {
   it("accepts an empty body and caps the title", () => {

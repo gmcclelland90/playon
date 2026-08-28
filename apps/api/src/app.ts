@@ -4,7 +4,7 @@ import { createNodeWebSocket } from "@hono/node-ws";
 import { Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { cors } from "hono/cors";
-import { and, asc, count, desc, eq } from "drizzle-orm";
+import { and, asc, count, desc, eq, isNull } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -2832,9 +2832,33 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     return c.json({ job });
   });
 
+  app.post("/api/conversations", async (c) => {
+    const user = requireCan(c, "chat.agent");
+    const body = await optionalJsonBody(c, CreateConversationRequestSchema);
+    const now = new Date();
+    const id = nanoid();
+    await db.insert(conversations).values({
+      id,
+      userId: user.id,
+      title: body.title ?? "Add server",
+      createdAt: now,
+      updatedAt: now,
+    });
+    return c.json({
+      conversation: {
+        id,
+        serverId: null,
+        title: body.title ?? "Add server",
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString(),
+      },
+    });
+  });
+
   app.get("/api/conversations", async (c) => {
     const user = requireCan(c, "chat.agent");
     const serverId = c.req.query("serverId") || undefined;
+    const unbound = c.req.query("unbound") === "1" || c.req.query("unbound") === "true";
     const rows = await db
       .select({
         id: conversations.id,
@@ -2845,9 +2869,11 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       })
       .from(conversations)
       .where(
-        serverId
-          ? and(eq(conversations.userId, user.id), eq(conversations.serverId, serverId))
-          : eq(conversations.userId, user.id),
+        unbound
+          ? and(eq(conversations.userId, user.id), isNull(conversations.serverId))
+          : serverId
+            ? and(eq(conversations.userId, user.id), eq(conversations.serverId, serverId))
+            : eq(conversations.userId, user.id),
       )
       .orderBy(desc(conversations.updatedAt));
 

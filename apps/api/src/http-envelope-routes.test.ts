@@ -1155,6 +1155,7 @@ describe("transport error envelope on migrated routes", () => {
       ["/api/servers/srv-1/conversations", {}],
       ["/api/servers/srv-1/conversations", { method: "POST" }],
       ["/api/conversations", {}],
+      ["/api/conversations", { method: "POST" }],
       ["/api/conversations/conv-1/messages", {}],
       ["/api/agents", {}],
       ["/api/activity", {}],
@@ -1218,6 +1219,29 @@ describe("transport error envelope on migrated routes", () => {
     expect(malformed.status).toBe(200);
     expect(((await malformed.json()) as { conversation: { title: string } }).conversation.title)
       .toBe("New session");
+  });
+
+  it("creates an unbound add-server conversation without a serverId", async () => {
+    const app = createApp(db, config);
+    const created = await app.request("/api/conversations", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ title: "Add server" }),
+    });
+    expect(created.status).toBe(200);
+    const body = (await created.json()) as {
+      conversation: { id: string; serverId: string | null; title: string };
+    };
+    expect(body.conversation.serverId).toBeNull();
+    expect(body.conversation.title).toBe("Add server");
+
+    const listed = await app.request("/api/conversations?unbound=1", { headers: { cookie } });
+    expect(listed.status).toBe(200);
+    const listedBody = (await listed.json()) as {
+      conversations: Array<{ id: string; serverId: string | null }>;
+    };
+    expect(listedBody.conversations.map((row) => row.id)).toContain(body.conversation.id);
+    expect(listedBody.conversations.every((row) => row.serverId == null)).toBe(true);
   });
 
   it("answers 404 for an unknown transcript and 403 for someone else's", async () => {
