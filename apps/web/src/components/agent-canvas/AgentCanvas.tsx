@@ -23,11 +23,12 @@ import {
 } from "./map-node-layout";
 
 export type AgentActivityView = {
-  serverId: string;
+  serverId?: string;
   skill: string;
   phase: string;
   verb: string;
   label?: string;
+  thinking?: string;
 };
 
 export type AgentSkillView = {

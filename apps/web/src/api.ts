@@ -366,6 +366,16 @@ export const api = {
         body: JSON.stringify(title ? { title } : {}),
       },
     ),
+  createConversation: (title?: string) =>
+    request<{ conversation: ConversationRow }>(
+      "/api/conversations",
+      {
+        method: "POST",
+        body: JSON.stringify(title ? { title } : {}),
+      },
+    ),
+  unboundConversations: () =>
+    request<{ conversations: ConversationRow[] }>("/api/conversations?unbound=1"),
   agents: () =>
     request<{
       agent: { name: string };

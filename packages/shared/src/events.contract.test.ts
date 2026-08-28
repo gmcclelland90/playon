@@ -56,6 +56,39 @@ describe("WsEventSchema", () => {
     ).toMatchObject({ type: "node.metrics", nodeId: "local" });
   });
 
+  it("accepts agent.activity without a serverId and with thinking", () => {
+    expect(
+      WsEventSchema.parse({
+        type: "agent.activity",
+        conversationId: "c1",
+        skill: "orchestrator",
+        phase: "tool_start",
+        verb: "run",
+        label: "Waiting for a heartbeat from win-1",
+        thinking: "Looks like win-1 is still on 0.2.10, so I’ll swap from the extracted tar.",
+        steps: [{ label: "Waiting for a heartbeat from win-1", status: "active" }],
+      }),
+    ).toMatchObject({
+      type: "agent.activity",
+      label: "Waiting for a heartbeat from win-1",
+      thinking: expect.stringContaining("win-1"),
+    });
+  });
+
+  it("still accepts agent.activity with a serverId", () => {
+    expect(
+      WsEventSchema.parse({
+        type: "agent.activity",
+        serverId: "srv-1",
+        conversationId: "c1",
+        skill: "installer",
+        phase: "thinking",
+        verb: "other",
+        label: "Thinking…",
+      }),
+    ).toMatchObject({ serverId: "srv-1", phase: "thinking" });
+  });
+
   it("rejects unknown event types", () => {
     expect(() => WsEventSchema.parse({ type: "nope" })).toThrow();
   });

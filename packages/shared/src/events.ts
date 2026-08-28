@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { PanelBlockSchema } from "./panel.js";
 
+export const ChatProgressStepSchema = z.object({
+  label: z.string().min(1).max(120),
+  status: z.enum(["done", "active", "failed"]),
+});
+
 export const WsEventSchema = z.discriminatedUnion("type", [
   z.object({
     type: z.literal("chat.token"),
@@ -74,7 +79,8 @@ export const WsEventSchema = z.discriminatedUnion("type", [
   }),
   z.object({
     type: z.literal("agent.activity"),
-    serverId: z.string(),
+    /** Absent on unbound install chat until a server is created. */
+    serverId: z.string().optional(),
     conversationId: z.string().optional(),
     skill: z.string(),
     phase: z.enum([
@@ -97,7 +103,11 @@ export const WsEventSchema = z.discriminatedUnion("type", [
       "other",
     ]),
     toolName: z.string().optional(),
+    /** Human now-line. Never a raw tool name or job id. */
     label: z.string().optional(),
+    /** Sanitized short rationale; sticky until the next thought. */
+    thinking: z.string().max(600).optional(),
+    steps: z.array(ChatProgressStepSchema).max(24).optional(),
   }),
   z.object({
     type: z.literal("update.progress"),

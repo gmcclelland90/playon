@@ -7,7 +7,19 @@ import {
   type KeyboardEvent,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { PublicUser } from "@playon/shared";
+import {
+  attachBoundComposeToServer,
+  COMPOSE_CHANNEL_KEY,
+  composeNeedsFreshConversation,
+  listChatChannels,
+  nowLineForTool,
+  parseChatChannelKey,
+  routeConversationToChannelKey,
+  serverChannelKey,
+  type ChatChannelRecord,
+  type ChatProgressStep,
+  type PublicUser,
+} from "@playon/shared";
 import { api, type ToolTrace } from "../api";
 import {
   clearConfirmPrefs,
@@ -22,7 +34,10 @@ import {
   type AgentActivityView,
   type SelectedAnchor,
 } from "../components/agent-canvas/AgentCanvas";
+import { ChatChannelList } from "../components/ChatChannelList";
+import { ChatNowLine } from "../components/ChatNowLine";
 import { ChatMarkdown } from "../components/ChatMarkdown";
+import { chatNowView } from "../chat-now";
 import { mergeNodeContainerInventory } from "../components/agent-canvas/map-node-layout";
 import { MapAddNodePanel } from "../components/MapAddNodePanel";
 import { MapManageSuggestPanel } from "../components/MapManageSuggestPanel";
@@ -44,6 +59,25 @@ type ChatLine = {
   tools?: ToolTrace[];
   degradedMode?: boolean;
 };
+
+type ChannelProgress = {
+  phase: string;
+  now: string;
+  thinking?: string;
+  steps: ChatProgressStep[];
+  updatedAt: number;
+};
+
+type ChannelRecord = ChatChannelRecord<ChannelProgress, ChatLine> & {
+  sessionError?: string | null;
+};
+
+const emptyChannel = (): ChannelRecord => ({
+  lines: [],
+  progress: null,
+  pending: false,
+  sessionError: null,
+});
 
 type DockTab = "chat" | "ops";
 
@@ -136,14 +170,19 @@ export function CanvasPage({ user }: { user: PublicUser }) {
       return undefined;
     }
   });
-  /** Unbound install dock (no crate selected). */
-  const [installOpen, setInstallOpen] = useState(false);
-  const [conversationId, setConversationId] = useState<string | undefined>();
-  const [lines, setLines] = useState<ChatLine[]>([]);
+  const [activeKey, setActiveKey] = useState<string>(() =>
+    selectedId ? serverChannelKey(selectedId) : "",
+  );
+  const [channels, setChannels] = useState<Record<string, ChannelRecord>>({});
   const [message, setMessage] = useState("");
   const [activity, setActivity] = useState<AgentActivityView | undefined>();
   /** Last activity event timestamp (for stale idle clear). */
   const activityUpdatedAtRef = useRef(0);
+  const channelsRef = useRef(channels);
+  channelsRef.current = channels;
+  const activeKeyRef = useRef(activeKey);
+  activeKeyRef.current = activeKey;
+  const chatAbortRef = useRef<Record<string, AbortController>>({});
   const [pendingConfirm, setPendingConfirm] = useState<{
     requestId: string;
     toolName: string;
@@ -154,16 +193,13 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const [celebration, setCelebration] = useState<string | null>(null);
   const [joinCopied, setJoinCopied] = useState(false);
   const confirmApproveRef = useRef<HTMLButtonElement>(null);
-  const [liveConversationId, setLiveConversationId] = useState<string | undefined>();
   const [opsError, setOpsError] = useState<string | null>(null);
-  const [sessionError, setSessionError] = useState<string | null>(null);
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState(false);
   const [dockTab, setDockTab] = useState<DockTab>("chat");
   const [consoleOpen, setConsoleOpen] = useState(true);
   const [selectedAnchor, setSelectedAnchor] = useState<SelectedAnchor | null>(null);
   const chatLogRef = useRef<HTMLDivElement>(null);
-  const chatAbortRef = useRef<AbortController | null>(null);
 
   const servers = useQuery({ queryKey: ["servers"], queryFn: api.servers, refetchInterval: 4000 });
   const nodes = useQuery({ queryKey: ["nodes"], queryFn: api.nodes, refetchInterval: 8_000 });
@@ -187,25 +223,37 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     refetchInterval: 5000,
   });
 
-  const dockOpen = Boolean(selectedId) || installOpen;
-  const unbound = !selectedId && installOpen;
+  const composeActive = activeKey === COMPOSE_CHANNEL_KEY;
+  const dockOpen = Boolean(selectedId) || composeActive;
+  const unbound = composeActive;
+  const activeChannel = channels[activeKey] ?? emptyChannel();
+  const lines = activeChannel.lines;
+  const chatProgress = activeChannel.progress;
+  const sessionError = activeChannel.sessionError ?? null;
+  const chatPending = activeChannel.pending;
 
   useEffect(() => {
     if (!selectedId || !servers.data?.servers.length) return;
     if (!servers.data.servers.some((s) => s.id === selectedId)) {
+      if (activeKey === serverChannelKey(selectedId)) setActiveKey("");
       setSelectedId(undefined);
       setConsoleOpen(false);
       setSelectedAnchor(null);
     }
   }, [selectedId, servers.data?.servers]);
 
+  function patchChannel(key: string, fn: (prev: ChannelRecord) => ChannelRecord) {
+    setChannels((prev) => {
+      const next = { ...prev, [key]: fn(prev[key] ?? emptyChannel()) };
+      channelsRef.current = next;
+      return next;
+    });
+  }
+
   function openInstallChat() {
     setSelectedId(undefined);
-    setInstallOpen(true);
-    setConversationId(undefined);
-    setLines([]);
+    setActiveKey(COMPOSE_CHANNEL_KEY);
     setOpsError(null);
-    setSessionError(null);
     setDockTab("chat");
     setConsoleOpen(false);
     setSelectedAnchor(null);
@@ -214,17 +262,17 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     } catch {
       /* ignore */
     }
+    void ensureComposeConversation();
   }
 
   function clearMapSelection() {
     setSelectedId(undefined);
-    setInstallOpen(false);
+    setActiveKey("");
     setConsoleOpen(false);
     setSelectedAnchor(null);
     setScanNodeId(null);
     setAddNodeOpen(false);
     setOpsError(null);
-    setSessionError(null);
     try {
       localStorage.removeItem("playon.lastServerId");
     } catch {
@@ -237,17 +285,25 @@ export function CanvasPage({ user }: { user: PublicUser }) {
       clearMapSelection();
       return;
     }
-    setInstallOpen(false);
     setScanNodeId(null);
     setAddNodeOpen(false);
-    // Chat dock is the control surface; Terminal is opt-in (avoids a second composer).
     if (id !== selectedId) {
       setConsoleOpen(false);
     }
     setSelectedId(id);
+    setActiveKey(serverChannelKey(id));
     setOpsError(null);
-    setSessionError(null);
     setDockTab("chat");
+    void ensureServerConversation(id);
+  }
+
+  function selectChannel(key: string) {
+    const parsed = parseChatChannelKey(key);
+    if (parsed.kind === "compose") {
+      openInstallChat();
+      return;
+    }
+    selectServer(parsed.serverId);
   }
 
   useEffect(() => {
@@ -265,7 +321,27 @@ export function CanvasPage({ user }: { user: PublicUser }) {
           phase: event.phase,
           verb: event.verb,
           label: event.label,
+          thinking: event.thinking,
         });
+        const key = event.conversationId
+          ? routeConversationToChannelKey(
+              channelsRef.current,
+              event.conversationId,
+              event.serverId,
+            )
+          : activeKeyRef.current || COMPOSE_CHANNEL_KEY;
+        patchChannel(key, (prev) => ({
+          ...prev,
+          conversationId: event.conversationId ?? prev.conversationId,
+          boundServerId: event.serverId ?? prev.boundServerId,
+          progress: {
+            phase: event.phase,
+            now: event.label ?? prev.progress?.now ?? "Thinking…",
+            thinking: event.thinking ?? prev.progress?.thinking,
+            steps: event.steps ?? prev.progress?.steps ?? [],
+            updatedAt: Date.now(),
+          },
+        }));
         return;
       }
       if (event.type === "agent.celebration") {
@@ -298,35 +374,36 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         return;
       }
       if (event.type === "chat.token") {
-        if (liveConversationId && event.conversationId !== liveConversationId) return;
-        // Adopt id from first streamed token when install chat created the conversation mid-turn.
-        if (!liveConversationId && event.conversationId) {
-          setLiveConversationId(event.conversationId);
-        }
-        setLines((prev) => {
-          const next = [...prev];
+        const key = routeConversationToChannelKey(
+          channelsRef.current,
+          event.conversationId,
+        );
+        patchChannel(key, (prev) => {
+          const next = [...prev.lines];
           const last = next[next.length - 1];
           if (!last || last.role !== "assistant") return prev;
           next[next.length - 1] = { ...last, content: `${last.content}${event.token}` };
-          return next;
+          return { ...prev, conversationId: event.conversationId, lines: next };
         });
         return;
       }
       if (event.type === "chat.tool") {
-        if (liveConversationId && event.conversationId !== liveConversationId) return;
-        // Clear any leaked interim text when tools start so the bubble stays clean until the final reply.
+        const key = routeConversationToChannelKey(
+          channelsRef.current,
+          event.conversationId,
+        );
         if (event.status === "started") {
-          setLines((prev) => {
-            const next = [...prev];
+          patchChannel(key, (prev) => {
+            const next = [...prev.lines];
             const last = next[next.length - 1];
             if (!last || last.role !== "assistant" || !last.content) return prev;
             next[next.length - 1] = { ...last, content: "" };
-            return next;
+            return { ...prev, conversationId: event.conversationId, lines: next };
           });
         }
       }
     });
-  }, [liveConversationId, qc]);
+  }, [qc]);
 
   /** Clear stuck busy labels if idle was dropped (WS gap / crash). */
   useEffect(() => {
@@ -342,46 +419,87 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     return () => window.clearInterval(id);
   }, []);
 
-  useEffect(() => {
-    if (!selectedId) {
-      if (!installOpen) {
-        setConversationId(undefined);
-        setLines([]);
+  function writeChannel(key: string, next: ChannelRecord) {
+    channelsRef.current = { ...channelsRef.current, [key]: next };
+    patchChannel(key, () => next);
+  }
+
+  async function ensureServerConversation(serverId: string): Promise<string | undefined> {
+    const key = serverChannelKey(serverId);
+    const existing = channelsRef.current[key];
+    if (existing?.pending || existing?.conversationId) return existing.conversationId;
+    try {
+      const sessions = await api.serverConversations(serverId);
+      let id = sessions.conversations[0]?.id;
+      if (!id) {
+        const created = await api.createServerConversation(serverId);
+        id = created.conversation.id;
       }
-      return;
+      const current = channelsRef.current[key];
+      if (current?.pending || current?.conversationId) return current.conversationId;
+      const history = await api.conversationMessages(id);
+      writeChannel(key, {
+        ...(current ?? emptyChannel()),
+        conversationId: id,
+        boundServerId: serverId,
+        sessionError: null,
+        lines: history.messages
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .map((m) => ({
+            role: m.role as "user" | "assistant",
+            content: m.content,
+          })),
+      });
+      return id;
+    } catch (err) {
+      patchChannel(key, (prev) => ({
+        ...prev,
+        sessionError: (err as Error).message || "Could not load chat history.",
+      }));
+      return undefined;
     }
-    localStorage.setItem("playon.lastServerId", selectedId);
-    let cancelled = false;
-    setSessionError(null);
-    (async () => {
-      try {
-        const sessions = await api.serverConversations(selectedId);
-        if (cancelled) return;
-        let id = sessions.conversations[0]?.id;
-        if (!id) {
-          const created = await api.createServerConversation(selectedId);
-          id = created.conversation.id;
-        }
-        setConversationId(id);
-        const history = await api.conversationMessages(id);
-        if (cancelled) return;
-        setLines(
-          history.messages
-            .filter((m) => m.role === "user" || m.role === "assistant")
-            .map((m) => ({
-              role: m.role as "user" | "assistant",
-              content: m.content,
-            })),
-        );
-      } catch (err) {
-        if (cancelled) return;
-        setSessionError((err as Error).message || "Could not load chat history.");
+  }
+
+  async function ensureComposeConversation(): Promise<string | undefined> {
+    const existing = channelsRef.current[COMPOSE_CHANNEL_KEY];
+    if (!composeNeedsFreshConversation(existing)) return existing?.conversationId;
+    try {
+      const listed = await api.unboundConversations();
+      let id = listed.conversations[0]?.id;
+      if (!id) {
+        const created = await api.createConversation("Add server");
+        id = created.conversation.id;
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedId, installOpen]);
+      const current = channelsRef.current[COMPOSE_CHANNEL_KEY];
+      if (!composeNeedsFreshConversation(current)) return current?.conversationId;
+      const history = id ? await api.conversationMessages(id) : { messages: [] };
+      writeChannel(COMPOSE_CHANNEL_KEY, {
+        ...(current ?? emptyChannel()),
+        conversationId: id,
+        boundServerId: undefined,
+        sessionError: null,
+        lines: history.messages
+          .filter((m) => m.role === "user" || m.role === "assistant")
+          .map((m) => ({
+            role: m.role as "user" | "assistant",
+            content: m.content,
+          })),
+      });
+      return id;
+    } catch (err) {
+      patchChannel(COMPOSE_CHANNEL_KEY, (prev) => ({
+        ...prev,
+        sessionError: (err as Error).message || "Could not open add-server chat.",
+      }));
+      return undefined;
+    }
+  }
+
+  useEffect(() => {
+    if (!selectedId) return;
+    localStorage.setItem("playon.lastServerId", selectedId);
+    void ensureServerConversation(selectedId);
+  }, [selectedId]);
 
   const refreshServer = async (serverId: string) => {
     await Promise.all([
@@ -417,12 +535,17 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteServer(id),
     onMutate: () => setOpsError(null),
-    onSuccess: async () => {
+    onSuccess: async (_data, id) => {
       setPendingDelete(false);
-      setSelectedId(undefined);
-      setInstallOpen(false);
-      setConversationId(undefined);
-      setLines([]);
+      setChannels((prev) => {
+        const next = { ...prev };
+        delete next[serverChannelKey(id)];
+        return next;
+      });
+      if (activeKey === serverChannelKey(id)) {
+        setSelectedId(undefined);
+        setActiveKey("");
+      }
       await qc.invalidateQueries({ queryKey: ["servers"] });
       try {
         localStorage.removeItem("playon.lastServerId");
@@ -483,45 +606,96 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [scanNodeId, selectedId]);
 
-  const chat = useMutation({
-    mutationFn: (text: string) => {
-      const ac = new AbortController();
-      chatAbortRef.current = ac;
-      if (selectedId) {
-        return api.chat(text, {
-          conversationId,
-          serverId: selectedId,
-          signal: ac.signal,
-        });
+  const [chatSendError, setChatSendError] = useState<string | null>(null);
+
+  async function sendOnChannel(key: string, text: string) {
+    const channel = channelsRef.current[key] ?? emptyChannel();
+    if (channel.pending) return;
+    let conversationId = channel.conversationId;
+    if (key === COMPOSE_CHANNEL_KEY) {
+      conversationId = (await ensureComposeConversation()) ?? conversationId;
+    } else {
+      const parsed = parseChatChannelKey(key);
+      if (parsed.kind === "server") {
+        conversationId = (await ensureServerConversation(parsed.serverId)) ?? conversationId;
       }
-      return api.chat(text, { conversationId, signal: ac.signal });
-    },
-    onMutate: (text) => {
-      setLiveConversationId(conversationId);
-      setLines((prev) => [
+    }
+    if (!conversationId) {
+      patchChannel(key, (prev) => ({
         ...prev,
+        sessionError: prev.sessionError ?? "Could not open this chat session.",
+      }));
+      return;
+    }
+    const ac = new AbortController();
+    chatAbortRef.current[key] = ac;
+    setChatSendError(null);
+    setMessage("");
+    patchChannel(key, (prev) => ({
+      ...prev,
+      conversationId: conversationId ?? prev.conversationId,
+      pending: true,
+      progress: {
+        phase: "thinking",
+        now: "Thinking…",
+        steps: [],
+        updatedAt: Date.now(),
+      },
+      lines: [
+        ...prev.lines,
         { role: "user", content: text },
         { role: "assistant", content: "", tools: [] },
-      ]);
-      setMessage("");
-    },
-    onSuccess: async (data) => {
-      setConversationId(data.conversationId);
-      setLiveConversationId(undefined);
-      setLines((prev) => {
-        const next = [...prev];
+      ],
+    }));
+    try {
+      const parsed = parseChatChannelKey(key);
+      const data = await api.chat(text, {
+        conversationId,
+        serverId: parsed.kind === "server" ? parsed.serverId : undefined,
+        signal: ac.signal,
+      });
+      patchChannel(key, (prev) => {
+        const next = [...prev.lines];
         const last = next[next.length - 1];
         if (last?.role === "assistant") {
           next[next.length - 1] = {
             role: "assistant",
-            // Prefer the HTTP final reply; streamed interim text must not win if reply is empty.
             content: typeof data.reply === "string" ? data.reply : last.content,
             tools: data.toolTrace?.length ? data.toolTrace : last.tools,
             degradedMode: data.degradedMode,
           };
         }
-        return next;
+        const snapshot: ChannelRecord = {
+          ...prev,
+          conversationId: data.conversationId,
+          boundServerId: data.serverId ?? prev.boundServerId,
+          pending: false,
+          progress: {
+            phase: "idle",
+            now: "Done",
+            thinking: prev.progress?.thinking,
+            steps: prev.progress?.steps ?? [],
+            updatedAt: Date.now(),
+          },
+          lines: next,
+        };
+        return snapshot;
       });
+      if (data.serverId && key === COMPOSE_CHANNEL_KEY) {
+        const compose = channelsRef.current[COMPOSE_CHANNEL_KEY];
+        if (compose) {
+          setChannels((prev) => {
+            const next = attachBoundComposeToServer(prev, data.serverId!, {
+              ...compose,
+              conversationId: data.conversationId,
+              boundServerId: data.serverId,
+              pending: false,
+            });
+            channelsRef.current = next;
+            return next;
+          });
+        }
+      }
       if (data.celebrations?.length) {
         const top = data.celebrations[0]!;
         setCelebration(
@@ -534,60 +708,71 @@ export function CanvasPage({ user }: { user: PublicUser }) {
       if (data.serverId) {
         await qc.invalidateQueries({ queryKey: ["server-detail", data.serverId] });
       }
-      if (data.serverId && data.serverId !== selectedId) {
-        setInstallOpen(false);
-        setSelectedId(data.serverId);
-        localStorage.setItem("playon.lastServerId", data.serverId);
-      }
-    },
-    onError: (err) => {
-      setLiveConversationId(undefined);
+    } catch (err) {
       if (isAbortError(err)) {
-        setLines((prev) => {
-          const next = [...prev];
+        patchChannel(key, (prev) => {
+          const next = [...prev.lines];
           const last = next[next.length - 1];
           if (last?.role === "assistant" && !last.content.trim()) {
             next[next.length - 1] = { ...last, content: "Stopped." };
           }
-          return next;
+          return {
+            ...prev,
+            pending: false,
+            progress: {
+              phase: "idle",
+              now: "Stopped",
+              thinking: prev.progress?.thinking,
+              steps: prev.progress?.steps ?? [],
+              updatedAt: Date.now(),
+            },
+            lines: next,
+          };
         });
         return;
       }
-      setLines((prev) => {
-        const next = [...prev];
+      patchChannel(key, (prev) => {
+        const next = [...prev.lines];
         const last = next[next.length - 1];
         if (last?.role === "assistant" && !last.content) next.pop();
-        return next;
+        return {
+          ...prev,
+          pending: false,
+          progress: prev.progress
+            ? { ...prev.progress, phase: "idle", now: "Done", updatedAt: Date.now() }
+            : null,
+          lines: next,
+        };
       });
-    },
-    onSettled: () => {
-      chatAbortRef.current = null;
-    },
-  });
+      setChatSendError((err as Error).message);
+    } finally {
+      delete chatAbortRef.current[key];
+    }
+  }
 
   useEffect(() => {
     const el = chatLogRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [lines, chat.isPending]);
+  }, [lines, chatPending, chatProgress]);
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
     const text = message.trim();
-    if (!text || !dockOpen || chat.isPending) return;
-    chat.mutate(text);
+    if (!text || !dockOpen || chatPending || !activeKey) return;
+    void sendOnChannel(activeKey, text);
   }
 
   function onComposerKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key !== "Enter" || e.shiftKey) return;
     e.preventDefault();
     const text = message.trim();
-    if (!text || !dockOpen || chat.isPending) return;
-    chat.mutate(text);
+    if (!text || !dockOpen || chatPending || !activeKey) return;
+    void sendOnChannel(activeKey, text);
   }
 
   function stopChat() {
-    chatAbortRef.current?.abort();
+    if (activeKey) chatAbortRef.current[activeKey]?.abort();
     if (pendingConfirm) {
       const requestId = pendingConfirm.requestId;
       setPendingConfirm(null);
@@ -646,13 +831,40 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const skills = agents.data?.skills ?? [];
   const activeSkill =
     activity && activity.phase !== "idle" ? activity.skill : undefined;
-  const dockTitle = selected?.name ?? "New server";
+  const dockTitle = selected?.name ?? (composeActive ? "Add server" : "Chat");
   const dockHint = unbound
     ? `${user.displayName} · tell the agent what to install`
     : `${user.displayName} · ask the agent to maintain this server`;
   const emptyHint = unbound
     ? "Try “I want a vanilla Minecraft server”."
     : "Ask about status, config, restarts, snapshots…";
+  const channelItems = listChatChannels({
+    servers: (servers.data?.servers ?? []).filter((s) => !s.unmanaged),
+    compose: {
+      pending: Boolean(channels[COMPOSE_CHANNEL_KEY]?.pending),
+      conversationId: channels[COMPOSE_CHANNEL_KEY]?.conversationId,
+    },
+    pendingByServer: Object.fromEntries(
+      (servers.data?.servers ?? []).map((s) => [
+        s.id,
+        Boolean(channels[serverChannelKey(s.id)]?.pending),
+      ]),
+    ),
+    conversationByServer: Object.fromEntries(
+      (servers.data?.servers ?? []).map((s) => [
+        s.id,
+        channels[serverChannelKey(s.id)]?.conversationId,
+      ]),
+    ),
+  });
+  const nowView = chatNowView({
+    pending: chatPending,
+    phase: chatProgress?.phase,
+    now: chatProgress?.now,
+    thinking: chatProgress?.thinking,
+    steps: chatProgress?.steps,
+    updatedAt: chatProgress?.updatedAt,
+  });
 
   const pageClass = [
     "canvas-page",
@@ -766,18 +978,18 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                 <button
                   type="button"
                   className="linkish"
-                  onClick={() => {
-                    setSelectedId(undefined);
-                    setInstallOpen(false);
-                    setConsoleOpen(false);
-                    setSelectedAnchor(null);
-                  }}
+                  onClick={() => clearMapSelection()}
                 >
                   Close
                 </button>
               </div>
             </div>
             <p className="canvas-dock-hint">{dockHint}</p>
+            <ChatChannelList
+              channels={channelItems}
+              activeKey={activeKey}
+              onSelect={selectChannel}
+            />
             {sessionError ? <p className="error">{sessionError}</p> : null}
             {opsError ? (
               <p className="error" role="alert">
@@ -1050,7 +1262,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
             ) : (
               lines.map((line, i) => {
                 const streaming =
-                  chat.isPending && line.role === "assistant" && i === lines.length - 1;
+                  chatPending && line.role === "assistant" && i === lines.length - 1;
                 return (
                   <div
                     key={i}
@@ -1065,12 +1277,10 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                     {streaming ? <span className="stream-caret" aria-hidden /> : null}
                     {line.tools?.length ? (
                       <details className="tool-trace">
-                        <summary>Tools ({line.tools.length})</summary>
+                        <summary>Steps ({line.tools.length})</summary>
                         <ul className="list compact-list">
                           {line.tools.map((tool, ti) => (
-                            <li key={`${tool.name}-${ti}`}>
-                              <code>{tool.name}</code>
-                            </li>
+                            <li key={`${tool.name}-${ti}`}>{nowLineForTool(tool.name)}</li>
                           ))}
                         </ul>
                       </details>
@@ -1084,6 +1294,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                 );
               })
             )}
+            <ChatNowLine view={nowView} />
           </div>
 
           <form className="stack canvas-chat-composer" onSubmit={onSubmit}>
@@ -1096,13 +1307,13 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                 placeholder={
                   unbound ? "Describe the server you want…" : "Ask the agent what you need…"
                 }
-                disabled={chat.isPending}
+                disabled={chatPending}
                 rows={2}
                 aria-label="Message the agents"
               />
             </label>
             <div className="btn-row">
-              {chat.isPending ? (
+              {chatPending ? (
                 <button
                   type="button"
                   className="btn btn-ghost btn-danger"
@@ -1121,14 +1332,12 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                 </button>
               )}
               <span className="muted canvas-busy-hint">
-                {chat.isPending
-                  ? "Working… Stop cancels this turn"
+                {chatPending
+                  ? "Stop cancels this turn"
                   : "Enter to send · Shift+Enter for line"}
               </span>
             </div>
-            {chat.isError && !isAbortError(chat.error) ? (
-              <p className="error">{(chat.error as Error).message}</p>
-            ) : null}
+            {chatSendError ? <p className="error">{chatSendError}</p> : null}
           </form>
         </aside>
       ) : null}

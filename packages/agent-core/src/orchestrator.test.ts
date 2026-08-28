@@ -279,6 +279,80 @@ describe("Orchestrator in-session servers_stop confirm", () => {
   });
 });
 
+describe("Orchestrator thinking sink", () => {
+  it("emits next-step prose on onThinking without streaming it as tokens", async () => {
+    const tokens: string[] = [];
+    const thoughts: string[] = [];
+    let round = 0;
+    const orch = new Orchestrator(
+      {
+        mode: "openai_compatible",
+        async complete() {
+          round += 1;
+          if (round === 1) {
+            return {
+              content: "Looks like win-1 is still on 0.2.10, so I’ll swap from the extracted tar.",
+              toolCalls: [{ id: "1", name: "servers_list", arguments: {} }],
+            };
+          }
+          return { content: "listed" };
+        },
+      },
+      {
+        stream: {
+          conversationId: "c1",
+          onToken: (t) => tokens.push(t),
+          onTool: () => undefined,
+          onThinking: (t) => thoughts.push(t),
+        },
+      },
+    );
+    orch.registerTool(
+      { name: "servers_list", description: "list", parameters: {} },
+      async () => ({ servers: [] }),
+    );
+    const result = await orch.handle("check");
+    expect(thoughts[0]).toMatch(/win-1 is still on 0\.2\.10/);
+    expect(tokens.join("")).toBe("listed");
+    expect(result.content).toBe("listed");
+  });
+
+  it("prefers provider reasoning over tool-shaped content", async () => {
+    const thoughts: string[] = [];
+    let round = 0;
+    const orch = new Orchestrator(
+      {
+        mode: "openai_compatible",
+        async complete() {
+          round += 1;
+          if (round === 1) {
+            return {
+              content: '{"name":"servers_list","arguments":{}}',
+              reasoning: "I’ll list what’s on the board first.",
+              toolCalls: [{ id: "1", name: "servers_list", arguments: {} }],
+            };
+          }
+          return { content: "ok" };
+        },
+      },
+      {
+        stream: {
+          conversationId: "c1",
+          onToken: () => undefined,
+          onTool: () => undefined,
+          onThinking: (t) => thoughts.push(t),
+        },
+      },
+    );
+    orch.registerTool(
+      { name: "servers_list", description: "list", parameters: {} },
+      async () => ({ servers: [] }),
+    );
+    await orch.handle("list");
+    expect(thoughts).toEqual(["I’ll list what’s on the board first."]);
+  });
+});
+
 describe("Orchestrator Gemini thought_signature", () => {
   it("passes extraContent through to the next complete() so the client can echo it", async () => {
     const seen: LlmMessage[][] = [];

@@ -21,7 +21,14 @@ import {
   SESSION_CREATE_TOOLS,
   serverIdFromToolResult,
 } from "@playon/agent-core";
-import { HttpError, messageFromError } from "@playon/shared";
+import {
+  HttpError,
+  messageFromError,
+  nowLineForPhase,
+  nowLineForTool,
+  sanitizeAgentThinking,
+  type ChatProgressStep,
+} from "@playon/shared";
 import type { ControlPlane } from "../control-plane.js";
 import { conversations, messages, toolInvocations, users } from "../db/schema.js";
 import { labelForTool, verbForTool } from "./agent-activity.js";
@@ -176,6 +183,26 @@ export class AgentTurn {
     const toolSurface = createPlayOnToolSurface(plane, { workspaceServerId });
     let activityServerId = workspaceServerId;
     let activitySkill = isChat ? "orchestrator" : "monitor";
+    let lastThinking: string | undefined;
+    let lastNow = nowLineForPhase("thinking");
+    const progressSteps: ChatProgressStep[] = [];
+
+    const rememberStep = (label: string, status: ChatProgressStep["status"]) => {
+      if (status === "active") {
+        for (const step of progressSteps) {
+          if (step.status === "active") step.status = "done";
+        }
+        progressSteps.push({ label, status });
+        if (progressSteps.length > 24) progressSteps.shift();
+        return;
+      }
+      const last = progressSteps[progressSteps.length - 1];
+      if (last && last.label === label && last.status === "active") {
+        last.status = status;
+        return;
+      }
+      if (last && last.status === "active") last.status = status;
+    };
 
     const publishActivity = (
       phase: ActivityPhase,
@@ -184,33 +211,36 @@ export class AgentTurn {
         verb?: ReturnType<typeof verbForTool>;
         label?: string;
         skill?: string;
+        thinking?: string;
+        args?: Record<string, unknown>;
       },
     ) => {
-      if (isChat && !activityServerId) return;
       const serverId = activityServerId ?? (isChat ? undefined : input.serverId);
-      if (!serverId) return;
+      if (!isChat && !serverId) return;
+
+      if (opts?.thinking) lastThinking = opts.thinking;
 
       if (isChat) {
         const verb = opts?.verb ?? "other";
         if (opts?.skill) activitySkill = opts.skill;
         else if (opts?.toolName) activitySkill = toolSurface.skill(opts.toolName);
+        const label =
+          opts?.label ??
+          (opts?.toolName
+            ? nowLineForTool(opts.toolName, opts.args)
+            : nowLineForPhase(phase));
+        lastNow = label;
         plane.eventHub.publish({
           type: "agent.activity",
-          serverId,
+          ...(serverId ? { serverId } : {}),
           conversationId,
           skill: activitySkill,
           phase,
           verb,
           toolName: opts?.toolName,
-          label:
-            opts?.label ??
-            (phase === "thinking"
-              ? "Thinking…"
-              : phase === "idle"
-                ? "Idle"
-                : phase === "confirm_wait"
-                  ? "Waiting for confirm…"
-                  : undefined),
+          label,
+          ...(lastThinking ? { thinking: lastThinking } : {}),
+          ...(progressSteps.length ? { steps: progressSteps.map((s) => ({ ...s })) } : {}),
         });
         return;
       }
@@ -219,7 +249,7 @@ export class AgentTurn {
       const verb = toolName ? verbForTool(toolName, toolSurface) : "run";
       plane.eventHub.publish({
         type: "agent.activity",
-        serverId,
+        serverId: serverId!,
         conversationId,
         skill: "monitor",
         phase,
@@ -227,12 +257,13 @@ export class AgentTurn {
         toolName,
         label:
           opts?.label ??
-          (toolName ? labelForTool(toolName, verb) : input.watcherName),
+          (toolName ? labelForTool(toolName, verb, opts?.args) : input.watcherName),
       });
     };
 
     const abortSignal = input.abortSignal;
     let streamedReply = "";
+    let writingReply = false;
     const onClientAbort = () => {
       if (isChat) plane.confirm.cancelAll();
     };
@@ -268,6 +299,16 @@ export class AgentTurn {
           if (!isChat) return;
           streamedReply += token;
           plane.eventHub.publish({ type: "chat.token", conversationId, token });
+          if (!writingReply && streamedReply.trim()) {
+            writingReply = true;
+            publishActivity("thinking", { label: "Writing a reply…", verb: "other" });
+          }
+        },
+        onThinking: (text) => {
+          if (!isChat) return;
+          const thinking = sanitizeAgentThinking(redactString(text));
+          if (!thinking) return;
+          publishActivity("thinking", { thinking, label: lastNow || nowLineForPhase("thinking") });
         },
         onTool: ({ toolName, status, detail }) => {
           if (isChat) {
@@ -288,19 +329,32 @@ export class AgentTurn {
               activityServerId = detail.serverId;
             }
             const verb = verbForTool(toolName, toolSurface);
+            const args =
+              detail &&
+              typeof detail.arguments === "object" &&
+              detail.arguments &&
+              !Array.isArray(detail.arguments)
+                ? (detail.arguments as Record<string, unknown>)
+                : detail && typeof detail === "object"
+                  ? (detail as Record<string, unknown>)
+                  : undefined;
             const phase: ActivityPhase =
               status === "started"
                 ? "tool_start"
                 : status === "failed"
                   ? "tool_fail"
                   : "tool_done";
+            const label = labelForTool(toolName, verb, args);
+            if (status === "started") rememberStep(label, "active");
+            else rememberStep(label, status === "failed" ? "failed" : "done");
             publishActivity(phase, {
               toolName,
               verb,
-              label: labelForTool(toolName, verb),
+              label,
+              args,
             });
             if (status === "completed" || status === "failed") {
-              publishActivity("thinking", { label: "Thinking…", verb: "other" });
+              publishActivity("thinking", { label: nowLineForPhase("thinking"), verb: "other" });
             }
             return;
           }

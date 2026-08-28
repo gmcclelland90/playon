@@ -50,12 +50,22 @@ describe("agent activity verbs", () => {
     expect(verbForTool("weird_custom_tool", composedSurface())).toBe("other");
   });
 
-  it("provides short labels", () => {
-    expect(labelForTool("fetch_url", "fetch")).toMatch(/fetch/i);
+  it("provides short human labels without raw tool names", () => {
+    expect(labelForTool("fetch_url", "fetch")).toBe("Fetching a file");
+    expect(labelForTool("fetch_url", "fetch")).not.toMatch(/fetch_url/);
   });
 
   it("distinguishes panel list vs publish labels", () => {
-    expect(labelForTool("panel_list", "panel")).toBe("Checking panel…");
-    expect(labelForTool("panel_publish", "panel")).toBe("Updating panel…");
+    expect(labelForTool("panel_list", "panel")).toBe("Checking the panel");
+    expect(labelForTool("panel_publish", "panel")).toBe("Updating the player panel");
+  });
+
+  it("uses display names from args", () => {
+    expect(labelForTool("servers_stop", "run", { name: "PlayOnNodeAgent" })).toBe(
+      "Stopping PlayOnNodeAgent",
+    );
+    expect(labelForTool("node_ping", "run", { nodeId: "win-1" })).toBe(
+      "Waiting for a heartbeat from win-1",
+    );
   });
 });
