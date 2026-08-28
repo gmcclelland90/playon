@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Application, Container, Graphics, Text } from "pixi.js";
-import { hostMeterRows, serverMeterRows, type UsageTone } from "@playon/shared";
+import {
+  COMPOSE_CHANNEL_KEY,
+  hostMeterRows,
+  serverMeterRows,
+  type ServerAgentPresence,
+  type UsageTone,
+} from "@playon/shared";
 import type { ServerRow } from "../../api";
 import { HostUsageMeters, ServerUsageMeters } from "../UsageMeters";
 import {
@@ -54,8 +60,8 @@ type Props = {
   selectedId?: string;
   /** Host pad / rail selection (Scan panel), independent of server selection. */
   selectedHostId?: string | null;
-  /** Latest agent activity (one agent). */
-  activity?: AgentActivityView;
+  /** One occupant per managed server (plus compose while in flight). */
+  agents?: ServerAgentPresence[];
   /** Skill roster for accent colors while busy. */
   skills: AgentSkillView[];
   onSelect: (serverId: string | undefined) => void;
@@ -77,10 +83,13 @@ type Props = {
   showAddButton?: boolean;
 };
 
+type CrateSize = "hero" | "player" | "other";
+
 type ServerNode = {
   id: string;
   x: number;
   y: number;
+  size?: CrateSize;
   root: Container;
 };
 
@@ -304,7 +313,6 @@ function drawFloorGrid(g: Graphics) {
 }
 
 type CrateTone = "live" | "idle" | "inventory" | "lab";
-type CrateSize = "hero" | "player" | "other";
 
 const CRATE_TONES: Record<CrateTone, { fill: number; top: number; stroke: number }> = {
   live: { fill: 0x2f6f6c, top: 0x3d8f8a, stroke: 0x6ab8b0 },
@@ -399,31 +407,46 @@ function phaseRingColor(phase: string | undefined): number {
 
 function drawAgentBody(
   g: Graphics,
-  opts: { busy: boolean; phase?: string; skill?: string },
+  opts: { busy: boolean; phase?: string; skill?: string; scale?: number },
 ) {
   g.clear();
+  const s = opts.scale ?? 1;
   const color = opts.busy && opts.skill ? skillColor(opts.skill) : IDLE_COLOR;
-  const hw = 14;
-  const hd = 9;
-  const extrude = 26;
-  const top = isoFootprint(hw, hd).map((p) => ({ x: p.x, y: p.y - 18 }));
+  const hw = 14 * s;
+  const hd = 9 * s;
+  const extrude = 26 * s;
+  const top = isoFootprint(hw, hd).map((p) => ({ x: p.x, y: p.y - 18 * s }));
   const bottom = top.map((p) => ({ x: p.x, y: p.y + extrude }));
-  g.ellipse(3, bottom[2]!.y + 2, 16, 7).fill({ color: 0x000000, alpha: 0.3 });
-  fillPoly(g, [top[3]!, top[2]!, bottom[2]!, bottom[3]!], shade(color, 0.55), opts.busy ? 1 : 0.85);
-  fillPoly(g, [top[1]!, top[2]!, bottom[2]!, bottom[1]!], shade(color, 0.75), opts.busy ? 1 : 0.88);
-  fillPoly(g, top, color, opts.busy ? 1 : 0.9);
-  // Head disc sitting on the top face
-  g.circle(0, top[0]!.y - 2, 11).fill({ color, alpha: opts.busy ? 1 : 0.92 });
-  g.circle(0, top[0]!.y - 2, 11).stroke({ width: 1.25, color: shade(color, 0.65), alpha: 0.8 });
+  g.ellipse(3 * s, bottom[2]!.y + 2 * s, 16 * s, 7 * s).fill({ color: 0x000000, alpha: 0.3 });
+  fillPoly(g, [top[3]!, top[2]!, bottom[2]!, bottom[3]!], shade(color, 0.55), opts.busy ? 1 : 0.78);
+  fillPoly(g, [top[1]!, top[2]!, bottom[2]!, bottom[1]!], shade(color, 0.75), opts.busy ? 1 : 0.82);
+  fillPoly(g, top, color, opts.busy ? 1 : 0.82);
+  g.circle(0, top[0]!.y - 2 * s, 11 * s).fill({ color, alpha: opts.busy ? 1 : 0.86 });
+  g.circle(0, top[0]!.y - 2 * s, 11 * s).stroke({
+    width: 1.25 * s,
+    color: shade(color, 0.65),
+    alpha: 0.8,
+  });
   if (opts.busy) {
-    g.circle(0, top[0]!.y - 2, 16).stroke({ width: 2.25, color: phaseRingColor(opts.phase), alpha: 0.95 });
-    g.circle(0, top[0]!.y - 2, 20).stroke({ width: 1, color: phaseRingColor(opts.phase), alpha: 0.28 });
+    g.circle(0, top[0]!.y - 2 * s, 16 * s).stroke({
+      width: 2.25 * s,
+      color: phaseRingColor(opts.phase),
+      alpha: 0.95,
+    });
+    g.circle(0, top[0]!.y - 2 * s, 20 * s).stroke({
+      width: 1 * s,
+      color: phaseRingColor(opts.phase),
+      alpha: 0.28,
+    });
   }
-  g.roundRect(-8, top[0]!.y - 6, 16, 6, 3).fill({ color: 0x111111, alpha: 0.55 });
-  g.circle(-3.5, top[0]!.y - 3, 1.8).fill({ color: 0xf2e8ee, alpha: 0.92 });
-  g.circle(3.5, top[0]!.y - 3, 1.8).fill({ color: 0xf2e8ee, alpha: 0.92 });
+  g.roundRect(-8 * s, top[0]!.y - 6 * s, 16 * s, 6 * s, 3 * s).fill({
+    color: 0x111111,
+    alpha: 0.55,
+  });
+  g.circle(-3.5 * s, top[0]!.y - 3 * s, 1.8 * s).fill({ color: 0xf2e8ee, alpha: 0.92 });
+  g.circle(3.5 * s, top[0]!.y - 3 * s, 1.8 * s).fill({ color: 0xf2e8ee, alpha: 0.92 });
   if (opts.busy && opts.skill) {
-    g.circle(0, top[0]!.y - 16, 3).fill({ color: phaseRingColor(opts.phase), alpha: 0.95 });
+    g.circle(0, top[0]!.y - 16 * s, 3 * s).fill({ color: phaseRingColor(opts.phase), alpha: 0.95 });
   }
 }
 
@@ -455,6 +478,12 @@ function drawUsageStrip(
   }
 }
 
+function occupantOffset(size: CrateSize): { x: number; y: number } {
+  if (size === "hero") return { x: 48, y: -30 };
+  if (size === "other") return { x: 26, y: -16 };
+  return { x: 40, y: -24 };
+}
+
 function prefersReducedMotion(): boolean {
   try {
     return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -464,7 +493,7 @@ function prefersReducedMotion(): boolean {
 }
 
 /**
- * Sparse Pixi stage: isometric floor, server crates, one agent sprite.
+ * Sparse Pixi stage: isometric floor, server crates, a small fleet of occupants.
  */
 export function AgentCanvas({
   servers,
@@ -472,7 +501,7 @@ export function AgentCanvas({
   serversLoading = false,
   selectedId,
   selectedHostId = null,
-  activity,
+  agents = [],
   skills: _skills,
   onSelect,
   onDescribe,
@@ -490,7 +519,7 @@ export function AgentCanvas({
   const worldRef = useRef<Container | null>(null);
   const nodesRef = useRef<Map<string, ServerNode>>(new Map());
   const padsRef = useRef<Map<string, Container>>(new Map());
-  const agentRef = useRef<AgentSprite | null>(null);
+  const occupantsRef = useRef<Map<string, AgentSprite>>(new Map());
   const onSelectRef = useRef(onSelect);
   const onDescribeRef = useRef(onDescribe);
   const onAddServerRef = useRef(onAddServer);
@@ -639,23 +668,23 @@ export function AgentCanvas({
 
       const tickerFn = () => {
         publishAnchor();
-        const sprite = agentRef.current;
-        if (!sprite) return;
-        if (reduceMotion) {
-          sprite.x = sprite.targetX;
-          sprite.y = sprite.targetY;
-          sprite.root.x = sprite.x;
-          sprite.root.y = sprite.y;
-          return;
-        }
         const dt = Math.min(app.ticker.deltaMS / 1000, 0.05);
         const t = 1 - Math.exp(-LERP_SPEED * dt);
-        sprite.x += (sprite.targetX - sprite.x) * t;
-        sprite.y += (sprite.targetY - sprite.y) * t;
-        sprite.bobPhase += dt * 3.2;
-        const bob = Math.sin(sprite.bobPhase) * 2.2;
-        sprite.root.x = sprite.x;
-        sprite.root.y = sprite.y + bob;
+        for (const sprite of occupantsRef.current.values()) {
+          if (reduceMotion) {
+            sprite.x = sprite.targetX;
+            sprite.y = sprite.targetY;
+            sprite.root.x = sprite.x;
+            sprite.root.y = sprite.y;
+            continue;
+          }
+          sprite.x += (sprite.targetX - sprite.x) * t;
+          sprite.y += (sprite.targetY - sprite.y) * t;
+          sprite.bobPhase += dt * 3.2;
+          const bob = Math.sin(sprite.bobPhase) * 2.2;
+          sprite.root.x = sprite.x;
+          sprite.root.y = sprite.y + bob;
+        }
       };
       app.ticker.add(tickerFn);
 
@@ -689,7 +718,7 @@ export function AgentCanvas({
       worldRef.current = null;
       nodesRef.current.clear();
       padsRef.current.clear();
-      agentRef.current = null;
+      occupantsRef.current.clear();
     };
   }, []);
 
@@ -890,6 +919,7 @@ export function AgentCanvas({
         const selected = !isStack && server?.id === selectedId;
         const size =
           placement.role === "hero" ? "hero" : placement.role === "other" ? "other" : "player";
+        node.size = size;
         const wrapWidth = size === "hero" ? 156 : size === "other" ? 86 : 128;
         const fontSize = size === "hero" ? 13 : size === "other" ? 10 : 12;
         name.style.fontSize = fontSize;
@@ -909,10 +939,6 @@ export function AgentCanvas({
         } else if (server) {
           const kind = boardCrateKind(server);
           const shown = displayServerStatus(server.status, server.ready);
-          const busyHere =
-            activity && activity.serverId === server.id && activity.phase !== "idle"
-              ? activity
-              : undefined;
           drawCrate(crate, {
             selected: Boolean(selected),
             tone: boardCrateTone(kind, shown),
@@ -921,10 +947,7 @@ export function AgentCanvas({
           const nameMax = size === "hero" ? 32 : size === "other" ? 16 : 24;
           name.text = shortDisplayName(server.name, nameMax);
           const baseStatus = boardCrateStatusText(server);
-          status.text =
-            busyHere && kind === "player"
-              ? `${baseStatus} · ${busyHere.label || busyHere.verb}`
-              : baseStatus;
+          status.text = baseStatus;
           const serverMeters =
             size === "other" ? [] : serverMeterRows(server, server.usageHistory ?? []);
           drawUsageStrip(
@@ -952,108 +975,113 @@ export function AgentCanvas({
         nodesRef.current.delete(id);
       }
     }
-  }, [servers, hostNodes, selectedId, selectedHostId, activity, stageReady, expandedOtherNodes]);
+  }, [servers, hostNodes, selectedId, selectedHostId, stageReady, expandedOtherNodes]);
 
-  // Sync single agent sprite
+  // One little occupant per server, plus compose while that add-server turn is in flight.
   useEffect(() => {
     const world = worldRef.current;
     if (!world || !stageReady) return;
 
-    let sprite = agentRef.current;
-    if (!sprite) {
-      const home = homeSpot();
-      const root = new Container();
-      root.x = home.x;
-      root.y = home.y;
-      root.zIndex = 10;
+    const seen = new Set<string>();
+    for (const presence of agents) {
+      seen.add(presence.key);
+      let sprite = occupantsRef.current.get(presence.key);
+      if (!sprite) {
+        const home = homeSpot();
+        const root = new Container();
+        root.x = home.x;
+        root.y = home.y;
+        root.zIndex = 11;
+        root.eventMode = "none";
 
-      const body = new Graphics();
-      body.label = "body";
-      root.addChild(body);
+        const body = new Graphics();
+        body.label = "body";
+        root.addChild(body);
 
-      const label = new Text({
-        text: "Agent",
-        style: { fill: 0xf2e8ee, fontSize: 11, fontFamily: "DM Sans, sans-serif" },
-      });
-      label.anchor.set(0.5, 0);
-      label.y = 22;
-      root.addChild(label);
+        const label = new Text({
+          text: "",
+          style: { fill: 0xf2e8ee, fontSize: 9, fontFamily: "DM Sans, sans-serif" },
+        });
+        label.anchor.set(0.5, 0);
+        label.y = 16;
+        root.addChild(label);
 
-      const statusText = new Text({
-        text: "",
-        style: { fill: 0xa898a0, fontSize: 9, fontFamily: "DM Sans, sans-serif" },
-      });
-      statusText.anchor.set(0.5, 0);
-      statusText.y = 34;
-      root.addChild(statusText);
+        const statusText = new Text({
+          text: "",
+          style: { fill: 0xa898a0, fontSize: 8, fontFamily: "DM Sans, sans-serif" },
+        });
+        statusText.anchor.set(0.5, 0);
+        statusText.y = 26;
+        root.addChild(statusText);
 
-      world.addChild(root);
-      sprite = {
-        root,
-        body,
-        label,
-        statusText,
-        x: home.x,
-        y: home.y,
-        targetX: home.x,
-        targetY: home.y,
-        bobPhase: 0,
-      };
-      agentRef.current = sprite;
-    }
-
-    const busy = Boolean(activity && activity.phase !== "idle");
-    drawAgentBody(sprite.body, {
-      busy,
-      phase: activity?.phase,
-      skill: activity?.skill,
-    });
-    sprite.statusText.text = busy
-      ? (activity?.label ?? activity?.verb ?? "busy").slice(0, 18)
-      : "";
-    sprite.label.alpha = busy ? 1 : 0.85;
-
-    if (busy && activity?.serverId) {
-      const node = nodesRef.current.get(activity.serverId);
-      if (node) {
-        const off = verbOffset(activity.verb);
-        sprite.targetX = node.x + off.x;
-        sprite.targetY = node.y + off.y;
+        world.addChild(root);
+        sprite = {
+          root,
+          body,
+          label,
+          statusText,
+          x: home.x,
+          y: home.y,
+          targetX: home.x,
+          targetY: home.y,
+          bobPhase: Math.random() * Math.PI * 2,
+        };
+        occupantsRef.current.set(presence.key, sprite);
       }
-    } else if (selectedId) {
-      const node = nodesRef.current.get(selectedId);
-      if (node) {
-        sprite.targetX = node.x + 64;
-        sprite.targetY = node.y;
-      } else {
+
+      const busy = presence.mood !== "idle";
+      const scale = presence.key === COMPOSE_CHANNEL_KEY ? 0.78 : 0.62;
+      drawAgentBody(sprite.body, {
+        busy,
+        phase: presence.mood === "working" ? "tool_start" : presence.mood,
+        skill: presence.skill,
+        scale,
+      });
+      sprite.label.text = "";
+      sprite.statusText.text = presence.nowLine ?? "";
+      sprite.statusText.alpha = busy ? 1 : 0;
+      sprite.root.zIndex = busy ? 14 : 11;
+
+      if (presence.key === COMPOSE_CHANNEL_KEY || !presence.serverId) {
         const home = homeSpot();
         sprite.targetX = home.x;
         sprite.targetY = home.y;
+      } else {
+        const node = nodesRef.current.get(presence.serverId);
+        if (node) {
+          const perch = occupantOffset(node.size ?? "player");
+          const fidget = presence.verb ? verbOffset(presence.verb) : { x: 0, y: 0 };
+          sprite.targetX = node.x + perch.x + fidget.x * 0.15;
+          sprite.targetY = node.y + perch.y + fidget.y * 0.15;
+        }
       }
-    } else {
-      const home = homeSpot();
-      sprite.targetX = home.x;
-      sprite.targetY = home.y;
+
+      if (prefersReducedMotion()) {
+        sprite.x = sprite.targetX;
+        sprite.y = sprite.targetY;
+        sprite.root.x = sprite.x;
+        sprite.root.y = sprite.y;
+      }
     }
 
-    if (prefersReducedMotion()) {
-      sprite.x = sprite.targetX;
-      sprite.y = sprite.targetY;
-      sprite.root.x = sprite.x;
-      sprite.root.y = sprite.y;
+    for (const [key, sprite] of occupantsRef.current) {
+      if (seen.has(key)) continue;
+      world.removeChild(sprite.root);
+      sprite.root.destroy({ children: true });
+      occupantsRef.current.delete(key);
     }
 
     world.sortableChildren = true;
-  }, [activity, selectedId, servers, stageReady]);
+  }, [agents, servers, stageReady]);
 
+  const agentByServerId = new Map(
+    agents.filter((row) => row.serverId).map((row) => [row.serverId, row]),
+  );
   const serverBusyLabel = (serverId: string): string | undefined => {
-    if (activity && activity.serverId === serverId && activity.phase !== "idle") {
-      return activity.label;
-    }
+    const presence = agentByServerId.get(serverId);
+    if (presence && presence.mood !== "idle") return presence.nowLine;
     return undefined;
   };
-
-  const liveBusy = activity && activity.phase !== "idle" ? activity : undefined;
   const mapEmpty = servers.length === 0 && hostNodes.length === 0;
   const playerServers = servers.filter(isPlayerGameCrate);
   const otherServers = servers.filter((s) => !isPlayerGameCrate(s));
@@ -1121,11 +1149,6 @@ export function AgentCanvas({
             </span>
             <span className="hint-short">Esc clear · tap host or server</span>
           </p>
-          {liveBusy ? (
-            <p className="agent-canvas-live-chip" role="status">
-              {skillShortLabel(liveBusy.skill)} · {liveBusy.label ?? liveBusy.verb}
-            </p>
-          ) : null}
           <div className="agent-canvas-rail">
             <p className="sr-only" role="status" aria-live="polite">
               {selectedHostId
@@ -1232,6 +1255,7 @@ export function AgentCanvas({
                 >
                   {railServers.map((server) => {
                     const selected = server.id === selectedId;
+                    const occupant = agentByServerId.get(server.id);
                     const busyLabel = serverBusyLabel(server.id);
                     const secondary = !isPlayerGameCrate(server);
                     return (
@@ -1251,6 +1275,11 @@ export function AgentCanvas({
                             onSelectRef.current(server.id);
                           }}
                         >
+                          <span
+                            className={`agent-canvas-list-agent mood-${occupant?.mood ?? "idle"}`}
+                            title={occupant?.nowLine ?? occupant?.mood ?? "idle"}
+                            aria-hidden
+                          />
                           <span className="agent-canvas-list-name" title={server.name}>
                             {server.name}
                           </span>
