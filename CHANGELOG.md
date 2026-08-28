@@ -4,9 +4,21 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+## [0.2.12] — 2026-08-28
+
+### Added
+
+- **Node board hierarchy** — join-ready managed games stay large on a busy host pad. Host inventory, Expedition park sidecars, `playon-ollama`, and lab canaries collapse to an **N other services** stack instead of a wall of equal tiles. Inventory no longer uses the player “Not joinable” label (`#920` / `#919`).
+- **Host and per-server usage** — node-agent heartbeats sample host CPU, RAM, and free disk (Linux + Windows) and attach per-container Docker stats plus per-native-process usage. Home persists host metrics and shows them on Settings → Nodes, the dashboard, and the node board. Older agents stay disk-only until they OTA; missing CPU/RAM is omitted, not zeroed (`#922` / `#921`).
+
 ### Fixed
 
-- **Windows node OTA hash** — playon-win-1 0.2.10→0.2.11 failed with `update_sha256_mismatch` (`expected c2ab7575…8305a`, the `latest.json` / GitHub `playon-node-0.2.11-windows-x64.tar.gz` digest; `got 42579e38…c108f`, not the zip). Home now drives Windows agents `< 0.2.12` with PowerShell download (cache-busted URL, size + gzip/zip magic, retries) instead of 0.2.10 `fetch`+sha only. 0.2.12+ `node_self_update` and Home apply reject HTML/short bodies before apply (`#917`).
+- **Windows node OTA hash** — playon-win-1 0.2.10→0.2.11 failed with `update_sha256_mismatch` (`expected c2ab7575…8305a`, the `latest.json` / GitHub `playon-node-0.2.11-windows-x64.tar.gz` digest; `got 42579e38…c108f`, not the zip). Home now drives Windows agents `< 0.2.12` with PowerShell download (cache-busted URL, size + gzip/zip magic, retries) instead of 0.2.10 `fetch`+sha only. 0.2.12+ `node_self_update` and Home apply reject HTML/short bodies before apply (`#918` / `#917`).
+
+### Notes
+
+- Update Home via OTA, then Update Windows nodes from **Settings → Nodes** so playon-win-1 can hop past 0.2.11 with the Home-driven download.
+- Deferred: `#910` / `#909` node-agent OTA kill-scope / native keep-alive (HOLD for 0.2.13). `#911` lab Windows node `disk_low`.
 
 ## [0.2.11] — 2026-08-25
 
