@@ -900,6 +900,38 @@ body.server-console-resizing iframe {
 .agent-canvas-list-name {
   font-weight: 700;
   font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-canvas-list-item.secondary {
+  opacity: 0.78;
+}
+
+.agent-canvas-list-item.secondary .agent-canvas-list-name {
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+
+.agent-canvas-others-toggle {
+  flex-shrink: 0;
+  margin-top: 0.15rem;
+  padding: 0.35rem 0.5rem;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  background: oklch(0.2 0.01 353 / 0.5);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-canvas-others-toggle:hover {
+  color: inherit;
+  background: var(--surface-2);
 }
 
 .canvas-chat-dock {

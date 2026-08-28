@@ -151,5 +151,12 @@ export function shortDisplayName(name: string, max = 22): string {
     const mid = meaningful.join("-");
     if (mid.length >= 3 && mid.length <= max) return mid;
   }
+  // Prefer a hyphen / underscore / space break over mid-word cut
+  // (expedition-spacetime → expedition…, not expedition-spacet…).
+  const slice = trimmed.slice(0, max);
+  const breakAt = Math.max(slice.lastIndexOf("-"), slice.lastIndexOf("_"), slice.lastIndexOf(" "));
+  if (breakAt >= Math.floor(max * 0.45)) {
+    return `${trimmed.slice(0, breakAt)}…`;
+  }
   return `${trimmed.slice(0, Math.max(1, max - 1))}…`;
 }

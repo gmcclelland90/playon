@@ -77,5 +77,8 @@ describe("status helpers", () => {
   it("shortens long display names", () => {
     expect(shortDisplayName("Minecraft Small")).toBe("Minecraft Small");
     expect(shortDisplayName("lab-matrix-stormworks-mslmnas5")).toBe("stormworks");
+    expect(shortDisplayName("expedition-spacetime", 18)).toBe("expedition…");
+    expect(shortDisplayName("expedition-stdb-postgres", 18)).toBe("expedition-stdb…");
+    expect(shortDisplayName("expedition-openvidu", 18)).toBe("expedition…");
   });
 });
