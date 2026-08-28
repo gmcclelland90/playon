@@ -10,6 +10,7 @@ export * from "./events.js";
 export * from "./agent-thinking.js";
 export * from "./agent-now-line.js";
 export * from "./chat-channels.js";
+export * from "./agent-presence.js";
 export * from "./api.js";
 export * from "./http/index.js";
 export * from "./node-jobs/index.js";

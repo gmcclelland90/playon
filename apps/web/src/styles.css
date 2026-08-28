@@ -874,6 +874,24 @@ body.server-console-resizing iframe {
   outline-offset: 2px;
 }
 
+.agent-canvas-list-agent {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: oklch(0.78 0.12 185 / 0.4);
+  box-shadow: 0 0 0 1px oklch(0.78 0.12 185 / 0.2);
+  align-self: center;
+  grid-row: 1 / -1;
+}
+
+.agent-canvas-list-agent.mood-thinking {
+  background: oklch(0.72 0.12 250);
+}
+
+.agent-canvas-list-agent.mood-working {
+  background: var(--accent);
+}
+
 .agent-canvas-list-item {
   width: 100%;
   display: grid;
@@ -887,6 +905,17 @@ body.server-console-resizing iframe {
   font: inherit;
   cursor: pointer;
   transition: background 150ms var(--ease), border-color 150ms var(--ease);
+}
+
+.agent-canvas-list-item:has(.agent-canvas-list-agent) {
+  grid-template-columns: auto 1fr;
+  gap: 0.05rem 0.4rem;
+}
+
+.agent-canvas-list-item:has(.agent-canvas-list-agent) .muted,
+.agent-canvas-list-item:has(.agent-canvas-list-agent) .usage-meters,
+.agent-canvas-list-item:has(.agent-canvas-list-agent) .usage-strip {
+  grid-column: 2;
 }
 
 .agent-canvas-list-item:hover {
@@ -1340,9 +1369,17 @@ body.server-console-resizing iframe {
   width: 0.4rem;
   height: 0.4rem;
   border-radius: 50%;
-  background: var(--accent);
+  background: oklch(0.78 0.12 185 / 0.4);
   box-shadow: 0 0 0 2px oklch(0.78 0.12 185 / 0.2);
   flex-shrink: 0;
+}
+
+.chat-channel-pip.mood-thinking {
+  background: oklch(0.72 0.12 250);
+}
+
+.chat-channel-pip.mood-working {
+  background: var(--accent);
 }
 
 .canvas-dock-tabs {

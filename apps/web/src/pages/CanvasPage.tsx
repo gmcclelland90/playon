@@ -12,6 +12,7 @@ import {
   COMPOSE_CHANNEL_KEY,
   composeNeedsFreshConversation,
   listChatChannels,
+  listServerAgents,
   nowLineForTool,
   parseChatChannelKey,
   routeConversationToChannelKey,
@@ -31,7 +32,6 @@ import {
 import {
   AgentCanvas,
   skillShortLabel,
-  type AgentActivityView,
   type SelectedAnchor,
 } from "../components/agent-canvas/AgentCanvas";
 import { ChatChannelList } from "../components/ChatChannelList";
@@ -64,6 +64,7 @@ type ChannelProgress = {
   phase: string;
   now: string;
   thinking?: string;
+  skill?: string;
   steps: ChatProgressStep[];
   updatedAt: number;
 };
@@ -175,9 +176,6 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   );
   const [channels, setChannels] = useState<Record<string, ChannelRecord>>({});
   const [message, setMessage] = useState("");
-  const [activity, setActivity] = useState<AgentActivityView | undefined>();
-  /** Last activity event timestamp (for stale idle clear). */
-  const activityUpdatedAtRef = useRef(0);
   const channelsRef = useRef(channels);
   channelsRef.current = channels;
   const activeKeyRef = useRef(activeKey);
@@ -319,15 +317,6 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         return;
       }
       if (event.type === "agent.activity") {
-        activityUpdatedAtRef.current = Date.now();
-        setActivity({
-          serverId: event.serverId,
-          skill: event.skill,
-          phase: event.phase,
-          verb: event.verb,
-          label: event.label,
-          thinking: event.thinking,
-        });
         const key = event.conversationId
           ? routeConversationToChannelKey(
               channelsRef.current,
@@ -343,6 +332,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
             phase: event.phase,
             now: event.label ?? prev.progress?.now ?? "Thinking…",
             thinking: event.thinking ?? prev.progress?.thinking,
+            skill: event.skill ?? prev.progress?.skill,
             steps: event.steps ?? prev.progress?.steps ?? [],
             updatedAt: Date.now(),
           },
@@ -415,10 +405,19 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     const STALE_MS = 90_000;
     const id = window.setInterval(() => {
       const now = Date.now();
-      setActivity((prev) => {
-        if (!prev || prev.phase === "idle") return prev;
-        if (now - activityUpdatedAtRef.current < STALE_MS) return prev;
-        return { ...prev, phase: "idle", label: "Idle" };
+      setChannels((prev) => {
+        let changed = false;
+        const next = { ...prev };
+        for (const [key, channel] of Object.entries(next)) {
+          if (!channel.progress || channel.progress.phase === "idle") continue;
+          if (now - channel.progress.updatedAt < STALE_MS) continue;
+          next[key] = {
+            ...channel,
+            progress: { ...channel.progress, phase: "idle", now: "Idle" },
+          };
+          changed = true;
+        }
+        return changed ? next : prev;
       });
     }, 15_000);
     return () => window.clearInterval(id);
@@ -829,13 +828,45 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const ready = detail.data?.runtime.ready ?? detail.data?.server.ready ?? selected?.ready;
   const status = displayServerStatus(processStatus, ready);
   const join = detail.data?.runtime.join;
+  const pendingKeys = Object.entries(channels)
+    .filter(([, channel]) => channel.pending)
+    .map(([key]) => key);
+  const activityByKey = Object.fromEntries(
+    Object.entries(channels).map(([key, channel]) => [
+      key,
+      {
+        phase: channel.progress?.phase,
+        label: channel.progress?.now,
+        skill: channel.progress?.skill,
+      },
+    ]),
+  );
+  const serverAgents = listServerAgents({
+    servers: (servers.data?.servers ?? [])
+      .filter((s) => !s.unmanaged)
+      .map((s) => ({ id: s.id })),
+    pendingKeys,
+    activityByKey,
+    includeCompose: Boolean(channels[COMPOSE_CHANNEL_KEY]?.pending),
+  });
+  const agentByKey = Object.fromEntries(serverAgents.map((row) => [row.key, row]));
+  const selectedActivity = activeKey ? activityByKey[activeKey] : undefined;
+  const selectedPhase = selectedActivity?.phase;
   const activityOnSelected =
-    selectedId && activity && activity.serverId === selectedId && activity.phase !== "idle"
-      ? activity
+    selectedPhase && selectedPhase !== "idle"
+      ? {
+          serverId: selectedId ?? "",
+          skill: selectedActivity?.skill ?? "orchestrator",
+          phase: selectedPhase,
+          verb: "other",
+          label: selectedActivity?.label,
+        }
       : undefined;
   const skills = agents.data?.skills ?? [];
   const activeSkill =
-    activity && activity.phase !== "idle" ? activity.skill : undefined;
+    activityOnSelected && activityOnSelected.phase !== "idle"
+      ? activityOnSelected.skill
+      : undefined;
   const dockTitle = selected?.name ?? (composeActive ? "Add server" : "Chat");
   const dockHint = unbound
     ? `${user.displayName} · tell the agent what to install`
@@ -901,7 +932,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         serversLoading={servers.isLoading || (servers.isFetching && !servers.data)}
         selectedId={selectedId}
         selectedHostId={scanNodeId}
-        activity={activity}
+        agents={serverAgents}
         skills={skills.map((s) => ({
           skill: s.skill,
           level: s.level,
@@ -993,7 +1024,11 @@ export function CanvasPage({ user }: { user: PublicUser }) {
             </div>
             <p className="canvas-dock-hint">{dockHint}</p>
             <ChatChannelList
-              channels={channelItems}
+              channels={channelItems.map((channel) => ({
+                ...channel,
+                mood: agentByKey[channel.key]?.mood,
+                nowLine: agentByKey[channel.key]?.nowLine,
+              }))}
               activeKey={activeKey}
               onSelect={selectChannel}
             />
