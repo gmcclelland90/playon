@@ -14,7 +14,10 @@ import {
   LOCAL_NODE_ID,
   NODE_SELF_UPDATE_VIA_ESM_BOOTSTRAP,
   UpdateManifestSchema,
-  windowsAgentNeedsEsmOtaBootstrap,
+  assertUpdateArchiveLooksReal,
+  cacheBustUpdateDownloadUrl,
+  formatUpdateSha256Mismatch,
+  windowsAgentNeedsHomeDrivenOta,
   windowsOtaEsmBootstrapStartArgs,
   windowsOtaEsmBootstrapWriteArgs,
   type UpdateAsset,
@@ -157,19 +160,41 @@ export async function downloadAndVerifyUpdate(opts: {
   downloadUrl: string;
   sha256: string;
   destFile: string;
+  expectedBytes?: number;
   onProgress?: (phase: UpdateProgressPhase, message: string, percent?: number) => void;
 }): Promise<{ bytes: number; sha256: string }> {
   assertAllowedUpdateDownloadUrl(opts.downloadUrl);
+  const downloadUrl = cacheBustUpdateDownloadUrl(opts.downloadUrl, opts.sha256);
   opts.onProgress?.("downloading", "Downloading update…", 10);
-  const res = await fetch(opts.downloadUrl, {
-    headers: { accept: "application/octet-stream,*/*", "user-agent": "PlayOn-Home" },
+  const res = await fetch(downloadUrl, {
+    headers: {
+      accept: "application/octet-stream",
+      "accept-encoding": "identity",
+      "cache-control": "no-cache",
+      "user-agent": "PlayOn-Home",
+    },
   });
   if (!res.ok) throw new Error(`update_download_failed: ${res.status}`);
   const buf = Buffer.from(await res.arrayBuffer());
   opts.onProgress?.("verifying", "Verifying checksum…", 70);
+  const contentType = res.headers?.get?.("content-type") ?? undefined;
+  const kind = assertUpdateArchiveLooksReal({
+    bytes: buf,
+    expectedBytes: opts.expectedBytes,
+    contentType,
+  });
   const sha256 = crypto.createHash("sha256").update(buf).digest("hex");
   if (sha256.toLowerCase() !== opts.sha256.toLowerCase()) {
-    throw new Error(`update_sha256_mismatch: expected ${opts.sha256} got ${sha256}`);
+    throw new Error(
+      formatUpdateSha256Mismatch({
+        expectedSha256: opts.sha256,
+        gotSha256: sha256,
+        bytes: buf.byteLength,
+        expectedBytes: opts.expectedBytes,
+        kind,
+        contentType,
+      }),
+    );
   }
   fs.mkdirSync(path.dirname(opts.destFile), { recursive: true });
   fs.writeFileSync(opts.destFile, buf);
@@ -433,6 +458,7 @@ export class UpdateService {
         downloadUrl: asset.downloadUrl,
         sha256: asset.sha256,
         destFile: archivePath,
+        expectedBytes: asset.size,
         onProgress: (phase, message, percent) =>
           this.publishProgress("home", phase, message, undefined, percent),
       });
@@ -546,20 +572,22 @@ export class UpdateService {
     }
 
     const preserve = ["data", "env", "node.env", "node.env.cmd"];
-    const vintageWindows = windowsAgentNeedsEsmOtaBootstrap({
+    const downloadUrl = cacheBustUpdateDownloadUrl(asset.downloadUrl, asset.sha256);
+    const homeDrivenWindows = windowsAgentNeedsHomeDrivenOta({
       os: row.os || "linux",
       agentVersion: row.agentVersion || "0.0.0",
     });
 
-    if (vintageWindows) {
-      // 0.2.3/0.2.4 Windows `require()`s spawn in ESM after extract (#885).
-      // Track the update for Settings / heartbeat, but never let that vintage
-      // claim node_self_update. Drive the swap with fs_write_text + process_start.
+    if (homeDrivenWindows) {
+      // 0.2.3/0.2.4: require() in ESM after extract (#885).
+      // 0.2.5–0.2.11: Node fetch hashed a body that was not latest.json's tar.gz (#917).
+      // Track the update for Settings / heartbeat, but never let those agents
+      // claim node_self_update. Drive download+swap with fs_write_text + process_start.
       const job = nodeJobService.enqueue(
         nodeId,
         "node_self_update",
         {
-          downloadUrl: asset.downloadUrl,
+          downloadUrl,
           sha256: asset.sha256,
           version: manifest.version,
           preserve,
@@ -572,15 +600,16 @@ export class UpdateService {
         nodeId,
         "process_start",
         windowsOtaEsmBootstrapStartArgs({
-          downloadUrl: asset.downloadUrl,
+          downloadUrl,
           sha256: asset.sha256,
           version: manifest.version,
+          expectedSize: asset.size,
         }),
       );
       this.publishProgress(
         "node",
         "downloading",
-        `Queued ESM bootstrap update to ${manifest.version} for ${row.name}`,
+        `Queued Home-driven update to ${manifest.version} for ${row.name}`,
         nodeId,
         0,
       );
@@ -588,7 +617,7 @@ export class UpdateService {
     }
 
     const job = nodeJobService.enqueue(nodeId, "node_self_update", {
-      downloadUrl: asset.downloadUrl,
+      downloadUrl,
       sha256: asset.sha256,
       version: manifest.version,
       preserve,

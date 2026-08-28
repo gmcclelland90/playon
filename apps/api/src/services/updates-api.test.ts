@@ -269,9 +269,10 @@ describe("updates API", () => {
     expect(restored.claimNext("upd-win-parent")?.kind).toBe("fs_write_text");
   });
 
-  it("queues a claimable node_self_update for Windows agents that already import spawn", async () => {
+  it("queues a claimable node_self_update for Windows agents on 0.2.12+", async () => {
     const homeVer = readAppVersion();
     const sha = "c".repeat(64);
+    const assetUrl = `https://github.com/gmcclelland90/playon/releases/download/v${homeVer}/playon-node-${homeVer}-windows-x64.tar.gz`;
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) => {
@@ -285,7 +286,7 @@ describe("updates API", () => {
               home: {},
               node: {
                 "windows-x64": {
-                  downloadUrl: `https://github.com/gmcclelland90/playon/releases/download/v${homeVer}/playon-node-${homeVer}-windows-x64.tar.gz`,
+                  downloadUrl: assetUrl,
                   sha256: sha,
                 },
               },
@@ -303,7 +304,7 @@ describe("updates API", () => {
       native: true,
       lastSeenAt: new Date(),
       kind: "lan",
-      agentVersion: "0.2.5",
+      agentVersion: "0.2.12",
       tunnelStatus: "none",
     });
     const app = createApp(db, testConfig(root));
@@ -315,8 +316,73 @@ describe("updates API", () => {
     });
     expect(queued.status).toBe(200);
     const body = (await queued.json()) as { jobId: string };
-    expect(nodeJobService.get(body.jobId)?.args.via).toBeUndefined();
+    const job = nodeJobService.get(body.jobId);
+    expect(job?.args.via).toBeUndefined();
+    expect(String(job?.args.downloadUrl)).toContain("playon_sha256=");
+    expect(String(job?.args.downloadUrl)).toContain(sha);
     expect(nodeJobService.findActive("upd-win-current", "fs_write_text")).toBeNull();
     expect(nodeJobService.claimNext("upd-win-current")?.kind).toBe("node_self_update");
+  });
+
+  it("drives Windows 0.2.10 OTA via PowerShell with size + cache-busted URL (#917)", async () => {
+    const homeVer = readAppVersion();
+    const sha = "d".repeat(64);
+    const assetUrl = `https://github.com/gmcclelland90/playon/releases/download/v${homeVer}/playon-node-${homeVer}-windows-x64.tar.gz`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (String(url).includes("latest.json")) {
+          return {
+            ok: true,
+            json: async () => ({
+              version: homeVer,
+              channel: "stable",
+              notesUrl: "https://playon.games/docs/changelog",
+              home: {},
+              node: {
+                "windows-x64": {
+                  downloadUrl: assetUrl,
+                  sha256: sha,
+                  size: 39600808,
+                },
+              },
+            }),
+          };
+        }
+        return { ok: false, status: 404 };
+      }),
+    );
+    await db.insert(nodes).values({
+      id: "playon-win-1",
+      name: "playon-win-1",
+      os: "windows",
+      docker: false,
+      native: true,
+      lastSeenAt: new Date(),
+      kind: "lan",
+      agentVersion: "0.2.10",
+      tunnelStatus: "none",
+    });
+    const app = createApp(db, testConfig(root));
+    attachNodeJobPersist(root);
+    const queued = await app.request("/api/nodes/playon-win-1/update", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(queued.status).toBe(200);
+    const body = (await queued.json()) as { jobId: string };
+    const tracked = nodeJobService.get(body.jobId);
+    expect(tracked?.args.via).toBe(NODE_SELF_UPDATE_VIA_ESM_BOOTSTRAP);
+    expect(String(tracked?.args.downloadUrl)).toContain("playon_sha256=");
+    expect(nodeJobService.claimNext("playon-win-1")?.kind).toBe("fs_write_text");
+    const start = nodeJobService.findActive("playon-win-1", "process_start");
+    expect(start?.args.name).toBe(WINDOWS_OTA_ESM_BOOTSTRAP_PROCESS_NAME);
+    const startArgs = start?.args.args as string[];
+    expect(startArgs).toContain("-ExpectedSize");
+    expect(startArgs).toContain("39600808");
+    expect(startArgs.some((a) => a.includes("playon_sha256="))).toBe(true);
+    expect(nodeJobService.claimNext("playon-win-1")?.kind).toBe("process_start");
+    expect(nodeJobService.claimNext("playon-win-1")).toBeNull();
   });
 });

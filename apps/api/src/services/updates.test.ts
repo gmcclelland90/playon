@@ -54,7 +54,8 @@ describe("pickAsset", () => {
 
 describe("downloadAndVerifyUpdate", () => {
   it("writes file when sha matches", async () => {
-    const body = Buffer.from("playon-update-bytes");
+    const { gzipSync } = await import("node:zlib");
+    const body = gzipSync(Buffer.from("playon-update-bytes"));
     const sha256 = crypto.createHash("sha256").update(body).digest("hex");
     vi.stubGlobal(
       "fetch",
@@ -78,8 +79,9 @@ describe("downloadAndVerifyUpdate", () => {
     }
   });
 
-  it("rejects sha mismatch", async () => {
-    const body = Buffer.from("nope");
+  it("rejects sha mismatch with size/kind (#917)", async () => {
+    const { gzipSync } = await import("node:zlib");
+    const body = gzipSync(Buffer.from("nope"));
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({
@@ -95,7 +97,32 @@ describe("downloadAndVerifyUpdate", () => {
           sha256: "b".repeat(64),
           destFile: path.join(dir, "x.tar.gz"),
         }),
-      ).rejects.toThrow(/update_sha256_mismatch/);
+      ).rejects.toThrow(/update_sha256_mismatch: expected b{64} got .* kind=gzip/);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects HTML before apply (#917)", async () => {
+    const body = Buffer.from("<!DOCTYPE html><html><body>nope</body></html>");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        headers: { get: (name: string) => (name === "content-type" ? "text/html" : null) },
+        arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+      })),
+    );
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "playon-upd-"));
+    try {
+      await expect(
+        downloadAndVerifyUpdate({
+          downloadUrl: "https://github.com/gmcclelland90/playon/releases/download/v1/x.tar.gz",
+          sha256: "b".repeat(64),
+          destFile: path.join(dir, "x.tar.gz"),
+          expectedBytes: 39600808,
+        }),
+      ).rejects.toThrow(/update_download_size_mismatch|update_download_not_archive/);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

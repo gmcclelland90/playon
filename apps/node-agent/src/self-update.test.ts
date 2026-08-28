@@ -155,6 +155,28 @@ describe("performNodeSelfUpdate", () => {
     }
   });
 
+  it("rejects HTML download before apply (#917)", async () => {
+    const html = Buffer.from("<!DOCTYPE html><html><body>not the tarball</body></html>");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        headers: { get: (name: string) => (name === "content-type" ? "text/html" : null) },
+        arrayBuffer: async () =>
+          html.buffer.slice(html.byteOffset, html.byteOffset + html.byteLength),
+      })),
+    );
+    await expect(
+      performNodeSelfUpdate({
+        downloadUrl: "https://github.com/gmcclelland90/playon/releases/download/v0.2.11/playon-node-0.2.11-windows-x64.tar.gz",
+        sha256: "c2ab7575e942a1d3265def8b7fdeec9ae2ff3e8d7b131883196708385c18305a",
+        version: "0.2.11",
+        expectedSize: 39600808,
+        skipExit: true,
+      }),
+    ).rejects.toThrow(/update_download_size_mismatch|update_download_not_archive/);
+  });
+
   it("preserves node.env and node.env.cmd by default", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-preserve-"));
     try {
