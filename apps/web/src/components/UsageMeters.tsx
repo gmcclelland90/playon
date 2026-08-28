@@ -37,7 +37,7 @@ function MeterRowView({ row, compact }: { row: UsageMeterRow; compact?: boolean 
     >
       <span className="usage-meter-label">{row.label}</span>
       <span className="usage-meter-track" aria-hidden>
-        <AreaChart series={row.series} fallback={row.fill} tone={row.tone} height={compact ? 22 : 28} />
+        <AreaChart series={row.series} fallback={row.fill} tone={row.tone} height={compact ? 28 : 36} />
       </span>
       <span className="usage-meter-value">{row.value}</span>
     </div>
@@ -78,7 +78,7 @@ function UsageStrip({ rows, label }: { rows: UsageMeterRow[]; label: string }) {
           className={`usage-strip-seg tone-${row.tone}`}
           title={`${row.label} ${row.value}`}
         >
-          <AreaChart series={row.series} fallback={row.fill} tone={row.tone} height={16} />
+          <AreaChart series={row.series} fallback={row.fill} tone={row.tone} height={20} />
         </span>
       ))}
       {hot ? <span className={`usage-strip-note tone-${hot.tone}`}>{hot.value}</span> : null}

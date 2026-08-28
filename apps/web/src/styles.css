@@ -3195,14 +3195,16 @@ a.btn {
 
 .usage-meter-track {
   position: relative;
-  height: 1.75rem;
+  height: 2.15rem;
   border-radius: 6px;
-  background: oklch(0.96 0.01 353 / 0.05);
+  background:
+    linear-gradient(to top, oklch(0.78 0.12 185 / 0.07), transparent 42%),
+    oklch(0.96 0.01 353 / 0.05);
   overflow: hidden;
 }
 
 .usage-meters.compact .usage-meter-track {
-  height: 1.35rem;
+  height: 1.7rem;
 }
 
 .usage-meter-value {
@@ -3247,13 +3249,18 @@ a.btn {
 .usage-spark-line {
   fill: none;
   stroke: currentColor;
-  stroke-width: 1.2;
+  stroke-width: 1.35;
   stroke-linejoin: round;
   stroke-linecap: round;
 }
 
+.usage-spark.tone-ok .usage-spark-area {
+  opacity: 0.2;
+}
+
 .usage-spark.tone-ok .usage-spark-line {
-  opacity: 0.88;
+  stroke-width: 1.5;
+  opacity: 0.95;
 }
 
 .usage-spark.tone-warn {
@@ -3290,9 +3297,11 @@ a.btn {
 
 .usage-strip-seg {
   flex: 1 1 0;
-  height: 1.15rem;
+  height: 1.35rem;
   border-radius: 5px;
-  background: oklch(0.96 0.01 353 / 0.05);
+  background:
+    linear-gradient(to top, oklch(0.78 0.12 185 / 0.07), transparent 42%),
+    oklch(0.96 0.01 353 / 0.05);
   overflow: hidden;
 }
 
