@@ -79,7 +79,13 @@ describe("map-node-layout", () => {
       {
         id: "playon-win-1",
         containers: [
-          { name: "lab-sbox", image: "har0x/sbox-server:public", status: "running" },
+          {
+            name: "lab-sbox",
+            image: "har0x/sbox-server:public",
+            status: "running",
+            cpuPercent: 4,
+            memUsedBytes: 300_000_000,
+          },
         ],
       },
       {
@@ -97,6 +103,8 @@ describe("map-node-layout", () => {
       nodeId: "playon-win-1",
       unmanaged: true,
       status: "running",
+      cpuPercent: 4,
+      memUsedBytes: 300_000_000,
     });
     expect(merged.filter((s) => s.nodeId === "playon-win-1-wsl")).toHaveLength(1);
   });

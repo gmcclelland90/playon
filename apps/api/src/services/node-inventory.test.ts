@@ -9,12 +9,15 @@ import { createDb, type Db } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
 import { hashPassword } from "../auth/password.js";
 import { createSession, SESSION_COOKIE } from "../auth/session.js";
-import { users } from "../db/schema.js";
+import { servers, users } from "../db/schema.js";
 import {
   clearNodeContainers,
   forgetNodeContainers,
   nodeContainers,
+  nodeProcesses,
   recordNodeContainers,
+  recordNodeProcesses,
+  serverUsageFromInventory,
 } from "./node-inventory.js";
 
 describe("node-inventory", () => {
@@ -43,6 +46,30 @@ describe("node-inventory", () => {
     forgetNodeContainers("playon-win-1");
     expect(nodeContainers("playon-win-1")).toEqual([]);
     expect(nodeContainers("playon-win-1-wsl")[0]?.name).toBe("lab-matrix-paper");
+  });
+
+  it("matches managed server usage from container or process inventory", () => {
+    recordNodeContainers("node-a", [
+      {
+        name: "playon-abc",
+        image: "itzg/minecraft-server",
+        status: "running",
+        cpuPercent: 11,
+        memUsedBytes: 400_000_000,
+      },
+    ]);
+    recordNodeProcesses("node-a", [
+      { name: "server-z", status: "running", cpuPercent: 22, memUsedBytes: 800_000_000 },
+    ]);
+    expect(serverUsageFromInventory("abc", "node-a", "docker")).toEqual({
+      cpuPercent: 11,
+      memUsedBytes: 400_000_000,
+    });
+    expect(serverUsageFromInventory("z", "node-a", "native")).toEqual({
+      cpuPercent: 22,
+      memUsedBytes: 800_000_000,
+    });
+    expect(nodeProcesses("node-a")[0]?.name).toBe("server-z");
   });
 });
 
@@ -109,12 +136,17 @@ describe("GET /api/nodes container inventory", () => {
         native: true,
         steamcmd: false,
         agentVersion: "0.2.9",
+        cpuPercent: 18,
+        memUsedBytes: 6_000_000_000,
+        memTotalBytes: 16_000_000_000,
         containers: [
           {
             name: "lab-sbox",
             image: "har0x/sbox-server:public",
             status: "running",
             ports: [{ host: 27150, container: 27150, protocol: "tcp" }],
+            cpuPercent: 9,
+            memUsedBytes: 1_200_000_000,
           },
         ],
       }),
@@ -124,16 +156,82 @@ describe("GET /api/nodes container inventory", () => {
     const list = await app.request("/api/nodes", { headers: { cookie } });
     expect(list.status).toBe(200);
     const body = (await list.json()) as {
-      nodes: Array<{ id: string; containers?: Array<{ name: string; image: string }> }>;
+      nodes: Array<{
+        id: string;
+        cpuPercent?: number | null;
+        memUsedBytes?: number | null;
+        memTotalBytes?: number | null;
+        containers?: Array<{ name: string; image: string; cpuPercent?: number }>;
+      }>;
     };
     const win = body.nodes.find((n) => n.id === "playon-win-1");
+    expect(win?.cpuPercent).toBe(18);
+    expect(win?.memUsedBytes).toBe(6_000_000_000);
+    expect(win?.memTotalBytes).toBe(16_000_000_000);
     expect(win?.containers).toEqual([
       {
         name: "lab-sbox",
         image: "har0x/sbox-server:public",
         status: "running",
         ports: [{ host: 27150, container: 27150, protocol: "tcp" }],
+        cpuPercent: 9,
+        memUsedBytes: 1_200_000_000,
       },
     ]);
+  });
+
+  it("attaches per-server usage from heartbeat inventory onto GET /api/servers", async () => {
+    const config: AppConfig = {
+      port: 0,
+      advertiseHost: "127.0.0.1",
+      dataRoot: root,
+      dbPath: path.join(root, "playon.sqlite"),
+      sessionSecret: "test-session-secret-at-least-32-chars!!",
+      skillsRoots: [],
+      llmMode: "openai_compatible",
+      runtimeMode: "native",
+      nodeToken: "inv-token",
+    };
+    const app = createApp(db, config);
+    const hb = await app.request("/api/nodes/heartbeat", {
+      method: "POST",
+      headers: { authorization: "Bearer inv-token", "content-type": "application/json" },
+      body: JSON.stringify({
+        nodeId: "node-a",
+        name: "node-a",
+        os: "linux",
+        docker: true,
+        native: true,
+        steamcmd: false,
+        agentVersion: "0.2.12",
+        containers: [
+          {
+            name: "playon-abc",
+            image: "itzg/minecraft-server",
+            status: "running",
+            cpuPercent: 15,
+            memUsedBytes: 700_000_000,
+          },
+        ],
+      }),
+    });
+    expect(hb.status).toBe(200);
+    await db.insert(servers).values({
+      id: "abc",
+      name: "Paper",
+      game: "paper",
+      nodeId: "node-a",
+      runtimeMode: "docker",
+      status: "running",
+      dataPath: path.join(root, "servers", "abc"),
+      createdAt: new Date(),
+    });
+    const list = await app.request("/api/servers", { headers: { cookie } });
+    expect(list.status).toBe(200);
+    const body = (await list.json()) as {
+      servers: Array<{ id: string; cpuPercent?: number; memUsedBytes?: number }>;
+    };
+    const paper = body.servers.find((s) => s.id === "abc");
+    expect(paper).toMatchObject({ cpuPercent: 15, memUsedBytes: 700_000_000 });
   });
 });

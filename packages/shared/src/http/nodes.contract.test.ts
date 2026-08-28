@@ -76,6 +76,27 @@ describe("node route request contracts", () => {
         name: "n1",
         os: "linux",
         docker: true,
+        cpuPercent: 12.5,
+        memUsedBytes: 4_000_000_000,
+        memTotalBytes: 16_000_000_000,
+        containers: [
+          {
+            name: "playon-abc",
+            image: "itzg/minecraft-server",
+            status: "running",
+            cpuPercent: 8,
+            memUsedBytes: 512_000_000,
+          },
+        ],
+        processes: [{ name: "server-z", pid: 4242, status: "running", cpuPercent: 3, memUsedBytes: 200_000_000 }],
+      }).processes?.[0]?.name,
+    ).toBe("server-z");
+    expect(
+      NodeHeartbeatSchema.parse({
+        nodeId: "n1",
+        name: "n1",
+        os: "linux",
+        docker: true,
       }).containers,
     ).toBeUndefined();
   });

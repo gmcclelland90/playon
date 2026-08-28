@@ -50,5 +50,22 @@ describe("buildHeartbeat", () => {
     ]);
     expect(NodeHeartbeatSchema.parse(hb).containers?.[0]?.name).toBe("lab-sbox");
   });
+
+  it("includes host RAM (CPU only after ticks advance)", async () => {
+    const hb = await buildHeartbeat({
+      nodeId: "local",
+      name: "dev-node",
+      dataRoot: process.cwd(),
+      listContainers: async () => [],
+      listProcesses: () => [],
+    });
+    expect(hb.memUsedBytes).toBeGreaterThan(0);
+    expect(hb.memTotalBytes).toBeGreaterThan(0);
+    expect(NodeHeartbeatSchema.parse(hb).memTotalBytes).toBe(hb.memTotalBytes);
+    if (hb.cpuPercent != null) {
+      expect(hb.cpuPercent).toBeGreaterThanOrEqual(0);
+      expect(hb.cpuPercent).toBeLessThanOrEqual(100);
+    }
+  });
 });
 

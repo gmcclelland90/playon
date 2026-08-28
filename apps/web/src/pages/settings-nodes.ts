@@ -84,3 +84,5 @@ export function nodeUpdateRowMessage(opts: {
 export function nodeUpdateInFlight(job: NodeUpdateJobView | null): boolean {
   return job?.status === "queued" || job?.status === "running";
 }
+
+export { nodeUsageChips } from "../format-usage";

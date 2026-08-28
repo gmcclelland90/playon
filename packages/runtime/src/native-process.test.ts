@@ -81,7 +81,11 @@ describe("NativeProcessSupervisor", () => {
 
     expect(info.status).toBe("running");
     expect(info.pid).toBeTypeOf("number");
+    expect(supervisor.list()).toEqual([
+      expect.objectContaining({ id: info.id, name: "echo", status: "running" }),
+    ]);
     await supervisor.stop(info.id);
+    expect(supervisor.list()).toEqual([]);
     const stopped = await supervisor.status(info.id);
     expect(stopped.status).toBe("stopped");
   });

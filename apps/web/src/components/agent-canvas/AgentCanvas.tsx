@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Application, Container, Graphics, Text } from "pixi.js";
 import type { ServerRow } from "../../api";
+import { formatHostUsage, formatServerUsage } from "../../format-usage";
 import {
   isPendingNodeSetup,
   nodePresenceLabel,
@@ -752,6 +753,8 @@ export function AgentCanvas({
       });
       const bits = [cluster.node.badge || cluster.node.kind || "", presenceLabel];
       if (cluster.node.joinHost) bits.push(cluster.node.joinHost);
+      const hostUsage = formatHostUsage(cluster.node);
+      if (hostUsage) bits.push(hostUsage);
       sub.text = bits.filter(Boolean).join(" · ");
       sub.y = title.y + 16;
 
@@ -863,10 +866,12 @@ export function AgentCanvas({
           const nameMax = size === "hero" ? 32 : size === "other" ? 16 : 24;
           name.text = shortDisplayName(server.name, nameMax);
           const baseStatus = boardCrateStatusText(server);
+          const usage = formatServerUsage(server);
+          const labeled = usage ? `${baseStatus} · ${usage}` : baseStatus;
           status.text =
             busyHere && kind === "player"
-              ? `${baseStatus} · ${busyHere.label || busyHere.verb}`
-              : baseStatus;
+              ? `${labeled} · ${busyHere.label || busyHere.verb}`
+              : labeled;
         }
         status.y = name.y + Math.max(name.height, fontSize + 2) + 2;
       }
@@ -1116,6 +1121,7 @@ export function AgentCanvas({
                           status: n.status,
                           agentVersion: n.agentVersion,
                         })}
+                        {formatHostUsage(n) ? ` · ${formatHostUsage(n)}` : ""}
                         {n.id === "local" || n.status === "online"
                           ? " · Scan for installs"
                           : ""}
@@ -1181,7 +1187,10 @@ export function AgentCanvas({
                             {server.name}
                           </span>
                           <span className="muted">
-                            {busyLabel || boardCrateStatusText(server)}
+                            {busyLabel ||
+                              [boardCrateStatusText(server), formatServerUsage(server)]
+                                .filter(Boolean)
+                                .join(" · ")}
                           </span>
                         </button>
                       </li>

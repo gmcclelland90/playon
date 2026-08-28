@@ -16,6 +16,10 @@ export type HostContainer = {
   image: string;
   status: string;
   ports: HostContainerPort[];
+  /** Engine id — used to sample stats; omitted from the heartbeat wire if unused. */
+  id?: string;
+  cpuPercent?: number;
+  memUsedBytes?: number;
 };
 
 type DockerListPort = {
@@ -25,6 +29,7 @@ type DockerListPort = {
 };
 
 type DockerListRow = {
+  Id?: string;
   Names?: string[];
   Image?: string;
   State?: string;
@@ -52,7 +57,8 @@ export function mapDockerListContainer(raw: DockerListRow | null | undefined): H
       ...(proto === "tcp" || proto === "udp" ? { protocol: proto } : {}),
     });
   }
-  return { name, image, status, ports };
+  const id = String(raw.Id ?? "").trim();
+  return { name, image, status, ports, ...(id ? { id } : {}) };
 }
 
 /**

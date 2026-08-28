@@ -200,6 +200,11 @@ async function ensureAdapters(): Promise<{
   return { docker: dockerAdapter, process: processSupervisor };
 }
 
+/** Tracked native processes — empty until a job has created the supervisor. */
+export function listSupervisedProcesses(): import("@playon/runtime").ProcessInfo[] {
+  return processSupervisor?.list?.() ?? [];
+}
+
 export async function claimNextJob(
   apiBase: string,
   nodeId: string,

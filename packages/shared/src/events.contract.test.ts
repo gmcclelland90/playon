@@ -46,6 +46,16 @@ describe("WsEventSchema", () => {
     ).toMatchObject({ type: "update.progress", target: "home" });
   });
 
+  it("accepts node.metrics with optional cpu/mem/disk", () => {
+    expect(
+      WsEventSchema.parse({
+        type: "node.metrics",
+        nodeId: "local",
+        metrics: { cpuPercent: 14, memUsedBytes: 1, memTotalBytes: 2, freeDiskBytes: 3 },
+      }),
+    ).toMatchObject({ type: "node.metrics", nodeId: "local" });
+  });
+
   it("rejects unknown event types", () => {
     expect(() => WsEventSchema.parse({ type: "nope" })).toThrow();
   });

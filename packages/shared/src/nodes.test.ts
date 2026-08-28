@@ -4,6 +4,9 @@ import {
   isWslNodeId,
   placementBadge,
   placementFromNodeKind,
+  playonContainerName,
+  playonProcessName,
+  usageForManagedServer,
   wslParentNodeId,
   wslSiblingNodeId,
 } from "./nodes.js";
@@ -53,5 +56,31 @@ describe("wsl sibling ids", () => {
     expect(isWslNodeId("win-1")).toBe(false);
     expect(wslParentNodeId("local-wsl")).toBe("local");
     expect(wslParentNodeId("win-1-wsl")).toBe("win-1");
+  });
+});
+
+describe("usageForManagedServer", () => {
+  it("prefers a docker container named playon-<id>", () => {
+    expect(playonContainerName("abc")).toBe("playon-abc");
+    expect(playonProcessName("abc")).toBe("server-abc");
+    expect(
+      usageForManagedServer(
+        "abc",
+        "docker",
+        [{ name: "playon-abc", cpuPercent: 9, memUsedBytes: 10 }],
+        [{ name: "server-abc", cpuPercent: 1, memUsedBytes: 2 }],
+      ),
+    ).toEqual({ cpuPercent: 9, memUsedBytes: 10 });
+  });
+
+  it("uses the native process when runtimeMode is native", () => {
+    expect(
+      usageForManagedServer(
+        "z",
+        "native",
+        [{ name: "playon-z", cpuPercent: 9, memUsedBytes: 10 }],
+        [{ name: "server-z", cpuPercent: 22, memUsedBytes: 800 }],
+      ),
+    ).toEqual({ cpuPercent: 22, memUsedBytes: 800 });
   });
 });

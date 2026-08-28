@@ -100,6 +100,45 @@ export function placementBadge(opts: {
   return opts.name ? `Remote · ${opts.name}` : "Remote";
 }
 
+/** Docker container name minted by Home for a managed server. */
+export function playonContainerName(serverId: string): string {
+  return `playon-${serverId}`;
+}
+
+/** Native supervisor process name minted by Home for a managed server. */
+export function playonProcessName(serverId: string): string {
+  return `server-${serverId}`;
+}
+
+export type ResourceUsage = {
+  cpuPercent?: number;
+  memUsedBytes?: number;
+};
+
+/** Last-known usage for a managed server from a node's heartbeat inventory. */
+export function usageForManagedServer(
+  serverId: string,
+  runtimeMode: string | null | undefined,
+  containers: Array<{ name: string; cpuPercent?: number; memUsedBytes?: number }>,
+  processes: Array<{ name: string; cpuPercent?: number; memUsedBytes?: number }>,
+): ResourceUsage {
+  if (runtimeMode === "native") {
+    const proc = processes.find((p) => p.name === playonProcessName(serverId));
+    if (proc && (proc.cpuPercent != null || proc.memUsedBytes != null)) {
+      return { cpuPercent: proc.cpuPercent, memUsedBytes: proc.memUsedBytes };
+    }
+  }
+  const container = containers.find((c) => c.name === playonContainerName(serverId));
+  if (container && (container.cpuPercent != null || container.memUsedBytes != null)) {
+    return { cpuPercent: container.cpuPercent, memUsedBytes: container.memUsedBytes };
+  }
+  const proc = processes.find((p) => p.name === playonProcessName(serverId));
+  if (proc && (proc.cpuPercent != null || proc.memUsedBytes != null)) {
+    return { cpuPercent: proc.cpuPercent, memUsedBytes: proc.memUsedBytes };
+  }
+  return {};
+}
+
 export function deriveNodePresence(
   lastSeenAt: Date | number | string,
   nowMs: number = Date.now(),

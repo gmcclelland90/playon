@@ -10,6 +10,10 @@ export type MapNodeInput = {
   agentVersion?: string | null;
   joinHost?: string | null;
   badge?: string | null;
+  cpuPercent?: number | null;
+  memUsedBytes?: number | null;
+  memTotalBytes?: number | null;
+  freeDiskBytes?: number | null;
 };
 
 export type MapServerInput = {
@@ -143,6 +147,8 @@ export function mergeNodeContainerInventory(
         runtimeMode: "docker",
         dataPath: "",
         unmanaged: true,
+        ...(c.cpuPercent != null ? { cpuPercent: c.cpuPercent } : {}),
+        ...(c.memUsedBytes != null ? { memUsedBytes: c.memUsedBytes } : {}),
       });
     }
   }
