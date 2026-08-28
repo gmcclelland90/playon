@@ -47,7 +47,8 @@ CREATE TABLE IF NOT EXISTS nodes (
   tunnel_endpoint TEXT,
   overlay_ip TEXT,
   tunnel_status TEXT NOT NULL DEFAULT 'none',
-  join_host TEXT
+  join_host TEXT,
+  usage_history_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS servers (

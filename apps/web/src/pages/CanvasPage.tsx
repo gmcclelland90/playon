@@ -42,7 +42,7 @@ import { mergeNodeContainerInventory } from "../components/agent-canvas/map-node
 import { MapAddNodePanel } from "../components/MapAddNodePanel";
 import { MapManageSuggestPanel } from "../components/MapManageSuggestPanel";
 import { ServerConsoleBubble } from "../components/ServerConsoleBubble";
-import { formatServerUsage } from "../format-usage";
+import { ServerUsageMeters } from "../components/UsageMeters";
 import { displayServerStatus, runtimeErrorHint, statusHint, statusLabel } from "../status";
 import { playonSocket } from "../ws";
 
@@ -308,6 +308,11 @@ export function CanvasPage({ user }: { user: PublicUser }) {
 
   useEffect(() => {
     return playonSocket.subscribe((event) => {
+      if (event.type === "node.metrics" || event.type === "node.heartbeat") {
+        void qc.invalidateQueries({ queryKey: ["nodes"] });
+        void qc.invalidateQueries({ queryKey: ["servers"] });
+        return;
+      }
       if (event.type === "server.status") {
         void qc.invalidateQueries({ queryKey: ["servers"] });
         void qc.invalidateQueries({ queryKey: ["server-detail", event.serverId] });
@@ -890,6 +895,8 @@ export function CanvasPage({ user }: { user: PublicUser }) {
           memUsedBytes: n.memUsedBytes,
           memTotalBytes: n.memTotalBytes,
           freeDiskBytes: n.freeDiskBytes,
+          usageHistory: n.usageHistory,
+          alerts: n.alerts,
         }))}
         serversLoading={servers.isLoading || (servers.isFetching && !servers.data)}
         selectedId={selectedId}
@@ -1004,9 +1011,6 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                 <div className="canvas-status-row">
                   <span className={`server-status-pill status-${status}`}>{statusLabel(status)}</span>
                   {selected.game ? <span className="muted">{selected.game}</span> : null}
-                  {formatServerUsage(selected) ? (
-                    <span className="muted">{formatServerUsage(selected)}</span>
-                  ) : null}
                   {activityOnSelected ? (
                     <span className="muted canvas-busy-hint">
                       {skillShortLabel(activityOnSelected.skill)} ·{" "}
@@ -1014,6 +1018,12 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                     </span>
                   ) : null}
                 </div>
+                <ServerUsageMeters
+                  compact
+                  cpuPercent={selected.cpuPercent}
+                  memUsedBytes={selected.memUsedBytes}
+                  history={selected.usageHistory}
+                />
                 {join ? (
                   <div className="canvas-join-card">
                     <div className="dash-section-head">

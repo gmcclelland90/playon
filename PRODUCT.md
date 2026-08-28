@@ -35,6 +35,7 @@ Purple-on-white AI dashboards, cream/terracotta editorial kits, neon cyberpunk g
 3. **Two audiences, two tempos** — dense host booth for ops; calm, scan-first player panel for phones.
 4. **Playful without toyish** — sharp / playful / trustworthy; never carnival UI or SaaS-cream.
 5. **Self-hosted LAN ops** — reinforce local control plane, not multi-tenant cloud console vibes.
+6. **Load at a glance** — host and running-game usage is a first-class visual, not a status-chip string. A quiet box stays quiet; a filling disk or hot CPU punches.
 
 ## Accessibility & Inclusion
 

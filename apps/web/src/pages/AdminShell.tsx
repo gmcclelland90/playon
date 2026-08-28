@@ -2,6 +2,7 @@ import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { can, roleAtLeast, type PublicUser } from "@playon/shared";
 import { api } from "../api";
+import { ResourceAlertBanner } from "../components/ResourceAlertBanner";
 import { UpdateBanner } from "../components/UpdateBanner";
 
 function roleLabel(role: string): string {
@@ -37,6 +38,7 @@ export function AdminShell({ user }: { user: PublicUser }) {
   return (
     <div className="app-shell">
       <UpdateBanner user={user} />
+      <ResourceAlertBanner />
       <header className="topbar">
         <div className="topbar-brand">
           <NavLink to={home} className="brand-mark">

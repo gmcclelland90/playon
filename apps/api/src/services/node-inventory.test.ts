@@ -233,5 +233,99 @@ describe("GET /api/nodes container inventory", () => {
     };
     const paper = body.servers.find((s) => s.id === "abc");
     expect(paper).toMatchObject({ cpuPercent: 15, memUsedBytes: 700_000_000 });
+    expect(Array.isArray((paper as { usageHistory?: unknown }).usageHistory)).toBe(true);
+  });
+
+  it("stores a short usage ring and surfaces a disk_low alert on GET /api/nodes", async () => {
+    const config: AppConfig = {
+      port: 0,
+      advertiseHost: "127.0.0.1",
+      dataRoot: root,
+      dbPath: path.join(root, "playon.sqlite"),
+      sessionSecret: "test-session-secret-at-least-32-chars!!",
+      skillsRoots: [],
+      llmMode: "openai_compatible",
+      runtimeMode: "native",
+      nodeToken: "inv-token",
+    };
+    const app = createApp(db, config);
+    const first = await app.request("/api/nodes/heartbeat", {
+      method: "POST",
+      headers: { authorization: "Bearer inv-token", "content-type": "application/json" },
+      body: JSON.stringify({
+        nodeId: "playon-dev",
+        name: "playon-dev",
+        os: "linux",
+        docker: true,
+        native: true,
+        steamcmd: false,
+        agentVersion: "0.2.12",
+        cpuPercent: 5.9,
+        memUsedBytes: 5.2 * 1024 ** 3,
+        memTotalBytes: 62.5 * 1024 ** 3,
+        freeDiskBytes: 400 * 1024 * 1024,
+      }),
+    });
+    expect(first.status).toBe(200);
+    await db.insert(servers).values({
+      id: "mc",
+      name: "Small Minecraft",
+      game: "paper",
+      nodeId: "playon-dev",
+      runtimeMode: "docker",
+      status: "running",
+      dataPath: path.join(root, "servers", "mc"),
+      createdAt: new Date(),
+    });
+    for (const cpu of [6.1, 6.2]) {
+      const hb = await app.request("/api/nodes/heartbeat", {
+        method: "POST",
+        headers: { authorization: "Bearer inv-token", "content-type": "application/json" },
+        body: JSON.stringify({
+          nodeId: "playon-dev",
+          name: "playon-dev",
+          os: "linux",
+          docker: true,
+          native: true,
+          steamcmd: false,
+          agentVersion: "0.2.12",
+          cpuPercent: cpu,
+          memUsedBytes: 5.2 * 1024 ** 3,
+          memTotalBytes: 62.5 * 1024 ** 3,
+          freeDiskBytes: 400 * 1024 * 1024,
+          containers: [
+            {
+              name: "playon-mc",
+              image: "itzg/minecraft-server",
+              status: "running",
+              cpuPercent: 1.5,
+              memUsedBytes: 1.5 * 1024 ** 3,
+            },
+          ],
+        }),
+      });
+      expect(hb.status).toBe(200);
+    }
+    const nodesRes = await app.request("/api/nodes", { headers: { cookie } });
+    expect(nodesRes.status).toBe(200);
+    const nodesBody = (await nodesRes.json()) as {
+      nodes: Array<{
+        id: string;
+        usageHistory: Array<{ cpuPercent?: number; freeDiskBytes?: number }>;
+        alerts: Array<{ kind: string; tone: string; message: string }>;
+      }>;
+    };
+    const dev = nodesBody.nodes.find((n) => n.id === "playon-dev");
+    expect(dev?.usageHistory.length).toBe(3);
+    expect(dev?.usageHistory[2]?.cpuPercent).toBe(6.2);
+    expect(dev?.alerts.some((a) => a.kind === "disk_low" && a.tone === "danger")).toBe(true);
+
+    const serversRes = await app.request("/api/servers", { headers: { cookie } });
+    const serversBody = (await serversRes.json()) as {
+      servers: Array<{ id: string; usageHistory?: Array<{ cpuPercent?: number }> }>;
+    };
+    const mc = serversBody.servers.find((s) => s.id === "mc");
+    expect(mc?.usageHistory?.length).toBe(2);
+    expect(mc?.usageHistory?.[1]?.cpuPercent).toBe(1.5);
   });
 });

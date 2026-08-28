@@ -1,6 +1,7 @@
 export * from "./roles.js";
 export * from "./rbac.js";
 export * from "./nodes.js";
+export * from "./resource-usage.js";
 export * from "./join-path-probe.js";
 export * from "./skill.js";
 export * from "./live-state.js";

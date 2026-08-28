@@ -69,6 +69,9 @@ function ensureNodeCapabilityColumns(raw: Database.Database) {
   if (!names.has("mem_total_bytes")) {
     raw.exec(`ALTER TABLE nodes ADD COLUMN mem_total_bytes INTEGER`);
   }
+  if (!names.has("usage_history_json")) {
+    raw.exec(`ALTER TABLE nodes ADD COLUMN usage_history_json TEXT`);
+  }
 }
 
 /** Dev reset: replace legacy persona/per-server progress with skill-keyed table. */

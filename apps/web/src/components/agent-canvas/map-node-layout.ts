@@ -14,6 +14,14 @@ export type MapNodeInput = {
   memUsedBytes?: number | null;
   memTotalBytes?: number | null;
   freeDiskBytes?: number | null;
+  usageHistory?: Array<{
+    t: number;
+    cpuPercent?: number;
+    memUsedBytes?: number;
+    memTotalBytes?: number;
+    freeDiskBytes?: number;
+  }>;
+  alerts?: Array<{ kind: string; tone: string; message: string }>;
 };
 
 export type MapServerInput = {

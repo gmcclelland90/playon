@@ -53,6 +53,7 @@ import {
   VultrOAuthCallbackRequestSchema,
   can,
   deriveNodePresence,
+  parseUsageHistory,
   messageFromError,
   playerPanelStatusFromJoinReady,
   placementBadge,
@@ -179,6 +180,7 @@ import {
   recordNodeProcesses,
   serverUsageFromInventory,
 } from "./services/node-inventory.js";
+import { alertsForNode, persistNodeUsageSample } from "./services/usage-history.js";
 import {
   authenticateAccessToken,
   bearerFromAuthorization,
@@ -1608,11 +1610,16 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
   app.get("/api/servers", async (c) => {
     requireRole(c, "operator");
     const list = await serverService.list();
+    const nodeRows = await db.select().from(nodes);
+    const historyByNode = new Map(
+      nodeRows.map((n) => [n.id, parseUsageHistory(n.usageHistoryJson)] as const),
+    );
     return c.json({
       servers: list.map((s) => {
         const cached = joinReadyService.cached(s.id);
         const usage = serverUsageFromInventory(s.id, s.nodeId, s.runtimeMode);
-        return { ...s, ready: cached?.ready, ...usage };
+        const usageHistory = s.nodeId ? (historyByNode.get(s.nodeId)?.servers[s.id] ?? []) : [];
+        return { ...s, ready: cached?.ready, ...usage, usageHistory };
       }),
       advertiseHost: config.advertiseHost,
       runtimeMode: config.runtimeMode,
@@ -2062,6 +2069,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     const list = await db.select().from(nodes);
     const now = Date.now();
     const nodeSettings = await getSetting<NodeSettings>(db, NODE_SETTINGS_KEY);
+    const nodeServers = await serverService.list();
     return c.json({
       localComputeEnabled: nodeSettings?.localComputeEnabled ?? true,
       wireguardTools: tunnel.toolsAvailable(),
@@ -2071,6 +2079,14 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         const kind =
           (n.kind as NodeKind) ||
           (n.id === LOCAL_NODE_ID || n.id === LOCAL_WSL_NODE_ID ? "local" : "lan");
+        const usageHistory = parseUsageHistory(n.usageHistoryJson);
+        const hosted = nodeServers
+          .filter((s) => s.nodeId === n.id)
+          .map((s) => ({
+            id: s.id,
+            name: s.name,
+            ...serverUsageFromInventory(s.id, s.nodeId, s.runtimeMode),
+          }));
         return {
           id: n.id,
           name: n.name,
@@ -2098,6 +2114,14 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           tunnelEndpoint: n.tunnelEndpoint,
           joinHost: n.joinHost ?? null,
           containers: nodeContainers(n.id),
+          usageHistory: usageHistory.host,
+          alerts: alertsForNode({
+            nodeId: n.id,
+            nodeName: n.name,
+            current: n,
+            history: usageHistory,
+            hostedServers: hosted,
+          }),
         };
       }),
     });
@@ -2663,6 +2687,20 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       });
     }
 
+    if (
+      body.freeDiskBytes != null ||
+      body.cpuPercent != null ||
+      body.memUsedBytes != null ||
+      body.memTotalBytes != null
+    ) {
+      await persistNodeUsageSample(db, body.nodeId, {
+        cpuPercent: body.cpuPercent,
+        memUsedBytes: body.memUsedBytes,
+        memTotalBytes: body.memTotalBytes,
+        freeDiskBytes: body.freeDiskBytes,
+      });
+    }
+
     eventHub.publish({
       type: "node.heartbeat",
       nodeId: body.nodeId,
@@ -2745,6 +2783,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           ...(body.memTotalBytes != null ? { memTotalBytes: body.memTotalBytes } : {}),
         })
         .where(eq(nodes.id, nodeId));
+      await persistNodeUsageSample(db, nodeId, body);
     }
 
     eventHub.publish({
