@@ -118,10 +118,7 @@ export async function sampleContainerUsage(
         platform === "win32" ? await resolveDockerClientOptions({ platform, timeoutMs }) : undefined;
       if (platform === "win32" && !options) return null;
       const docker = new Docker(options);
-      const raw = await docker.getContainer(idOrName).stats({ stream: false, oneShot: true } as {
-        stream: boolean;
-        oneShot: boolean;
-      });
+      const raw = await docker.getContainer(idOrName).stats({ stream: false, "one-shot": true });
       return raw as DockerStatsLike;
     });
 
