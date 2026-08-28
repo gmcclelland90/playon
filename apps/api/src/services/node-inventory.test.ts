@@ -249,6 +249,24 @@ describe("GET /api/nodes container inventory", () => {
       nodeToken: "inv-token",
     };
     const app = createApp(db, config);
+    const first = await app.request("/api/nodes/heartbeat", {
+      method: "POST",
+      headers: { authorization: "Bearer inv-token", "content-type": "application/json" },
+      body: JSON.stringify({
+        nodeId: "playon-dev",
+        name: "playon-dev",
+        os: "linux",
+        docker: true,
+        native: true,
+        steamcmd: false,
+        agentVersion: "0.2.12",
+        cpuPercent: 5.9,
+        memUsedBytes: 5.2 * 1024 ** 3,
+        memTotalBytes: 62.5 * 1024 ** 3,
+        freeDiskBytes: 400 * 1024 * 1024,
+      }),
+    });
+    expect(first.status).toBe(200);
     await db.insert(servers).values({
       id: "mc",
       name: "Small Minecraft",
@@ -259,7 +277,7 @@ describe("GET /api/nodes container inventory", () => {
       dataPath: path.join(root, "servers", "mc"),
       createdAt: new Date(),
     });
-    for (const cpu of [5.9, 6.1]) {
+    for (const cpu of [6.1, 6.2]) {
       const hb = await app.request("/api/nodes/heartbeat", {
         method: "POST",
         headers: { authorization: "Bearer inv-token", "content-type": "application/json" },
@@ -298,8 +316,8 @@ describe("GET /api/nodes container inventory", () => {
       }>;
     };
     const dev = nodesBody.nodes.find((n) => n.id === "playon-dev");
-    expect(dev?.usageHistory.length).toBe(2);
-    expect(dev?.usageHistory[1]?.cpuPercent).toBe(6.1);
+    expect(dev?.usageHistory.length).toBe(3);
+    expect(dev?.usageHistory[2]?.cpuPercent).toBe(6.2);
     expect(dev?.alerts.some((a) => a.kind === "disk_low" && a.tone === "danger")).toBe(true);
 
     const serversRes = await app.request("/api/servers", { headers: { cookie } });
