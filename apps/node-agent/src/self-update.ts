@@ -7,8 +7,11 @@ import {
   ARCHIVE_EXTRACT_TIMEOUT_MS,
   WINDOWS_START_NODE_CMD,
   assertAllowedUpdateDownloadUrl,
+  assertUpdateArchiveLooksReal,
   buildArchiveExtractCommands,
   bundledWindowsStartNodeCmd,
+  cacheBustUpdateDownloadUrl,
+  formatUpdateSha256Mismatch,
   startNodeCmdLoadsNodeEnv,
 } from "@playon/shared";
 
@@ -190,6 +193,8 @@ export async function performNodeSelfUpdate(args: {
   version: string;
   preserve?: string[];
   installRoot?: string;
+  /** Manifest size; reject a short/HTML body before apply (#917). */
+  expectedSize?: number;
   /** When true (tests), do not schedule process.exit */
   skipExit?: boolean;
 }): Promise<{
@@ -208,19 +213,52 @@ export async function performNodeSelfUpdate(args: {
   const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-update-"));
   let windowsHelperSpawned = false;
   try {
+    const downloadUrl = cacheBustUpdateDownloadUrl(args.downloadUrl, args.sha256);
     const archivePath = path.join(
       staging,
-      path.basename(new URL(args.downloadUrl).pathname) || "node-update.bin",
+      path.basename(new URL(downloadUrl).pathname) || "node-update.bin",
     );
-    const res = await fetch(args.downloadUrl, {
-      headers: { accept: "application/octet-stream,*/*", "user-agent": "PlayOn-Node" },
-    });
-    if (!res.ok) throw new Error(`update_download_failed: ${res.status}`);
-    const buf = Buffer.from(await res.arrayBuffer());
-    const sha256 = crypto.createHash("sha256").update(buf).digest("hex");
-    if (sha256.toLowerCase() !== args.sha256.toLowerCase()) {
-      throw new Error(`update_sha256_mismatch: expected ${args.sha256} got ${sha256}`);
+    let lastErr: Error | undefined;
+    let buf: Buffer | undefined;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const res = await fetch(downloadUrl, {
+          headers: {
+            accept: "application/octet-stream",
+            "accept-encoding": "identity",
+            "cache-control": "no-cache",
+            "user-agent": "PlayOn-Node",
+          },
+        });
+        if (!res.ok) throw new Error(`update_download_failed: ${res.status}`);
+        buf = Buffer.from(await res.arrayBuffer());
+        const contentType = res.headers?.get?.("content-type") ?? undefined;
+        const kind = assertUpdateArchiveLooksReal({
+          bytes: buf,
+          expectedBytes: args.expectedSize,
+          contentType,
+        });
+        const sha256 = crypto.createHash("sha256").update(buf).digest("hex");
+        if (sha256.toLowerCase() !== args.sha256.toLowerCase()) {
+          throw new Error(
+            formatUpdateSha256Mismatch({
+              expectedSha256: args.sha256,
+              gotSha256: sha256,
+              bytes: buf.byteLength,
+              expectedBytes: args.expectedSize,
+              kind,
+              contentType,
+            }),
+          );
+        }
+        lastErr = undefined;
+        break;
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error(String(err));
+        if (attempt === 3) throw lastErr;
+      }
     }
+    if (!buf) throw lastErr ?? new Error("update_download_failed");
     fs.writeFileSync(archivePath, buf);
     const extracted = await extractArchive(archivePath, path.join(staging, "extracted"));
 

@@ -12,7 +12,9 @@ import {
   WINDOWS_OTA_ESM_BOOTSTRAP_PROCESS_NAME,
   WINDOWS_OTA_ESM_BOOTSTRAP_REL,
   isEsmBootstrapSelfUpdateArgs,
+  WINDOWS_OTA_HOME_DRIVEN_UNTIL,
   windowsAgentNeedsEsmOtaBootstrap,
+  windowsAgentNeedsHomeDrivenOta,
   windowsOtaEsmBootstrapScript,
   windowsOtaEsmBootstrapStartArgs,
   windowsOtaEsmBootstrapWriteArgs,
@@ -83,6 +85,17 @@ describe("windowsAgentNeedsEsmOtaBootstrap", () => {
   });
 });
 
+describe("windowsAgentNeedsHomeDrivenOta", () => {
+  it("covers Windows 0.2.3–0.2.11 so 0.2.10 can land without a node-agent patch (#917)", () => {
+    expect(WINDOWS_OTA_HOME_DRIVEN_UNTIL).toBe("0.2.12");
+    expect(windowsAgentNeedsHomeDrivenOta({ os: "windows", agentVersion: "0.2.3" })).toBe(true);
+    expect(windowsAgentNeedsHomeDrivenOta({ os: "windows", agentVersion: "0.2.10" })).toBe(true);
+    expect(windowsAgentNeedsHomeDrivenOta({ os: "windows", agentVersion: "0.2.11" })).toBe(true);
+    expect(windowsAgentNeedsHomeDrivenOta({ os: "windows", agentVersion: "0.2.12" })).toBe(false);
+    expect(windowsAgentNeedsHomeDrivenOta({ os: "linux", agentVersion: "0.2.10" })).toBe(false);
+  });
+});
+
 describe("Home vintage Windows bootstrap jobs", () => {
   it("bootstrap script has no require() and launches apply-self-update.ps1", () => {
     const script = windowsOtaEsmBootstrapScript();
@@ -92,9 +105,13 @@ describe("Home vintage Windows bootstrap jobs", () => {
       .join("\n");
     expect(codeLines).not.toMatch(/\brequire\s*\(/);
     expect(script).toMatch(/apply-self-update\.ps1/);
-    expect(script).toMatch(/--force-local/);
+    expect(script).not.toMatch(/--force-local/);
     expect(script).toMatch(/ParentProcessId/);
     expect(script).toMatch(/Get-FileHash/);
+    expect(script).toMatch(/update_download_not_archive/);
+    expect(script).toMatch(/update_download_size_mismatch/);
+    expect(script).toMatch(/Cache-Control/);
+    expect(script).toMatch(/ExpectedSize/);
     const shipped = fs.readFileSync(
       path.join(repoRoot, "deploy", "windows", "ota-esm-bootstrap.ps1"),
       "utf8",
@@ -115,12 +132,15 @@ describe("Home vintage Windows bootstrap jobs", () => {
       downloadUrl: "https://playon.games/home/packages/playon-node-0.2.8-windows-x64.tar.gz",
       sha256: "a".repeat(64),
       version: "0.2.8",
+      expectedSize: 39600808,
     });
     expect(start.name).toBe(WINDOWS_OTA_ESM_BOOTSTRAP_PROCESS_NAME);
     expect(start.command).toBe("powershell.exe");
     expect(start.cwd).toBe(".");
     expect(start.args).toContain("-File");
     expect(start.args).toContain("-DownloadUrl");
+    expect(start.args).toContain("-ExpectedSize");
+    expect(start.args).toContain("39600808");
     const parsedStart = parseNodeJobArgs("process_start", start);
     expect(parsedStart).toMatchObject({
       name: WINDOWS_OTA_ESM_BOOTSTRAP_PROCESS_NAME,

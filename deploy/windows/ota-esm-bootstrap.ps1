@@ -1,10 +1,11 @@
-# PlayOn vintage Windows OTA bootstrap (#885)
-# 0.2.3/0.2.4 agents call require in ESM after extract. This script never
-# enters that helper: download + extract, then the packaged apply-self-update.ps1.
+# PlayOn Windows OTA bootstrap (#885 / #917)
+# Home writes this so 0.2.3–0.2.11 never claim node_self_update.
+# Download + size/magic/sha256, then the packaged apply-self-update.ps1.
 param(
   [Parameter(Mandatory = $true)][string]$DownloadUrl,
   [Parameter(Mandatory = $true)][string]$Sha256,
-  [Parameter(Mandatory = $true)][string]$Version
+  [Parameter(Mandatory = $true)][string]$Version,
+  [int]$ExpectedSize = 0
 )
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
@@ -42,7 +43,18 @@ function Find-ExtractedRoot {
   }
   throw "update_extract_root_missing"
 }
-Write-Log "Starting vintage OTA bootstrap version=$Version"
+function Get-ArchiveKind {
+  param([string]$Path)
+  $fs = [IO.File]::OpenRead($Path)
+  try {
+    $magic = New-Object byte[] 2
+    [void]$fs.Read($magic, 0, 2)
+  } finally { $fs.Close() }
+  if ($magic[0] -eq 31 -and $magic[1] -eq 139) { return "gzip" }
+  if ($magic[0] -eq 80 -and $magic[1] -eq 75) { return "zip" }
+  return "unknown"
+}
+Write-Log "Starting Windows OTA bootstrap version=$Version expectedSize=$ExpectedSize"
 $agentPid = Get-AgentPid
 $installRoot = Get-InstallRoot
 Write-Log "agentPid=$agentPid installRoot=$installRoot"
@@ -52,24 +64,52 @@ New-Item -ItemType Directory -Force -Path $staging | Out-Null
 $leaf = [IO.Path]::GetFileName(([Uri]$DownloadUrl).AbsolutePath)
 if (-not $leaf) { $leaf = "node-update.bin" }
 $archivePath = Join-Path $staging $leaf
-Write-Log "Downloading $DownloadUrl"
-Invoke-WebRequest -Uri $DownloadUrl -OutFile $archivePath -UseBasicParsing -UserAgent "PlayOn-Node"
-$got = (Get-FileHash -Algorithm SHA256 -Path $archivePath).Hash
-if ($got.ToLower() -ne $Sha256.ToLower()) {
-  throw "update_sha256_mismatch: expected $Sha256 got $got"
+$headers = @{
+  "User-Agent" = "PlayOn-Node"
+  "Accept" = "application/octet-stream"
+  "Cache-Control" = "no-cache"
+  "Pragma" = "no-cache"
 }
+$lastErr = $null
+for ($attempt = 1; $attempt -le 3; $attempt++) {
+  try {
+    if (Test-Path $archivePath) { Remove-Item -Path $archivePath -Force }
+    Write-Log "Downloading attempt=$attempt $DownloadUrl"
+    Invoke-WebRequest -Uri $DownloadUrl -OutFile $archivePath -UseBasicParsing -Headers $headers
+    $len = (Get-Item -LiteralPath $archivePath).Length
+    if ($ExpectedSize -gt 0 -and $len -ne $ExpectedSize) {
+      throw "update_download_size_mismatch: expected $ExpectedSize got $len"
+    }
+    $kind = Get-ArchiveKind -Path $archivePath
+    if ($kind -ne "gzip" -and $kind -ne "zip") {
+      throw "update_download_not_archive: kind=$kind bytes=$len"
+    }
+    $got = (Get-FileHash -Algorithm SHA256 -Path $archivePath).Hash
+    if ($got.ToLower() -ne $Sha256.ToLower()) {
+      throw "update_sha256_mismatch: expected $Sha256 got $got bytes=$len expectedBytes=$ExpectedSize kind=$kind"
+    }
+    $lastErr = $null
+    break
+  } catch {
+    $lastErr = $_
+    Write-Log "Download attempt $attempt failed: $($_.Exception.Message)"
+    if ($attempt -eq 3) { throw }
+    Start-Sleep -Seconds (2 * $attempt)
+  }
+}
+if ($lastErr) { throw $lastErr }
 Write-Log "Checksum ok"
 $destDir = Join-Path $staging "extracted"
 New-Item -ItemType Directory -Force -Path $destDir | Out-Null
 $isZip = $archivePath.ToLower().EndsWith(".zip")
 if ($isZip) {
-  & tar --force-local -xf $archivePath -C $destDir
+  & tar -xf $archivePath -C $destDir
   if ($LASTEXITCODE -ne 0) {
     Write-Log "tar zip extract failed; Expand-Archive fallback"
     Expand-Archive -LiteralPath $archivePath -DestinationPath $destDir -Force
   }
 } else {
-  & tar --force-local -xzf $archivePath -C $destDir
+  & tar -xzf $archivePath -C $destDir
   if ($LASTEXITCODE -ne 0) { throw "update_extract_failed: tar exit $LASTEXITCODE" }
 }
 $extracted = Find-ExtractedRoot -DestDir $destDir

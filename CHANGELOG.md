@@ -4,6 +4,10 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+### Fixed
+
+- **Windows node OTA hash** — playon-win-1 0.2.10→0.2.11 failed with `update_sha256_mismatch` (`expected c2ab7575…8305a`, the `latest.json` / GitHub `playon-node-0.2.11-windows-x64.tar.gz` digest; `got 42579e38…c108f`, not the zip). Home now drives Windows agents `< 0.2.12` with PowerShell download (cache-busted URL, size + gzip/zip magic, retries) instead of 0.2.10 `fetch`+sha only. 0.2.12+ `node_self_update` and Home apply reject HTML/short bodies before apply (`#917`).
+
 ## [0.2.11] — 2026-08-25
 
 ### Added

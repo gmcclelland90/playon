@@ -12,6 +12,7 @@ export * from "./node-jobs/index.js";
 export * from "./llm-presets.js";
 export * from "./updates.js";
 export * from "./update-extract.js";
+export * from "./update-download.js";
 export * from "./windows-ota-esm-bootstrap.js";
 export * from "./windows-start-node-cmd.js";
 export * from "./watcher.js";

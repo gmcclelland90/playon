@@ -31,6 +31,8 @@ export const NodeSelfUpdateArgsSchema = z
     installRoot: z.string().min(1).optional(),
     /** Tests only: perform the swap but do not schedule the agent restart. */
     skipExit: z.boolean().optional(),
+    /** Manifest byte length; reject HTML/short bodies before apply (#917). */
+    expectedSize: z.number().int().nonnegative().optional(),
     /**
      * How Home is driving this job. `esm-bootstrap` is Home-tracked only: a 0.2.3/0.2.4
      * Windows agent must not claim it (those builds `require()` in ESM after extract).
