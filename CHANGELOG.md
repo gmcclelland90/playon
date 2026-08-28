@@ -4,6 +4,24 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+## [0.2.13] — 2026-08-28
+
+### Added
+
+- **Live now-line and thinking** — Home agent chat no longer goes silent mid-turn. A live **now-line** sits under the last message and updates as tools start, finish, or keep waiting (elapsed seconds). A short sanitized **thinking** line rides with it (`reasoning_content` when the provider sends it, otherwise the model’s own tool-round text) — not raw chain-of-thought, tool JSON, job ids, or secrets (`#927`).
+- **Per-server chat sessions** — each server parks its own conversation (own in-flight turn and now-line). Add-server / unbound compose stays a stable channel while that turn is in flight (`#927`).
+- **Usage graphs** — host and per-server CPU, RAM, and disk read as small area charts from the 24-sample heartbeat ring. Quiet hosts hug the floor in cyan; loaded CPU/RAM or a filling disk fill amber/ember. Numbers appear on hover or when the sample is hot. Older agents stay disk-only (`#925` / `#930` / `#924` / `#929`).
+- **Little-agent occupants** — one idle-vs-thinking-vs-working occupant on every server tile, plus channel-chip and rail pips. Compose shows an occupant only while that add-server turn is in flight (`#931`).
+
+### Fixed
+
+- **Node-agent OTA must not kill native games** — 0.2.9+ hops no longer treat systemd MAINPID exit as safe when the unit is `KillMode=control-group` or a pipe-based `keepStdin` child is attached. Those cases supervisor-loop so `Restart=always` does not SIGTERM leftover cgroup members. `process_start` / `process_stop` reclaim no longer tree-reaps every `/proc` cwd under a game jail unless the job name is that server identity (`#910` / `#909`).
+
+### Notes
+
+- Update Home via OTA (**Settings → About / Updates → Update & restart**), then Update nodes from **Settings → Nodes** so agents pick up the OTA keep-alive fix before the next hop.
+- Deferred: `#933` / `#932` server rename. `#911` lab Windows node `disk_low`.
+
 ## [0.2.12] — 2026-08-28
 
 ### Added
