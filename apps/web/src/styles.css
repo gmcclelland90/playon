@@ -991,6 +991,7 @@ body.server-console-resizing iframe {
 .canvas-dock-head h3 {
   margin: 0;
   font-size: 1.125rem;
+  overflow-wrap: anywhere;
 }
 
 .canvas-dock-hint {

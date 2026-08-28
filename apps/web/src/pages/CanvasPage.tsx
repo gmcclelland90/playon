@@ -1034,17 +1034,17 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         >
           <div className="canvas-dock-head">
             <div className="dash-section-head">
-              {selected && selectedId ? (
+              {selected && selectedId && !selectedAnchor ? (
                 <ServerNameControl
                   name={selected.name}
-                  editing={selectedAnchor ? false : renameOpen}
+                  editing={renameOpen}
                   onEditingChange={setRenameOpen}
                   pending={rename.isPending}
                   error={renameError}
                   onSave={(name) => rename.mutateAsync({ id: selectedId, name })}
                 />
               ) : (
-                <h3>{dockTitle}</h3>
+                <h3 title={selected?.name ?? dockTitle}>{dockTitle}</h3>
               )}
               <div className="btn-row">
                 {selectedId ? (
