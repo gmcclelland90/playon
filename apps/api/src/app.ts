@@ -46,6 +46,7 @@ import {
   MfaHostFileResetSchema,
   PromoteServerSkillRequestSchema,
   RelocateServerRequestSchema,
+  RenameServerRequestSchema,
   RestoreOffNodeBackupRequestSchema,
   WriteServerFsContentRequestSchema,
   RoleSchema,
@@ -1636,6 +1637,14 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       server: { ...detail.server, ready: joinReady.ready },
       runtime: { ...detail.runtime, ready: joinReady.ready, joinPath: joinReady.joinPath },
     });
+  });
+
+  app.patch("/api/servers/:id", async (c) => {
+    requireCan(c, "servers.manage");
+    const body = await jsonBody(c, RenameServerRequestSchema);
+    const server = await serverService.rename(c.req.param("id"), body.name);
+    if (!server) throw HttpError.notFound("not_found", { code: "server_not_found" });
+    return c.json({ server });
   });
 
   app.get("/api/servers/:id/fs", async (c) => {

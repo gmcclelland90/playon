@@ -184,6 +184,30 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
       },
     }),
 
+    serverTool({
+      def: {
+        name: "servers_rename",
+        description:
+          "Rename this server's PlayOn display name. Does not change server id, ports, data directory, container name, or the game's world folder on disk.",
+        parameters: {
+          type: "object",
+          properties: {
+            serverId: { type: "string" },
+            name: { type: "string" },
+          },
+          required: ["serverId", "name"],
+        },
+      },
+      surface: { skill: "orchestrator", activityVerb: "write" },
+      handler: async (args, { serverId }) => {
+        const name = String(args.name ?? "").trim();
+        if (!name) return { error: "name_required" };
+        const server = await servers.rename(serverId, name);
+        if (!server) return { error: "unknown_server" };
+        return { serverId: server.id, name: server.name, dataPath: server.dataPath };
+      },
+    }),
+
     globalTool({
       def: {
         name: "servers_list",

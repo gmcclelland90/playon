@@ -40,6 +40,15 @@ export const RelocateServerRequestSchema = z.object({
 
 export type RelocateServerRequest = z.infer<typeof RelocateServerRequestSchema>;
 
+/** Display name only — must not be used to rename ids, data dirs, or world folders. */
+export const SERVER_DISPLAY_NAME_MAX = 80;
+
+export const RenameServerRequestSchema = z.object({
+  name: z.string().trim().min(1).max(SERVER_DISPLAY_NAME_MAX),
+});
+
+export type RenameServerRequest = z.infer<typeof RenameServerRequestSchema>;
+
 /** PUT `/api/servers/:id/fs/content` — path + full text body. */
 export const WriteServerFsContentRequestSchema = z.object({
   path: z.string().min(1),

@@ -47,6 +47,7 @@ export const MAINTAIN_EXTRA_TOOL_NAMES = [
   "rcon_exec",
   "rcon_say",
   "servers_restart",
+  "servers_rename",
   "snapshot_create",
   "snapshot_restore",
   "snapshot_list",

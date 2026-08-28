@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { can, type PublicUser } from "@playon/shared";
 import { api } from "../api";
+import { ServerNameControl } from "../components/ServerNameControl";
 import { HostUsageMeters, ServerUsageMeters } from "../components/UsageMeters";
 import {
   nodePresenceHint,
@@ -22,6 +23,7 @@ function toolLabel(name: string): string {
     servers_start: "Started a server",
     servers_stop: "Stopped a server",
     servers_restart: "Restarted a server",
+    servers_rename: "Renamed a server",
     servers_health_check: "Checked server health",
     snapshot_create: "Took a snapshot",
     snapshot_restore: "Restored a snapshot",
@@ -60,6 +62,7 @@ export function DashboardPage({ user }: { user: PublicUser }) {
   const qc = useQueryClient();
   const canRestore = can(user.role, "snapshots.restore");
   const canMap = can(user.role, "chat.agent");
+  const canRename = can(user.role, "servers.manage");
   const confirmCancelRef = useRef<HTMLButtonElement>(null);
   const [pendingRestore, setPendingRestore] = useState<
     | { kind: "snapshot"; id: string; label: string; serverLabel: string }
@@ -121,6 +124,12 @@ export function DashboardPage({ user }: { user: PublicUser }) {
     mutationFn: (id: string) => api.stopServer(id),
     onSuccess: async (_data, id) => {
       flashOpsNotice(`Stopping ${serverName(id)}… status will update below.`);
+      await qc.invalidateQueries({ queryKey: ["servers"] });
+    },
+  });
+  const renameServer = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => api.renameServer(id, name),
+    onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["servers"] });
     },
   });
@@ -310,7 +319,21 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                 {serverList.map((s) => (
                   <li key={s.id}>
                     <div>
-                      <strong title={s.name}>{shortDisplayName(s.name, 28)}</strong>
+                      {canRename ? (
+                        <ServerNameControl
+                          name={s.name}
+                          as="strong"
+                          pending={renameServer.isPending}
+                          error={
+                            renameServer.isError && renameServer.variables?.id === s.id
+                              ? (renameServer.error as Error).message
+                              : null
+                          }
+                          onSave={(name) => renameServer.mutateAsync({ id: s.id, name })}
+                        />
+                      ) : (
+                        <strong title={s.name}>{shortDisplayName(s.name, 28)}</strong>
+                      )}
                       <div className="muted canvas-status-row">
                         <span className={`server-status-pill status-${displayServerStatus(s.status, s.ready)}`}>
                           {statusLabel(displayServerStatus(s.status, s.ready))}
