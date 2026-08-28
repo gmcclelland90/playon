@@ -7,7 +7,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { PublicUser } from "@playon/shared";
+import { nowLineForTool, type ChatProgressStep, type PublicUser } from "@playon/shared";
 import { api, type ToolTrace } from "../api";
 import {
   clearConfirmPrefs,
@@ -22,7 +22,9 @@ import {
   type AgentActivityView,
   type SelectedAnchor,
 } from "../components/agent-canvas/AgentCanvas";
+import { ChatNowLine } from "../components/ChatNowLine";
 import { ChatMarkdown } from "../components/ChatMarkdown";
+import { chatNowView } from "../chat-now";
 import { mergeNodeContainerInventory } from "../components/agent-canvas/map-node-layout";
 import { MapAddNodePanel } from "../components/MapAddNodePanel";
 import { MapManageSuggestPanel } from "../components/MapManageSuggestPanel";
@@ -144,6 +146,13 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const [activity, setActivity] = useState<AgentActivityView | undefined>();
   /** Last activity event timestamp (for stale idle clear). */
   const activityUpdatedAtRef = useRef(0);
+  const [chatProgress, setChatProgress] = useState<{
+    phase: string;
+    now: string;
+    thinking?: string;
+    steps: ChatProgressStep[];
+    updatedAt: number;
+  } | null>(null);
   const [pendingConfirm, setPendingConfirm] = useState<{
     requestId: string;
     toolName: string;
@@ -204,6 +213,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     setInstallOpen(true);
     setConversationId(undefined);
     setLines([]);
+    setChatProgress(null);
     setOpsError(null);
     setSessionError(null);
     setDockTab("chat");
@@ -225,6 +235,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     setAddNodeOpen(false);
     setOpsError(null);
     setSessionError(null);
+    setChatProgress(null);
     try {
       localStorage.removeItem("playon.lastServerId");
     } catch {
@@ -265,7 +276,24 @@ export function CanvasPage({ user }: { user: PublicUser }) {
           phase: event.phase,
           verb: event.verb,
           label: event.label,
+          thinking: event.thinking,
         });
+        const forThisChat =
+          !liveConversationId ||
+          !event.conversationId ||
+          event.conversationId === liveConversationId;
+        if (forThisChat) {
+          if (!liveConversationId && event.conversationId) {
+            setLiveConversationId(event.conversationId);
+          }
+          setChatProgress((prev) => ({
+            phase: event.phase,
+            now: event.label ?? prev?.now ?? "Thinking…",
+            thinking: event.thinking ?? prev?.thinking,
+            steps: event.steps ?? prev?.steps ?? [],
+            updatedAt: Date.now(),
+          }));
+        }
         return;
       }
       if (event.type === "agent.celebration") {
@@ -363,6 +391,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
           id = created.conversation.id;
         }
         setConversationId(id);
+        setChatProgress(null);
         const history = await api.conversationMessages(id);
         if (cancelled) return;
         setLines(
@@ -498,6 +527,12 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     },
     onMutate: (text) => {
       setLiveConversationId(conversationId);
+      setChatProgress({
+        phase: "thinking",
+        now: "Thinking…",
+        steps: [],
+        updatedAt: Date.now(),
+      });
       setLines((prev) => [
         ...prev,
         { role: "user", content: text },
@@ -508,6 +543,11 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     onSuccess: async (data) => {
       setConversationId(data.conversationId);
       setLiveConversationId(undefined);
+      setChatProgress((prev) =>
+        prev
+          ? { ...prev, phase: "idle", now: "Done", updatedAt: Date.now() }
+          : null,
+      );
       setLines((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
@@ -542,6 +582,11 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     },
     onError: (err) => {
       setLiveConversationId(undefined);
+      setChatProgress((prev) =>
+        prev
+          ? { ...prev, phase: "idle", now: isAbortError(err) ? "Stopped" : "Done", updatedAt: Date.now() }
+          : null,
+      );
       if (isAbortError(err)) {
         setLines((prev) => {
           const next = [...prev];
@@ -569,7 +614,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     const el = chatLogRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [lines, chat.isPending]);
+  }, [lines, chat.isPending, chatProgress]);
 
   function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -653,6 +698,14 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const emptyHint = unbound
     ? "Try “I want a vanilla Minecraft server”."
     : "Ask about status, config, restarts, snapshots…";
+  const nowView = chatNowView({
+    pending: chat.isPending,
+    phase: chatProgress?.phase,
+    now: chatProgress?.now,
+    thinking: chatProgress?.thinking,
+    steps: chatProgress?.steps,
+    updatedAt: chatProgress?.updatedAt,
+  });
 
   const pageClass = [
     "canvas-page",
@@ -1065,12 +1118,10 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                     {streaming ? <span className="stream-caret" aria-hidden /> : null}
                     {line.tools?.length ? (
                       <details className="tool-trace">
-                        <summary>Tools ({line.tools.length})</summary>
+                        <summary>Steps ({line.tools.length})</summary>
                         <ul className="list compact-list">
                           {line.tools.map((tool, ti) => (
-                            <li key={`${tool.name}-${ti}`}>
-                              <code>{tool.name}</code>
-                            </li>
+                            <li key={`${tool.name}-${ti}`}>{nowLineForTool(tool.name)}</li>
                           ))}
                         </ul>
                       </details>
@@ -1084,6 +1135,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                 );
               })
             )}
+            <ChatNowLine view={nowView} />
           </div>
 
           <form className="stack canvas-chat-composer" onSubmit={onSubmit}>
@@ -1122,7 +1174,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
               )}
               <span className="muted canvas-busy-hint">
                 {chat.isPending
-                  ? "Working… Stop cancels this turn"
+                  ? "Stop cancels this turn"
                   : "Enter to send · Shift+Enter for line"}
               </span>
             </div>

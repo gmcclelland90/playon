@@ -6,6 +6,8 @@ export * from "./skill.js";
 export * from "./live-state.js";
 export * from "./panel.js";
 export * from "./events.js";
+export * from "./agent-thinking.js";
+export * from "./agent-now-line.js";
 export * from "./api.js";
 export * from "./http/index.js";
 export * from "./node-jobs/index.js";

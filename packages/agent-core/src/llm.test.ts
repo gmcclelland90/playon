@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  extractProviderReasoning,
   extractToolCallsFromContent,
   googleThoughtSignature,
   isGeminiOpenAiCompatBackend,
@@ -7,6 +8,24 @@ import {
   looksLikeToolShapedContent,
   OpenAICompatibleLlmClient,
 } from "./llm.js";
+
+describe("extractProviderReasoning", () => {
+  it("reads reasoning_content when the provider already sent it", () => {
+    expect(
+      extractProviderReasoning({
+        reasoning_content: "Looks like win-1 is still on 0.2.10, so I’ll swap.",
+      }),
+    ).toBe("Looks like win-1 is still on 0.2.10, so I’ll swap.");
+  });
+
+  it("skips signature-shaped blobs", () => {
+    expect(
+      extractProviderReasoning({
+        reasoning: "CiQAAAA-gemini-thought-sig-that-is-long-enough-to-look-like-b64",
+      }),
+    ).toBeUndefined();
+  });
+});
 
 describe("extractToolCallsFromContent", () => {
   describe("OpenAI/Hermes JSON formats", () => {
@@ -386,6 +405,38 @@ describe("NVIDIA-shaped sequential tool calling", () => {
       [{ name: "servers_list", description: "l", parameters: {} }],
     );
     expect(result.toolCalls).toHaveLength(2);
+  });
+
+  it("surfaces provider reasoning_content on the completion", async () => {
+    const fetchImpl: typeof fetch = async () =>
+      new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: "",
+                reasoning_content:
+                  "Looks like win-1 is still on 0.2.10, so I’ll swap from the extracted tar.",
+                tool_calls: [{ id: "1", function: { name: "node_ping", arguments: "{}" } }],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    const client = new OpenAICompatibleLlmClient(
+      "https://api.venice.ai/api/v1",
+      "key",
+      "grok-4-5",
+      "openai_compatible",
+      { fetchImpl },
+    );
+    const result = await client.complete(
+      [{ role: "user", content: "update" }],
+      [{ name: "node_ping", description: "p", parameters: {} }],
+    );
+    expect(result.reasoning).toMatch(/win-1 is still on 0\.2\.10/);
+    expect(result.toolCalls?.[0]?.name).toBe("node_ping");
   });
 });
 

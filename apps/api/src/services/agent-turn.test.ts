@@ -164,6 +164,52 @@ describe("AgentTurn", () => {
     expect(watcherOutcome.result.conversationId).toBeTruthy();
   });
 
+  it("publishes now-line activity on unbound chat and keeps sanitized thinking", async () => {
+    const { plane, userId } = await tempPlane();
+    const events: Array<{
+      type: string;
+      label?: string;
+      thinking?: string;
+      serverId?: string;
+      phase?: string;
+    }> = [];
+    plane.eventHub.subscribe((e) => {
+      if (e.type === "agent.activity") events.push(e);
+    });
+    let round = 0;
+    const turn = new AgentTurn(plane, {
+      createLlmClient: async () => ({
+        mode: "openai_compatible",
+        async complete() {
+          round += 1;
+          if (round === 1) {
+            return {
+              content:
+                "Looks like win-1 is still on 0.2.10, so I’ll swap from the extracted tar.",
+              toolCalls: [{ id: "1", name: "servers_list", arguments: {} }],
+            };
+          }
+          return { content: "Listed." };
+        },
+      }),
+    });
+
+    const result = await turn.run({
+      source: "chat",
+      userId,
+      prompt: "what is on the board",
+      abortSignal: new AbortController().signal,
+    });
+
+    expect(result.reply).toBe("Listed.");
+    expect(events.some((e) => e.label === "Thinking…")).toBe(true);
+    expect(events.some((e) => e.thinking?.includes("win-1 is still on 0.2.10"))).toBe(true);
+    expect(events.some((e) => e.label === "Checking servers")).toBe(true);
+    expect(events.some((e) => e.label === "Done")).toBe(true);
+    expect(events.some((e) => e.serverId)).toBe(false);
+    expect(events.every((e) => !e.thinking || !/"name"\s*:/.test(e.thinking))).toBe(true);
+  });
+
   it("preserves chat bind errors as AgentTurnError codes", async () => {
     const { plane, userId } = await tempPlane();
     const turn = new AgentTurn(plane, {

@@ -53,6 +53,8 @@ export interface ChatStreamSink {
     status: "started" | "completed" | "failed";
     detail?: Record<string, unknown>;
   }) => void;
+  /** Sanitized later by the control plane — raw next-step prose from this round. */
+  onThinking?: (text: string) => void;
 }
 
 export interface OrchestratorOptions {
@@ -278,8 +280,14 @@ export class Orchestrator {
           ? completion.toolCalls.slice(0, maxToolCalls)
           : completion.toolCalls;
 
-      // Do not stream interim "thinking" text that accompanies tool calls — models often
-      // restate the plan each round, and concatenating those fragments garbles the UI.
+      // Do not stream interim thinking into the assistant bubble — that garbles
+      // the final reply. Emit it on the thinking sink so the dock now-line can
+      // show a sanitized rationale while tools run.
+      const thought = (completion.reasoning ?? completion.content).trim();
+      if (thought && !looksLikeToolShapedContent(thought)) {
+        stream?.onThinking?.(thought);
+      }
+
       messages.push({
         role: "assistant",
         content: completion.content,

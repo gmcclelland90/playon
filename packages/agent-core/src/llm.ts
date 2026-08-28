@@ -22,6 +22,11 @@ export interface LlmToolCall {
 export interface LlmCompletion {
   content: string;
   toolCalls?: LlmToolCall[];
+  /**
+   * Provider reasoning / thinking text when the backend already returns it
+   * (e.g. `reasoning_content`). Not a second model call. May be empty.
+   */
+  reasoning?: string;
 }
 
 export type LlmCompleteOptions = {
@@ -95,6 +100,8 @@ interface OpenAiChatResponse {
   choices?: Array<{
     message?: {
       content?: string | null;
+      reasoning_content?: string | null;
+      reasoning?: string | null;
       tool_calls?: Array<{
         id: string;
         function: { name: string; arguments: string };
@@ -103,6 +110,24 @@ interface OpenAiChatResponse {
     };
   }>;
   error?: { message?: string } | string;
+}
+
+/** Prefer provider reasoning fields; skip signature-shaped blobs. */
+export function extractProviderReasoning(
+  message:
+    | {
+        reasoning_content?: string | null;
+        reasoning?: string | null;
+      }
+    | undefined,
+): string | undefined {
+  if (!message) return undefined;
+  const raw = message.reasoning_content ?? message.reasoning;
+  if (typeof raw !== "string") return undefined;
+  const text = raw.trim();
+  if (text.length < 8) return undefined;
+  if (!/\s/.test(text) && /^[A-Za-z0-9+/=_-]{40,}$/.test(text)) return undefined;
+  return text;
 }
 
 function parseToolArguments(raw: string): Record<string, unknown> {
@@ -487,11 +512,14 @@ export class OpenAICompatibleLlmClient implements LlmClient {
         ? toolCalls.slice(0, this.maxToolCallsPerCompletion)
         : toolCalls;
 
+    const reasoning = extractProviderReasoning(message);
+
     return {
       // When we recovered tool calls from content, clear content so the orchestrator
       // doesn't surface raw function JSON as the user-visible reply.
       content: capped?.length && !message?.tool_calls?.length ? "" : content,
       toolCalls: capped?.length ? capped : undefined,
+      ...(reasoning ? { reasoning } : {}),
     };
   }
 }
