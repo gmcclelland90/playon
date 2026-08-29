@@ -23,4 +23,5 @@ export * from "./windows-start-node-cmd.js";
 export * from "./watcher.js";
 export * from "./udp-listen.js";
 export * from "./instance-liveness.js";
+export * from "./instance-game-port.js";
 export * from "./wsl-lan-publish.js";
