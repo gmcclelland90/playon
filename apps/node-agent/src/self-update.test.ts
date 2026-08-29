@@ -12,6 +12,9 @@ import {
   applyNodeInstallSwap,
   ensureWindowsStartNodeCmd,
   extractArchive,
+  ensureWindowsNodeEnvCmdCrlf,
+  isLockedFsError,
+  uniqueExtractDir,
   isAgentSupervised,
   isSystemdService,
   performNodeSelfUpdate,
@@ -705,6 +708,11 @@ describe("apply-self-update.ps1", () => {
     expect(src).not.toMatch(/\brequire\s*\(/);
     expect(src).toMatch(/function Write-PortableStartNodeCmd/);
     expect(src).toMatch(/if exist "%~dp0node\.env\.cmd" call "%~dp0node\.env\.cmd"/);
+    expect(src).toMatch(/Register-PlayOnNodeAgentTaskFromTree/);
+    expect(src).toMatch(/--require/);
+    expect(src).toMatch(/load-env\.cjs/);
+    expect(src).toMatch(/update_extract_busy|being used by another process|EBUSY/);
+    expect(src).not.toMatch(/>>.*agent-stdout\.log/);
     expect(src.indexOf("Write-PortableStartNodeCmd -Dir $TargetDir")).toBeGreaterThan(
       src.indexOf("Copying:"),
     );
@@ -716,6 +724,28 @@ describe("apply-self-update.ps1", () => {
     );
     expect(portable?.[1]).toBeTruthy();
     expect(startNodeCmdLoadsNodeEnv(portable![1])).toBe(true);
+    expect(portable![1]).not.toMatch(/>>/);
+  });
+});
+
+describe("elevate-node-agent.ps1", () => {
+  it("re-registers PlayOnNodeAgent as node.exe --require load-env.cjs", () => {
+    const src = fs.readFileSync(
+      path.join(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "..",
+        "..",
+        "..",
+        "deploy",
+        "windows",
+        "elevate-node-agent.ps1",
+      ),
+      "utf8",
+    );
+    expect(src).toMatch(/New-ScheduledTaskAction -Execute \$nodeExe/);
+    expect(src).toMatch(/--require/);
+    expect(src).toMatch(/load-env\.cjs/);
+    expect(src).not.toMatch(/New-ScheduledTaskAction -Execute \$start/);
   });
 });
 
@@ -735,5 +765,48 @@ describe("install-node.ps1 manifest extract (#868)", () => {
     expect(src).toMatch(/& tar --force-local -xzf/);
     expect(src).toMatch(/ProgressPreference/);
     expect(src.indexOf("& tar --force-local -xzf")).toBeLessThan(src.lastIndexOf("Expand-Archive"));
+    expect(src).toMatch(/Write-PlayOnCrlfText/);
+    expect(src).toMatch(/Write-PlayOnNodeEnv/);
+    expect(src).toMatch(/--require/);
+    expect(src).toMatch(/load-env\.cjs/);
+    expect(src).toMatch(/New-ScheduledTaskAction -Execute \$nodeExe/);
+    expect(src).not.toMatch(/Register-PlayOnNodeAgentTask -StartCmd/);
+    expect(src).not.toMatch(/>> `"\$logFile`"/);
+  });
+});
+
+describe("OTA extract fail-clean", () => {
+  it("classifies Windows lock errors and prefers a new extract dir", () => {
+    expect(isLockedFsError(Object.assign(new Error("busy"), { code: "EBUSY" }))).toBe(true);
+    expect(isLockedFsError(new Error("EPERM: being used by another process"))).toBe(true);
+    expect(isLockedFsError(Object.assign(new Error("nope"), { code: "ENOENT" }))).toBe(false);
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-extract-busy-"));
+    try {
+      const dest = path.join(root, "extracted");
+      fs.mkdirSync(dest);
+      expect(uniqueExtractDir(dest)).not.toBe(dest);
+      expect(uniqueExtractDir(path.join(root, "fresh"))).toBe(path.join(root, "fresh"));
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rewrites leftover LF node.env.cmd to CRLF without changing values", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-env-crlf-"));
+    try {
+      fs.writeFileSync(
+        path.join(root, "node.env.cmd"),
+        "set PLAYON_API_URL=http://home:8787\nset PLAYON_NODE_ID=win-1\n",
+        "utf8",
+      );
+      expect(ensureWindowsNodeEnvCmdCrlf(root)).toEqual({ repaired: true });
+      const after = fs.readFileSync(path.join(root, "node.env.cmd"), "utf8");
+      expect(after).toContain("\r\n");
+      expect(after.replace(/\r\n/g, "")).not.toContain("\n");
+      expect(after).toContain("set PLAYON_API_URL=http://home:8787");
+      expect(ensureWindowsNodeEnvCmdCrlf(root)).toEqual({ repaired: false });
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 });

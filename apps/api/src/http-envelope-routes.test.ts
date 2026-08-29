@@ -763,6 +763,7 @@ describe("transport error envelope on migrated routes", () => {
       ["/api/nodes/bootstrap-token", { method: "POST" }],
       ["/api/nodes/node-a", { method: "DELETE" }],
       ["/api/nodes/node-a/update", { method: "POST" }],
+      ["/api/nodes/node-a/restart", { method: "POST" }],
       ["/api/nodes/node-a/manage", { method: "POST" }],
       ["/api/nodes/node-a/manage/suggest", { method: "POST" }],
       ["/api/nodes/node-a/install-docker", { method: "POST" }],
@@ -774,6 +775,7 @@ describe("transport error envelope on migrated routes", () => {
     const app = createApp(db, config);
     const cases: Array<[string, RequestInit, string]> = [
       ["/api/nodes/ghost", { method: "DELETE" }, "remove_node_failed"],
+      ["/api/nodes/ghost/restart", { method: "POST" }, "node_restart_failed"],
       ["/api/nodes/ghost/manage/suggest", { method: "POST" }, "manage_suggest_failed"],
       [
         "/api/nodes/ghost/install-docker/token",

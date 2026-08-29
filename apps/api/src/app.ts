@@ -174,6 +174,7 @@ import { EventHub } from "./services/event-hub.js";
 import { safeQueryLive } from "./services/server-panel.js";
 import { execConsoleCommand } from "./services/server-console.js";
 import { nodeJobService } from "./services/node-jobs.js";
+import { nodeRestartService } from "./services/node-restart.js";
 import {
   nodeContainers,
   recordNodeContainers,
@@ -499,6 +500,27 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       throw serviceHttpError(err, {
         fallback: "node_update_failed",
         code: "node_update_failed",
+      });
+    }
+  });
+
+  app.post("/api/nodes/:nodeId/restart", async (c) => {
+    requireRole(c, "owner");
+    const nodeId = c.req.param("nodeId");
+    try {
+      const row = await db.select().from(nodes).where(eq(nodes.id, nodeId)).limit(1);
+      if (!row[0]) throw new Error(`unknown_node: ${nodeId}`);
+      nodeRestartService.request(nodeId);
+      return c.json({
+        ok: true as const,
+        nodeId,
+        restartRequested: true as const,
+      });
+    } catch (err) {
+      throw serviceHttpError(err, {
+        fallback: "node_restart_failed",
+        code: "node_restart_failed",
+        notFoundPrefixes: ["unknown_node"],
       });
     }
   });
@@ -2730,7 +2752,12 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       });
     }
 
-    return c.json({ ok: true, status: "online" as const });
+    const restartRequested = nodeRestartService.consume(body.nodeId);
+    return c.json({
+      ok: true,
+      status: "online" as const,
+      ...(restartRequested ? { restartRequested: true as const } : {}),
+    });
   });
 
   app.post("/api/nodes/:nodeId/logs", async (c) => {

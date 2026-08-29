@@ -571,7 +571,7 @@ export class UpdateService {
       };
     }
 
-    const preserve = ["data", "env", "node.env", "node.env.cmd"];
+    const preserve = ["data", "env", "node.env", "node.env.cmd", "node.env.json"];
     const downloadUrl = cacheBustUpdateDownloadUrl(asset.downloadUrl, asset.sha256);
     const homeDrivenWindows = windowsAgentNeedsHomeDrivenOta({
       os: row.os || "linux",

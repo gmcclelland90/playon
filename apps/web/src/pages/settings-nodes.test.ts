@@ -7,6 +7,7 @@ import {
   SETTINGS_NODE_ITEM_CLASS,
   SETTINGS_NODE_NOTES_CLASS,
   nodeDockerChip,
+  nodeRestartRowMessage,
   nodeUpdateInFlight,
   nodeUpdateRowMessage,
   nodeUsageChips,
@@ -96,6 +97,16 @@ describe("nodeUpdateRowMessage", () => {
   it("treats queued and running as in-flight", () => {
     expect(nodeUpdateInFlight({ jobId: "j", status: "queued" })).toBe(true);
     expect(nodeUpdateInFlight({ jobId: "j", status: "failed" })).toBe(false);
+  });
+});
+
+describe("nodeRestartRowMessage", () => {
+  it("explains the heartbeat path so operators skip Task Scheduler", () => {
+    expect(nodeRestartRowMessage(false)).toBeNull();
+    expect(nodeRestartRowMessage(true)).toEqual({
+      tone: "muted",
+      text: "Restart requested — the agent will exit on its next heartbeat.",
+    });
   });
 });
 

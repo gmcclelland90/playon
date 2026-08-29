@@ -9,6 +9,7 @@ import {
   reportJobProgress,
   reportJobResult,
 } from "./jobs.js";
+import { claimWatchdogIdleMs, createClaimLoopWatchdog } from "./claim-loop-watchdog.js";
 import { relaunchUpdatedAgent } from "./self-update.js";
 import { readAgentVersion } from "./version.js";
 import { startWslKeepalive } from "./wsl-keepalive.js";
@@ -25,32 +26,43 @@ const agentVersion = readAgentVersion();
 fs.mkdirSync(dataRoot, { recursive: true });
 
 let agentStopped = false;
+const claimWatchdog = createClaimLoopWatchdog({ idleMs: claimWatchdogIdleMs() });
 
 async function tickHeartbeat() {
   if (agentStopped) return;
   const payload = await buildHeartbeat({ nodeId, name, dataRoot, agentVersion });
   try {
-    await postHeartbeat(apiBase, payload, nodeToken);
+    const ack = await postHeartbeat(apiBase, payload, nodeToken);
     console.log(
       `[node-agent] heartbeat ok node=${nodeId} docker=${payload.docker} native=${payload.native} steamcmd=${payload.steamcmd}`,
     );
+    if (ack.restartRequested) {
+      console.log(`[node-agent] home requested restart; exiting so supervisor replaces us`);
+      stopAgentLoops();
+      process.exit(1);
+    }
   } catch (err) {
     console.warn(`[node-agent] heartbeat failed: ${(err as Error).message}`);
   }
+  claimWatchdog.check();
 }
 
 async function tickJobs() {
   try {
     const job = await claimNextJob(apiBase, nodeId, nodeToken);
+    claimWatchdog.markClaimPoll();
     if (!job) return;
     console.log(`[node-agent] job claim id=${job.id} kind=${job.kind}`);
+    claimWatchdog.markJobStarted(job.kind);
     try {
       const result = await executeJob(job, dataRoot, {
         onProgress: async (message) => {
+          claimWatchdog.markJobProgress();
           await reportJobProgress(apiBase, nodeId, job.id, message, nodeToken);
         },
       });
       await reportJobResult(apiBase, nodeId, job.id, { ok: true, result }, nodeToken);
+      claimWatchdog.markJobFinished();
       console.log(`[node-agent] job done id=${job.id}`);
       if (job.kind === "node_self_update") {
         // Re-advertise jobKinds/version before the control plane sends anything else.
@@ -74,10 +86,12 @@ async function tickJobs() {
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : "job_failed";
+      claimWatchdog.markJobFinished();
       await reportJobResult(apiBase, nodeId, job.id, { ok: false, error: message }, nodeToken);
       console.warn(`[node-agent] job failed id=${job.id}: ${message}`);
     }
   } catch (err) {
+    claimWatchdog.markClaimPoll();
     console.warn(`[node-agent] job poll failed: ${(err as Error).message}`);
   }
 }

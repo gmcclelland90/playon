@@ -15,9 +15,14 @@ if (-not $isAdmin) {
   throw "Run elevate-node-agent.ps1 from an elevated PowerShell (Run as administrator)."
 }
 
-$start = Join-Path $InstallRoot "start-node.cmd"
-if (-not (Test-Path $start)) {
-  throw "Missing $start - install the Windows node first (install-node.ps1)."
+$nodeExe = Join-Path $InstallRoot "runtime\node\node.exe"
+$agentJs = Join-Path $InstallRoot "apps\node-agent\dist\index.js"
+$loadEnv = Join-Path $InstallRoot "load-env.cjs"
+if (-not (Test-Path $agentJs)) {
+  throw "Missing $agentJs - install the Windows node first (install-node.ps1)."
+}
+if (-not (Test-Path $nodeExe)) {
+  throw "Missing $nodeExe - install the Windows node first (install-node.ps1)."
 }
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -30,8 +35,27 @@ Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyCon
     Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
   }
 
-Write-Host "==> Registering $TaskName as $userId (RunLevel Highest, S4U)"
-$action = New-ScheduledTaskAction -Execute $start -WorkingDirectory $InstallRoot
+if (-not (Test-Path $loadEnv)) {
+  $bundled = Join-Path $PSScriptRoot "load-env.cjs"
+  if (Test-Path $bundled) {
+    Copy-Item -Force $bundled $loadEnv
+  } else {
+    throw "Missing $loadEnv — copy deploy/windows/load-env.cjs next to the agent or re-run install-node.ps1."
+  }
+}
+
+# Leftover node.env.cmd must be CRLF so a human `call` cannot hang cmd.exe.
+$envCmd = Join-Path $InstallRoot "node.env.cmd"
+if (Test-Path $envCmd) {
+  $raw = [System.IO.File]::ReadAllText($envCmd)
+  $crlf = ($raw -replace "`r`n", "`n" -replace "`n", "`r`n")
+  if (-not $crlf.EndsWith("`r`n")) { $crlf += "`r`n" }
+  [System.IO.File]::WriteAllText($envCmd, $crlf, [System.Text.ASCIIEncoding]::new())
+}
+
+Write-Host "==> Registering $TaskName as $userId (RunLevel Highest, S4U, node.exe)"
+$arg = "--require `"$loadEnv`" `"$agentJs`""
+$action = New-ScheduledTaskAction -Execute $nodeExe -Argument $arg -WorkingDirectory $InstallRoot
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $settings = New-ScheduledTaskSettingsSet `
   -AllowStartIfOnBatteries `
@@ -57,6 +81,7 @@ Start-Sleep -Seconds 3
 
 $task = Get-ScheduledTask -TaskName $TaskName
 Write-Host "Principal: $($task.Principal.UserId) RunLevel=$($task.Principal.RunLevel) LogonType=$($task.Principal.LogonType)"
+Write-Host "Action: $nodeExe $arg"
 $alive = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue |
   Where-Object { $_.CommandLine -like "*$InstallRoot*" }
 if ($alive) {

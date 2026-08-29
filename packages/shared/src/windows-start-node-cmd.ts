@@ -28,9 +28,10 @@ export function startNodeCmdLoadsNodeEnv(contents: string): boolean {
 }
 
 /**
- * Portable start-node.cmd for the Windows node tarball and OTA repair.
- * `if exist` so a manual extract without env still starts; when `node.env.cmd`
- * is present (installer / preserved across OTA) the agent talks to Home.
+ * Leftover portable start-node.cmd for the tarball / a human double-click.
+ * The scheduled task must exec node.exe directly — this file is not the task
+ * action. No `>> logfile` (a locked redirect wedges cmd). `call node.env.cmd`
+ * is still here for vintage hosts; installers rewrite that file as CRLF.
  */
 export function bundledWindowsStartNodeCmd(): string {
   return [
@@ -38,11 +39,11 @@ export function bundledWindowsStartNodeCmd(): string {
     'cd /d "%~dp0"',
     'if exist "%~dp0node.env.cmd" call "%~dp0node.env.cmd"',
     'if defined PLAYON_DATA_ROOT if not exist "%PLAYON_DATA_ROOT%" mkdir "%PLAYON_DATA_ROOT%"',
-    "if defined PLAYON_DATA_ROOT (",
-    '  "%~dp0runtime\\node\\node.exe" "%~dp0apps\\node-agent\\dist\\index.js" >> "%PLAYON_DATA_ROOT%\\agent-stdout.log" 2>&1',
+    'if exist "%~dp0load-env.cjs" (',
+    '  "%~dp0runtime\\node\\node.exe" --require "%~dp0load-env.cjs" "%~dp0apps\\node-agent\\dist\\index.js"',
     ") else (",
     '  "%~dp0runtime\\node\\node.exe" "%~dp0apps\\node-agent\\dist\\index.js"',
     ")",
     "",
-  ].join("\n");
+  ].join("\r\n");
 }

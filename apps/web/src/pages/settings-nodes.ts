@@ -85,4 +85,12 @@ export function nodeUpdateInFlight(job: NodeUpdateJobView | null): boolean {
   return job?.status === "queued" || job?.status === "running";
 }
 
+export function nodeRestartRowMessage(pending: boolean): NodeUpdateRowMessage | null {
+  if (!pending) return null;
+  return {
+    tone: "muted",
+    text: "Restart requested — the agent will exit on its next heartbeat.",
+  };
+}
+
 export { nodeUsageChips } from "../format-usage";
