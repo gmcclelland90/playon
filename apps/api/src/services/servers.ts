@@ -78,6 +78,7 @@ import {
   decideReconcileInstance,
   decideStartInstance,
   deriveNodePresence,
+  instanceGamePortFromIniTexts,
   isLocalNodeId,
   isLoopbackJoinHost,
   isWslNodeId,
@@ -88,6 +89,7 @@ import {
   type HostPortsBound,
   type SkillMetadata,
 } from "@playon/shared";
+import { listLocalIniRelPaths } from "./instance-game-port-files.js";
 import { dispatchNodeJob, nodeServerRelPath } from "./node-runtime.js";
 import { checkNodeLoopbackTcp } from "./node-loopback-tcp.js";
 import { ensureWslLanPublish, releaseWslLanPublish } from "./wsl-lan-publish.js";
@@ -1086,11 +1088,38 @@ export class ServerService {
   }
 
   async joinInfoFor(server: ServerRecord): Promise<{ address: string; port: number }> {
-    const skillName = this.readSkillName(server.dataPath);
     return {
       address: await this.resolveJoinAddress(server),
-      port: this.gamePortForSkill(skillName, server.game),
+      port: await this.advertisedGamePort(server),
     };
+  }
+
+  /**
+   * Port players join / health / reap probe. Instance DefaultPort (or UDPPort)
+   * wins; skill metadata default is only the fallback when the jail has none.
+   */
+  async advertisedGamePort(server: ServerRecord): Promise<number> {
+    const fromInstance = await this.readInstanceGamePort(server);
+    if (fromInstance != null && fromInstance > 0) return fromInstance;
+    return this.gamePortForSkill(this.readSkillName(server.dataPath), server.game);
+  }
+
+  private async readInstanceGamePort(server: ServerRecord): Promise<number | null> {
+    const rels = await this.instanceIniRelPaths(server);
+    if (!rels.length) return null;
+    const texts: string[] = [];
+    for (const rel of rels) {
+      const text = await this.readServerText(server, rel);
+      if (text) texts.push(text);
+    }
+    return instanceGamePortFromIniTexts(texts);
+  }
+
+  private async instanceIniRelPaths(server: ServerRecord): Promise<string[]> {
+    const local = listLocalIniRelPaths(server.dataPath);
+    if (local.length) return local;
+    if (!this.isRemoteNode(server)) return [];
+    return (await this.collectNodeConfigCandidates(server)).filter((rel) => /\.ini$/i.test(rel));
   }
 
   private async nodeIsOnline(nodeId: string | null | undefined): Promise<boolean> {
@@ -1246,7 +1275,7 @@ export class ServerService {
 
   private async probeAdvertisedGamePorts(server: ServerRecord): Promise<HostPortsBound> {
     const skillName = this.readSkillName(server.dataPath);
-    const port = this.gamePortForSkill(skillName, server.game);
+    const port = await this.advertisedGamePort(server);
     if (!port) return null;
     const proto = this.gamePortProtocolForSkill(skillName);
     try {

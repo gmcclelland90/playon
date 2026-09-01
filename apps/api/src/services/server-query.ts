@@ -75,18 +75,27 @@ export class ServerQueryService {
       return offlineState("query_dialect_none");
     }
 
-    const { gamePort, queryPort } = this.resolveQueryPorts(skillName, meta);
+    const { gamePort: skillGamePort, queryPort: skillQueryPort } = this.resolveQueryPorts(
+      skillName,
+      meta,
+    );
+    const advertised = await this.dbServers.advertisedGamePort(server);
+    const gamePort = advertised > 0 ? advertised : skillGamePort;
+    const queryPort =
+      skillQueryPort === skillGamePort ? gamePort : skillQueryPort;
     // Probe the node players join (LAN joinHost / Home advertise), not API loopback.
     const host = await this.dbServers.resolveJoinAddress(server);
     const connectorRel =
       meta?.queryConnector ?? marker.queryConnector ?? DEFAULT_QUERY_CONNECTOR;
+    const skillPorts =
+      meta?.ports.map((p) => p.default).filter((p): p is number => Boolean(p)) ?? [];
     const target: QueryTarget = {
       host,
       port: primaryPortForDialect(dialect, { gamePort, queryPort }),
       queryPort,
       gamePort,
       timeoutMs: 2500,
-      allowedPorts: meta?.ports.map((p) => p.default).filter((p): p is number => Boolean(p)) ?? [],
+      allowedPorts: [...new Set([...skillPorts, gamePort, queryPort].filter((p) => p > 0))],
     };
 
     try {

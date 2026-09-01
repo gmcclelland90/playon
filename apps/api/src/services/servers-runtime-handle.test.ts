@@ -1,3 +1,4 @@
+import dgram from "node:dgram";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +12,7 @@ import type {
   ProcessSpec,
   ProcessSupervisor,
 } from "@playon/runtime";
+import { probeUdpListen } from "@playon/runtime";
 import type { NodeJobKind } from "@playon/shared";
 import type { AppConfig } from "../config.js";
 import { createDb, type Db } from "../db/client.js";
@@ -276,6 +278,58 @@ vi.mock("@playon/runtime", async (importOriginal) => {
 });
 
 const temps: Array<{ root: string; sqlite: Database.Database }> = [];
+const udpSockets: dgram.Socket[] = [];
+
+function writePzSkill(skillsRoot: string): void {
+  const skillDir = path.join(skillsRoot, "games", "project-zomboid");
+  fs.mkdirSync(path.join(skillDir, "guides"), { recursive: true });
+  fs.writeFileSync(
+    path.join(skillDir, "metadata.yaml"),
+    [
+      "name: games.project-zomboid",
+      "version: 0.1.0",
+      "game: Project Zomboid",
+      "containerSupport: none",
+      "ports:",
+      "  - name: game",
+      "    protocol: udp",
+      "    default: 16261",
+      "healthChecks: []",
+      "dependencies: []",
+      "requiredTools: []",
+      "",
+    ].join("\n"),
+  );
+  fs.writeFileSync(path.join(skillDir, "guides", "INSTALL.md"), "# PZ\n");
+}
+
+function writePzIni(dataPath: string, name: string, defaultPort: number): void {
+  const dir = path.join(dataPath, "home", "Zomboid", "Server");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, `${name}.ini`),
+    [`DefaultPort=${defaultPort}`, `UDPPort=${defaultPort + 1}`, `PublicName=${name}`, ""].join(
+      "\n",
+    ),
+  );
+}
+
+function bindUdp(port = 0): Promise<{ socket: dgram.Socket; port: number }> {
+  return new Promise((resolve, reject) => {
+    const socket = dgram.createSocket("udp4");
+    socket.once("error", reject);
+    socket.bind(port, "127.0.0.1", () => {
+      const addr = socket.address();
+      if (typeof addr === "string") {
+        socket.close();
+        reject(new Error("udp_bind_failed"));
+        return;
+      }
+      udpSockets.push(socket);
+      resolve({ socket, port: addr.port });
+    });
+  });
+}
 
 function findRepoRoot(): string {
   let dir = path.resolve(process.cwd());
@@ -351,6 +405,30 @@ async function nativeServer(opts?: { startable?: boolean }): Promise<{
   return { db, config, servers, id: server.id, gameDir, dataPath: server.dataPath };
 }
 
+/** Native PZ instance whose advertised port is DefaultPort, not skill 16261. */
+async function pzNativeServer(opts: { defaultPort: number }): Promise<{
+  db: Db;
+  config: AppConfig;
+  servers: ServerService;
+  id: string;
+  gameDir: string;
+}> {
+  const { db, config, servers } = tempEnv();
+  writePzSkill(path.join(config.dataRoot!, "skills"));
+  const server = await servers.createFromSkill({
+    skillName: "games.project-zomboid",
+    serverName: "Hub",
+  });
+  writePzIni(server.dataPath, "Hub", opts.defaultPort);
+  const gameDir = path.join(server.dataPath, "game");
+  fs.mkdirSync(gameDir, { recursive: true });
+  fs.writeFileSync(path.join(gameDir, "start.sh"), "#!/bin/bash\nsleep 30\n");
+  fs.writeFileSync(path.join(gameDir, "start.bat"), "@echo off\n");
+  fake.reset();
+  host.reset();
+  return { db, config, servers, id: server.id, gameDir };
+}
+
 /** A docker server whose container only exists on a node. */
 async function remoteServer(): Promise<{
   db: Db;
@@ -401,6 +479,14 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  while (udpSockets.length) {
+    const socket = udpSockets.pop();
+    try {
+      socket?.close();
+    } catch {
+      /* ignore */
+    }
+  }
   for (const entry of temps.splice(0)) {
     entry.sqlite.close();
     fs.rmSync(entry.root, { recursive: true, force: true });
@@ -736,6 +822,60 @@ describe("local native lifecycle through ServerRuntimeHandle", () => {
     expect(row!.status).toBe("error");
     expect(host.calls).toContain(`reclaim:server-${id}:${gameDir}`);
     expect(host.running).toBeNull();
+  });
+
+  it("does not reap a live PZ instance when skill default 16261 is unbound but DefaultPort is bound", async () => {
+    const prevSkip = process.env.PLAYON_SKIP_HOST_PORT_PROBE;
+    delete process.env.PLAYON_SKIP_HOST_PORT_PROBE;
+    try {
+      const bound = await bindUdp();
+      const { servers, id, gameDir } = await pzNativeServer({ defaultPort: bound.port });
+      await servers.start(id);
+      servers.portDeadGraceMs = 0;
+      servers.autoRestartOnDeadInstance = false;
+      host.calls.length = 0;
+
+      const row = await servers.get(id);
+      const join = await servers.joinInfoFor(row!);
+
+      expect(servers.gamePortForSkill("games.project-zomboid")).toBe(16261);
+      expect(join.port).toBe(bound.port);
+      expect(join.port).not.toBe(16261);
+      expect(row!.status).toBe("running");
+      expect(host.running).not.toBeNull();
+      expect(host.calls).not.toContain(`reclaim:server-${id}:${gameDir}`);
+    } finally {
+      if (prevSkip == null) delete process.env.PLAYON_SKIP_HOST_PORT_PROBE;
+      else process.env.PLAYON_SKIP_HOST_PORT_PROBE = prevSkip;
+    }
+  });
+
+  it("reaps a live PZ instance when its own DefaultPort is unbound after grace", async () => {
+    const prevSkip = process.env.PLAYON_SKIP_HOST_PORT_PROBE;
+    delete process.env.PLAYON_SKIP_HOST_PORT_PROBE;
+    try {
+      const parked = await bindUdp();
+      const defaultPort = parked.port;
+      parked.socket.close();
+      const idx = udpSockets.indexOf(parked.socket);
+      if (idx >= 0) udpSockets.splice(idx, 1);
+
+      const { servers, id, gameDir } = await pzNativeServer({ defaultPort });
+      await servers.start(id);
+      servers.portDeadGraceMs = 0;
+      servers.autoRestartOnDeadInstance = false;
+      if (probeUdpListen(defaultPort).probe === "unavailable") return;
+      host.calls.length = 0;
+
+      const row = await servers.get(id);
+
+      expect(row!.status).toBe("error");
+      expect(host.calls).toContain(`reclaim:server-${id}:${gameDir}`);
+      expect(host.running).toBeNull();
+    } finally {
+      if (prevSkip == null) delete process.env.PLAYON_SKIP_HOST_PORT_PROBE;
+      else process.env.PLAYON_SKIP_HOST_PORT_PROBE = prevSkip;
+    }
   });
 
   it("health restart reaps a leftover and starts exactly one instance", async () => {
