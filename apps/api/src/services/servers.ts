@@ -1221,6 +1221,17 @@ export class ServerService {
     return rows[0] ? toRecord(rows[0]) : null;
   }
 
+  /**
+   * Change only the PlayOn display name. Id, dataPath, ports, runtime, and
+   * on-disk world folders stay put — never used to rename native worlds.
+   */
+  async rename(id: string, name: string): Promise<ServerRecord | null> {
+    const existing = await this.getRaw(id);
+    if (!existing) return null;
+    await this.db.update(servers).set({ name }).where(eq(servers.id, id));
+    return (await this.getRaw(id))!;
+  }
+
   /** Runtime status from the handle, or null when the runtime could not answer at all. */
   private async runtimeStatus(server: ServerRecord): Promise<ServerRuntimeStatus | null> {
     try {

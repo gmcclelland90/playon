@@ -16,7 +16,7 @@ type Envelope = { error: string; code?: string; details?: unknown };
 
 /**
  * Routes migrated to the shared envelope: session, servers list/detail, every
- * mutating server route (create, import, start, stop, restart, delete, relocate,
+ * mutating server route (create, import, start, stop, restart, rename, delete, relocate,
  * console), server health, the skill library, watchers, the player panel, the
  * nodes (admin + node-token protocol), MCP, snapshots, backups, settings and
  * users groups, and the agent conversation surface (chat, conversations,
@@ -288,6 +288,7 @@ describe("transport error envelope on migrated routes", () => {
       ["/api/servers/srv-1/restart", { method: "POST" }],
       ["/api/servers/srv-1/relocate", { method: "POST" }],
       ["/api/servers/srv-1/console", { method: "POST" }],
+      ["/api/servers/srv-1", { method: "PATCH", body: JSON.stringify({ name: "Renamed" }) }],
       ["/api/servers/srv-1", { method: "DELETE" }],
     ];
 
@@ -348,6 +349,14 @@ describe("transport error envelope on migrated routes", () => {
     const relocatedBody = (await relocated.json()) as Envelope;
     expect(relocatedBody.code).toBe("server_relocate_failed");
     expect(relocatedBody.error).toMatch(/unknown_server/);
+
+    const renamed = await app.request("/api/servers/unknown", {
+      method: "PATCH",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ name: "New label" }),
+    });
+    expect(renamed.status).toBe(404);
+    expect(await renamed.json()).toEqual({ error: "not_found", code: "server_not_found" });
   });
 
   it("renders request-contract failures as 400 invalid_request with issues", async () => {
@@ -358,6 +367,15 @@ describe("transport error envelope on migrated routes", () => {
       ["/api/servers/import/sftp", { host: "h", remotePath: "/x" }, "username"],
       ["/api/servers/srv-1/relocate", {}, "targetNodeId"],
     ];
+
+    const renameBad = await app.request("/api/servers/srv-1", {
+      method: "PATCH",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ name: "" }),
+    });
+    expect(renameBad.status).toBe(400);
+    const renameEnvelope = (await renameBad.json()) as Envelope;
+    expect(renameEnvelope).toMatchObject({ error: "invalid_request", code: "invalid_request" });
 
     for (const [path_, body, expected] of cases) {
       const res = await app.request(path_, {

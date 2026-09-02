@@ -3,6 +3,8 @@ import {
   ImportLocalServerRequestSchema,
   ImportSftpServerRequestSchema,
   RelocateServerRequestSchema,
+  RenameServerRequestSchema,
+  SERVER_DISPLAY_NAME_MAX,
   WriteServerFsContentRequestSchema,
 } from "./servers.js";
 
@@ -42,6 +44,21 @@ describe("mutating server route request contracts", () => {
     expect(RelocateServerRequestSchema.parse({ targetNodeId: "node-a" })).toEqual({
       targetNodeId: "node-a",
     });
+  });
+
+  it("accepts a trimmed display name and rejects empty or oversized names", () => {
+    expect(RenameServerRequestSchema.parse({ name: "  LAN Zomboid  " })).toEqual({
+      name: "LAN Zomboid",
+    });
+    expect(RenameServerRequestSchema.safeParse({ name: "   " }).success).toBe(false);
+    expect(RenameServerRequestSchema.safeParse({ name: "" }).success).toBe(false);
+    expect(
+      RenameServerRequestSchema.safeParse({ name: "x".repeat(SERVER_DISPLAY_NAME_MAX + 1) })
+        .success,
+    ).toBe(false);
+    expect(
+      RenameServerRequestSchema.parse({ name: "x".repeat(SERVER_DISPLAY_NAME_MAX) }).name,
+    ).toHaveLength(SERVER_DISPLAY_NAME_MAX);
   });
 
   it("accepts a server fs write with empty content", () => {

@@ -37,6 +37,7 @@ import {
 import { ChatChannelList } from "../components/ChatChannelList";
 import { ChatNowLine } from "../components/ChatNowLine";
 import { ChatMarkdown } from "../components/ChatMarkdown";
+import { ServerNameControl } from "../components/ServerNameControl";
 import { chatNowView } from "../chat-now";
 import { mergeNodeContainerInventory } from "../components/agent-canvas/map-node-layout";
 import { MapAddNodePanel } from "../components/MapAddNodePanel";
@@ -194,6 +195,8 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const [opsError, setOpsError] = useState<string | null>(null);
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState(false);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
   const [dockTab, setDockTab] = useState<DockTab>("chat");
   const [consoleOpen, setConsoleOpen] = useState(true);
   const [selectedAnchor, setSelectedAnchor] = useState<SelectedAnchor | null>(null);
@@ -252,6 +255,8 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     setSelectedId(undefined);
     setActiveKey(COMPOSE_CHANNEL_KEY);
     setOpsError(null);
+    setRenameOpen(false);
+    setRenameError(null);
     setDockTab("chat");
     setConsoleOpen(false);
     setSelectedAnchor(null);
@@ -271,6 +276,8 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     setScanNodeId(null);
     setAddNodeOpen(false);
     setOpsError(null);
+    setRenameOpen(false);
+    setRenameError(null);
     try {
       localStorage.removeItem("playon.lastServerId");
     } catch {
@@ -287,6 +294,8 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     setAddNodeOpen(false);
     if (id !== selectedId) {
       setConsoleOpen(false);
+      setRenameOpen(false);
+      setRenameError(null);
     }
     setSelectedId(id);
     setActiveKey(serverChannelKey(id));
@@ -535,6 +544,18 @@ export function CanvasPage({ user }: { user: PublicUser }) {
       await refreshServer(data.server.id);
     },
     onError: (err) => setOpsError((err as Error).message),
+  });
+  const rename = useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => api.renameServer(id, name),
+    onMutate: () => {
+      setRenameError(null);
+      setOpsError(null);
+    },
+    onSuccess: async (data) => {
+      setRenameOpen(false);
+      await refreshServer(data.server.id);
+    },
+    onError: (err) => setRenameError((err as Error).message),
   });
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteServer(id),
@@ -956,6 +977,23 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         showAddButton={!dockOpen && !addNodeOpen && !scanNodeId}
       />
 
+      {selected && selectedId && selectedAnchor ? (
+        <div
+          className="server-tile-rename"
+          style={{ left: selectedAnchor.x, top: selectedAnchor.y }}
+        >
+          <ServerNameControl
+            name={selected.name}
+            showName={false}
+            editing={renameOpen}
+            onEditingChange={setRenameOpen}
+            pending={rename.isPending}
+            error={renameError}
+            onSave={(name) => rename.mutateAsync({ id: selectedId, name })}
+          />
+        </div>
+      ) : null}
+
       {consoleOpen && selectedId && selected ? (
         <ServerConsoleBubble
           serverId={selectedId}
@@ -996,7 +1034,18 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         >
           <div className="canvas-dock-head">
             <div className="dash-section-head">
-              <h3>{dockTitle}</h3>
+              {selected && selectedId && !selectedAnchor ? (
+                <ServerNameControl
+                  name={selected.name}
+                  editing={renameOpen}
+                  onEditingChange={setRenameOpen}
+                  pending={rename.isPending}
+                  error={renameError}
+                  onSave={(name) => rename.mutateAsync({ id: selectedId, name })}
+                />
+              ) : (
+                <h3 title={selected?.name ?? dockTitle}>{dockTitle}</h3>
+              )}
               <div className="btn-row">
                 {selectedId ? (
                   <button
@@ -1163,6 +1212,14 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                   onClick={() => restart.mutate(selectedId)}
                 >
                   {restart.isPending ? "Restarting…" : "Restart"}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-compact"
+                  disabled={opsBusy || rename.isPending}
+                  onClick={() => setRenameOpen(true)}
+                >
+                  Rename
                 </button>
                 <button
                   type="button"

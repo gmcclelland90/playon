@@ -40,6 +40,16 @@ describe("chat channel identity", () => {
     expect(items[2]).toMatchObject({ title: "Zomboid", pending: false });
   });
 
+  it("uses the current display name as the channel title after a rename", () => {
+    const items = listChatChannels({
+      servers: [{ id: "B4KR2xjZnLFZjqrtqqvvL", name: "Friday night PZ" }],
+    });
+    expect(items[1]).toMatchObject({
+      key: "server:B4KR2xjZnLFZjqrtqqvvL",
+      title: "Friday night PZ",
+    });
+  });
+
   it("keeps an in-flight compose channel when switching to another server", () => {
     const inflight = {
       conversationId: "c-add",

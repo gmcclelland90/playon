@@ -1067,6 +1067,11 @@ export const api = {
     }),
   stopServer: (id: string) =>
     request<{ server: ServerRow }>(`/api/servers/${id}/stop`, { method: "POST" }),
+  renameServer: (id: string, name: string) =>
+    request<{ server: ServerRow }>(`/api/servers/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ name }),
+    }),
   deleteServer: (id: string) =>
     request<{ ok: true; removed: { id: string; name: string } }>(`/api/servers/${id}`, {
       method: "DELETE",

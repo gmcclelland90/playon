@@ -991,6 +991,7 @@ body.server-console-resizing iframe {
 .canvas-dock-head h3 {
   margin: 0;
   font-size: 1.125rem;
+  overflow-wrap: anywhere;
 }
 
 .canvas-dock-hint {
@@ -3764,6 +3765,67 @@ a.btn {
   .files-back-to-tree {
     display: none;
   }
+}
+
+.server-name-control {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.server-name-control.chip {
+  flex: 0 0 auto;
+}
+
+.server-name-label {
+  margin: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.server-name-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.server-name-editor input {
+  min-width: 8rem;
+  flex: 1 1 10rem;
+  max-width: 18rem;
+  padding: 0.28rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid oklch(0.45 0.04 350);
+  background: oklch(0.18 0.02 350);
+  color: inherit;
+  font: inherit;
+}
+
+.server-tile-rename {
+  position: absolute;
+  z-index: 4;
+  transform: translate(-50%, 58px);
+  pointer-events: auto;
+}
+
+.server-tile-rename .server-name-control,
+.server-tile-rename .server-name-editor {
+  padding: 0.2rem 0.4rem;
+  background: oklch(0.16 0.02 350 / 0.94);
+  border: 1px solid oklch(0.45 0.04 350);
+  border-radius: 8px;
+  box-shadow: 0 8px 20px oklch(0.08 0.02 350 / 0.45);
+}
+
+.server-tile-rename .server-name-editor input {
+  max-width: 12rem;
 }
 
 @media (prefers-reduced-motion: reduce) {
