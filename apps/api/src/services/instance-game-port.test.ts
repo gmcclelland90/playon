@@ -100,6 +100,52 @@ function bindUdp(port = 0): Promise<{ socket: dgram.Socket; port: number }> {
   });
 }
 
+function releaseUdp(socket: dgram.Socket): void {
+  try {
+    socket.close();
+  } catch {
+    /* ignore */
+  }
+  const idx = sockets.indexOf(socket);
+  if (idx >= 0) sockets.splice(idx, 1);
+}
+
+/** Ephemeral bind that is never the PZ skill-default 16261 (lab NZL may own that). */
+async function bindUdpAvoiding(avoid: readonly number[]): Promise<{ socket: dgram.Socket; port: number }> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const bound = await bindUdp();
+    if (!avoid.includes(bound.port)) return bound;
+    releaseUdp(bound.socket);
+  }
+  throw new Error("udp_bind_avoid_failed");
+}
+
+/** Port we just released — confirmed not listed as listening when the probe works. */
+async function unusedUdpPort(avoid: readonly number[]): Promise<number> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const parked = await bindUdpAvoiding(avoid);
+    const port = parked.port;
+    releaseUdp(parked.socket);
+    const probe = probeUdpListen(port);
+    if (probe.probe === "unavailable" || probe.listening !== true) return port;
+  }
+  throw new Error("unused_udp_port_failed");
+}
+
+/**
+ * Reproduce the lab: NZL may already bind skill-default 16261. Bind it only when
+ * free — never steal a live friend-server socket.
+ */
+async function occupySkillDefaultIfFree(): Promise<void> {
+  const existing = probeUdpListen(16261);
+  if (existing.probe === "unavailable" || existing.listening === true) return;
+  try {
+    await bindUdp(16261);
+  } catch {
+    /* raced with a real bind; leave it */
+  }
+}
+
 afterEach(() => {
   while (sockets.length) {
     const socket = sockets.pop();
@@ -178,9 +224,11 @@ describe("instance DefaultPort vs skill default 16261", () => {
         skillName: "games.project-zomboid",
         serverName: "Frontier",
       });
-      const bound = await bindUdp();
+      await occupySkillDefaultIfFree();
+      const bound = await bindUdpAvoiding([16261]);
+      const frontierPort = await unusedUdpPort([16261, bound.port]);
       writeInstanceIni(hub.dataPath, "Hub", bound.port, bound.port + 1);
-      writeInstanceIni(frontier.dataPath, "Frontier", 16265, 16266);
+      writeInstanceIni(frontier.dataPath, "Frontier", frontierPort, frontierPort + 1);
       servers.portDeadGraceMs = 0;
 
       const hubHealth = await servers.evaluateHostPortsHealth({ ...hub, status: "running" });
@@ -188,7 +236,6 @@ describe("instance DefaultPort vs skill default 16261", () => {
         ...frontier,
         status: "running",
       });
-      const skillDefault = probeUdpListen(16261);
 
       if (probeUdpListen(bound.port).probe === "unavailable") {
         expect(hubHealth.ok).toBe(true);
@@ -196,13 +243,17 @@ describe("instance DefaultPort vs skill default 16261", () => {
         return;
       }
 
-      expect(skillDefault.listening).not.toBe(true);
+      // 16261 may be live (lab NZL, or occupySkillDefaultIfFree). Frontier on a
+      // different unbound DefaultPort must still look dead — that is the proof
+      // we probe the instance port, not the skill default.
+      expect(bound.port).not.toBe(16261);
+      expect(frontierPort).not.toBe(16261);
       expect(await servers.hostGamePortsBound(hub)).toBe(true);
       expect(await servers.hostGamePortsBound(frontier)).toBe(false);
       expect(hubHealth.ok).toBe(true);
       expect(frontierHealth.ok).toBe(false);
       expect(await servers.joinInfoFor(hub)).toMatchObject({ port: bound.port });
-      expect(await servers.joinInfoFor(frontier)).toMatchObject({ port: 16265 });
+      expect(await servers.joinInfoFor(frontier)).toMatchObject({ port: frontierPort });
     } finally {
       if (prevSkip == null) delete process.env.PLAYON_SKIP_HOST_PORT_PROBE;
       else process.env.PLAYON_SKIP_HOST_PORT_PROBE = prevSkip;
