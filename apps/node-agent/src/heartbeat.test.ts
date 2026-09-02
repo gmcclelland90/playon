@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { NodeHeartbeatSchema } from "@playon/shared";
-import { buildHeartbeat } from "./heartbeat.js";
+import { buildHeartbeat, postHeartbeat } from "./heartbeat.js";
 import { SUPPORTED_JOB_KINDS } from "./jobs.js";
 
 describe("buildHeartbeat", () => {
@@ -66,6 +66,36 @@ describe("buildHeartbeat", () => {
       expect(hb.cpuPercent).toBeGreaterThanOrEqual(0);
       expect(hb.cpuPercent).toBeLessThanOrEqual(100);
     }
+  });
+});
+
+describe("postHeartbeat", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("reads restartRequested from the heartbeat ACK", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ ok: true, status: "online", restartRequested: true }),
+      })),
+    );
+    const ack = await postHeartbeat(
+      "http://home:8787",
+      {
+        nodeId: "playon-win-1",
+        name: "playon-win-1",
+        os: "windows",
+        docker: false,
+        native: true,
+        steamcmd: false,
+        agentVersion: "0.2.13",
+      },
+      "tok",
+    );
+    expect(ack).toEqual({ ok: true, status: "online", restartRequested: true });
   });
 });
 

@@ -77,11 +77,18 @@ export async function buildHeartbeat(opts: {
   };
 }
 
+export type HeartbeatAck = {
+  ok: boolean;
+  status?: string;
+  /** Home Restart on the node tile — claim loop may be dead; heartbeat is the control path. */
+  restartRequested?: boolean;
+};
+
 export async function postHeartbeat(
   apiBase: string,
   payload: NodeHeartbeat,
   token?: string,
-): Promise<void> {
+): Promise<HeartbeatAck> {
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (token?.trim()) headers.authorization = `Bearer ${token.trim()}`;
   const res = await fetch(`${apiBase.replace(/\/$/, "")}/api/nodes/heartbeat`, {
@@ -92,4 +99,14 @@ export async function postHeartbeat(
   if (!res.ok) {
     throw new Error(`heartbeat failed: ${res.status} ${await res.text()}`);
   }
+  const body = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    status?: string;
+    restartRequested?: boolean;
+  };
+  return {
+    ok: body.ok !== false,
+    ...(typeof body.status === "string" ? { status: body.status } : {}),
+    ...(body.restartRequested === true ? { restartRequested: true } : {}),
+  };
 }

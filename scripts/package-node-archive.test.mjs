@@ -42,6 +42,10 @@ assert.ok(
   "package-node.mjs must ship start-node.cmd from bundledWindowsStartNodeCmd (call node.env.cmd)",
 );
 assert.ok(
+  src.includes("windowsLoadEnvCjsSource"),
+  "package-node.mjs must ship load-env.cjs so the task can exec node.exe without cmd.exe",
+);
+assert.ok(
   !src.includes('"%~dp0runtime\\\\node\\\\node.exe" "%~dp0apps\\\\node-agent\\\\dist\\\\index.js"'),
   "package-node.mjs must not ship the vintage start-node.cmd that skipped node.env.cmd",
 );

@@ -12,12 +12,17 @@ describe("Windows start-node.cmd Home wiring", () => {
     expect(VINTAGE_PACKAGED_WINDOWS_START_NODE_CMD).not.toMatch(/node\.env\.cmd/i);
   });
 
-  it("bundled launcher calls node.env.cmd when present", () => {
+  it("bundled leftover launcher calls node.env.cmd and does not redirect a locked log", () => {
     const cmd = bundledWindowsStartNodeCmd();
     expect(startNodeCmdLoadsNodeEnv(cmd)).toBe(true);
     expect(cmd).toMatch(/if exist "%~dp0node\.env\.cmd" call "%~dp0node\.env\.cmd"/);
     expect(cmd).toContain("runtime\\node\\node.exe");
     expect(cmd).toContain("apps\\node-agent\\dist\\index.js");
+    expect(cmd).toContain("--require");
+    expect(cmd).toContain("load-env.cjs");
+    expect(cmd).not.toMatch(/>>/);
+    expect(cmd).not.toMatch(/agent-stdout\.log/);
+    expect(cmd.replace(/\r\n/g, "")).not.toContain("\n");
   });
 
   it("accepts installer-style absolute call + CRLF", () => {

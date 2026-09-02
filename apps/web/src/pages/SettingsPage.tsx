@@ -24,6 +24,7 @@ import {
   SETTINGS_NODE_ITEM_CLASS,
   SETTINGS_NODE_NOTES_CLASS,
   nodeDockerChip,
+  nodeRestartRowMessage,
   nodeUpdateInFlight,
   nodeUpdateRowMessage,
 } from "./settings-nodes";
@@ -158,6 +159,7 @@ export function SettingsPage({ user }: { user: PublicUser }) {
 
   const [nodeNotice, setNodeNotice] = useState<string | null>(null);
   const [nodeError, setNodeError] = useState<string | null>(null);
+  const [nodeRestartPending, setNodeRestartPending] = useState<Record<string, boolean>>({});
   const [aboutError, setAboutError] = useState<string | null>(null);
   /** Shown after Remove hits node_has_servers for this id. */
   const [forceRemoveNodeId, setForceRemoveNodeId] = useState<string | null>(null);
@@ -441,6 +443,23 @@ export function SettingsPage({ user }: { user: PublicUser }) {
       setNodeError(null);
       await qc.invalidateQueries({ queryKey: ["updates"] });
       await qc.invalidateQueries({ queryKey: ["nodes"] });
+    },
+    onError: (err) => setNodeError((err as Error).message),
+  });
+
+  const restartNodeMut = useMutation({
+    mutationFn: (nodeId: string) => api.restartNode(nodeId),
+    onSuccess: async (_data, nodeId) => {
+      setNodeRestartPending((prev) => ({ ...prev, [nodeId]: true }));
+      setNodeError(null);
+      await qc.invalidateQueries({ queryKey: ["nodes"] });
+      window.setTimeout(() => {
+        setNodeRestartPending((prev) => {
+          const next = { ...prev };
+          delete next[nodeId];
+          return next;
+        });
+      }, 20_000);
     },
     onError: (err) => setNodeError((err as Error).message),
   });
@@ -1220,6 +1239,29 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                         {thisNodeUpdating ? "Updating…" : "Update"}
                       </button>
                     ) : null}
+                    {user.role === "owner" && !pendingSetup ? (
+                      <button
+                        className="btn"
+                        type="button"
+                        title="Restart the node agent. Uses the next heartbeat so a dead claim loop still recovers — no Task Scheduler."
+                        disabled={restartNodeMut.isPending && restartNodeMut.variables === n.id}
+                        onClick={() => {
+                          if (
+                            !window.confirm(
+                              `Restart the agent on “${n.name}”? In-flight jobs stop; the scheduled task or systemd starts it again.`,
+                            )
+                          ) {
+                            return;
+                          }
+                          setNodeError(null);
+                          restartNodeMut.mutate(n.id);
+                        }}
+                      >
+                        {restartNodeMut.isPending && restartNodeMut.variables === n.id
+                          ? "Restarting…"
+                          : "Restart"}
+                      </button>
+                    ) : null}
                     {n.id !== "local" ? (
                       <button
                         className="btn btn-danger"
@@ -1281,6 +1323,11 @@ export function SettingsPage({ user }: { user: PublicUser }) {
                   <p className="muted status-inline">
                     This node can place Windows container images (Docker Engine in Windows container
                     mode). Linux images still use the WSL sibling when enabled.
+                  </p>
+                ) : null}
+                {nodeRestartRowMessage(Boolean(nodeRestartPending[n.id])) ? (
+                  <p className="muted status-inline" role="status">
+                    {nodeRestartRowMessage(Boolean(nodeRestartPending[n.id]))?.text}
                   </p>
                 ) : null}
                 {updateFeedback ? (

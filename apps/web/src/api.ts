@@ -648,6 +648,11 @@ export const api = {
       `/api/nodes/${encodeURIComponent(nodeId)}/update`,
       { method: "POST", body: JSON.stringify({}) },
     ),
+  restartNode: (nodeId: string) =>
+    request<{ ok: true; nodeId: string; restartRequested: true }>(
+      `/api/nodes/${encodeURIComponent(nodeId)}/restart`,
+      { method: "POST", body: JSON.stringify({}) },
+    ),
   getPanelUrls: () =>
     request<{
       mdnsUrl: string;

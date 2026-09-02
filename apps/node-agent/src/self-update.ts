@@ -5,6 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import {
   ARCHIVE_EXTRACT_TIMEOUT_MS,
+  WINDOWS_LOAD_ENV_CJS,
+  WINDOWS_NODE_ENV_CMD,
   WINDOWS_START_NODE_CMD,
   assertAllowedUpdateDownloadUrl,
   assertUpdateArchiveLooksReal,
@@ -12,7 +14,11 @@ import {
   bundledWindowsStartNodeCmd,
   cacheBustUpdateDownloadUrl,
   formatUpdateSha256Mismatch,
+  parseWindowsNodeEnvCmd,
+  serializeWindowsNodeEnvCmd,
   startNodeCmdLoadsNodeEnv,
+  windowsLoadEnvCjsSource,
+  windowsNodeEnvFileIsCrlf,
 } from "@playon/shared";
 
 /** Child exit that means "swap is on disk; relaunch me" — not a crash. */
@@ -22,6 +28,36 @@ export const AGENT_SUPERVISED_ENV = "PLAYON_AGENT_SUPERVISED";
 
 export function isAgentSupervised(env: NodeJS.ProcessEnv = process.env): boolean {
   return env[AGENT_SUPERVISED_ENV] === "1";
+}
+
+/** Windows extract/swap of a live tree: EBUSY / "used by another process". */
+export function isLockedFsError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  if (code === "EBUSY" || code === "EPERM" || code === "EACCES") return true;
+  const message = err instanceof Error ? err.message : String(err);
+  return /ebusy|being used by another process|resource busy|locked/i.test(message);
+}
+
+function throwIfLocked(err: unknown, prefix: string, target: string): never {
+  if (isLockedFsError(err)) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`${prefix}: ${target}: ${detail}`);
+  }
+  throw err instanceof Error ? err : new Error(String(err));
+}
+
+function rmUnlocked(target: string, prefix: string): void {
+  try {
+    fs.rmSync(target, { recursive: true, force: true });
+  } catch (err) {
+    throwIfLocked(err, prefix, target);
+  }
+}
+
+/** Prefer a fresh dir over rmSync of a leftover locked extract (playon-win-1 EBUSY). */
+export function uniqueExtractDir(baseDir: string): string {
+  if (!fs.existsSync(baseDir)) return baseDir;
+  return `${baseDir}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 }
 
 function copyTree(from: string, to: string): void {
@@ -67,14 +103,14 @@ export function swapInstallTree(opts: {
       continue;
     }
     if (!sourceNames.has(name)) {
-      fs.rmSync(path.join(target, name), { recursive: true, force: true });
+      rmUnlocked(path.join(target, name), "update_swap_busy");
     }
   }
   for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
     const name = entry.name;
     const dest = path.join(target, name);
     if (preserve.has(name) && fs.existsSync(dest)) continue;
-    fs.rmSync(dest, { recursive: true, force: true });
+    rmUnlocked(dest, "update_swap_busy");
     const src = path.join(source, name);
     if (entry.isDirectory()) copyTree(src, dest);
     else fs.copyFileSync(src, dest);
@@ -89,18 +125,39 @@ export function swapInstallTree(opts: {
 export function ensureWindowsStartNodeCmd(installRoot: string): { repaired: boolean } {
   const dest = path.join(installRoot, WINDOWS_START_NODE_CMD);
   const current = fs.existsSync(dest) ? fs.readFileSync(dest, "utf8") : "";
-  if (startNodeCmdLoadsNodeEnv(current)) return { repaired: false };
+  if (startNodeCmdLoadsNodeEnv(current) && !/>>/.test(current)) return { repaired: false };
   fs.writeFileSync(dest, bundledWindowsStartNodeCmd(), "utf8");
   return { repaired: true };
 }
 
-/** Extract apply: swap the package tree, then keep start-node.cmd pointing at Home. */
+export function ensureWindowsLoadEnvCjs(installRoot: string): { repaired: boolean } {
+  const dest = path.join(installRoot, WINDOWS_LOAD_ENV_CJS);
+  const wanted = windowsLoadEnvCjsSource();
+  const current = fs.existsSync(dest) ? fs.readFileSync(dest, "utf8") : "";
+  if (current === wanted) return { repaired: false };
+  fs.writeFileSync(dest, wanted, "utf8");
+  return { repaired: true };
+}
+
+/** Rewrite leftover node.env.cmd to CRLF so `call` cannot hang cmd.exe. */
+export function ensureWindowsNodeEnvCmdCrlf(installRoot: string): { repaired: boolean } {
+  const dest = path.join(installRoot, WINDOWS_NODE_ENV_CMD);
+  if (!fs.existsSync(dest)) return { repaired: false };
+  const current = fs.readFileSync(dest, "utf8");
+  if (windowsNodeEnvFileIsCrlf(current)) return { repaired: false };
+  fs.writeFileSync(dest, serializeWindowsNodeEnvCmd(parseWindowsNodeEnvCmd(current)), "utf8");
+  return { repaired: true };
+}
+
+/** Extract apply: swap the package tree, then keep Home wiring + CRLF env. */
 export function applyNodeInstallSwap(opts: {
   target: string;
   source: string;
   preserve: string[];
 }): { preserved: string[]; startNodeRepaired: boolean } {
   const { preserved } = swapInstallTree(opts);
+  ensureWindowsLoadEnvCjs(opts.target);
+  ensureWindowsNodeEnvCmdCrlf(opts.target);
   const { repaired } = ensureWindowsStartNodeCmd(opts.target);
   return { preserved, startNodeRepaired: repaired };
 }
@@ -139,6 +196,10 @@ export function runExtractCommand(
         return;
       }
       const detail = stderr.trim().slice(0, 400);
+      if (/ebusy|being used by another process|resource busy/i.test(detail)) {
+        finish(new Error(`update_extract_busy: ${cmd} exit ${code}: ${detail}`));
+        return;
+      }
       finish(
         new Error(
           detail
@@ -151,9 +212,17 @@ export function runExtractCommand(
 }
 
 export async function extractArchive(archivePath: string, destDir: string): Promise<string> {
-  fs.rmSync(destDir, { recursive: true, force: true });
-  fs.mkdirSync(destDir, { recursive: true });
-  const commands = buildArchiveExtractCommands(archivePath, destDir, process.platform);
+  let dest = destDir;
+  if (fs.existsSync(dest)) {
+    try {
+      fs.rmSync(dest, { recursive: true, force: true });
+    } catch (err) {
+      if (!isLockedFsError(err)) throw err;
+      dest = uniqueExtractDir(destDir);
+    }
+  }
+  fs.mkdirSync(dest, { recursive: true });
+  const commands = buildArchiveExtractCommands(archivePath, dest, process.platform);
   let lastErr: Error | undefined;
   for (const { cmd, args } of commands) {
     try {
@@ -162,16 +231,19 @@ export async function extractArchive(archivePath: string, destDir: string): Prom
       break;
     } catch (err) {
       lastErr = err instanceof Error ? err : new Error(String(err));
+      if (isLockedFsError(err) || /ebusy/i.test(lastErr.message)) {
+        throw new Error(`update_extract_busy: ${lastErr.message}`);
+      }
     }
   }
   if (lastErr) throw lastErr;
   for (const name of ["playon-node", "playon"]) {
-    const candidate = path.join(destDir, name);
+    const candidate = path.join(dest, name);
     if (fs.existsSync(path.join(candidate, "package.json"))) return candidate;
   }
-  for (const ent of fs.readdirSync(destDir, { withFileTypes: true })) {
+  for (const ent of fs.readdirSync(dest, { withFileTypes: true })) {
     if (!ent.isDirectory()) continue;
-    const candidate = path.join(destDir, ent.name);
+    const candidate = path.join(dest, ent.name);
     if (fs.existsSync(path.join(candidate, "package.json"))) return candidate;
   }
   throw new Error("update_extract_root_missing");
@@ -208,7 +280,7 @@ export async function performNodeSelfUpdate(args: {
     args.installRoot || process.env.PLAYON_INSTALL_ROOT || process.cwd(),
   );
   const preserve =
-    args.preserve ?? ["data", "env", "node.env", "node.env.cmd"];
+    args.preserve ?? ["data", "env", "node.env", "node.env.cmd", "node.env.json"];
 
   const staging = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-update-"));
   let windowsHelperSpawned = false;
@@ -287,7 +359,13 @@ export async function performNodeSelfUpdate(args: {
     };
   } finally {
     if (process.platform !== "win32" || args.skipExit || !windowsHelperSpawned) {
-      fs.rmSync(staging, { recursive: true, force: true });
+      try {
+        fs.rmSync(staging, { recursive: true, force: true });
+      } catch (err) {
+        if (!isLockedFsError(err)) {
+          console.warn(`[node-agent] staging cleanup failed: ${(err as Error).message}`);
+        }
+      }
     }
   }
 }

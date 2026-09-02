@@ -116,7 +116,7 @@ $extracted = Find-ExtractedRoot -DestDir $destDir
 $helper = Join-Path $extracted "deploy\windows\apply-self-update.ps1"
 if (-not (Test-Path $helper)) { throw "update_helper_missing: $helper" }
 Write-Log "Launching apply-self-update.ps1 (breakaway) source=$extracted"
-$preserve = @("data", "env", "node.env", "node.env.cmd")
+$preserve = @("data", "env", "node.env", "node.env.cmd", "node.env.json")
 $helperArgs = @(
   "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $helper,
   "-SourceDir", $extracted, "-TargetDir", $installRoot, "-AgentPid", "$agentPid"

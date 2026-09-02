@@ -16,7 +16,7 @@ import https from "node:https";
 import { createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { linuxNodeTarCreate, windowsNodeTarCreate } from "./package-node-archive.mjs";
-import { bundledWindowsStartNodeCmd } from "../packages/shared/dist/index.js";
+import { bundledWindowsStartNodeCmd, windowsLoadEnvCjsSource } from "../packages/shared/dist/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -269,6 +269,7 @@ if (Test-Path $envCmd) {
 `,
 );
 fs.writeFileSync(path.join(stage, "start-node.cmd"), bundledWindowsStartNodeCmd());
+fs.writeFileSync(path.join(stage, "load-env.cjs"), windowsLoadEnvCjsSource());
 if (!isWin) {
   try {
     fs.chmodSync(path.join(stage, "start-node.sh"), 0o755);

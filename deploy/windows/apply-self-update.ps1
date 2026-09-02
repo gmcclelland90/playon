@@ -2,7 +2,7 @@ param(
   [Parameter(Mandatory = $true)][string]$SourceDir,
   [Parameter(Mandatory = $true)][string]$TargetDir,
   [Parameter(Mandatory = $true)][int]$AgentPid,
-  [string[]]$Preserve = @("data", "env", "node.env", "node.env.cmd"),
+  [string[]]$Preserve = @("data", "env", "node.env", "node.env.cmd", "node.env.json"),
   [switch]$Detached
 )
 
@@ -23,23 +23,66 @@ function Write-Log {
   }
 }
 
-# Tarball start-node.cmd (0.2.3–0.2.9) omitted `call node.env.cmd`. Write this
-# immediately after swap so a later failure cannot leave localhost wiring.
+# Leftover double-click launcher. Task action is node.exe — never >> logfile.
 function Write-PortableStartNodeCmd {
   param([string]$Dir)
   $portable = Join-Path $Dir "start-node.cmd"
-  @"
+  $text = @"
 @echo off
 cd /d "%~dp0"
 if exist "%~dp0node.env.cmd" call "%~dp0node.env.cmd"
 if defined PLAYON_DATA_ROOT if not exist "%PLAYON_DATA_ROOT%" mkdir "%PLAYON_DATA_ROOT%"
-if defined PLAYON_DATA_ROOT (
-  "%~dp0runtime\node\node.exe" "%~dp0apps\node-agent\dist\index.js" >> "%PLAYON_DATA_ROOT%\agent-stdout.log" 2>&1
+if exist "%~dp0load-env.cjs" (
+  "%~dp0runtime\node\node.exe" --require "%~dp0load-env.cjs" "%~dp0apps\node-agent\dist\index.js"
 ) else (
   "%~dp0runtime\node\node.exe" "%~dp0apps\node-agent\dist\index.js"
 )
-"@ | Set-Content -Path $portable -Encoding ASCII
-  Write-Log "Wrote start-node.cmd with node.env.cmd wiring"
+"@
+  $crlf = ($text -replace "`r`n", "`n" -replace "`n", "`r`n")
+  if (-not $crlf.EndsWith("`r`n")) { $crlf += "`r`n" }
+  [System.IO.File]::WriteAllText($portable, $crlf, [System.Text.ASCIIEncoding]::new())
+  Write-Log "Wrote leftover start-node.cmd (no logfile redirect)"
+}
+
+function Restore-NodeAgentTask {
+  param([string]$Reason)
+  Write-Log $Reason
+  try { Enable-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Out-Null } catch {}
+  try { Start-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue } catch {}
+  Unregister-ApplyUpdateTask
+}
+
+function Register-PlayOnNodeAgentTaskFromTree {
+  param([string]$TargetDir)
+  $nodeExe = Join-Path $TargetDir "runtime\node\node.exe"
+  $agentJs = Join-Path $TargetDir "apps\node-agent\dist\index.js"
+  $loadEnv = Join-Path $TargetDir "load-env.cjs"
+  if (-not (Test-Path $nodeExe) -or -not (Test-Path $agentJs)) {
+    throw "Missing node.exe or agent entry after swap"
+  }
+  if (-not (Test-Path $loadEnv)) {
+    $fromSource = Join-Path $SourceDir "load-env.cjs"
+    $fromDeploy = Join-Path $SourceDir "deploy\windows\load-env.cjs"
+    if (Test-Path $fromSource) { Copy-Item -Force $fromSource $loadEnv }
+    elseif (Test-Path $fromDeploy) { Copy-Item -Force $fromDeploy $loadEnv }
+  }
+  $arg = "--require `"$loadEnv`" `"$agentJs`""
+  $action = New-ScheduledTaskAction -Execute $nodeExe -Argument $arg -WorkingDirectory $TargetDir
+  $existing = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+  $userId = if ($existing) { $existing.Principal.UserId } else { [Security.Principal.WindowsIdentity]::GetCurrent().Name }
+  $logon = if ($existing) { $existing.Principal.LogonType } else { "S4U" }
+  $runLevel = if ($existing) { $existing.Principal.RunLevel } else { "Highest" }
+  $trigger = New-ScheduledTaskTrigger -AtStartup
+  $settings = New-ScheduledTaskSettingsSet `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
+    -RestartCount 5 `
+    -RestartInterval (New-TimeSpan -Minutes 1) `
+    -ExecutionTimeLimit ([TimeSpan]::Zero) `
+    -StartWhenAvailable
+  $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType $logon -RunLevel $runLevel
+  Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
+  Write-Log "Registered $TaskName → $nodeExe $arg"
 }
 
 function Format-ProcessArgs {
@@ -197,9 +240,7 @@ try {
 }
 
 if (-not (Test-Path $SourceDir)) {
-  Write-Log "ERROR: Source directory not found: $SourceDir"
-  try { Enable-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Out-Null } catch {}
-  Unregister-ApplyUpdateTask
+  Restore-NodeAgentTask -Reason "ERROR: Source directory not found: $SourceDir — leaving previous agent"
   exit 1
 }
 
@@ -225,8 +266,23 @@ foreach ($item in Get-ChildItem -Path $SourceDir) {
     continue
   }
   Write-Log "Copying: $($item.Name)"
-  Remove-Item -Path $dest -Recurse -Force -ErrorAction SilentlyContinue
-  Copy-Item -Path $item.FullName -Destination $dest -Recurse -Force
+  try {
+    Remove-Item -Path $dest -Recurse -Force -ErrorAction Stop
+  } catch {
+    if ($_.Exception.Message -match "being used by another process|EBUSY|cannot access|locked") {
+      Restore-NodeAgentTask -Reason "ERROR: swap locked removing $($item.Name): $_ — aborting, previous tree kept where possible"
+      exit 1
+    }
+  }
+  try {
+    Copy-Item -Path $item.FullName -Destination $dest -Recurse -Force -ErrorAction Stop
+  } catch {
+    if ($_.Exception.Message -match "being used by another process|EBUSY|cannot access|locked") {
+      Restore-NodeAgentTask -Reason "ERROR: swap locked copying $($item.Name): $_ — aborting, restarting previous agent"
+      exit 1
+    }
+    throw
+  }
 }
 
 Write-PortableStartNodeCmd -Dir $TargetDir
@@ -236,18 +292,19 @@ $agentJs = Join-Path $TargetDir "apps\node-agent\dist\index.js"
 $useBundled = Test-Path $nodeExe
 
 if (-not (Test-Path $agentJs)) {
-  Write-Log "ERROR: Agent missing after swap: $agentJs"
-  try { Enable-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Out-Null } catch {}
-  Unregister-ApplyUpdateTask
+  Restore-NodeAgentTask -Reason "ERROR: Agent missing after swap: $agentJs"
   exit 1
 }
 
 $envFile = Join-Path $TargetDir "node.env.cmd"
-if (-not (Test-Path $envFile)) {
-  Write-Log "ERROR: node.env.cmd missing — cannot regenerate installer start-node.cmd; portable launcher already written"
-  try { Enable-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Out-Null } catch {}
-  Unregister-ApplyUpdateTask
-  exit 1
+if (Test-Path $envFile) {
+  $rawEnv = [System.IO.File]::ReadAllText($envFile)
+  $crlfEnv = ($rawEnv -replace "`r`n", "`n" -replace "`n", "`r`n")
+  if (-not $crlfEnv.EndsWith("`r`n")) { $crlfEnv += "`r`n" }
+  [System.IO.File]::WriteAllText($envFile, $crlfEnv, [System.Text.ASCIIEncoding]::new())
+  Write-Log "Rewrote node.env.cmd as CRLF"
+} else {
+  Write-Log "WARNING: node.env.cmd missing — load-env.cjs will use node.env.json if present"
 }
 
 $startCmd = Join-Path $TargetDir "start-node.cmd"
@@ -264,27 +321,28 @@ if (-not $dataRoot) {
   $dataRoot = Join-Path $TargetDir "data"
 }
 
-$agentStdout = Join-Path $dataRoot "agent-stdout.log"
-
+$loadEnvFile = Join-Path $TargetDir "load-env.cjs"
 if ($useBundled) {
-  @"
+  $startText = @"
 @echo off
 call `"$envFile`"
 cd /d `"$TargetDir`"
 if not exist `"$dataRoot`" mkdir `"$dataRoot`"
-`"$nodeExe`" `"$agentJs`" >> `"$agentStdout`" 2>&1
-"@ | Set-Content -Path $startCmd -Encoding ASCII
-  Write-Log "Regenerated start-node.cmd (bundled Node)"
+`"$nodeExe`" --require `"$loadEnvFile`" `"$agentJs`"
+"@
 } else {
-  @"
+  $startText = @"
 @echo off
 call `"$envFile`"
 cd /d `"$TargetDir`"
 if not exist `"$dataRoot`" mkdir `"$dataRoot`"
-pnpm --filter @playon/node-agent start >> `"$agentStdout`" 2>&1
-"@ | Set-Content -Path $startCmd -Encoding ASCII
-  Write-Log "Regenerated start-node.cmd (system Node)"
+pnpm --filter @playon/node-agent start
+"@
 }
+$crlfStart = ($startText -replace "`r`n", "`n" -replace "`n", "`r`n")
+if (-not $crlfStart.EndsWith("`r`n")) { $crlfStart += "`r`n" }
+[System.IO.File]::WriteAllText($startCmd, $crlfStart, [System.Text.ASCIIEncoding]::new())
+Write-Log "Regenerated leftover start-node.cmd (no logfile redirect)"
 
 Write-Log "Linking workspace dependencies..."
 $env:Path = (Join-Path $TargetDir "runtime\node") + ";" + $env:Path
@@ -302,7 +360,15 @@ try {
   Pop-Location
 }
 
-Write-Log "Re-enabling and starting $TaskName..."
+Write-Log "Re-registering $TaskName as node.exe (not start-node.cmd)..."
+try {
+  Register-PlayOnNodeAgentTaskFromTree -TargetDir $TargetDir
+} catch {
+  Write-Log "WARNING: could not rewrite task action: $_"
+  try { Enable-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Out-Null } catch {}
+}
+
+Write-Log "Starting $TaskName..."
 try {
   Enable-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue | Out-Null
   Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
