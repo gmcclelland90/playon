@@ -21,6 +21,12 @@ import {
   loadHomeAuth,
   windowsPlacementConfig,
 } from "./lab-matrix-home-client.mjs";
+import { createDb } from "../apps/api/dist/db/client.js";
+import { playonContainerName } from "../packages/shared/dist/index.js";
+import {
+  knownLeftoverNamesFromTempRoots,
+  reapLabMatrixDockerLeftovers,
+} from "./lab-matrix-docker-reap.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.chdir(repoRoot);
@@ -215,6 +221,43 @@ async function sweepHomeOrphans(pids) {
   return { deleted, skipped: false };
 }
 
+async function sweepDockerLeftovers(pids) {
+  const known = knownLeftoverNamesFromTempRoots({
+    createDb,
+    inUse: (root) => tempRootInUse(root, pids),
+  });
+  let homeProtectLoaded = false;
+  const homeProtectNames = new Set();
+  try {
+    const cfg = windowsPlacementConfig(repoRoot);
+    const auth = await loadHomeAuth(cfg);
+    const home = new HomeClient(auth);
+    const list = await home.rest("/api/servers");
+    const servers = Array.isArray(list) ? list : Array.isArray(list?.servers) ? list.servers : [];
+    for (const s of servers) {
+      if (s?.id) homeProtectNames.add(playonContainerName(s.id));
+    }
+    homeProtectLoaded = true;
+  } catch (err) {
+    console.warn(`docker protect list unavailable: ${err instanceof Error ? err.message : err}`);
+  }
+  const result = await reapLabMatrixDockerLeftovers({
+    homeProtectNames,
+    homeProtectLoaded,
+    knownLeftoverNames: known,
+    rm: dryRun
+      ? (name) => {
+          console.log(`dry-run: docker rm -f ${name}`);
+          return true;
+        }
+      : undefined,
+    onReap: (c) => {
+      if (!dryRun) console.log(`removed container ${c.name}`);
+    },
+  });
+  return { ...result, dryRun };
+}
+
 async function main() {
   const pids = matrixPids();
   console.log(`lab-matrix pids=${pids.join(",") || "none"} maxAgeHours=${maxAgeHours} dryRun=${dryRun}`);
@@ -222,6 +265,8 @@ async function main() {
   console.log(`temp removed=${temp.removed} kept=${temp.kept} ~${temp.gib}GiB`);
   const home = await sweepHomeOrphans(pids);
   console.log(`home lab-matrix deleted=${home.deleted}${home.skipped ? " (skipped)" : ""}`);
+  const docker = await sweepDockerLeftovers(pids);
+  console.log(`docker leftovers removed=${docker.removed}${docker.dryRun ? " (dry-run)" : ""}`);
 }
 
 main().catch((err) => {

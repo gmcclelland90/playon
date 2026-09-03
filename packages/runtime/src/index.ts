@@ -9,6 +9,8 @@ export * from "./container-stats.js";
 export * from "./host-resources.js";
 export * from "./process-resources.js";
 export * from "./docker-create-options.js";
+export * from "./host-port-bind.js";
+export * from "./leftover-port-holders.js";
 export * from "./dockerode-adapter.js";
 export * from "./factory.js";
 export * from "./server-runtime.js";

@@ -31,7 +31,7 @@ import { listSkills, loadSkillMetadata } from "../apps/api/dist/services/skills.
 import { steamcmdAppUpdate } from "../apps/api/dist/services/steamcmd.js";
 import { execConsoleCommand } from "../apps/api/dist/services/server-console.js";
 import { createRuntimeAdapters } from "../packages/runtime/dist/factory.js";
-import { LOCAL_NODE_ID, requiredUdpListenEvidence, windowsUdpPortOpenVerdict } from "../packages/shared/dist/index.js";
+import { LOCAL_NODE_ID, playonContainerName, requiredUdpListenEvidence, windowsUdpPortOpenVerdict } from "../packages/shared/dist/index.js";
 import {
   HomeClient,
   loadHomeAuth,
@@ -39,6 +39,12 @@ import {
   windowsPlacementConfig,
 } from "./lab-matrix-home-client.mjs";
 import { classifyMatrixErrorClass } from "./lab-file-github-issues.mjs";
+import {
+  dockerRmForce,
+  knownLeftoverNamesFromTempRoots,
+  reapLabMatrixDockerLeftovers,
+  serverIdsFromPlayonDb,
+} from "./lab-matrix-docker-reap.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.chdir(repoRoot);
@@ -65,6 +71,9 @@ const HOST_SUPPLIED_SKILLS = new Set([
  * server_packages.sii/.dat (export_server_packages) before the process stays up.
  */
 const HOST_SUPPLIED_PACKAGES_SKILLS = new Set(["games.ats", "games.ets2"]);
+
+/** Durable Home `playon-<id>` names — refreshed once per matrix run. */
+let cachedHomeProtect = { loaded: false, names: new Set() };
 
 const TOOLS_ARCHETYPES = [
   "games.minecraft-paper",
@@ -277,6 +286,10 @@ function sweepStaleMatrixTempRoots({ keepPath = null, maxAgeMs = 3600_000 } = {}
     if (Date.now() - st.mtimeMs < maxAgeMs) continue;
     if (tempRootInUse(full)) continue;
     try {
+      for (const id of serverIdsFromPlayonDb(path.join(full, "playon.db"), createDb)) {
+        const name = playonContainerName(id);
+        if (dockerRmForce(name)) console.log(`lab-matrix reaped leftover ${name}`);
+      }
       fs.rmSync(full, { recursive: true, force: true });
       removed += 1;
       console.log(`lab-matrix swept stale temp ${full}`);
@@ -544,12 +557,55 @@ async function waitForQuery(queries, serverId, { attempts = 20, delayMs = 3000 }
 }
 
 function dockerCleanup(serverId) {
-  const name = `playon-${serverId}`;
+  dockerRmForce(playonContainerName(serverId));
+}
+
+function skillHostPorts(meta) {
+  return (meta?.ports ?? [])
+    .filter((p) => p.default)
+    .map((p) => ({
+      host: p.default,
+      protocol: p.protocol === "udp" ? "udp" : "tcp",
+    }));
+}
+
+async function loadHomeProtectContainerNames() {
   try {
-    execSync(`docker rm -f ${name}`, { stdio: "ignore" });
-  } catch {
-    /* ignore */
+    const cfg = windowsPlacementConfig(repoRoot);
+    const auth = await loadHomeAuth(cfg);
+    const home = new HomeClient(auth);
+    const list = await home.rest("/api/servers");
+    const servers = Array.isArray(list) ? list : Array.isArray(list?.servers) ? list.servers : [];
+    const names = new Set();
+    for (const s of servers) {
+      if (s?.id) names.add(playonContainerName(s.id));
+    }
+    return { loaded: true, names };
+  } catch (err) {
+    console.warn(
+      `lab-matrix home protect list unavailable: ${err instanceof Error ? err.message : err}`,
+    );
+    return { loaded: false, names: new Set() };
   }
+}
+
+async function reapMatrixDockerLeftovers({ ports, homeProtect, extraKnownIds = [] } = {}) {
+  const known = knownLeftoverNamesFromTempRoots({
+    createDb,
+    inUse: tempRootInUse,
+  });
+  for (const id of extraKnownIds) known.add(playonContainerName(id));
+  const result = await reapLabMatrixDockerLeftovers({
+    homeProtectNames: homeProtect?.names ?? [],
+    homeProtectLoaded: Boolean(homeProtect?.loaded),
+    knownLeftoverNames: known,
+    ports,
+    onReap: (c) => console.log(`lab-matrix reaped leftover ${c.name}`),
+  });
+  if (result.removed) {
+    console.log(`lab-matrix docker leftovers removed=${result.removed}`);
+  }
+  return result;
 }
 
 async function runStatic(skill, skillsRoots) {
@@ -1081,6 +1137,13 @@ async function runLifecycle(cp, skill, { runTools, windows }) {
       const gameDir = path.join(created.dataPath, "game");
       const copiedSkillOverlay = copySkillFilesLocal(skill.path, gameDir);
       if (copiedSkillOverlay.length) notes.skillOverlay = copiedSkillOverlay;
+      await reapMatrixDockerLeftovers({
+        ports: skillHostPorts(meta),
+        homeProtect: {
+          loaded: cachedHomeProtect.loaded,
+          names: new Set([...cachedHomeProtect.names, playonContainerName(serverId)]),
+        },
+      });
       const started = await servers.start(serverId);
       phases.start = started.status === "running" || started.status === "starting" ? "ok" : "fail";
       if (phases.start !== "ok") throw new Error(`start_status_${started.status}`);
@@ -1337,6 +1400,13 @@ async function main() {
   const platformRoot = path.join(repoRoot, "skills", "platform");
   const swept = sweepStaleMatrixTempRoots({ maxAgeMs: 3600_000 });
   if (swept > 0) console.log(`lab-matrix reclaimed ${swept} stale temp root(s)`);
+  const unusedLeftovers = knownLeftoverNamesFromTempRoots({
+    createDb,
+    inUse: tempRootInUse,
+  });
+  for (const name of unusedLeftovers) {
+    if (dockerRmForce(name)) console.log(`lab-matrix reaped unused-temp leftover ${name}`);
+  }
   const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), "playon-lab-matrix-"));
   assertSafeDataRoot(dataRoot);
   const dbPath = path.join(dataRoot, "playon.db");
@@ -1345,6 +1415,12 @@ async function main() {
 
   let exitCode = 0;
   const finalizeTemp = () => {
+    try {
+      const ids = sqlite.prepare("select id from servers").all().map((r) => r.id);
+      for (const id of ids) dockerCleanup(id);
+    } catch {
+      /* db already closed or empty */
+    }
     try {
       sqlite.close();
     } catch {
@@ -1390,6 +1466,12 @@ async function runMatrixBody({ dataRoot, db, sqlite, skillsRoots, gamesRoot }) {
     advertiseHost,
   };
   console.log(`lab-matrix advertiseHost=${advertiseHost}`);
+
+  cachedHomeProtect =
+    tier !== "static" ? await loadHomeProtectContainerNames() : { loaded: false, names: new Set() };
+  if (tier !== "static") {
+    await reapMatrixDockerLeftovers({ homeProtect: cachedHomeProtect });
+  }
 
   // Docker preflight only when we will start servers
   if (tier !== "static" && config.runtimeMode === "docker") {

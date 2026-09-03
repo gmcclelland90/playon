@@ -4,15 +4,19 @@ import path from "node:path";
 import { eq, inArray } from "drizzle-orm";
 import {
   createRuntime,
+  listHostContainers,
   localDockerTransport,
   localNativeTransport,
   openServerRuntime,
+  parseDockerHostPortBindError,
   probeUdpListen,
   remoteDockerTransport,
   remoteNativeTransport,
+  rewriteDockerPortBindError,
   type ContainerJobDispatch,
   type DockerAdapter,
   type DockerRuntimeTransport,
+  type HostContainer,
   type LogFollowHandle,
   type NativeProcessIdentity,
   type NativeRuntimeTransport,
@@ -172,6 +176,11 @@ export class ServerService {
    * Production leaves it null and probes advertised game ports on the host.
    */
   portsBoundOverride: ((server: ServerRecord) => Promise<HostPortsBound>) | null = null;
+  /**
+   * Unit tests assign this so bind-error rewrite does not call a live daemon.
+   * Production leaves it null and lists host containers read-only.
+   */
+  hostPortHoldersOverride: (() => Promise<HostContainer[]>) | null = null;
   /** After this, a running process with unbound advertised ports is dead. */
   portDeadGraceMs = DEFAULT_PORT_DEAD_GRACE_MS;
   /** One clean auto-restart after a port-dead crash if the user did not stop. */
@@ -1640,6 +1649,11 @@ export class ServerService {
     } catch (err) {
       await this.db.update(servers).set({ status: "error" }).where(eq(servers.id, id));
       this.emitStatus(id, "error");
+      if (parseDockerHostPortBindError(err)) {
+        await rewriteDockerPortBindError(err, {
+          listContainers: this.hostPortHoldersOverride ?? (() => listHostContainers()),
+        });
+      }
       throw err;
     }
   }

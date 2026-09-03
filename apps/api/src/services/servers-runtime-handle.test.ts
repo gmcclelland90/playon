@@ -280,6 +280,35 @@ vi.mock("@playon/runtime", async (importOriginal) => {
 const temps: Array<{ root: string; sqlite: Database.Database }> = [];
 const udpSockets: dgram.Socket[] = [];
 
+function writeFactorioShapedSkill(skillsRoot: string): void {
+  const skillDir = path.join(skillsRoot, "fixtures", "lab-factorio-ports");
+  fs.mkdirSync(path.join(skillDir, "guides"), { recursive: true });
+  fs.writeFileSync(
+    path.join(skillDir, "metadata.yaml"),
+    [
+      "name: fixtures.lab-factorio-ports",
+      "version: 0.1.0",
+      "game: Factorio",
+      "containerSupport: full",
+      "dockerImage: factoriotools/factorio:stable",
+      "adminDialect: none",
+      "queryDialect: factorio",
+      "ports:",
+      "  - name: game",
+      "    protocol: udp",
+      "    default: 34197",
+      "  - name: rcon",
+      "    protocol: tcp",
+      "    default: 27015",
+      "healthChecks: []",
+      "dependencies: []",
+      "requiredTools: []",
+      "",
+    ].join("\n"),
+  );
+  fs.writeFileSync(path.join(skillDir, "guides", "INSTALL.md"), "# Factorio ports fixture\n");
+}
+
 function writePzSkill(skillsRoot: string): void {
   const skillDir = path.join(skillsRoot, "games", "project-zomboid");
   fs.mkdirSync(path.join(skillDir, "guides"), { recursive: true });
@@ -522,6 +551,45 @@ describe("local docker lifecycle through ServerRuntimeHandle", () => {
       hostPath: path.join(server.dataPath, "game"),
       containerPath: "/data",
     });
+  });
+
+  it("publishes Factorio game 34197/udp and rcon 27015/tcp — not a Source game remap (#942)", async () => {
+    const { servers, config } = tempEnv();
+    writeFactorioShapedSkill(path.join(config.dataRoot!, "skills"));
+    const server = await servers.createFromSkill({ skillName: "fixtures.lab-factorio-ports" });
+
+    await servers.start(server.id);
+
+    expect(fake.specs[0]?.ports).toEqual([
+      { host: 34197, container: 34197, protocol: "udp" },
+      { host: 27015, container: 27015, protocol: "tcp" },
+    ]);
+  });
+
+  it("rewrites Docker bind-address-in-use as host_port_in_use with the holder (#941)", async () => {
+    const { servers } = tempEnv();
+    const server = await servers.createFromSkill({ skillName: LAB_DOCKER_SKILL });
+    const origStart = fake.docker.start;
+    fake.docker.start = async () => {
+      throw new Error(
+        "(HTTP code 500) server error - failed to bind host port 0.0.0.0:27015/tcp: address already in use",
+      );
+    };
+    servers.hostPortHoldersOverride = async () => [
+      {
+        name: "playon-leftover",
+        image: "cm2network/cs2",
+        status: "running",
+        ports: [{ host: 27015, container: 27015, protocol: "tcp" }],
+      },
+    ];
+    try {
+      await expect(servers.start(server.id)).rejects.toThrow(
+        /host_port_in_use: 27015\/tcp held by container playon-leftover/,
+      );
+    } finally {
+      fake.docker.start = origStart;
+    }
   });
 
   it("start reuses an existing container instead of creating a second one", async () => {
