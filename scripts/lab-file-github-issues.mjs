@@ -134,6 +134,9 @@ export function classifyMatrixErrorClass({
   if (/steamcmd_timeout/i.test(text)) return "steamcmd_timeout";
   if (/steamcmd_empty_depot/i.test(text)) return "steamcmd_empty_depot";
   if (/steamcmd_no_subscription/i.test(text)) return "steamcmd_no_subscription";
+  if (/host_port_in_use|bind host port .+ address already in use/i.test(text)) {
+    return "platform_bug";
+  }
   if (
     errorClass &&
     errorClass !== "lifecycle_fail" &&

@@ -73,6 +73,7 @@ Wire the script into Playon Ops `playon-polish-canary` ([#835](https://github.co
 - Linux path: always `mkdtemp` data root; refuse durable Home paths; `nodeId: "local"`
 - Windows path: live Home + `nodeId: playon-win-1` only (set `PLAYON_MATRIX_WIN_NODE_ID=off` to force skips). Auth auto-mints into `tmp/lab-matrix-home-auth.json` against durable DB for MCP/session — does not mutate live game servers outside `lab-matrix-*`. Requires `playon-win-1` online with `join_host` set; SteamCMD marks the server node-authoritative so Home does not push-wipe the install
 - Disposable names `lab-matrix-<slug>`; stop + remove + `docker rm` after each skill
+- Leftover `playon-*` containers from a killed matrix (temp root gone, ports still published) are reaped at run start and before each skill start. Durable Home inventory, `playon-ollama`, and NZL-shaped names are never removed. A remaining conflict is `host_port_in_use: <port>/<proto> held by …`, not a Docker 500.
 - Do not schedule matrix work on `playon-node-1`
 - Live Zomboid (or any) server under systemd Home is out of bounds; the **skill** `games.project-zomboid` is still E2E-tested in the temp root
 

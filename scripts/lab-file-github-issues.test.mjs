@@ -95,6 +95,20 @@ assert.equal(
   }),
   "lifecycle_fail",
 );
+assert.equal(
+  classifyMatrixErrorClass({
+    phase: "start",
+    tail: "failed to bind host port 0.0.0.0:27015/tcp: address already in use",
+  }),
+  "platform_bug",
+);
+assert.equal(
+  classifyMatrixErrorClass({
+    phase: "start",
+    tail: "host_port_in_use: 27015/tcp held by container playon-leftover",
+  }),
+  "platform_bug",
+);
 
 assert.deepEqual(mapErrorClass("steamcmd_timeout"), {
   type: "bug",
