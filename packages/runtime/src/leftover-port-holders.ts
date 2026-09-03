@@ -1,6 +1,9 @@
-import { playonContainerName } from "@playon/shared";
 import type { HostContainer } from "./docker-inventory.js";
 import type { HostPortNeed } from "./host-port-bind.js";
+
+function playonContainerName(serverId: string): string {
+  return `playon-${serverId}`;
+}
 
 /** Sidecar that must never be reaped with game leftovers. */
 export const PROTECTED_PLAYON_CONTAINERS = new Set(["playon-ollama"]);

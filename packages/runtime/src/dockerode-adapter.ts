@@ -102,6 +102,7 @@ export class DockerodeAdapter implements DockerAdapter {
       return { id: container.id, name: spec.name, status: "created" };
     } catch (err) {
       await rewriteDockerPortBindError(err, lookup);
+      throw err;
     }
   }
 

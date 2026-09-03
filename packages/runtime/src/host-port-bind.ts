@@ -92,7 +92,7 @@ export function holdersFromListenTable(
   const protoRe = protocol === "udp" ? /\budp\b/i : /\btcp\b/i;
   for (const line of output.split(/\r?\n/)) {
     if (!portRe.test(line)) continue;
-    if (!protoRe.test(line) && !/LISTEN|UNCONN/i.test(line)) continue;
+    if (!protoRe.test(line)) continue;
     const users = line.match(/users:\(\("([^"]+)",pid=(\d+)/);
     if (users) {
       holders.push({
