@@ -102,7 +102,7 @@ After each release, skim CHANGELOG **Fixed** entries and file `test-debt` for ga
 - Host-port exclusive bind + leftover `playon-*` reap (matrix / cleanup) is unit-covered in `@playon/runtime` + api runtime-handle; Docker 500 bind-in-use rewrites to `host_port_in_use` with the holder. Live single-skill matrix (`games.cs2` / `games.factorio`) is lab-only ([#941](https://github.com/gmcclelland90/playon/issues/941), [#942](https://github.com/gmcclelland90/playon/issues/942))
 - Node-agent OTA / parent restart must not stop a supervised native (or docker) child — keepStdin parent-exit (no EOF), `relaunchUpdatedAgent` / supervisor, and `KillMode=process` MAINPID-only SIGTERM are unit-covered in `@playon/runtime` + `@playon/node-agent` (not `skipExit`-only) ([#886](https://github.com/gmcclelland90/playon/issues/886)). 0.2.9+ MAINPID exit is gated on `KillMode=process` and no pipe-stdin child; `control-group` units supervisor-loop instead. cwd-jail `process_start`/`process_stop` must not tree-reap a different server identity ([#909](https://github.com/gmcclelland90/playon/issues/909))
 - Weekly e2e is scheduled (`e2e-weekly.yml`) and `pnpm test:e2e` always builds workspace packages first; not yet in every-PR CI ([#44](https://github.com/gmcclelland90/playon/issues/44))
-- Lab cadence timer must be installed once on playon-dev ([infra/lab](../infra/lab/README.md), [#45](https://github.com/gmcclelland90/playon/issues/45))
+- Lab cadence timer is live on playon-dev (daily verify → matrix → `source:lab` Issues; history on [#52](https://github.com/gmcclelland90/playon/issues/52) / [infra/lab](../infra/lab/README.md)); reinstall only if the host is rebuilt
 
 ## Human gates for testing
 

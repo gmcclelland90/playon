@@ -112,7 +112,7 @@ Not part of `pnpm loop:verify`. Use after the merge bar is green when validating
 
 ## Standing cadence + GitHub intake
 
-On playon-dev (24/7), install the systemd timer in [infra/lab/README.md](../infra/lab/README.md). Each tick: merge bar → `lab:matrix --continue-on-fail` → file Issues.
+On playon-dev (24/7), the systemd timer in [infra/lab/README.md](../infra/lab/README.md) is the standing cadence (reinstall only after a host rebuild). Each tick: merge bar → `lab:matrix --continue-on-fail` → file Issues; ticks also leave history comments on [#52](https://github.com/gmcclelland90/playon/issues/52).
 
 Failures also file immediately at the end of a matrix run via `scripts/lab-file-github-issues.mjs` (`source:lab`). Filing uses the **current** status file’s failures (not the full historical `issues.jsonl`), fingerprints **one issue per skill** (phase changes comment on that issue), and will not reopen a closed fingerprint unless `PLAYON_LAB_REFILE=1`. Detectable SteamCMD tails set `errorClass` to `steamcmd_timeout` / `steamcmd_empty_depot` / `steamcmd_no_subscription` (pass/fail is unchanged). See [testing-plan.md](testing-plan.md) and [sdlc.md](sdlc.md).
 
