@@ -12,6 +12,7 @@
  */
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { summarizeWindowsCoverage } from "./lab-matrix-windows-coverage.mjs";
 
 const root = process.cwd();
 const argv = process.argv.slice(2);
@@ -40,6 +41,11 @@ function summarizeMatrix(status) {
     else if (r.ok) ok += 1;
     else fail += 1;
   }
+  const windowsCoverage =
+    status?.windowsCoverage ||
+    summarizeWindowsCoverage(results, {
+      windowsPlacementEnabled: status?.windowsPlacementEnabled,
+    });
   return {
     requested,
     done: results.length,
@@ -55,6 +61,9 @@ function summarizeMatrix(status) {
     nextAction: status?.nextAction ?? null,
     results,
     overallOk: status ? !!status.ok : null,
+    windowsPlacementEnabled: status?.windowsPlacementEnabled ?? null,
+    windowsPlacementNote: status?.windowsPlacementNote ?? null,
+    windowsCoverage,
   };
 }
 
@@ -110,6 +119,10 @@ export function buildNowCard({ verify, m, host, now, runUrl }) {
     !m || m.requested === 0
       ? "No matrix status yet"
       : `${m.done}/${m.requested} (${m.pct}%) · ok ${m.ok} · fail ${m.fail} · skip ${m.skip}` +
+        (m.windowsCoverage?.skipCount
+          ? ` · win-pe-skip ${m.windowsCoverage.skipCount}`
+          : "") +
+        (m.windowsCoverage?.alert ? " · WIN-PE ALERT" : "") +
         (m.current?.skillName ? ` · last \`${m.current.skillName}\`` : "") +
         (m.failedSkill ? ` · failed \`${m.failedSkill}\`` : "");
 
@@ -176,6 +189,24 @@ export function buildDetailMarkdown({ verify, m, title, now, host }) {
           )
           .join("\n");
 
+  const wc = m.windowsCoverage;
+  const winSection = !wc
+    ? ["### Windows PE / dual-place coverage", "_No coverage summary._", ""]
+    : [
+        "### Windows PE / dual-place coverage",
+        `\`${wc.summaryLine}\``,
+        wc.alert
+          ? "**ALERT:** Windows placement off/unavailable while PE/depot skills skipped — coverage gap (see #46)."
+          : "",
+        m.windowsPlacementNote
+          ? `Placement note: \`${m.windowsPlacementNote}\``
+          : "",
+        wc.skills?.length
+          ? `Skipped skills: ${wc.skills.map((s) => `\`${s}\``).join(", ")}`
+          : "_No Windows PE / dual-place skips._",
+        "",
+      ];
+
   return [
     `## ${title}`,
     "",
@@ -191,6 +222,7 @@ export function buildDetailMarkdown({ verify, m, title, now, host }) {
       : "_No matrix._",
     m.nextAction ? `Next: ${m.nextAction}` : "",
     "",
+    ...winSection,
     "### Failures",
     failList,
     "",
@@ -219,6 +251,13 @@ export function buildHtml({ verify, m, title, now, host }) {
       ? `green (${verify.mode})`
       : `red @ ${verify.failedLayer}`;
 
+  const wc = m.windowsCoverage;
+  const winAlert = wc?.alert
+    ? `<p class="win-alert"><strong>Windows PE coverage ALERT</strong> — ${esc(wc.summaryLine)}</p>`
+    : wc
+      ? `<p class="muted">Windows PE coverage: ${esc(wc.summaryLine)}</p>`
+      : "";
+
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -233,6 +272,8 @@ export function buildHtml({ verify, m, title, now, host }) {
   .stat { background: #1a1d26; border: 1px solid #2a3142; padding: 0.75rem 1rem; border-radius: 6px; min-width: 7rem; }
   .stat b { display: block; font-size: 1.4rem; }
   .ok b { color: #3dba7a; } .fail b { color: #e25d5d; } .skip b { color: #c9a227; }
+  .win b { color: #e2a15d; }
+  .win-alert { color: #e2a15d; background: #2a2015; border: 1px solid #5a4020; padding: 0.75rem 1rem; border-radius: 6px; }
   table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
   th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #2a3142; }
   th { color: #9aa3b5; font-weight: 500; }
@@ -247,11 +288,13 @@ export function buildHtml({ verify, m, title, now, host }) {
   <h1>${esc(title)}</h1>
   <p class="muted">${esc(host)} · ${esc(now)}</p>
   <p>Merge bar: <strong>${esc(verifyText)}</strong></p>
+  ${winAlert}
   <div class="stats">
     <div class="stat"><span class="muted">Done</span><b>${m.done}/${m.requested}</b></div>
     <div class="stat ok"><span class="muted">Ok</span><b>${m.ok}</b></div>
     <div class="stat fail"><span class="muted">Fail</span><b>${m.fail}</b></div>
     <div class="stat skip"><span class="muted">Skip</span><b>${m.skip}</b></div>
+    <div class="stat win"><span class="muted">Win PE skip</span><b>${wc?.skipCount ?? 0}</b></div>
   </div>
   <div class="bar"><i style="width:${m.pct}%"></i></div>
   <table>
