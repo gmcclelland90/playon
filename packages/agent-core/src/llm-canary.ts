@@ -14,8 +14,11 @@ export const LAB_CANARY_SKILL = "fixtures.lab-docker-server";
 /** Cheap Venice default for the standing canary. Override with PLAYON_LLM_CANARY_VENICE_MODELS. */
 export const DEFAULT_VENICE_CANARY_MODELS = ["llama-3.2-3b"];
 
-/** Suggested Ollama tags from Settings. Skip (do not fail Venice) when missing. */
-export const DEFAULT_OLLAMA_CANARY_MODELS = ["llama3.2", "qwen2.5"];
+/**
+ * Suggested Ollama tags from Settings. Prefer tool-capable tags first
+ * (`qwen2.5` over `llama3.2`; #836 / #945). Skip (do not fail Venice) when missing.
+ */
+export const DEFAULT_OLLAMA_CANARY_MODELS = ["qwen2.5", "llama3.2"];
 
 export const MUTATING_CANARY_TOOLS = new Set([
   "servers_create_from_skill",
