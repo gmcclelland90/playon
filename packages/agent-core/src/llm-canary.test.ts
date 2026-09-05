@@ -146,6 +146,11 @@ describe("runTwoStepCanary", () => {
 });
 
 describe("Ollama reachability", () => {
+  it("prefers tool-capable Ollama canary tags first (qwen2.5 before llama3.2)", () => {
+    expect(DEFAULT_OLLAMA_CANARY_MODELS[0]).toBe("qwen2.5");
+    expect(DEFAULT_OLLAMA_CANARY_MODELS).toContain("llama3.2");
+  });
+
   it("reports reachable=false without throwing when Ollama is down", async () => {
     const probe = await probeOllamaReachable("http://127.0.0.1:9", async () => {
       throw new Error("connect_refused");
