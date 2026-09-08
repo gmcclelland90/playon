@@ -123,17 +123,21 @@ describe("holdersFromListenTable / containers", () => {
 
 describe("tryExclusiveBind / assertHostPortsFree", () => {
   it("claims a free TCP port and releases it", async () => {
-    const probe = net.createServer();
-    const port = await new Promise<number>((resolve, reject) => {
-      probe.once("error", reject);
-      probe.listen(0, "0.0.0.0", () => {
-        const addr = probe.address();
-        if (!addr || typeof addr === "string") reject(new Error("no addr"));
-        else resolve(addr.port);
+    // listen(0) → close → rebind races other parallel vitest files (#949).
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const probe = net.createServer();
+      const port = await new Promise<number>((resolve, reject) => {
+        probe.once("error", reject);
+        probe.listen(0, "0.0.0.0", () => {
+          const addr = probe.address();
+          if (!addr || typeof addr === "string") reject(new Error("no addr"));
+          else resolve(addr.port);
+        });
       });
-    });
-    await new Promise<void>((resolve) => probe.close(() => resolve()));
-    expect(await tryExclusiveBind(port, "tcp")).toBe(true);
+      await new Promise<void>((resolve) => probe.close(() => resolve()));
+      if (await tryExclusiveBind(port, "tcp")) return;
+    }
+    throw new Error("tryExclusiveBind could not claim a just-released ephemeral port");
   });
 
   it("fails exclusive bind when something already listens", async () => {

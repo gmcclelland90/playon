@@ -58,6 +58,19 @@ async function waitForStatus(file: string, want: string, timeoutMs = 8_000): Pro
   throw new Error(`timeout waiting for ${file} === ${want} (last=${last})`);
 }
 
+async function waitForFileContains(file: string, needle: string, timeoutMs = 8_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let last = "";
+  while (Date.now() < deadline) {
+    if (fs.existsSync(file)) {
+      last = fs.readFileSync(file, "utf8");
+      if (last.includes(needle)) return;
+    }
+    await new Promise((r) => setTimeout(r, 40));
+  }
+  throw new Error(`timeout waiting for ${file} to contain ${JSON.stringify(needle)} (last=${last.slice(0, 200)})`);
+}
+
 const temps: string[] = [];
 
 afterEach(() => {
@@ -308,9 +321,7 @@ describe("NativeProcessSupervisor", () => {
     });
 
     await supervisor.writeStdin("server-x", "game", "say hi");
-    await new Promise((r) => setTimeout(r, 400));
-
-    expect(fs.readFileSync(path.join(jail, "logs", "console.log"), "utf8")).toContain("ran:say hi");
+    await waitForFileContains(path.join(jail, "logs", "console.log"), "ran:say hi");
     await supervisor.stop(info.id);
   });
 
@@ -374,8 +385,11 @@ describe("NativeProcessSupervisor", () => {
     const childPid = Number(await waitForFile(pidFile));
     expect(childPid).toBeGreaterThan(0);
     expect(await helperExit).toBe(0);
+    // Settle so an EOF from MAINPID death would show up, then poll — a
+    // single read can catch writeFileSync's truncate-before-write window
+    // (`''` instead of `alive`) on a loaded ubuntu-latest runner (#905 / #949).
     await new Promise((r) => setTimeout(r, 400));
-    expect(fs.readFileSync(status, "utf8").trim()).toBe("alive");
+    await waitForStatus(status, "alive");
     expect(() => process.kill(childPid, 0)).not.toThrow();
     if (fs.existsSync(holderFile)) {
       const holderPid = Number(fs.readFileSync(holderFile, "utf8").trim());
@@ -421,7 +435,7 @@ describe("NativeProcessSupervisor", () => {
     helper.kill("SIGTERM");
     await new Promise<void>((resolve) => helper.once("close", () => resolve()));
     await new Promise((r) => setTimeout(r, 400));
-    expect(fs.readFileSync(status, "utf8").trim()).toBe("alive");
+    await waitForStatus(status, "alive"); // poll: do not single-read (#905 / #949)
     expect(() => process.kill(childPid, 0)).not.toThrow();
     expect(() => process.kill(holderPid, 0)).not.toThrow();
     try {
@@ -487,9 +501,7 @@ describe("NativeProcessSupervisor", () => {
     });
 
     await supervisor.writeStdin("server-x", "game", "say hi");
-    await new Promise((r) => setTimeout(r, 400));
-
-    expect(fs.readFileSync(path.join(jail, "logs", "console.log"), "utf8")).toContain("ran:say hi");
+    await waitForFileContains(path.join(jail, "logs", "console.log"), "ran:say hi");
     await supervisor.stop(info.id);
   });
 
@@ -507,9 +519,7 @@ describe("NativeProcessSupervisor", () => {
       logFile: "logs/console.log",
     });
     expect(info.status).toBe("running");
-    await new Promise((r) => setTimeout(r, 400));
+    await waitForFileContains(logFile, "hello-from-native");
     await supervisor.stop(info.id);
-    expect(fs.existsSync(logFile)).toBe(true);
-    expect(fs.readFileSync(logFile, "utf8")).toContain("hello-from-native");
   });
 });

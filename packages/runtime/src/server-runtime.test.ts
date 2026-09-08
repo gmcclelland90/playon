@@ -756,7 +756,12 @@ describe("localNativeTransport", () => {
     const lines: string[] = [];
     const follow = await handle.followLogs((line) => lines.push(line));
     fs.appendFileSync(logFile, "live-native\n");
-    await new Promise((r) => setTimeout(r, 600));
+    // Default follow poll is 500ms — a fixed 600ms wait only has 100ms slack
+    // and flakes when the unit layer runs every package in parallel (#949).
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline && !lines.includes("live-native")) {
+      await new Promise((r) => setTimeout(r, 40));
+    }
     follow.abort();
     expect(lines).toContain("live-native");
   });
