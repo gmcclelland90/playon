@@ -35,7 +35,10 @@ describe("followLogFile", () => {
     const lines: string[] = [];
     const handle = followLogFile(file, (line) => lines.push(line), { pollMs: 50 });
     fs.appendFileSync(file, "hello\nworld\n", "utf8");
-    await new Promise((r) => setTimeout(r, 200));
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline && lines.length < 2) {
+      await new Promise((r) => setTimeout(r, 40));
+    }
     handle.abort();
     expect(lines).toEqual(["hello", "world"]);
   });

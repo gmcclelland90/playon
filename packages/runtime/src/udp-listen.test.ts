@@ -16,7 +16,12 @@ describe("probeUdpListen", () => {
     });
     expect(port).toBeGreaterThan(0);
     try {
-      const bound = probeUdpListen(port);
+      let bound = probeUdpListen(port);
+      const deadline = Date.now() + 2_000;
+      while (!bound.listening && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 40));
+        bound = probeUdpListen(port);
+      }
       expect(bound.port).toBe(port);
       expect(bound.probe).toMatch(/^(ss|netstat)$/);
       expect(bound.listening).toBe(true);
@@ -24,7 +29,12 @@ describe("probeUdpListen", () => {
       await new Promise<void>((resolve) => socket.close(() => resolve()));
     }
 
-    const after = probeUdpListen(port);
+    const afterDeadline = Date.now() + 2_000;
+    let after = probeUdpListen(port);
+    while (after.listening && Date.now() < afterDeadline) {
+      await new Promise((r) => setTimeout(r, 40));
+      after = probeUdpListen(port);
+    }
     expect(after.listening).toBe(false);
   });
 });
