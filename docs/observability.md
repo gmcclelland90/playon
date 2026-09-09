@@ -40,6 +40,7 @@ Agents **must** keep Issues honest so the board stays live:
 | **Lab report** | Full skill table + HTML | Actions Summary / artifact `lab-report-*`; cadence comments on #52 |
 | **Lab → Issues** | After red verify/matrix/e2e | New/updated Issues with `source:lab` (auto-add to PlayOn Ops) |
 | **Lab cadence timer** | Daily tick on playon-dev | `systemctl list-timers playon-lab-cadence.timer` |
+| **Polish canaries** | Soak / managed-install / OTA+nodes / site-catalog / WSL Phase 2 | Cursor workflow `playon-polish-canary` ([#835](https://github.com/gmcclelland90/playon/issues/835), [automations.md](automations.md)) |
 | **Lab status JSON** | Agent/local debug on lab host | `tmp/agent-loop-status.json`, `tmp/lab-matrix-status.json` |
 
 Generate locally: `pnpm lab:report` → `tmp/lab-report.html`.
@@ -58,6 +59,7 @@ https://github.com/gmcclelland90/playon/pulls
 
 3. Actions → latest **nightly-docker** (and **ci** on `main` if anything merged today)
 4. If matrix is running: open [#52](https://github.com/gmcclelland90/playon/issues/52) (lab-status now card); detail via Actions `lab-report` / cadence comments — not the old `:8791` dash
+5. Cursor Automations → `playon-polish-canary`: last scheduled soak / managed-install / OTA+nodes (weekdays) and site-catalog / WSL Phase 2 (Mon/Thu) should be GREEN. Red → file a product issue; do not bump friend hosts.
 
 If Fire/Needs you are empty and nightly is green → kick at most one `ready` item and stop.
 

@@ -22,6 +22,7 @@ Canonical automated build/test host for PlayOn (Docker + Node).
   - Set `nodes.join_host=172.16.0.94` so query/join target the Windows box (not Home’s advertiseHost)
   - Host deps for UE/Steam PE titles: VC++ 2010–2022 x64 redistributables + DirectX End-User Runtime (`d3dx9_43` / `XAudio2_7`)
   - Matrix: `pnpm lab:matrix --filter windows` (or `--skill games.*`) dual-places Windows-only skills here via live Home API/MCP
+  - After Home **0.2.13**, keep this lab agent current enough via Settings → Nodes (OTA keep-alive / Windows OTA / join-path publish). **Do not bump** friend zomboid / NewZombieLand3 / other friend-hosting nodes — they may lag on purpose ([#835](https://github.com/gmcclelland90/playon/issues/835)).
 
 ### SSH from the Windows workstation
 

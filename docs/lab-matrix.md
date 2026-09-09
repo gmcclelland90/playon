@@ -66,7 +66,7 @@ pnpm lab:join-path-canary --live-docker  # also start fixtures.lab-docker-server
 | WSL sibling | parent Windows `join_host` (not WSL-internal / `127.0.0.1`) | Manual: [wsl-phase2-smoke-checklist.md](wsl-phase2-smoke-checklist.md) on `playon-win-1` |
 | Windows PE | same fixture as a TCP stand-in on `playon-win-1` `join_host` (no PE binary in this repo) | Disposable native TCP on `playon-win-1` only — never friend servers / NZL |
 
-Wire the script into Playon Ops `playon-polish-canary` ([#835](https://github.com/gmcclelland90/playon/issues/835)). See [automations.md](automations.md).
+Standing on Playon Ops `playon-polish-canary` ([#835](https://github.com/gmcclelland90/playon/issues/835); first greens recorded 2026-09-09). See [automations.md](automations.md).
 
 ## Isolation rules
 

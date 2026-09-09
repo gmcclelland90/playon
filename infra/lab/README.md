@@ -8,6 +8,8 @@ Standing loop on the 24/7 Linux lab (timer already enabled on the current playon
 
 Live tick history: [#52 Lab now](https://github.com/gmcclelland90/playon/issues/52).
 
+Polish canaries (soak, managed-install, OTA+nodes, site/catalog, WSL Phase 2) are a **separate** Playon Ops workflow (`playon-polish-canary`) — not this timer. See [docs/automations.md](../../docs/automations.md).
+
 ## Install / reinstall (once per host, or after rebuild)
 
 ```bash

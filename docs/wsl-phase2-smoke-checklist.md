@@ -94,7 +94,7 @@ If the advertised Windows LAN IP was closed before start and open after:
 
 ## Automated join-path canary
 
-Address resolution (Linux fixture, WSL parent `join_host`, Windows node `join_host`) plus a TCP “loopback open / join host closed” fail is covered by `pnpm lab:join-path-canary` ([#843](https://github.com/gmcclelland90/playon/issues/843)). Full client join from another LAN device remains this checklist. Never use friend servers as the canary.
+Address resolution (Linux fixture, WSL parent `join_host`, Windows node `join_host`) plus a TCP “loopback open / join host closed” fail is covered by `pnpm lab:join-path-canary` ([#843](https://github.com/gmcclelland90/playon/issues/843)). Playon Ops also runs this checklist’s fixture path on **Mon/Thu 14:54 Sydney** via `playon-polish-canary` (first green recorded 2026-09-09, [#835](https://github.com/gmcclelland90/playon/issues/835)). Full client join from another LAN device remains this checklist. Never use friend servers as the canary.
 
 ## Additional Resources
 
