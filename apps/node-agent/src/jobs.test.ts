@@ -5,6 +5,60 @@ import { afterEach, describe, expect, it } from "vitest";
 import { NodeJobKindSchema, type NodeJobKind } from "@playon/shared";
 import { executeJob, shouldTryDockerAdapter, SUPPORTED_JOB_KINDS } from "./jobs.js";
 import { portPublishRegistry } from "./port-publish.js";
+import { isLockedFsError } from "./self-update.js";
+
+/** Windows keeps a dying child's cwd/log handles until the process actually exits. */
+async function waitPidGone(pid: number | undefined, timeoutMs = 5_000): Promise<void> {
+  if (pid == null) return;
+  const gone = (): boolean => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  const deadline = Date.now() + timeoutMs;
+  while (!gone() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 40));
+  }
+  if (gone()) return;
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    /* already gone or no permission */
+  }
+  const killDeadline = Date.now() + 2_000;
+  while (!gone() && Date.now() < killDeadline) {
+    await new Promise((resolve) => setTimeout(resolve, 40));
+  }
+}
+
+/**
+ * Windows CI: a just-stopped native child can still lock `…/servers/s1/game`
+ * (cwd + inherited log fd). Immediate `rmSync` then throws EBUSY and fails the
+ * suite after every assertion passed (run 34399355827 / #952).
+ */
+async function rmTempTree(root: string): Promise<void> {
+  const attempts = process.platform === "win32" ? 10 : 1;
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      fs.rmSync(root, {
+        recursive: true,
+        force: true,
+        maxRetries: process.platform === "win32" ? 8 : 0,
+        retryDelay: 80,
+      });
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (!isLockedFsError(err)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 50 * 2 ** Math.min(i, 5)));
+    }
+  }
+  throw lastErr;
+}
 
 describe("shouldTryDockerAdapter", () => {
   it("tries Docker on Windows even when PLAYON_RUNTIME=native", () => {
@@ -41,7 +95,7 @@ describe("executeJob", () => {
     expect(result.nodeId).toBe("n1");
     expect(result.dataRoot).toBe(root);
     expect(Number.isNaN(Date.parse(result.at))).toBe(false);
-    fs.rmSync(root, { recursive: true, force: true });
+    await rmTempTree(root);
   });
 
   it("rejects malformed meta args with a typed validation error", async () => {
@@ -62,7 +116,7 @@ describe("executeJob", () => {
         ),
       ).rejects.toMatchObject({ code: "validation_failed", kind: "node_self_update" });
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      await rmTempTree(root);
     }
   });
 
@@ -76,7 +130,7 @@ describe("executeJob", () => {
         ),
       ).rejects.toMatchObject({ code: "unsupported_job_kind", kind: "future_kind" });
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      await rmTempTree(root);
     }
   });
 
@@ -95,7 +149,7 @@ describe("executeJob", () => {
         root,
       ),
     ).rejects.toMatchObject({ code: "validation_failed", kind: "fs_list" });
-    fs.rmSync(root, { recursive: true, force: true });
+    await rmTempTree(root);
   });
 
   it("round-trips the fs family against the contract", async () => {
@@ -167,7 +221,7 @@ describe("executeJob", () => {
         archiveBase64: "",
       });
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      await rmTempTree(root);
     }
   });
 
@@ -190,7 +244,7 @@ describe("executeJob", () => {
         ),
       ).rejects.toMatchObject({ code: "validation_failed", kind: "fs_list" });
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      await rmTempTree(root);
     }
   });
 
@@ -230,7 +284,7 @@ describe("executeJob", () => {
         run("container_inspect", { id: "playon-no-such-container-ctr-test" }),
       ).rejects.not.toMatchObject({ code: "validation_failed" });
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      await rmTempTree(root);
     }
   });
 
@@ -266,7 +320,7 @@ describe("executeJob", () => {
         ok: true,
       });
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      await rmTempTree(root);
     }
     // Orphan reclaim deliberately waits between SIGTERM and SIGKILL.
   }, 30_000);
@@ -275,6 +329,7 @@ describe("executeJob", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-proc-run-"));
     const gameRel = "servers/s1/game";
     fs.mkdirSync(path.join(root, "servers", "s1", "game"), { recursive: true });
+    let startedPid: number | undefined;
     try {
       const started = (await executeJob(
         {
@@ -294,6 +349,7 @@ describe("executeJob", () => {
       expect(started.name).toBe("server-s1");
       expect(started.status).toBe("running");
       expect(started.pid).toBeGreaterThan(0);
+      startedPid = started.pid;
 
       expect(
         await executeJob(
@@ -347,7 +403,8 @@ describe("executeJob", () => {
         ),
       ).toMatchObject({ name: "server-s1", status: "stopped" });
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      await waitPidGone(startedPid);
+      await rmTempTree(root);
     }
   }, 30_000);
 
@@ -439,7 +496,7 @@ describe("executeJob", () => {
         root,
       );
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      await rmTempTree(root);
     }
   }, 30_000);
 
@@ -533,7 +590,7 @@ describe("executeJob", () => {
       } catch {
         /* gone */
       }
-      fs.rmSync(root, { recursive: true, force: true });
+      await rmTempTree(root);
     }
   }, 30_000);
 
@@ -621,7 +678,7 @@ describe("executeJob", () => {
           root,
         ).catch(() => undefined);
       }
-      fs.rmSync(root, { recursive: true, force: true });
+      await rmTempTree(root);
     }
   }, 60_000);
 
@@ -643,7 +700,7 @@ describe("executeJob", () => {
         run({ serverRel: "servers/s1", appId: 258_550, installDirRel: "../../opt" }),
       ).rejects.toMatchObject({ code: "validation_failed", kind: "steamcmd_app_update" });
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      await rmTempTree(root);
     }
   });
 
@@ -657,7 +714,7 @@ describe("executeJob", () => {
     expect(typeof caps.docker).toBe("boolean");
     expect(typeof caps.steamcmd).toBe("boolean");
     expect(caps.jobKinds).toEqual([...SUPPORTED_JOB_KINDS]);
-    fs.rmSync(root, { recursive: true, force: true });
+    await rmTempTree(root);
   });
 
   it("reports a bound UDP port via net_udp_listen", async () => {
@@ -688,7 +745,7 @@ describe("executeJob", () => {
       ).rejects.toMatchObject({ code: "validation_failed", kind: "net_udp_listen" });
     } finally {
       await new Promise<void>((resolve) => socket.close(() => resolve()));
-      fs.rmSync(root, { recursive: true, force: true });
+      await rmTempTree(root);
     }
   });
 
@@ -731,7 +788,7 @@ describe("executeJob", () => {
       ).rejects.toMatchObject({ code: "validation_failed", kind: "net_tcp_connect" });
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      fs.rmSync(root, { recursive: true, force: true });
+      await rmTempTree(root);
     }
   });
 
@@ -793,7 +850,7 @@ describe("executeJob", () => {
       expect(released.listening).toBe(false);
     } finally {
       await new Promise<void>((resolve) => backend.close(() => resolve()));
-      fs.rmSync(root, { recursive: true, force: true });
+      await rmTempTree(root);
     }
   });
 
@@ -883,8 +940,8 @@ describe("executeJob", () => {
         true,
       );
     } finally {
-      fs.rmSync(dataRoot, { recursive: true, force: true });
-      fs.rmSync(scan, { recursive: true, force: true });
+      await rmTempTree(dataRoot);
+      await rmTempTree(scan);
     }
   });
 
@@ -921,7 +978,7 @@ describe("executeJob", () => {
         }),
       ).rejects.toMatchObject({ code: "validation_failed", kind: "manage_cutover" });
     } finally {
-      fs.rmSync(root, { recursive: true, force: true });
+      await rmTempTree(root);
     }
   });
 });
