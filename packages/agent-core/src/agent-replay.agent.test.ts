@@ -43,6 +43,7 @@ describe("agent live LLM canary v2", () => {
       return;
     }
 
+    // Preference order: tool-capable first (qwen2.5 before llama3.2).
     const installed = DEFAULT_OLLAMA_CANARY_MODELS.filter((m) =>
       ollamaModelInstalled(ollama.models, m),
     );
@@ -52,9 +53,28 @@ describe("agent live LLM canary v2", () => {
     }
 
     const openaiBase = `${ollama.baseUrl.replace(/\/+$/, "")}/v1`;
-    const result = await runTwoStepCanary(
-      new OpenAICompatibleLlmClient(openaiBase, "", installed[0]!, "ollama"),
-    );
-    expect(result.ok, `${result.reason} names=${JSON.stringify(result.names)}`).toBe(true);
+    let last: Awaited<ReturnType<typeof runTwoStepCanary>> | undefined;
+    for (const model of installed) {
+      last = await runTwoStepCanary(
+        new OpenAICompatibleLlmClient(openaiBase, "", model, "ollama"),
+      );
+      if (last.ok) {
+        expect(last.degraded).toBe(false);
+        return;
+      }
+      // Hard fail (mutating / friend / non_lab) still fails the suite.
+      if (!last.degraded) {
+        expect(
+          last.ok,
+          `${last.reason} model=${model} names=${JSON.stringify(last.names)}`,
+        ).toBe(true);
+        return;
+      }
+    }
+    // Weak/optional Ollama that only degrades must not fail the Venice merge path (#945).
+    expect(
+      last?.degraded,
+      `ollama_degraded reason=${last?.reason} names=${JSON.stringify(last?.names)}`,
+    ).toBe(true);
   }, 180_000);
 });
