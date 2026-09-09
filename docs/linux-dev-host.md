@@ -78,6 +78,8 @@ pnpm loop:verify              # merge bar (real Venice + Docker)
 pnpm loop:verify:runtime      # + real Paper Docker smoke
 pnpm lab:matrix               # catalog E2E (see lab-matrix.md)
 pnpm lab:join-path-canary     # published joinHost vs loopback (see lab-matrix.md)
+pnpm lab:llm-canary           # in-process two-step (no Home mutation)
+pnpm lab:llm-canary --home    # Ops matrix: restore Settings + teardown lab-llm-canary*
 pnpm lab:file-issues          # push lab failures into GitHub Issues (source:lab)
 ```
 

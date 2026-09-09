@@ -4,6 +4,10 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+### Added
+
+- **LLM model-compat Home canary** — `pnpm lab:llm-canary --home` snapshots Settings before the first `PUT`, persists `tmp/lab-llm-canary-restore.json`, GET-verifies restore (never sends `apiKey`), and deletes only `lab-llm-canary*` leftovers (404 = already gone). Cheap-model `partial_trace` and disconnect/empty `toolTrace` are degraded/flake, not filed as product bugs. Matrix + restore contract: `docs/llm-model-compat.md` (`#836`).
+
 ### Fixed
 
 - **Lab host-port leftovers** — Docker start no longer fails with an opaque 500 when a leftover `playon-*` container still holds a published port (CS2 / Factorio matrix both died on `0.0.0.0:27015/tcp`). The runtime exclusive-binds advertised host ports first and rewrites bind-in-use as `host_port_in_use` naming the container or process. Matrix + `lab:matrix-cleanup` reap unreaped `playon-*` leftovers (never `playon-ollama`, NZL-shaped names, or durable Home inventory). Factorio still publishes game `34197/udp` plus RCON `27015/tcp` when the skill declares them — not a Source game remap (`#941` / `#942`).

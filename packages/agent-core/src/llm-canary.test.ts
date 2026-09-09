@@ -2,14 +2,24 @@ import { describe, expect, it, vi } from "vitest";
 import type { LlmClient, LlmCompletion } from "./llm.js";
 import {
   assertTwoStepToolTrace,
+  classifyLlmCanaryFailure,
   collectStringValues,
+  DEFAULT_HOME_RESTORE_MODEL,
+  DEFAULT_HOME_VENICE_CANARY_MODELS,
   DEFAULT_OLLAMA_CANARY_MODELS,
   DEFAULT_VENICE_CANARY_MODELS,
   FRIEND_SERVER_RE,
+  isDisposableLlmCanaryFixture,
+  isHomeCanaryLeftoverModel,
+  llmSettingsMatch,
+  mapHomeChatFailure,
   ollamaModelInstalled,
   probeOllamaReachable,
+  resolveRestoreTarget,
+  restorePutBody,
   runLlmModelCanary,
   runTwoStepCanary,
+  shouldFileLlmCanaryFailure,
 } from "./llm-canary.js";
 import type { ToolTraceEntry } from "./orchestrator.js";
 
@@ -207,5 +217,111 @@ describe("Ollama reachability", () => {
       true,
     );
     expect(report.ollama.ok).toBe(true);
+  });
+});
+
+describe("Home restore / teardown guards", () => {
+  it("matches snapshot by preset + provider + model (ignores extra fields)", () => {
+    expect(
+      llmSettingsMatch(
+        { preset: "venice", provider: "openai_compatible", model: "grok-4-6" },
+        { preset: "venice", provider: "openai_compatible", model: "grok-4-6", baseUrl: "https://api.venice.ai/api/v1" },
+      ),
+    ).toBe(true);
+    expect(
+      llmSettingsMatch(
+        { preset: "venice", provider: "openai_compatible", model: "grok-4-6" },
+        { preset: "venice", provider: "openai_compatible", model: "llama-3.3-70b" },
+      ),
+    ).toBe(false);
+  });
+
+  it("PUT restore body keeps preset+model and never sends an apiKey", () => {
+    const body = restorePutBody({
+      preset: "venice",
+      provider: "openai_compatible",
+      model: "grok-4-6",
+      baseUrl: "https://api.venice.ai/api/v1",
+    });
+    expect(body).toEqual({
+      preset: "venice",
+      model: "grok-4-6",
+      baseUrl: "https://api.venice.ai/api/v1",
+    });
+    expect(body).not.toHaveProperty("apiKey");
+  });
+
+  it("heals a leftover canary model when persist is missing", () => {
+    const resolved = resolveRestoreTarget({
+      current: { preset: "venice", provider: "openai_compatible", model: "llama-3.3-70b" },
+    });
+    expect(resolved.healed).toBe(true);
+    expect(resolved.reason).toBe("leftover_canary_model");
+    expect(resolved.snapshot.model).toBe(DEFAULT_HOME_RESTORE_MODEL);
+    expect(resolved.snapshot.preset).toBe("venice");
+  });
+
+  it("prefers a persisted snapshot over a leftover current model", () => {
+    const persisted = { preset: "venice", provider: "openai_compatible", model: "grok-4-6" };
+    const resolved = resolveRestoreTarget({
+      current: { preset: "venice", provider: "openai_compatible", model: "qwen3-5-9b" },
+      persisted,
+    });
+    expect(resolved).toEqual({ snapshot: persisted, healed: true, reason: "persisted_restore" });
+  });
+
+  it("does not treat the production default as a leftover", () => {
+    expect(isHomeCanaryLeftoverModel("grok-4-6")).toBe(false);
+    expect(isHomeCanaryLeftoverModel("llama-3.3-70b")).toBe(true);
+    const resolved = resolveRestoreTarget({
+      current: { preset: "venice", provider: "openai_compatible", model: "grok-4-6" },
+    });
+    expect(resolved.healed).toBe(false);
+    expect(resolved.reason).toBe("current");
+  });
+
+  it("only tears down lab-llm-canary* fixtures, never friends", () => {
+    expect(isDisposableLlmCanaryFixture({ id: "lab-llm-canary", name: "lab-llm-canary" })).toBe(true);
+    expect(isDisposableLlmCanaryFixture({ id: "abc", name: "lab-llm-canary-leftover" })).toBe(true);
+    expect(isDisposableLlmCanaryFixture({ id: "lab-matrix-paper", name: "lab-matrix-paper" })).toBe(false);
+    expect(isDisposableLlmCanaryFixture({ id: "nzl", name: "NewZombieLand3" })).toBe(false);
+    expect(isDisposableLlmCanaryFixture({ id: "lab-llm-canary", name: "NewZombieLand3" })).toBe(false);
+    expect(DEFAULT_HOME_VENICE_CANARY_MODELS).not.toContain("google-gemma-3-27b-it");
+    expect(DEFAULT_HOME_VENICE_CANARY_MODELS).not.toContain("grok-4-6");
+  });
+});
+
+describe("classifyLlmCanaryFailure", () => {
+  it("files only hard product tool-call failures", () => {
+    expect(shouldFileLlmCanaryFailure({ ok: false, reason: "mutating_tool" })).toBe(true);
+    expect(shouldFileLlmCanaryFailure({ ok: false, reason: "friend_server" })).toBe(true);
+    expect(shouldFileLlmCanaryFailure({ ok: false, reason: "fake_tool_json" })).toBe(true);
+  });
+
+  it("does not file flakes or cheap-model degraded traces", () => {
+    expect(classifyLlmCanaryFailure({ ok: false, reason: "disconnect" })).toBe("flake");
+    expect(classifyLlmCanaryFailure({ ok: false, reason: "empty_tool_trace" })).toBe("flake");
+    expect(classifyLlmCanaryFailure({ ok: false, reason: "partial_trace", degraded: true })).toBe(
+      "degraded",
+    );
+    expect(classifyLlmCanaryFailure({ ok: false, reason: "need_two_tools", degraded: true })).toBe(
+      "degraded",
+    );
+    expect(shouldFileLlmCanaryFailure({ ok: false, reason: "disconnect" })).toBe(false);
+    expect(shouldFileLlmCanaryFailure({ ok: false, reason: "partial_trace", degraded: true })).toBe(
+      false,
+    );
+    expect(shouldFileLlmCanaryFailure({ ok: true, reason: undefined })).toBe(false);
+  });
+
+  it("maps Home chat transport errors to flake reasons", () => {
+    expect(mapHomeChatFailure(new Error("home_rest_502: /api/chat bad gateway"))).toEqual({
+      reason: "http_5xx",
+      flake: true,
+    });
+    expect(mapHomeChatFailure(new Error("fetch failed: ECONNRESET"))).toEqual({
+      reason: "disconnect",
+      flake: true,
+    });
   });
 });

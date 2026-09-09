@@ -13,7 +13,7 @@ Companion docs: [agent-dev-loop.md](agent-dev-loop.md), [lab-matrix.md](lab-matr
 | Runtime | `pnpm loop:verify:runtime` | Docker lifecycle / Paper path changes | Lab + nightly |
 | Catalog | `pnpm lab:matrix` | Skill / catalog changes; standing lab cadence | Lab timer ([infra/lab](../infra/lab/README.md)) |
 | Join-path canary | `pnpm lab:join-path-canary` | Published `joinHost:gamePort` from `resolveJoinAddress` (not loopback). Ready-gate uses that advertised path from Home; WSL NAT publish is `net_port_publish` on the Windows parent LAN IP. | Unit in `pnpm verify`; live Docker / WSL / Win PE lab-only ([#843](https://github.com/gmcclelland90/playon/issues/843)) |
-| LLM canary | `pnpm lab:llm-canary` | Two-step tool trace (Venice + Ollama when present) | Playon Ops `llm-model-compat` (Mon/Thu) |
+| LLM canary | `pnpm lab:llm-canary` / `--home` | Two-step tool trace (Venice + Ollama when present). Home path restores Settings and tears down `lab-llm-canary*` ([llm-model-compat.md](llm-model-compat.md)) | Playon Ops `llm-model-compat` (Mon/Thu) |
 | Polish canaries | Playon Ops `playon-polish-canary` | Soak, managed-install, OTA+nodes, site/catalog, WSL Phase 2 — lab fixtures only | Standing Sydney schedule; first greens recorded 2026-09-09 ([#835](https://github.com/gmcclelland90/playon/issues/835), [automations.md](automations.md)) |
 | UI smoke | `pnpm test:e2e` | Auth / panel / UI flows | Weekly Actions (`e2e-weekly.yml`) |
 
@@ -31,7 +31,7 @@ CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the **fast**
 | smoke:paper-docker | scripts + runtime | Paper create → start → port |
 | lab:matrix | skills + playon-games catalog | Per-skill E2E install/start/port |
 | lab:join-path-canary | api + shared | Probe `resolveJoinAddress` / `nodes.join_host`, not `127.0.0.1` |
-| lab:llm-canary | agent-core | Two-step lab-* tool trace; Ollama `reachable=false` does not fail Venice |
+| lab:llm-canary | agent-core + scripts | Two-step lab-* tool trace; `--home` restore/teardown; Ollama `reachable=false` does not fail Venice |
 | playon-polish-canary | Ops / lab fixtures | Soak, managed-install, OTA+nodes, site/catalog, WSL Phase 2 — never friend servers / NZL |
 | e2e | web + api | Browser smoke (setup → login → panel) |
 
@@ -56,7 +56,8 @@ Always: link the issue (`Fixes #N`), keep secrets out of logs/fixtures, isolated
 | `tmp/agent-loop-status.json` | Last merge/fast/runtime bar result + failed layer tail |
 | `tmp/lab-matrix-status.json` | Matrix resume cursor + per-skill phases |
 | `tmp/lab-matrix-issues.jsonl` | Matrix failures for triage / fix agents |
-| `tmp/lab-llm-canary-status.json` | Last LLM canary v2 report (Venice + Ollama probe) |
+| `tmp/lab-llm-canary-status.json` | Last LLM canary v2 report (Venice + Ollama probe; restore/teardown when `--home`) |
+| `tmp/lab-llm-canary-restore.json` | Crash-safe Home Settings snapshot for `--home` restore |
 | `tmp/lab-filed-issues.json` | Ledger of fingerprints already filed to GitHub |
 
 Protocol: if `agent-loop-status.json` has `ok=false`, fix that layer before new feature work ([agent-dev-loop.md](agent-dev-loop.md)).
@@ -69,7 +70,7 @@ On failure, `scripts/lab-file-github-issues.mjs` opens or updates Issues labeled
 |--------|------------|
 | `pnpm loop:verify` / `:runtime` | After red bar (lab host; nightly Actions on failure) |
 | `pnpm lab:matrix` | After run with failures |
-| `pnpm lab:llm-canary` | After Venice two-step FAIL (`--from llm-canary`); Ollama `reachable=false` is not filed |
+| `pnpm lab:llm-canary` | After **product** Venice two-step FAIL (`--from llm-canary`). Skip degraded `partial_trace` and transport flakes. Ollama `reachable=false` is not filed. Matrix: [llm-model-compat.md](llm-model-compat.md) |
 | Lab cadence timer | Daily on playon-dev — verify then matrix ([infra/lab](../infra/lab/README.md)) |
 | Playon Ops `playon-polish-canary` | After a red scheduled soak / managed-install / OTA+nodes / site-catalog / WSL Phase 2 run — file a product issue; do not add extra unit CI ([#835](https://github.com/gmcclelland90/playon/issues/835)) |
 | Weekly e2e | `e2e-weekly.yml` on failure |
