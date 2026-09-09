@@ -22,9 +22,13 @@ export default defineConfig({
      * (nativeAddon) — better-sqlite3 Access-Violates under threads. #912 also
      * splits long snapshot files and serializes Windows CI turbo so birpc does
      * not miss onTaskUpdate after a fully green suite.
+     *
+     * After #948 the envelope (~124s) and runtime-handle (~177s) files grew
+     * past that cliff on windows-latest (run 34306522471). Those suites are
+     * split, and Windows `test:unit` runs them in sequential vitest processes.
      */
-    testTimeout: isWin ? 60_000 : 30_000,
-    hookTimeout: isWin ? 60_000 : 30_000,
+    testTimeout: isWin ? 90_000 : 30_000,
+    hookTimeout: isWin ? 90_000 : 30_000,
     ...windowsVitestTest({ nativeAddon: true }),
   },
 });
