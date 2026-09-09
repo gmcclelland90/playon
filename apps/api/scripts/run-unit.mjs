@@ -6,7 +6,7 @@
  * Windows CI: sequential vitest processes so a singleFork worker cannot sit on
  * the two historically fatal files (~124s envelope + ~177s runtime-handle)
  * and then miss birpc onTaskUpdate after every assertion already passed
- * (run 34306522471; same class as #912 / vitest#6511).
+ * (run 34306522471; #952; same class as #912 / vitest#6511).
  */
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
