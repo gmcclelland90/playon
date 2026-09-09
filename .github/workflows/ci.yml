@@ -22,7 +22,8 @@ jobs:
       - run: pnpm install
       # Full loop:verify (int/agent + Venice) stays on the Linux lab host.
       # Windows: serialize turbo so parallel package vitest forks do not starve
-      # birpc onTaskUpdate under load (#912 / vitest#6511).
+      # birpc onTaskUpdate under load (#912 / vitest#6511). @playon/api also
+      # shards its heavy unit files into sequential vitest processes on win32.
       - name: Verify
         run: pnpm verify
         env:
