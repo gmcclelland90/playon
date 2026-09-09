@@ -2,7 +2,7 @@
 
 Living contract for what must be green, when, and how coverage grows. Agents extend this after releases and `P0`/`P1` incidents.
 
-Companion docs: [agent-dev-loop.md](agent-dev-loop.md), [lab-matrix.md](lab-matrix.md), [sdlc.md](sdlc.md).
+Companion docs: [agent-dev-loop.md](agent-dev-loop.md), [lab-matrix.md](lab-matrix.md), [sdlc.md](sdlc.md), [automations.md](automations.md).
 
 ## Tiers
 
@@ -14,6 +14,7 @@ Companion docs: [agent-dev-loop.md](agent-dev-loop.md), [lab-matrix.md](lab-matr
 | Catalog | `pnpm lab:matrix` | Skill / catalog changes; standing lab cadence | Lab timer ([infra/lab](../infra/lab/README.md)) |
 | Join-path canary | `pnpm lab:join-path-canary` | Published `joinHost:gamePort` from `resolveJoinAddress` (not loopback). Ready-gate uses that advertised path from Home; WSL NAT publish is `net_port_publish` on the Windows parent LAN IP. | Unit in `pnpm verify`; live Docker / WSL / Win PE lab-only ([#843](https://github.com/gmcclelland90/playon/issues/843)) |
 | LLM canary | `pnpm lab:llm-canary` | Two-step tool trace (Venice + Ollama when present) | Playon Ops `llm-model-compat` (Mon/Thu) |
+| Polish canaries | Playon Ops `playon-polish-canary` | Soak, managed-install, OTA+nodes, site/catalog, WSL Phase 2 — lab fixtures only | Standing Sydney schedule; first greens recorded 2026-09-09 ([#835](https://github.com/gmcclelland90/playon/issues/835), [automations.md](automations.md)) |
 | UI smoke | `pnpm test:e2e` | Auth / panel / UI flows | Weekly Actions (`e2e-weekly.yml`) |
 
 CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the **fast** bar plus packaging and image smoke on ubuntu + windows. Full merge bar stays on the lab host (real Venice + Docker) — see [linux-dev-host.md](linux-dev-host.md).
@@ -31,6 +32,7 @@ CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the **fast**
 | lab:matrix | skills + playon-games catalog | Per-skill E2E install/start/port |
 | lab:join-path-canary | api + shared | Probe `resolveJoinAddress` / `nodes.join_host`, not `127.0.0.1` |
 | lab:llm-canary | agent-core | Two-step lab-* tool trace; Ollama `reachable=false` does not fail Venice |
+| playon-polish-canary | Ops / lab fixtures | Soak, managed-install, OTA+nodes, site/catalog, WSL Phase 2 — never friend servers / NZL |
 | e2e | web + api | Browser smoke (setup → login → panel) |
 
 ## Definition of done (by change type)
@@ -69,6 +71,7 @@ On failure, `scripts/lab-file-github-issues.mjs` opens or updates Issues labeled
 | `pnpm lab:matrix` | After run with failures |
 | `pnpm lab:llm-canary` | After Venice two-step FAIL (`--from llm-canary`); Ollama `reachable=false` is not filed |
 | Lab cadence timer | Daily on playon-dev — verify then matrix ([infra/lab](../infra/lab/README.md)) |
+| Playon Ops `playon-polish-canary` | After a red scheduled soak / managed-install / OTA+nodes / site-catalog / WSL Phase 2 run — file a product issue; do not add extra unit CI ([#835](https://github.com/gmcclelland90/playon/issues/835)) |
 | Weekly e2e | `e2e-weekly.yml` on failure |
 
 Disable: `PLAYON_LAB_FILE_ISSUES=0`. Manual: `pnpm lab:file-issues`. Matrix clones from the old phase-keyed fingerprint: `pnpm lab:file-issues --close-clones` (dry-run) then `--close-clones --apply`.
@@ -104,8 +107,10 @@ After each release, skim CHANGELOG **Fixed** entries and file `test-debt` for ga
 - Node-agent OTA / parent restart must not stop a supervised native (or docker) child — keepStdin parent-exit (no EOF), `relaunchUpdatedAgent` / supervisor, and `KillMode=process` MAINPID-only SIGTERM are unit-covered in `@playon/runtime` + `@playon/node-agent` (not `skipExit`-only) ([#886](https://github.com/gmcclelland90/playon/issues/886)). 0.2.9+ MAINPID exit is gated on `KillMode=process` and no pipe-stdin child; `control-group` units supervisor-loop instead. cwd-jail `process_start`/`process_stop` must not tree-reap a different server identity ([#909](https://github.com/gmcclelland90/playon/issues/909))
 - Weekly e2e is scheduled (`e2e-weekly.yml`) and `pnpm test:e2e` always builds workspace packages first; not yet in every-PR CI ([#44](https://github.com/gmcclelland90/playon/issues/44))
 - Lab cadence timer is live on playon-dev (daily verify → matrix → `source:lab` Issues; history on [#52](https://github.com/gmcclelland90/playon/issues/52) / [infra/lab](../infra/lab/README.md)); reinstall only if the host is rebuilt
+- Polish canaries beyond the skill matrix are standing Playon Ops routines (`playon-polish-canary`); first greens recorded 2026-09-09 ([#835](https://github.com/gmcclelland90/playon/issues/835), [automations.md](automations.md)). Extra unit CI stays out of scope. Friend / NZL hosts are never the canary target.
 
 ## Human gates for testing
 
 - Venice spend beyond routine lab verify → `blocked-human`
 - Destructive cleanup of durable Home inventory → never; matrix uses temp roots only ([lab-matrix.md](lab-matrix.md))
+- Bump friend-hosting / NewZombieLand3 node agents → never from polish canaries; Glenn-approved window only ([automations.md](automations.md))
