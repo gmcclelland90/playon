@@ -113,6 +113,7 @@ export const node = {
         case "fs_ensure_dir":
           return { path: args.path, ok: true };
         case "fs_write_text":
+          nodeFiles.set(String(args.path), String(args.content ?? ""));
           return { path: args.path, bytes: String(args.content ?? "").length };
         case "fs_read_text": {
           const rel = String(args.path);

@@ -4,6 +4,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { SkillMetadataSchema } from "@playon/shared";
 import {
+  BANNERLORD_SKILL,
+  bannerlordProcessEnv,
+  buildBannerlordWindowsStartBat,
   ensureFoundryAppCfg,
   ensureFoundryHeadlessArgs,
   ensureLinuxSteamSdk32,
@@ -15,6 +18,7 @@ import {
   isFoundrySkill,
   resolveNativeArgs,
   resolveNativeLaunch,
+  writeBannerlordWindowsOverlayFiles,
 } from "./native-launch.js";
 
 const rustMeta = SkillMetadataSchema.parse({
@@ -307,7 +311,7 @@ describe("native-launch", () => {
     process.env.PLAYON_BANNERLORD_AUTH_TOKEN = "tok-abc";
     try {
       const args = resolveNativeArgs({
-        skillName: "games.bannerlord",
+        skillName: BANNERLORD_SKILL,
         args: ["_MODULES_*Native*Multiplayer*_MODULES_", "/port", "7210"],
       });
       expect(args).toEqual([
@@ -332,6 +336,42 @@ describe("native-launch", () => {
     } finally {
       if (prev === undefined) delete process.env.PLAYON_BANNERLORD_AUTH_TOKEN;
       else process.env.PLAYON_BANNERLORD_AUTH_TOKEN = prev;
+    }
+  });
+
+  it("copies Bannerlord token into supervised process env for start.bat", () => {
+    expect(
+      bannerlordProcessEnv({ PLAYON_SERVER_ID: "s1" }, { PLAYON_BANNERLORD_AUTH_TOKEN: " tok " }),
+    ).toEqual({
+      PLAYON_SERVER_ID: "s1",
+      PLAYON_BANNERLORD_AUTH_TOKEN: "tok",
+    });
+    expect(bannerlordProcessEnv({ PLAYON_SERVER_ID: "s1" }, {})).toEqual({
+      PLAYON_SERVER_ID: "s1",
+    });
+  });
+
+  it("writes a Session-0 Bannerlord start.bat that cds into the Starter dir", () => {
+    const bat = buildBannerlordWindowsStartBat();
+    expect(bat).toMatch(/start \/b \/wait/);
+    expect(bat).not.toMatch(/start \/wait ""/);
+    expect(bat).toContain("_MODULES_*Native*Multiplayer*_MODULES_");
+    expect(bat).toContain("bin\\Win64_Shipping_Server");
+    expect(bat).toContain("PLAYON_BANNERLORD_AUTH_TOKEN");
+    expect(bat).toContain("/DisableErrorReporting");
+    expect(bat.includes("\r\n")).toBe(true);
+
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-bl-overlay-"));
+    const gameDir = path.join(root, "game");
+    try {
+      writeBannerlordWindowsOverlayFiles(gameDir);
+      const written = fs.readFileSync(path.join(gameDir, "start.bat"), "utf8");
+      expect(written).toBe(bat);
+      expect(fs.readFileSync(path.join(gameDir, "Modules", "Native", "playon_tdm.txt"), "utf8")).toMatch(
+        /start_game_and_mission/,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 

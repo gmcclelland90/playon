@@ -115,6 +115,12 @@ export const SkillNativeSchema = z.object({
   /** Paths relative to game/ prepended to LD_LIBRARY_PATH on Linux. */
   libraryPathRelative: z.array(SkillPathSegmentSchema).default([]),
   preferStartScript: z.boolean().default(true),
+  /**
+   * OS working directory relative to game/ (identity cwd stays game/).
+   * Required for PEs that Access-Violate when launched from the jail root
+   * (Bannerlord DedicatedCustomServer.Starter → bin/Win64_Shipping_Server).
+   */
+  workingDirectory: SkillPathSegmentSchema.optional(),
 });
 export type SkillNative = z.infer<typeof SkillNativeSchema>;
 
