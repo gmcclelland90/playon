@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import { isLocalNodeId, NODE_AUTHORITATIVE_MARKER } from "@playon/shared";
+import {
+  isLocalNodeId,
+  NODE_AUTHORITATIVE_MARKER,
+  resolveSteamInstallAppId,
+} from "@playon/shared";
 import { dispatchNodeJob, nodeServerRelPath } from "../node-runtime.js";
 import { readSkillMarker } from "../skill-marker.js";
 import { SteamcmdNotFoundError, steamcmdAppUpdate } from "../steamcmd.js";
@@ -130,7 +134,7 @@ export const contentToolModule: ToolModule = ({ plane }) => {
       handler: async (args, { serverId }) => {
         const server = await servers.get(serverId);
         if (!server) return { error: `unknown_server: ${serverId}` };
-        const appId = Number(args.appId);
+        const appId = resolveSteamInstallAppId(Number(args.appId));
         const installDirRel = args.installDir ? String(args.installDir) : undefined;
         const validate = args.validate === undefined ? true : Boolean(args.validate);
         const marker = readSkillMarker(server.dataPath);

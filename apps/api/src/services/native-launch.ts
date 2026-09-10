@@ -425,6 +425,14 @@ export function resolveNativeArgs(opts: {
   let args = opts.args.map((a) =>
     opts.gameDir ? a.replaceAll("{{gameDir}}", opts.gameDir) : a,
   );
+  if (opts.skillName === "games.stormworks") {
+    const hasServerDir = args.some(
+      (a) => a === "+server_dir" || a.startsWith("+server_dir="),
+    );
+    if (!hasServerDir) {
+      args = [...args, "+server_dir", "server_data"];
+    }
+  }
   if (opts.skillName === BANNERLORD_SKILL) {
     const token = bannerlordAuthToken(env);
     const hasTokenArg = args.some(
