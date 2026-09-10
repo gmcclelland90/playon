@@ -73,6 +73,21 @@ const HOST_SUPPLIED_SKILLS = new Set([
  */
 const HOST_SUPPLIED_PACKAGES_SKILLS = new Set(["games.ats", "games.ets2"]);
 
+/**
+ * TaleWorlds custom servers require a client `customserver.gettoken` value.
+ * Without PLAYON_BANNERLORD_AUTH_TOKEN the Starter PE exits before UDP 7210
+ * binds (lab: udp_process_not_running after start ok).
+ */
+const HOST_SUPPLIED_TOKEN_SKILLS = new Set(["games.bannerlord"]);
+
+function hostSuppliedTokenMissing(skillName) {
+  if (!HOST_SUPPLIED_TOKEN_SKILLS.has(skillName)) return false;
+  if (skillName === "games.bannerlord") {
+    return !(process.env.PLAYON_BANNERLORD_AUTH_TOKEN ?? "").trim();
+  }
+  return true;
+}
+
 /** Durable Home `playon-<id>` names — refreshed once per matrix run. */
 let cachedHomeProtect = { loaded: false, names: new Set() };
 
@@ -613,6 +628,19 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
   let serverId = null;
   const notes = { placement: "windows", nodeId: winNodeId, winHost };
 
+  if (hostSuppliedTokenMissing(meta.name)) {
+    return {
+      skillName: meta.name,
+      ok: true,
+      skipped: true,
+      skipReason: "host_supplied_token",
+      phases: { ...phases, static: "ok" },
+      durationMs: 0,
+      notes,
+      tail: "needs PLAYON_BANNERLORD_AUTH_TOKEN (TaleWorlds customserver.gettoken)",
+    };
+  }
+
   try {
     phases.static = "ok";
     await home.requireWinNodeOnline(winNodeId);
@@ -1005,6 +1033,18 @@ async function runLifecycle(cp, skill, { runTools, windows }) {
       phases: { ...phases, static: "ok" },
       durationMs: 0,
       tail: "needs client export_server_packages (server_packages.sii/.dat)",
+    };
+  }
+
+  if (hostSuppliedTokenMissing(meta.name)) {
+    return {
+      skillName: meta.name,
+      ok: true,
+      skipped: true,
+      skipReason: "host_supplied_token",
+      phases: { ...phases, static: "ok" },
+      durationMs: 0,
+      tail: "needs PLAYON_BANNERLORD_AUTH_TOKEN (TaleWorlds customserver.gettoken)",
     };
   }
 

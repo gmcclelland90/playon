@@ -118,6 +118,21 @@ describe("SkillMetadataSchema contract", () => {
     expect(parsed.os).toEqual(["windows"]);
   });
 
+  it("accepts native.workingDirectory for PEs that cannot launch from game/", () => {
+    const parsed = SkillMetadataSchema.parse({
+      name: "games.bannerlord",
+      version: "0.1.4",
+      containerSupport: "none",
+      native: {
+        binary: "bin/Win64_Shipping_Server/DedicatedCustomServer.Starter.exe",
+        binaryWindows: "bin/Win64_Shipping_Server/DedicatedCustomServer.Starter.exe",
+        workingDirectory: "bin/Win64_Shipping_Server",
+        preferStartScript: true,
+      },
+    });
+    expect(parsed.native?.workingDirectory).toBe("bin/Win64_Shipping_Server");
+  });
+
   it("accepts steamAppId for SteamCMD skills", () => {
     const parsed = SkillMetadataSchema.parse({
       name: "games.rust",

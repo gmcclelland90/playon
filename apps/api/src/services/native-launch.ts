@@ -10,6 +10,44 @@ export interface NativeLaunch {
   kind: "native" | "script";
 }
 
+/** Catalog id for Mount & Blade II: Bannerlord dedicated (Steam 1863440). */
+export const BANNERLORD_SKILL = "games.bannerlord";
+
+/** Starter PE relative to the SteamCMD jail root (and the usual nested depot). */
+export const BANNERLORD_STARTER_REL =
+  "bin/Win64_Shipping_Server/DedicatedCustomServer.Starter.exe";
+
+/**
+ * TaleWorlds Starter must run with CWD=this directory. PlayOn identity cwd is
+ * always game/; launching the PE from game/ Access-Violates before UDP 7210
+ * binds (lab: udp_process_not_running).
+ */
+export const BANNERLORD_WORKING_DIR_REL = "bin/Win64_Shipping_Server";
+
+/** Overlay config name; must live under Modules/Native (TaleWorlds loader). */
+export const BANNERLORD_CONFIG_NAME = "playon_tdm.txt";
+
+/**
+ * Disposable TDM rotation so the listen socket stays up after start.
+ * `start_game_and_mission` (not start_game alone) is what binds UDP 7210.
+ */
+export const BANNERLORD_PLAYON_TDM = [
+  "ServerName PlayOn-Bannerlord",
+  "GameType TeamDeathmatch",
+  "Map mp_tdm_map_001",
+  "MaxNumberOfPlayers 16",
+  "MinNumberOfPlayersForMatchStart 1",
+  "NumberOfBotsTeam1 0",
+  "NumberOfBotsTeam2 0",
+  "CultureTeam1 vlandia",
+  "CultureTeam2 battania",
+  "add_map_to_automated_battle_pool mp_tdm_map_001",
+  "set_automated_battle_count -1",
+  "enable_automated_battle_switching",
+  "start_game_and_mission",
+  "",
+].join("\n");
+
 /**
  * Resolve cmd.exe on Windows using ComSpec or fallback to absolute path.
  * Prevents spawn ENOENT on hosts where cmd.exe is not in PATH.
@@ -387,8 +425,8 @@ export function resolveNativeArgs(opts: {
   let args = opts.args.map((a) =>
     opts.gameDir ? a.replaceAll("{{gameDir}}", opts.gameDir) : a,
   );
-  if (opts.skillName === "games.bannerlord") {
-    const token = (env.PLAYON_BANNERLORD_AUTH_TOKEN ?? "").trim();
+  if (opts.skillName === BANNERLORD_SKILL) {
+    const token = bannerlordAuthToken(env);
     const hasTokenArg = args.some(
       (a, i) =>
         a === "/dedicatedcustomserverauthtoken" ||
@@ -403,6 +441,92 @@ export function resolveNativeArgs(opts: {
     args = ensureFoundryHeadlessArgs(args);
   }
   return args;
+}
+
+/** Host/node secret for Bannerlord custom-server registration. */
+export function bannerlordAuthToken(env: NodeJS.ProcessEnv = process.env): string {
+  return (env.PLAYON_BANNERLORD_AUTH_TOKEN ?? "").trim();
+}
+
+/**
+ * Copy the Home/node token into the supervised process env so overlay
+ * `start.bat` can see it. native.args injection is skipped when Home launches
+ * `cmd /c start.bat` with no extra args (Windows remote) — env is the path
+ * that actually reaches playon-win-1.
+ */
+export function bannerlordProcessEnv(
+  base: Record<string, string>,
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const token = bannerlordAuthToken(env);
+  if (!token) return { ...base };
+  return { ...base, PLAYON_BANNERLORD_AUTH_TOKEN: token };
+}
+
+/**
+ * Session-0-safe Bannerlord start.bat.
+ *
+ * Catalog 0.1.4 uses `start /wait` (new console). On playon-win-1 the node-agent
+ * spawns with `windowsHide` under Session 0 — that new window dies immediately,
+ * cmd.exe exits, and lab-matrix records `udp_process_not_running` after start
+ * reported ok. `start /b /wait` keeps the Windows-subsystem Starter attached
+ * in the same hidden console, after cd into bin\\Win64_Shipping_Server.
+ */
+export function buildBannerlordWindowsStartBat(): string {
+  const lines = [
+    "@echo off",
+    "REM PlayOn: Bannerlord dedicated (SteamCMD 1863440).",
+    "REM CWD must be bin\\Win64_Shipping_Server. start /b /wait: Session 0 / windowsHide.",
+    "setlocal EnableExtensions",
+    'cd /d "%~dp0"',
+    'set "ROOT=%CD%"',
+    'set "EXE="',
+    `if exist "%ROOT%\\bin\\Win64_Shipping_Server\\DedicatedCustomServer.Starter.exe" (`,
+    `  set "EXE=%ROOT%\\bin\\Win64_Shipping_Server\\DedicatedCustomServer.Starter.exe"`,
+    ")",
+    `if not defined EXE if exist "%ROOT%\\steamapps\\common\\Mount & Blade II Dedicated Server\\bin\\Win64_Shipping_Server\\DedicatedCustomServer.Starter.exe" (`,
+    `  set "EXE=%ROOT%\\steamapps\\common\\Mount & Blade II Dedicated Server\\bin\\Win64_Shipping_Server\\DedicatedCustomServer.Starter.exe"`,
+    ")",
+    "if not defined EXE (",
+    "  echo bannerlord: DedicatedCustomServer.Starter.exe missing - run steamcmd_app_update 1863440",
+    "  exit /b 1",
+    ")",
+    'for %%I in ("%EXE%") do set "BIN_DIR=%%~dpI"',
+    'for %%I in ("%BIN_DIR%\\..\\..") do set "GAME_ROOT=%%~fI"',
+    'set "NATIVE=%GAME_ROOT%\\Modules\\Native"',
+    `set "CFG=${BANNERLORD_CONFIG_NAME}"`,
+    'if not exist "%NATIVE%" (',
+    "  echo bannerlord: Modules\\Native missing - incomplete Steam depot 1863440",
+    "  exit /b 1",
+    ")",
+    'if not exist "%NATIVE%\\%CFG%" (',
+    `  if exist "%ROOT%\\Modules\\Native\\%CFG%" (`,
+    `    copy /Y "%ROOT%\\Modules\\Native\\%CFG%" "%NATIVE%\\%CFG%" >nul`,
+    "  ) else (",
+    "    echo bannerlord: %CFG% missing under Modules\\Native - skill overlay failed",
+    "    exit /b 1",
+    "  )",
+    ")",
+    'if not exist "%NATIVE%\\MultiplayerForcedAvatars" mkdir "%NATIVE%\\MultiplayerForcedAvatars"',
+    'if not exist "%GAME_ROOT%\\logs" mkdir "%GAME_ROOT%\\logs"',
+    'set "TOKEN_ARGS="',
+    "if defined PLAYON_BANNERLORD_AUTH_TOKEN set \"TOKEN_ARGS=/dedicatedcustomserverauthtoken %PLAYON_BANNERLORD_AUTH_TOKEN%\"",
+    'cd /d "%BIN_DIR%"',
+    "REM Quote _MODULES_ so cmd.exe does not glob '*'. /b = same hidden console.",
+    `start /b /wait "" "%EXE%" "_MODULES_*Native*Multiplayer*_MODULES_" /port 7210 /DisableErrorReporting /dedicatedcustomserverconfigfile %CFG% /LogOutputPath "%GAME_ROOT%\\logs" %TOKEN_ARGS% %*`,
+    "exit /b %ERRORLEVEL%",
+    "",
+  ];
+  return lines.join("\r\n");
+}
+
+/** Write the Session-0 start.bat + TDM config into a local game/ jail. */
+export function writeBannerlordWindowsOverlayFiles(gameDir: string): void {
+  fs.mkdirSync(gameDir, { recursive: true });
+  fs.writeFileSync(path.join(gameDir, "start.bat"), buildBannerlordWindowsStartBat());
+  const nativeDir = path.join(gameDir, "Modules", "Native");
+  fs.mkdirSync(nativeDir, { recursive: true });
+  fs.writeFileSync(path.join(nativeDir, BANNERLORD_CONFIG_NAME), BANNERLORD_PLAYON_TDM);
 }
 
 /** Pick a host process launch for a native skill's game/ directory. */

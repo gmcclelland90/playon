@@ -90,6 +90,7 @@ Standing on Playon Ops `playon-polish-canary` ([#835](https://github.com/gmcclel
 
 - Host-supplied binaries with no Steam/Docker install path (e.g. `games.unreal-tournament-99`, `games.quakeworld`)
 - Host-supplied SCS convoy packages (`games.ats`, `games.ets2`) — SteamCMD installs the dedi, but `server_packages.sii`/`.dat` must come from a client `export_server_packages` → `host_supplied_packages`
+- Host-supplied TaleWorlds custom-server token (`games.bannerlord`) — SteamCMD installs app 1863440, but anonymous hosting is rejected; without `PLAYON_BANNERLORD_AUTH_TOKEN` (from the Bannerlord client `customserver.gettoken`) the Starter PE exits before UDP 7210 binds (`udp_process_not_running`) → `host_supplied_token`. Set the env on Home to run the live Windows path.
 - FOSS titles without packaged fetch automation → `no_automated_install` after a failed start
 - SteamCMD `Invalid platform` on Linux Local → dual-place to `playon-win-1` when online; only `windows_only_depot` skip if Windows worker is off
 - SteamCMD `No subscription` under anonymous login (paid/licensed depot; e.g. `games.arma3`, `games.assetto-corsa`) → `steamcmd_no_subscription`

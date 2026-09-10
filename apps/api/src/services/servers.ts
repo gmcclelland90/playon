@@ -62,6 +62,11 @@ import {
   type RconEndpoint,
 } from "./rcon.js";
 import {
+  BANNERLORD_CONFIG_NAME,
+  BANNERLORD_PLAYON_TDM,
+  BANNERLORD_SKILL,
+  bannerlordProcessEnv,
+  buildBannerlordWindowsStartBat,
   foundryLanAppCfg,
   foundryLaunchEnv,
   foundryPreferStartScript,
@@ -71,6 +76,7 @@ import {
   nativeRconPort,
   resolveNativeArgs,
   resolveNativeLaunch,
+  writeBannerlordWindowsOverlayFiles,
 } from "./native-launch.js";
 import { ServerAdoptionService } from "./server-adoption.js";
 import {
@@ -888,6 +894,9 @@ export class ServerService {
     if (skillEntry?.path) {
       ensureSkillGameOverlay(skillEntry.path, gameDir);
     }
+    if (skillName === BANNERLORD_SKILL) {
+      writeBannerlordWindowsOverlayFiles(gameDir);
+    }
     const launch = resolveNativeLaunch({
       skillName,
       game: server.game,
@@ -903,7 +912,10 @@ export class ServerService {
       );
     }
     this.ensureRconConfig(server, skillName);
-    const env: Record<string, string> = { PLAYON_SERVER_ID: server.id, ...launch.env };
+    const env: Record<string, string> =
+      skillName === BANNERLORD_SKILL
+        ? bannerlordProcessEnv({ PLAYON_SERVER_ID: server.id, ...launch.env })
+        : { PLAYON_SERVER_ID: server.id, ...launch.env };
     const marker = readSkillMarker(server.dataPath);
     if (marker?.managedFrom) {
       env.PLAYON_MANAGED_FROM = marker.managedFrom;
@@ -979,9 +991,15 @@ export class ServerService {
     
     // Read managedFrom from skill marker (may be node-authoritative)
     const marker = readSkillMarker(server.dataPath);
+    const rawEnv: Record<string, string> = {
+      PLAYON_SERVER_ID: server.id,
+      ...(native?.env ?? {}),
+    };
     const baseEnv: Record<string, string> = isFoundrySkill(skillName)
-      ? foundryLaunchEnv({ PLAYON_SERVER_ID: server.id, ...(native?.env ?? {}) })
-      : { PLAYON_SERVER_ID: server.id, ...(native?.env ?? {}) };
+      ? foundryLaunchEnv(rawEnv)
+      : skillName === BANNERLORD_SKILL
+        ? bannerlordProcessEnv(rawEnv)
+        : rawEnv;
     if (marker?.managedFrom) {
       baseEnv.PLAYON_MANAGED_FROM = marker.managedFrom;
     }
@@ -995,9 +1013,30 @@ export class ServerService {
         .writeText("game/steam_appid.txt", `${FOUNDRY_STEAM_CLIENT_APP_ID}\n`)
         .catch(() => undefined);
     }
-    
+
     // Windows nodes have no /bin/bash start.sh contract — PE binary, or skill start.bat / start.ps1.
     if (nodeOs === "windows") {
+      if (skillName === BANNERLORD_SKILL) {
+        // Overwrite catalog start.bat: Session 0 needs start /b /wait, and
+        // SteamCMD can clobber a pre-install overlay. Token travels in env.
+        try {
+          const store = this.openFiles(server, { locality: "remote" });
+          await store.writeText("game/start.bat", buildBannerlordWindowsStartBat());
+          await store.writeText(
+            `game/Modules/Native/${BANNERLORD_CONFIG_NAME}`,
+            BANNERLORD_PLAYON_TDM,
+          );
+        } catch {
+          /* best-effort — still launch start.bat if a prior overlay landed */
+        }
+        return {
+          command: "C:\\Windows\\System32\\cmd.exe",
+          args: ["/c", "start.bat"],
+          env: baseEnv,
+          logFile: this.consoleLogRel(server.id),
+          keepStdin,
+        };
+      }
       const preferScript = isFoundrySkill(skillName)
         ? foundryPreferStartScript()
         : native?.preferStartScript !== false;
