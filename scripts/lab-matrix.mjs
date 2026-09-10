@@ -31,6 +31,8 @@ import { listSkills, loadSkillMetadata } from "../apps/api/dist/services/skills.
 import { steamcmdAppUpdate } from "../apps/api/dist/services/steamcmd.js";
 import { execConsoleCommand } from "../apps/api/dist/services/server-console.js";
 import { createRuntimeAdapters } from "../packages/runtime/dist/factory.js";
+import { listHostContainers } from "../packages/runtime/dist/docker-inventory.js";
+import { defaultHostPortLookup, waitForHostPortsFree } from "../packages/runtime/dist/host-port-bind.js";
 import { LOCAL_NODE_ID, playonContainerName, requiredUdpListenEvidence, udpListenTargets, windowsUdpPortOpenVerdict } from "../packages/shared/dist/index.js";
 import {
   HomeClient,
@@ -571,6 +573,22 @@ async function loadHomeProtectContainerNames() {
       `lab-matrix home protect list unavailable: ${err instanceof Error ? err.message : err}`,
     );
     return { loaded: false, names: new Set() };
+  }
+}
+
+async function waitSkillHostPortsFree(meta, label) {
+  const ports = skillHostPorts(meta);
+  if (!ports.length) return;
+  const ok = await waitForHostPortsFree(
+    ports,
+    defaultHostPortLookup(() => listHostContainers({ timeoutMs: 4_000 })),
+  );
+  if (!ok) {
+    console.log(
+      `lab-matrix ${label}: host ports still contested ${ports
+        .map((p) => `${p.host}/${p.protocol}`)
+        .join(",")}`,
+    );
   }
 }
 
@@ -1129,6 +1147,7 @@ async function runLifecycle(cp, skill, { runTools, windows }) {
           names: new Set([...cachedHomeProtect.names, playonContainerName(serverId)]),
         },
       });
+      await waitSkillHostPortsFree(meta, `${meta.name} before start`);
       const started = await servers.start(serverId);
       phases.start = started.status === "running" || started.status === "starting" ? "ok" : "fail";
       if (phases.start !== "ok") throw new Error(`start_status_${started.status}`);
@@ -1303,6 +1322,7 @@ async function runLifecycle(cp, skill, { runTools, windows }) {
     phases.stop = "ok";
     await servers.remove(serverId);
     dockerCleanup(serverId);
+    await waitSkillHostPortsFree(meta, `${meta.name} after cleanup`);
     phases.cleanup = "ok";
     serverId = null;
 

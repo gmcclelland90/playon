@@ -50,6 +50,11 @@ export function containerHoldsHostPort(
   );
 }
 
+/** Stopped/created leftovers often omit PublicPort while libnetwork still holds the publish. */
+export function containerHasNoPublishedHostPort(container: HostContainer): boolean {
+  return !(container.ports ?? []).some((p) => Number.isInteger(p.host) && (p.host ?? 0) > 0);
+}
+
 /**
  * PlayOn leftovers that may be force-removed.
  * When `protectListLoaded` is false, only `knownLeftoverNames` are reapable
@@ -71,7 +76,11 @@ export function leftoverPlayonContainers(
     if (!c.name.startsWith("playon-")) return false;
     if (isProtectedPlayonContainer(c.name, protect)) return false;
     if (!opts.protectListLoaded && !known.has(c.name)) return false;
-    if (opts.ports?.length && !opts.ports.some((p) => containerHoldsHostPort(c, p))) {
+    if (
+      opts.ports?.length &&
+      !opts.ports.some((p) => containerHoldsHostPort(c, p)) &&
+      !containerHasNoPublishedHostPort(c)
+    ) {
       return false;
     }
     return true;

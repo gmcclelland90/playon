@@ -7,11 +7,16 @@ import {
   formatHostPortInUseError,
   holdersFromContainers,
   holdersFromListenTable,
+  holdersFromSocketTable,
   hostPortsFromDockerInspect,
   hostPortsFromSpec,
+  isBlockingHostPortHolder,
   parseDockerHostPortBindError,
   rewriteDockerPortBindError,
+  runWithHostPortBindRetry,
   tryExclusiveBind,
+  tryPublishBind,
+  waitForHostPortsFree,
 } from "./host-port-bind.js";
 
 const DOCKER_500 =
@@ -119,6 +124,28 @@ describe("holdersFromListenTable / containers", () => {
       ),
     ).toEqual([{ kind: "container", detail: "container playon-old image=cm2network/cs2" }]);
   });
+
+  it("treats a LISTEN line without process info as a blocking listen socket (#955)", () => {
+    const hidden = holdersFromListenTable(
+      "tcp   LISTEN 0      4096       0.0.0.0:27015      0.0.0.0:*",
+      27015,
+      "tcp",
+    );
+    expect(hidden).toEqual([{ kind: "listen", detail: "listen socket (process hidden)" }]);
+    expect(hidden.every(isBlockingHostPortHolder)).toBe(true);
+  });
+});
+
+describe("holdersFromSocketTable", () => {
+  it("names TIME-WAIT leftovers that exclusive bind treats as in-use (#955)", () => {
+    const table = `
+tcp   TIME-WAIT 0 0 127.0.0.1:27015 127.0.0.1:54321
+tcp   ESTAB 0 0 10.0.0.1:22 10.0.0.2:9
+`;
+    const holders = holdersFromSocketTable(table, 27015, "tcp");
+    expect(holders).toEqual([{ kind: "time_wait", detail: "tcp TIME-WAIT leftover" }]);
+    expect(holders.some(isBlockingHostPortHolder)).toBe(false);
+  });
 });
 
 describe("tryExclusiveBind / assertHostPortsFree", () => {
@@ -180,5 +207,113 @@ describe("rewriteDockerPortBindError", () => {
     await expect(rewriteDockerPortBindError(new Error("no such container"))).rejects.toThrow(
       "no such container",
     );
+  });
+});
+
+describe("wait / retry for transient 27015 leftovers (#955)", () => {
+  it("does not fail the pre-check when only TIME-WAIT leftovers remain", async () => {
+    await expect(
+      assertHostPortsFree([{ host: 27015, protocol: "tcp" }], {
+        tryBind: async () => false,
+        listenTable: () => "",
+        socketTable: () => "tcp TIME-WAIT 0 0 127.0.0.1:27015 127.0.0.1:9",
+        sleep: async () => undefined,
+      }, { attempts: 3, delayMs: 0 }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("still fails when a live listener holds the port", async () => {
+    await expect(
+      assertHostPortsFree([{ host: 27015, protocol: "tcp" }], {
+        tryBind: async () => false,
+        listenTable: () =>
+          `tcp LISTEN 0 128 0.0.0.0:27015 0.0.0.0:* users:(("docker-proxy",pid=9,fd=1))`,
+        sleep: async () => undefined,
+      }, { attempts: 3, delayMs: 0 }),
+    ).rejects.toThrow(/host_port_in_use: 27015\/tcp held by process docker-proxy/);
+  });
+
+  it("treats TIME-WAIT-only as free for the next Docker publish", async () => {
+    await expect(
+      waitForHostPortsFree([{ host: 27015, protocol: "tcp" }], {
+        tryBind: async () => false,
+        socketTable: () => "tcp TIME-WAIT 0 0 0.0.0.0:27015 10.0.0.2:9",
+        sleep: async () => undefined,
+      }, { attempts: 2, delayMs: 0 }),
+    ).resolves.toBe(true);
+  });
+
+  it("retries Docker bind-in-use when the holder is an unknown leftover", async () => {
+    let tries = 0;
+    await expect(
+      runWithHostPortBindRetry(
+        async () => {
+          tries += 1;
+          if (tries < 3) throw new Error(DOCKER_500);
+          return "started";
+        },
+        { listenTable: () => "", socketTable: () => "", sleep: async () => undefined },
+        { attempts: 5, delayMs: 0 },
+      ),
+    ).resolves.toBe("started");
+    expect(tries).toBe(3);
+  });
+
+  it("fails fast when a leftover container still publishes the port", async () => {
+    let tries = 0;
+    await expect(
+      runWithHostPortBindRetry(
+        async () => {
+          tries += 1;
+          throw new Error(DOCKER_500);
+        },
+        {
+          listContainers: async () => [
+            {
+              name: "playon-leftover",
+              image: "cm2network/cs2",
+              status: "running",
+              ports: [{ host: 27015, container: 27015, protocol: "tcp" }],
+            },
+          ],
+          sleep: async () => undefined,
+        },
+        { attempts: 5, delayMs: 0 },
+      ),
+    ).rejects.toThrow(/held by container playon-leftover/);
+    expect(tries).toBe(1);
+  });
+
+  it("names TIME-WAIT when Docker 500 persists after retries", async () => {
+    await expect(
+      runWithHostPortBindRetry(
+        async () => {
+          throw new Error(DOCKER_500);
+        },
+        {
+          listenTable: () => "",
+          socketTable: () => "tcp TIME-WAIT 0 0 127.0.0.1:27015 127.0.0.1:9",
+          sleep: async () => undefined,
+        },
+        { attempts: 2, delayMs: 0 },
+      ),
+    ).rejects.toThrow(/host_port_in_use: 27015\/tcp held by tcp TIME-WAIT leftover/);
+  });
+
+  it("tryPublishBind can claim a port exclusive bind just released", async () => {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const probe = net.createServer();
+      const port = await new Promise<number>((resolve, reject) => {
+        probe.once("error", reject);
+        probe.listen(0, "0.0.0.0", () => {
+          const addr = probe.address();
+          if (!addr || typeof addr === "string") reject(new Error("no addr"));
+          else resolve(addr.port);
+        });
+      });
+      await new Promise<void>((resolve) => probe.close(() => resolve()));
+      if (await tryPublishBind(port, "tcp")) return;
+    }
+    throw new Error("tryPublishBind could not claim a just-released ephemeral port");
   });
 });

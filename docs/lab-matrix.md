@@ -74,6 +74,7 @@ Standing on Playon Ops `playon-polish-canary` ([#835](https://github.com/gmcclel
 - Windows path: live Home + `nodeId: playon-win-1` only (set `PLAYON_MATRIX_WIN_NODE_ID=off` to force skips). Auth auto-mints into `tmp/lab-matrix-home-auth.json` against durable DB for MCP/session — does not mutate live game servers outside `lab-matrix-*`. Requires `playon-win-1` online with `join_host` set; SteamCMD marks the server node-authoritative so Home does not push-wipe the install
 - Disposable names `lab-matrix-<slug>`; stop + remove + `docker rm` after each skill
 - Leftover `playon-*` containers from a killed matrix (temp root gone, ports still published) are reaped at run start and before each skill start. Durable Home inventory, `playon-ollama`, and NZL-shaped names are never removed. A remaining conflict is `host_port_in_use: <port>/<proto> held by …`, not a Docker 500.
+- After each skill stop/rm, and again before the next start, the runtime waits out transient `27015` leftovers (TCP TIME_WAIT from `port_open`, dying `docker-proxy`, stopped containers with no `PublicPort`, libnetwork/iptables reservations). Exclusive bind is not used as the publish pre-check — Docker userland-proxy binds with `SO_REUSEADDR`. Create/start retries bind-in-use when the holder is unknown or TIME_WAIT (`#955`; CS2 / Factorio matrix).
 - Do not schedule matrix work on `playon-node-1`
 - Live Zomboid (or any) server under systemd Home is out of bounds; the **skill** `games.project-zomboid` is still E2E-tested in the temp root
 
