@@ -353,11 +353,58 @@ export function tempEnv(): { db: Db; config: AppConfig; servers: ServerService }
   return { db, config, servers: new ServerService(db, config) };
 }
 
-export async function placeOnRemoteNode(db: Db, serverId: string): Promise<void> {
+export function writeFoundrySkill(skillsRoot: string): void {
+  const skillDir = path.join(skillsRoot, "games", "foundry");
+  fs.mkdirSync(path.join(skillDir, "guides"), { recursive: true });
+  fs.mkdirSync(path.join(skillDir, "files"), { recursive: true });
+  fs.writeFileSync(
+    path.join(skillDir, "metadata.yaml"),
+    [
+      "name: games.foundry",
+      "version: 0.1.8",
+      "game: Foundry",
+      "containerSupport: none",
+      "os:",
+      "  - linux",
+      "  - windows",
+      "steamAppId: 2915550",
+      "adminDialect: none",
+      "queryDialect: a2s",
+      "native:",
+      "  binary: FoundryDedicatedServer.exe",
+      "  binaryWindows: FoundryDedicatedServer.exe",
+      "  preferStartScript: true",
+      "  args:",
+      "    - -log",
+      "  env:",
+      '    SteamAppId: "983870"',
+      "ports:",
+      "  - name: game",
+      "    protocol: udp",
+      "    default: 3724",
+      "healthChecks: []",
+      "dependencies: []",
+      "requiredTools: []",
+      "",
+    ].join("\n"),
+  );
+  fs.writeFileSync(path.join(skillDir, "guides", "INSTALL.md"), "# Foundry\n");
+  fs.writeFileSync(
+    path.join(skillDir, "files", "start.bat"),
+    '@echo off\nstart /wait "" "%CD%\\FoundryDedicatedServer.exe" -log\n',
+  );
+  fs.writeFileSync(path.join(skillDir, "files", "app.cfg"), "server_is_public=true\n");
+}
+
+export async function placeOnRemoteNode(
+  db: Db,
+  serverId: string,
+  opts?: { os?: "linux" | "windows" },
+): Promise<void> {
   await db.insert(nodesTable).values({
     id: REMOTE_NODE_ID,
     name: "lab-node",
-    os: "linux",
+    os: opts?.os ?? "linux",
     docker: true,
     native: true,
     steamcmd: false,
