@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { resolveQueryDialect, SkillMetadataSchema } from "./skill.js";
+import {
+  applyKnownSkillMetadataFixes,
+  ENSHROUDED_LEGACY_GAME_PORT,
+  ENSHROUDED_QUERY_PORT,
+  parseSkillMetadata,
+  resolveQueryDialect,
+  SkillMetadataSchema,
+} from "./skill.js";
 
 describe("SkillMetadataSchema contract", () => {
   it("accepts a minimal fixture skill", () => {
@@ -184,6 +191,50 @@ describe("SkillMetadataSchema contract", () => {
         native: { libraryPathRelative: ["linux64", { not: "a path" }] },
       }),
     ).toThrow(/string/i);
+  });
+
+  it("remaps catalog games.enshrouded 15636 game port to query 15637 (#957)", () => {
+    const catalog = SkillMetadataSchema.parse({
+      name: "games.enshrouded",
+      version: "0.1.2",
+      queryDialect: "a2s",
+      ports: [
+        { name: "game", protocol: "udp", default: ENSHROUDED_LEGACY_GAME_PORT },
+        { name: "query", protocol: "udp", default: ENSHROUDED_QUERY_PORT },
+      ],
+    });
+    expect(catalog.ports.find((p) => p.name === "game")?.default).toBe(
+      ENSHROUDED_LEGACY_GAME_PORT,
+    );
+    expect(catalog.queryPortName).toBeUndefined();
+
+    const fixed = applyKnownSkillMetadataFixes(catalog);
+    expect(fixed.ports.find((p) => p.name === "game")?.default).toBe(ENSHROUDED_QUERY_PORT);
+    expect(fixed.ports.find((p) => p.name === "query")?.default).toBe(ENSHROUDED_QUERY_PORT);
+    expect(fixed.queryPortName).toBe("query");
+    expect(applyKnownSkillMetadataFixes(fixed).ports.find((p) => p.name === "game")?.default).toBe(
+      ENSHROUDED_QUERY_PORT,
+    );
+
+    const parsed = parseSkillMetadata({
+      name: "games.enshrouded",
+      version: "0.1.2",
+      queryDialect: "a2s",
+      ports: [{ name: "game", protocol: "udp", default: ENSHROUDED_LEGACY_GAME_PORT }],
+    });
+    expect(parsed.ports.find((p) => p.name === "game")?.default).toBe(ENSHROUDED_QUERY_PORT);
+    expect(parsed.ports.find((p) => p.name === "query")?.default).toBe(ENSHROUDED_QUERY_PORT);
+    expect(parsed.queryPortName).toBe("query");
+  });
+
+  it("does not remap other titles' game ports", () => {
+    const pz = parseSkillMetadata({
+      name: "games.project-zomboid",
+      version: "0.1.0",
+      ports: [{ name: "game", protocol: "udp", default: 16261 }],
+    });
+    expect(pz.ports[0]?.default).toBe(16261);
+    expect(pz.queryPortName).toBeUndefined();
   });
 });
 
