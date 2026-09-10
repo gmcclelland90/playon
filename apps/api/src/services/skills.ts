@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import yaml from "js-yaml";
 import { ZodError } from "zod";
-import { SkillMetadataSchema, type SkillMetadata } from "@playon/shared";
+import { parseSkillMetadata, type SkillMetadata } from "@playon/shared";
 
 export interface SkillEntry {
   id: string;
@@ -56,7 +56,7 @@ function formatSkillLoadError(err: unknown): string {
 
 function loadMetadataFile(metadataPath: string): SkillMetadata {
   const raw = yaml.load(fs.readFileSync(metadataPath, "utf8"));
-  return SkillMetadataSchema.parse(raw);
+  return parseSkillMetadata(raw);
 }
 
 /** Parse skill metadata; return null (and warn) so one bad tree cannot abort listing. */

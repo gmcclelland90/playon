@@ -53,6 +53,14 @@ export function resolveQueryDialect(
   return declared ?? "none";
 }
 
+/**
+ * Keen Content Update #2+ dedicated servers bind only `queryPort` (default
+ * 15637). Catalog `games.enshrouded` 0.1.2 still advertises obsolete
+ * `gamePort` 15636; current builds delete that key and never listen there.
+ */
+export const ENSHROUDED_QUERY_PORT = 15637;
+export const ENSHROUDED_LEGACY_GAME_PORT = 15636;
+
 export const SkillThemeIdSchema = z.enum(["default", "grass", "ember", "steel", "paper"]);
 export type SkillThemeId = z.infer<typeof SkillThemeIdSchema>;
 
@@ -179,6 +187,39 @@ export const SkillMetadataSchema = z.object({
 });
 
 export type SkillMetadata = z.infer<typeof SkillMetadataSchema>;
+
+/**
+ * Remap known stale catalog ports before join / matrix `port_open`.
+ * Does not rewrite on-disk YAML — catalog bump can drop the overlay later.
+ */
+export function applyKnownSkillMetadataFixes(meta: SkillMetadata): SkillMetadata {
+  if (meta.name !== "games.enshrouded") return meta;
+  const ports = meta.ports.map((p) => {
+    if (
+      p.name === "game" &&
+      p.protocol === "udp" &&
+      p.default === ENSHROUDED_LEGACY_GAME_PORT
+    ) {
+      return { ...p, default: ENSHROUDED_QUERY_PORT };
+    }
+    return p;
+  });
+  const hasQuery = ports.some(
+    (p) => p.name === "query" && p.protocol === "udp" && p.default === ENSHROUDED_QUERY_PORT,
+  );
+  return {
+    ...meta,
+    ports: hasQuery
+      ? ports
+      : [...ports, { name: "query", protocol: "udp", default: ENSHROUDED_QUERY_PORT }],
+    queryPortName: meta.queryPortName?.trim() || "query",
+  };
+}
+
+/** Parse catalog YAML/JSON and apply known-title port / dialect overlays. */
+export function parseSkillMetadata(raw: unknown): SkillMetadata {
+  return applyKnownSkillMetadataFixes(SkillMetadataSchema.parse(raw));
+}
 
 /** Expand {{host}} {{port}} {{endpoint}} {{connectCommand}} in skill join templates. */
 export function renderSkillTemplate(

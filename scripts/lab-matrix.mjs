@@ -31,7 +31,7 @@ import { listSkills, loadSkillMetadata } from "../apps/api/dist/services/skills.
 import { steamcmdAppUpdate } from "../apps/api/dist/services/steamcmd.js";
 import { execConsoleCommand } from "../apps/api/dist/services/server-console.js";
 import { createRuntimeAdapters } from "../packages/runtime/dist/factory.js";
-import { LOCAL_NODE_ID, playonContainerName, requiredUdpListenEvidence, windowsUdpPortOpenVerdict } from "../packages/shared/dist/index.js";
+import { LOCAL_NODE_ID, playonContainerName, requiredUdpListenEvidence, udpListenTargets, windowsUdpPortOpenVerdict } from "../packages/shared/dist/index.js";
 import {
   HomeClient,
   loadHomeAuth,
@@ -348,22 +348,6 @@ function udpOnlyGame(meta) {
   const ports = gamePorts(meta);
   if (!ports.length) return false;
   return ports.every((p) => p.protocol === "udp");
-}
-
-/**
- * UDP ports the matrix must prove listening (Linux ss / Windows node job).
- * When a query dialect is declared, only the queryPortName bind is required —
- * Steam-networking game ports (Avorion) often never show in ss/netstat.
- */
-function udpListenTargets(meta) {
-  const udpGame = gamePorts(meta).filter((p) => p.protocol === "udp");
-  const queryName = typeof meta.queryPortName === "string" ? meta.queryPortName.trim() : "";
-  const requireQueryOnly =
-    !!queryName && meta.queryDialect && meta.queryDialect !== "none";
-  const mustListen = requireQueryOnly
-    ? udpGame.filter((p) => p.name === queryName)
-    : udpGame;
-  return { udpGame, listenTargets: mustListen.length ? mustListen : udpGame };
 }
 
 function unwrapUdpListen(res) {

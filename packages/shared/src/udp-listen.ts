@@ -48,6 +48,42 @@ export function windowsUdpPortOpenVerdict(
   return { ok: false, reason: "udp_listen_unproven" };
 }
 
+export type SkillUdpListenPort = {
+  name: string;
+  protocol?: string;
+  default?: number;
+};
+
+export type SkillUdpListenMeta = {
+  ports?: SkillUdpListenPort[];
+  queryDialect?: string | null;
+  queryPortName?: string;
+};
+
+/**
+ * UDP ports the matrix must prove listening (Linux ss / Windows node job).
+ * When a query dialect is declared, only the queryPortName bind is required —
+ * Steam-networking game ports (Avorion) and Keen CU2+ Enshrouded often never
+ * show a separate game socket in ss/netstat.
+ */
+export function udpListenTargets(meta: SkillUdpListenMeta): {
+  udpGame: Array<{ name: string; protocol: string; default: number }>;
+  listenTargets: Array<{ name: string; protocol: string; default: number }>;
+} {
+  const udpGame = (meta.ports ?? [])
+    .filter(
+      (p) =>
+        p.protocol === "udp" &&
+        typeof p.default === "number" &&
+        /^(game|query)([-_]|$)/i.test(p.name),
+    )
+    .map((p) => ({ name: p.name, protocol: "udp", default: p.default! }));
+  const queryName = typeof meta.queryPortName === "string" ? meta.queryPortName.trim() : "";
+  const requireQueryOnly = !!queryName && !!meta.queryDialect && meta.queryDialect !== "none";
+  const mustListen = requireQueryOnly ? udpGame.filter((p) => p.name === queryName) : udpGame;
+  return { udpGame, listenTargets: mustListen.length ? mustListen : udpGame };
+}
+
 /** Collapse per-port probes into the tri-state `listening` field above. */
 export function requiredUdpListenEvidence(
   probes: Array<{ required: boolean; listening: boolean | null }>,

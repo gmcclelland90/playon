@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyKnownSkillMetadataFixes,
+  ENSHROUDED_LEGACY_GAME_PORT,
+  ENSHROUDED_QUERY_PORT,
+  SkillMetadataSchema,
+} from "./skill.js";
+import {
   requiredUdpListenEvidence,
+  udpListenTargets,
   udpPortListedInOutput,
   windowsUdpPortOpenVerdict,
 } from "./udp-listen.js";
@@ -108,6 +115,46 @@ describe("requiredUdpListenEvidence", () => {
     ).toBe(false);
     expect(requiredUdpListenEvidence([{ required: true, listening: null }])).toBe(null);
     expect(requiredUdpListenEvidence([{ required: false, listening: true }])).toBe(false);
+  });
+});
+
+describe("udpListenTargets", () => {
+  it("requires every UDP game/query port when no queryPortName is set", () => {
+    const catalog = SkillMetadataSchema.parse({
+      name: "games.enshrouded",
+      version: "0.1.2",
+      queryDialect: "a2s",
+      ports: [
+        { name: "game", protocol: "udp", default: ENSHROUDED_LEGACY_GAME_PORT },
+        { name: "query", protocol: "udp", default: ENSHROUDED_QUERY_PORT },
+      ],
+    });
+    const stale = udpListenTargets(catalog);
+    expect(stale.listenTargets.map((p) => `${p.name}:${p.default}`)).toEqual([
+      `game:${ENSHROUDED_LEGACY_GAME_PORT}`,
+      `query:${ENSHROUDED_QUERY_PORT}`,
+    ]);
+  });
+
+  it("after Enshrouded overlay, only query 15637 is required (#957)", () => {
+    const catalog = SkillMetadataSchema.parse({
+      name: "games.enshrouded",
+      version: "0.1.2",
+      queryDialect: "a2s",
+      ports: [
+        { name: "game", protocol: "udp", default: ENSHROUDED_LEGACY_GAME_PORT },
+        { name: "query", protocol: "udp", default: ENSHROUDED_QUERY_PORT },
+      ],
+    });
+    const fixed = applyKnownSkillMetadataFixes(catalog);
+    const { listenTargets, udpGame } = udpListenTargets(fixed);
+    expect(udpGame.map((p) => `${p.name}:${p.default}`)).toEqual([
+      `game:${ENSHROUDED_QUERY_PORT}`,
+      `query:${ENSHROUDED_QUERY_PORT}`,
+    ]);
+    expect(listenTargets.map((p) => `${p.name}:${p.default}`)).toEqual([
+      `query:${ENSHROUDED_QUERY_PORT}`,
+    ]);
   });
 });
 

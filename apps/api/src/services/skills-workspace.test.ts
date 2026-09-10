@@ -103,4 +103,32 @@ describe("listSkills metadata scan (#871)", () => {
       warn.mockRestore();
     }
   });
+
+  it("remaps catalog games.enshrouded game 15636 to query 15637 (#957)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-skills-"));
+    temps.push(root);
+    const skillDir = path.join(root, "enshrouded");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, "metadata.yaml"),
+      [
+        "name: games.enshrouded",
+        "version: 0.1.2",
+        "queryDialect: a2s",
+        "ports:",
+        "  - name: game",
+        "    protocol: udp",
+        "    default: 15636",
+        "  - name: query",
+        "    protocol: udp",
+        "    default: 15637",
+        "",
+      ].join("\n"),
+    );
+
+    const skill = loadSkillMetadata([root], "games.enshrouded");
+    expect(skill?.metadata.ports.find((p) => p.name === "game")?.default).toBe(15637);
+    expect(skill?.metadata.ports.find((p) => p.name === "query")?.default).toBe(15637);
+    expect(skill?.metadata.queryPortName).toBe("query");
+  });
 });
