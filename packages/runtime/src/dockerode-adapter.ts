@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { PassThrough } from "node:stream";
 import Docker from "dockerode";
 import { buildContainerCreateOptions } from "./docker-create-options.js";
@@ -12,9 +11,11 @@ import { demuxDockerLogBuffer, splitLogLines } from "./docker-log-demux.js";
 import {
   HostPortInUseError,
   assertHostPortsFree,
+  defaultHostPortLookup,
   hostPortsFromDockerInspect,
   hostPortsFromSpec,
-  rewriteDockerPortBindError,
+  runWithHostPortBindRetry,
+  waitForHostPortsFree,
   type HostPortLookup,
 } from "./host-port-bind.js";
 import type { ContainerInfo, ContainerSpec, DockerAdapter, LogFollowHandle } from "./types.js";
@@ -28,21 +29,7 @@ function mapStatus(status: string | undefined): ContainerInfo["status"] {
 }
 
 function hostPortLookup(): HostPortLookup {
-  return {
-    listContainers: () => listHostContainers(),
-    listenTable: (protocol) => {
-      try {
-        const args = protocol === "udp" ? ["-ulnp"] : ["-tlnp"];
-        return execFileSync("ss", args, {
-          encoding: "utf8",
-          timeout: 5_000,
-          windowsHide: true,
-        });
-      } catch {
-        return null;
-      }
-    },
-  };
+  return defaultHostPortLookup(() => listHostContainers());
 }
 
 /** Real Docker Engine adapter via dockerode. */
@@ -97,13 +84,10 @@ export class DockerodeAdapter implements DockerAdapter {
     const platform = engine.osType === "windows" ? "windows/amd64" : undefined;
     await this.ensureImage(spec.image, platform);
 
-    try {
+    return runWithHostPortBindRetry(async () => {
       const container = await this.docker.createContainer(buildContainerCreateOptions(spec, engine));
-      return { id: container.id, name: spec.name, status: "created" };
-    } catch (err) {
-      await rewriteDockerPortBindError(err, lookup);
-      throw err;
-    }
+      return { id: container.id, name: spec.name, status: "created" as const };
+    }, lookup);
   }
 
   async start(id: string): Promise<void> {
@@ -115,11 +99,7 @@ export class DockerodeAdapter implements DockerAdapter {
       if (err instanceof HostPortInUseError) throw err;
       /* inspect failed — start may still work; bind errors rewrite below */
     }
-    try {
-      await this.docker.getContainer(id).start();
-    } catch (err) {
-      await rewriteDockerPortBindError(err, lookup);
-    }
+    await runWithHostPortBindRetry(() => this.docker.getContainer(id).start(), lookup);
   }
 
   async stop(id: string): Promise<void> {
@@ -132,11 +112,21 @@ export class DockerodeAdapter implements DockerAdapter {
   }
 
   async remove(id: string): Promise<void> {
+    let ports = hostPortsFromSpec([]);
+    try {
+      const info = await this.docker.getContainer(id).inspect();
+      ports = hostPortsFromDockerInspect(info);
+    } catch {
+      /* inspect optional — still force-remove */
+    }
     try {
       await this.docker.getContainer(id).remove({ force: true, v: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       if (!/no such container|404/i.test(message)) throw err;
+    }
+    if (ports.length) {
+      await waitForHostPortsFree(ports, hostPortLookup());
     }
   }
 

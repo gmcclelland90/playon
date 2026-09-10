@@ -9,6 +9,7 @@ import {
   localNativeTransport,
   openServerRuntime,
   parseDockerHostPortBindError,
+  defaultHostPortLookup,
   probeUdpListen,
   remoteDockerTransport,
   remoteNativeTransport,
@@ -1650,9 +1651,10 @@ export class ServerService {
       await this.db.update(servers).set({ status: "error" }).where(eq(servers.id, id));
       this.emitStatus(id, "error");
       if (parseDockerHostPortBindError(err)) {
-        await rewriteDockerPortBindError(err, {
-          listContainers: this.hostPortHoldersOverride ?? (() => listHostContainers()),
-        });
+        await rewriteDockerPortBindError(
+          err,
+          defaultHostPortLookup(this.hostPortHoldersOverride ?? (() => listHostContainers())),
+        );
       }
       throw err;
     }

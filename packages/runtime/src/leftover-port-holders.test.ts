@@ -104,4 +104,32 @@ describe("leftoverPlayonContainers", () => {
       }),
     ).toEqual([]);
   });
+
+  it("never reaps NZL-shaped names even when unpublished", () => {
+    expect(
+      leftoverPlayonContainers(
+        [{ name: "playon-NewZombieLand3", image: "x", status: "exited", ports: [] }],
+        {
+          protectListLoaded: true,
+          ports: [{ host: 27015, protocol: "tcp" }],
+        },
+      ),
+    ).toEqual([]);
+  });
+
+  it("reaps stopped unpublished playon leftovers that may still hold a libnetwork reservation (#955)", () => {
+    const stopped = {
+      name: "playon-staleCs2",
+      image: "cm2network/cs2",
+      status: "exited",
+      ports: [{ container: 27015, protocol: "tcp" as const }],
+    };
+    expect(
+      leftoverPlayonContainers([stopped, homeCs2], {
+        protectNames: protectNamesFromServerIds(["homeCs2Live"]),
+        protectListLoaded: true,
+        ports: [{ host: 27015, protocol: "tcp" }],
+      }).map((c) => c.name),
+    ).toEqual([stopped.name]);
+  });
 });
