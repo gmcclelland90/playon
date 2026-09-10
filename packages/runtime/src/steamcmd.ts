@@ -353,6 +353,21 @@ export function clearStagedSteamDownload(installDir: string, appId: number): voi
   }
 }
 
+/**
+ * SteamCMD `+app_update <id> [-beta <name>]` flags.
+ * `steamBeta` applies on every OS; `steamBetaLinux` only on Linux (HumanitZ).
+ */
+export function steamcmdBetaFlags(
+  args: { steamBeta?: string; steamBetaLinux?: string },
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  const steamBeta = args.steamBeta?.trim();
+  if (steamBeta) return ["-beta", steamBeta];
+  const steamBetaLinux = args.steamBetaLinux?.trim();
+  if (steamBetaLinux && platform === "linux") return ["-beta", steamBetaLinux];
+  return [];
+}
+
 export async function steamcmdAppUpdate(args: {
   serverDataPath: string;
   appId: number;
@@ -360,6 +375,11 @@ export async function steamcmdAppUpdate(args: {
   validate?: boolean;
   /** HLDS app 90: `+app_set_config <appId> mod <steamMod>` before update. */
   steamMod?: string;
+  /**
+   * SteamCMD `-beta <name>` on every host (The Isle `evrima`, etc.).
+   * Wins over `steamBetaLinux` when both are set.
+   */
+  steamBeta?: string;
   /**
    * SteamCMD `-beta <name>` — only emitted on Linux hosts (Windows ignores).
    * Used for Linux-only depots such as HumanitZ `linuxbranch`.
@@ -393,10 +413,7 @@ export async function steamcmdAppUpdate(args: {
     cmdArgs.push("+app_set_config", String(appId), "mod", steamMod);
   }
   cmdArgs.push("+app_update", String(appId));
-  const steamBetaLinux = args.steamBetaLinux?.trim();
-  if (steamBetaLinux && process.platform === "linux") {
-    cmdArgs.push("-beta", steamBetaLinux);
-  }
+  cmdArgs.push(...steamcmdBetaFlags(args));
   if (args.validate !== false) cmdArgs.push("validate");
   cmdArgs.push("+quit");
 

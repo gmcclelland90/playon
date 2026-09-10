@@ -731,6 +731,7 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
           serverId,
           appId: stormworksSteamAppId(meta.steamAppId),
           ...(typeof meta.steamMod === "string" ? { steamMod: meta.steamMod } : {}),
+          ...(typeof meta.steamBeta === "string" ? { steamBeta: meta.steamBeta } : {}),
           ...(typeof meta.steamBetaLinux === "string"
             ? { steamBetaLinux: meta.steamBetaLinux }
             : {}),
@@ -1191,6 +1192,7 @@ async function runLifecycle(cp, skill, { runTools, windows }) {
           serverDataPath: created.dataPath,
           appId: stormworksSteamAppId(meta.steamAppId),
           steamMod: typeof meta.steamMod === "string" ? meta.steamMod : undefined,
+          steamBeta: typeof meta.steamBeta === "string" ? meta.steamBeta : undefined,
           steamBetaLinux:
             typeof meta.steamBetaLinux === "string" ? meta.steamBetaLinux : undefined,
           autoInstall: true,

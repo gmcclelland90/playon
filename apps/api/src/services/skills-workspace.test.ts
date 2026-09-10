@@ -131,4 +131,30 @@ describe("listSkills metadata scan (#871)", () => {
     expect(skill?.metadata.ports.find((p) => p.name === "query")?.default).toBe(15637);
     expect(skill?.metadata.queryPortName).toBe("query");
   });
+
+  it("pins catalog games.the-isle SteamCMD beta to evrima (#965)", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-skills-"));
+    temps.push(root);
+    const skillDir = path.join(root, "the-isle");
+    fs.mkdirSync(skillDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, "metadata.yaml"),
+      [
+        "name: games.the-isle",
+        "version: 0.1.1",
+        "game: The Isle",
+        "os:",
+        "  - windows",
+        "containerSupport: none",
+        "steamAppId: 412680",
+        "native:",
+        "  binary: TheIsleServer.exe",
+        "",
+      ].join("\n"),
+    );
+
+    const skill = loadSkillMetadata([root], "games.the-isle");
+    expect(skill?.metadata.steamAppId).toBe(412680);
+    expect(skill?.metadata.steamBeta).toBe("evrima");
+  });
 });

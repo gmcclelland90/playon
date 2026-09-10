@@ -120,6 +120,8 @@ export const contentToolModule: ToolModule = ({ plane }) => {
             validate: { type: "boolean" },
             /** HLDS app 90: SteamCMD mod name (cstrike, czero, valve, tfc). */
             steamMod: { type: "string" },
+            /** SteamCMD `-beta` on every host (e.g. The Isle evrima). Defaults from skill.json. */
+            steamBeta: { type: "string" },
             /** Linux-only SteamCMD beta (e.g. HumanitZ linuxbranch). Defaults from skill.json. */
             steamBetaLinux: { type: "string" },
           },
@@ -144,6 +146,12 @@ export const contentToolModule: ToolModule = ({ plane }) => {
             : typeof marker?.steamMod === "string" && marker.steamMod.trim()
               ? marker.steamMod.trim()
               : undefined;
+        const steamBeta =
+          typeof args.steamBeta === "string" && args.steamBeta.trim()
+            ? args.steamBeta.trim()
+            : typeof marker?.steamBeta === "string" && marker.steamBeta.trim()
+              ? marker.steamBeta.trim()
+              : undefined;
         const steamBetaLinux =
           typeof args.steamBetaLinux === "string" && args.steamBetaLinux.trim()
             ? args.steamBetaLinux.trim()
@@ -160,6 +168,7 @@ export const contentToolModule: ToolModule = ({ plane }) => {
               installDirRel,
               validate,
               steamMod,
+              steamBeta,
               steamBetaLinux,
             },
             timeoutMs: STEAMCMD_TIMEOUT_MS,
@@ -170,6 +179,7 @@ export const contentToolModule: ToolModule = ({ plane }) => {
                 installDirRel,
                 validate,
                 steamMod,
+                steamBeta,
                 steamBetaLinux,
               }),
           });

@@ -6,6 +6,8 @@ import {
   parseSkillMetadata,
   resolveQueryDialect,
   SkillMetadataSchema,
+  THE_ISLE_SKILL,
+  THE_ISLE_STEAM_BETA,
 } from "./skill.js";
 
 describe("SkillMetadataSchema contract", () => {
@@ -175,6 +177,18 @@ describe("SkillMetadataSchema contract", () => {
     expect(parsed.steamBetaLinux).toBe("linuxbranch");
   });
 
+  it("accepts steamBeta for all-platform SteamCMD branches", () => {
+    const parsed = SkillMetadataSchema.parse({
+      name: THE_ISLE_SKILL,
+      version: "0.1.2",
+      containerSupport: "none",
+      steamAppId: 412680,
+      steamBeta: THE_ISLE_STEAM_BETA,
+      native: { binary: "TheIsleServer.exe" },
+    });
+    expect(parsed.steamBeta).toBe(THE_ISLE_STEAM_BETA);
+  });
+
   it("stringifies finite numeric libraryPathRelative segments (YAML Steam app ids)", () => {
     const parsed = SkillMetadataSchema.parse({
       name: "games.ark-evolved",
@@ -250,6 +264,35 @@ describe("SkillMetadataSchema contract", () => {
     });
     expect(pz.ports[0]?.default).toBe(16261);
     expect(pz.queryPortName).toBeUndefined();
+  });
+
+  it("pins catalog games.the-isle to SteamCMD -beta evrima (#965)", () => {
+    const catalog = SkillMetadataSchema.parse({
+      name: THE_ISLE_SKILL,
+      version: "0.1.1",
+      steamAppId: 412680,
+      os: ["windows"],
+      native: { binary: "TheIsleServer.exe" },
+    });
+    expect(catalog.steamBeta).toBeUndefined();
+    const fixed = applyKnownSkillMetadataFixes(catalog);
+    expect(fixed.steamBeta).toBe(THE_ISLE_STEAM_BETA);
+    expect(applyKnownSkillMetadataFixes(fixed).steamBeta).toBe(THE_ISLE_STEAM_BETA);
+
+    const parsed = parseSkillMetadata({
+      name: THE_ISLE_SKILL,
+      version: "0.1.1",
+      steamAppId: 412680,
+    });
+    expect(parsed.steamBeta).toBe(THE_ISLE_STEAM_BETA);
+
+    const explicit = parseSkillMetadata({
+      name: THE_ISLE_SKILL,
+      version: "0.1.2",
+      steamAppId: 412680,
+      steamBeta: "custom-evrima",
+    });
+    expect(explicit.steamBeta).toBe("custom-evrima");
   });
 });
 

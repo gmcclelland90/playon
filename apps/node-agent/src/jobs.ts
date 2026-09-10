@@ -645,7 +645,7 @@ export async function executeJob(
   }
 
   if (job.kind === "steamcmd_app_update") {
-    const { serverRel, appId, installDirRel, validate, steamMod, steamBetaLinux } =
+    const { serverRel, appId, installDirRel, validate, steamMod, steamBeta, steamBetaLinux } =
       parseNodeJobArgs("steamcmd_app_update", job.args);
     return parseNodeJobResult(
       "steamcmd_app_update",
@@ -655,6 +655,7 @@ export async function executeJob(
         installDirRel,
         validate,
         steamMod,
+        steamBeta,
         steamBetaLinux,
       }),
     );
