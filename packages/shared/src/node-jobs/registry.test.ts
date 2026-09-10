@@ -384,6 +384,13 @@ describe("parseNodeJobArgs", () => {
         validate: false,
       }).validate,
     ).toBe(false);
+    expect(
+      parseNodeJobArgs("steamcmd_app_update", {
+        serverRel: "servers/a",
+        appId: 412_680,
+        steamBeta: "evrima",
+      }).steamBeta,
+    ).toBe("evrima");
     for (const bad of [{ appId: 0 }, { appId: 1.5 }, { installDirRel: "../../opt" }]) {
       expect(() =>
         parseNodeJobArgs("steamcmd_app_update", {

@@ -29,6 +29,7 @@ export type SkillMarker = {
   dockerIsolation?: "process" | "hyperv";
   steamAppId?: number;
   steamMod?: string;
+  steamBeta?: string;
   steamBetaLinux?: string;
   adminDialect?: AdminDialect;
   queryDialect?: QueryDialect;
@@ -57,6 +58,7 @@ export const SkillMarkerSchema = z.object({
   dockerIsolation: z.enum(["process", "hyperv"]).optional(),
   steamAppId: z.number().int().positive().optional(),
   steamMod: z.string().min(1).optional(),
+  steamBeta: z.string().min(1).optional(),
   steamBetaLinux: z.string().min(1).optional(),
   adminDialect: AdminDialectSchema.optional(),
   queryDialect: QueryDialectSchema.optional(),
@@ -94,6 +96,7 @@ export function buildSkillMarker(
     dockerIsolation: m.dockerIsolation,
     steamAppId: m.steamAppId,
     steamMod: m.steamMod,
+    steamBeta: m.steamBeta,
     steamBetaLinux: m.steamBetaLinux,
     adminDialect: m.adminDialect,
     queryDialect: m.queryDialect,

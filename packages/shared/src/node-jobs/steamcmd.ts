@@ -29,6 +29,11 @@ export const SteamcmdAppUpdateArgsSchema = z
      */
     steamMod: z.string().min(1).optional(),
     /**
+     * SteamCMD `-beta <name>` after app id on every host
+     * (e.g. The Isle `evrima`).
+     */
+    steamBeta: z.string().min(1).optional(),
+    /**
      * SteamCMD `-beta <name>` after app id — applied only when the node is Linux
      * (e.g. HumanitZ `linuxbranch`).
      */

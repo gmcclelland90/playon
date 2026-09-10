@@ -61,6 +61,16 @@ export function resolveQueryDialect(
 export const ENSHROUDED_QUERY_PORT = 15637;
 export const ENSHROUDED_LEGACY_GAME_PORT = 15636;
 
+/**
+ * The Isle dedicated 412680 must install the `evrima` beta on every OS.
+ * Catalog `games.the-isle` 0.1.1 documents that in INSTALL.md but ships no
+ * SteamCMD beta field — and `steamBetaLinux` is ignored on Windows, the only
+ * OS this skill declares. Without `-beta evrima`, SteamCMD fetches the
+ * abandoned Legacy `public` branch (empty on Linux; obsolete PE on Windows).
+ */
+export const THE_ISLE_SKILL = "games.the-isle";
+export const THE_ISLE_STEAM_BETA = "evrima";
+
 export const SkillThemeIdSchema = z.enum(["default", "grass", "ember", "steel", "paper"]);
 export type SkillThemeId = z.infer<typeof SkillThemeIdSchema>;
 
@@ -160,6 +170,11 @@ export const SkillMetadataSchema = z.object({
    */
   steamMod: z.string().min(1).optional(),
   /**
+   * SteamCMD `+app_update <appId> -beta <name>` on every install host
+   * (e.g. The Isle `evrima` — required on Windows, not a Linux-only depot).
+   */
+  steamBeta: z.string().min(1).optional(),
+  /**
    * SteamCMD `+app_update <appId> -beta <name>` applied only on Linux install hosts
    * (e.g. HumanitZ `linuxbranch` — Windows uses the default depot).
    */
@@ -194,12 +209,7 @@ export const SkillMetadataSchema = z.object({
 
 export type SkillMetadata = z.infer<typeof SkillMetadataSchema>;
 
-/**
- * Remap known stale catalog ports before join / matrix `port_open`.
- * Does not rewrite on-disk YAML — catalog bump can drop the overlay later.
- */
-export function applyKnownSkillMetadataFixes(meta: SkillMetadata): SkillMetadata {
-  if (meta.name !== "games.enshrouded") return meta;
+function applyEnshroudedPortFix(meta: SkillMetadata): SkillMetadata {
   const ports = meta.ports.map((p) => {
     if (
       p.name === "game" &&
@@ -220,6 +230,22 @@ export function applyKnownSkillMetadataFixes(meta: SkillMetadata): SkillMetadata
       : [...ports, { name: "query", protocol: "udp", default: ENSHROUDED_QUERY_PORT }],
     queryPortName: meta.queryPortName?.trim() || "query",
   };
+}
+
+function applyTheIsleSteamBetaFix(meta: SkillMetadata): SkillMetadata {
+  if (meta.steamBeta?.trim()) return meta;
+  return { ...meta, steamBeta: THE_ISLE_STEAM_BETA };
+}
+
+/**
+ * Remap known stale catalog fields before install / join / matrix.
+ * Does not rewrite on-disk YAML — catalog bump can drop the overlay later.
+ */
+export function applyKnownSkillMetadataFixes(meta: SkillMetadata): SkillMetadata {
+  let next = meta;
+  if (next.name === "games.enshrouded") next = applyEnshroudedPortFix(next);
+  if (next.name === THE_ISLE_SKILL) next = applyTheIsleSteamBetaFix(next);
+  return next;
 }
 
 /** Parse catalog YAML/JSON and apply known-title port / dialect overlays. */
