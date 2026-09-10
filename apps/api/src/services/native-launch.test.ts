@@ -4,7 +4,15 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { SkillMetadataSchema } from "@playon/shared";
 import {
+  ensureFoundryAppCfg,
+  ensureFoundryHeadlessArgs,
   ensureLinuxSteamSdk32,
+  foundryLanAppCfg,
+  foundryLaunchEnv,
+  foundryPreferStartScript,
+  FOUNDRY_SKILL_NAME,
+  FOUNDRY_STEAM_CLIENT_APP_ID,
+  isFoundrySkill,
   resolveNativeArgs,
   resolveNativeLaunch,
 } from "./native-launch.js";
@@ -315,6 +323,12 @@ describe("native-launch", () => {
           args: ["-batchmode"],
         }),
       ).toEqual(["-batchmode"]);
+      expect(
+        resolveNativeArgs({
+          skillName: FOUNDRY_SKILL_NAME,
+          args: ["-log"],
+        }),
+      ).toEqual(["-log", "-batchmode", "-nographics"]);
     } finally {
       if (prev === undefined) delete process.env.PLAYON_BANNERLORD_AUTH_TOKEN;
       else process.env.PLAYON_BANNERLORD_AUTH_TOKEN = prev;
@@ -423,6 +437,86 @@ describe("native-launch", () => {
       const launch2 = resolveNativeLaunch({ skillName: "test.game", gameDir });
       expect(launch2?.command.toLowerCase()).toMatch(/cmd\.exe$/);
       expect(launch2?.args.some((a) => a.includes("run.bat"))).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("does not wait on Foundry start.bat (S4U / no desktop → udp_process_not_running)", () => {
+    expect(isFoundrySkill(FOUNDRY_SKILL_NAME)).toBe(true);
+    expect(foundryPreferStartScript()).toBe(false);
+    expect(ensureFoundryHeadlessArgs(["-log"])).toEqual(["-log", "-batchmode", "-nographics"]);
+    expect(ensureFoundryHeadlessArgs(["-batchmode", "-nographics", "-log"])).toEqual([
+      "-batchmode",
+      "-nographics",
+      "-log",
+    ]);
+    expect(foundryLaunchEnv({ PLAYON_GAME: "native" })).toMatchObject({
+      SteamAppId: FOUNDRY_STEAM_CLIENT_APP_ID,
+      SteamGameId: FOUNDRY_STEAM_CLIENT_APP_ID,
+    });
+    expect(foundryLanAppCfg()).toMatch(/server_is_public=false/);
+    expect(foundryLanAppCfg()).toMatch(/server_port=3724/);
+  });
+
+  it("launches FoundryDedicatedServer.exe headless even when start.bat exists", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-foundry-"));
+    const gameDir = path.join(root, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(gameDir, "start.bat"),
+      '@echo off\nstart /wait "" "%CD%\\FoundryDedicatedServer.exe" -log\n',
+    );
+    fs.writeFileSync(path.join(gameDir, "FoundryDedicatedServer.exe"), "mz");
+    fs.writeFileSync(
+      path.join(gameDir, "app.cfg"),
+      "server_is_public=true\nserver_port=3724\n",
+    );
+
+    const meta = SkillMetadataSchema.parse({
+      name: FOUNDRY_SKILL_NAME,
+      version: "0.1.8",
+      containerSupport: "none",
+      native: {
+        binary: "FoundryDedicatedServer.exe",
+        binaryWindows: "FoundryDedicatedServer.exe",
+        preferStartScript: true,
+        env: { SteamAppId: FOUNDRY_STEAM_CLIENT_APP_ID },
+        args: ["-log"],
+      },
+    });
+    try {
+      const launch = resolveNativeLaunch({
+        skillName: FOUNDRY_SKILL_NAME,
+        gameDir,
+        metadata: meta,
+      });
+      expect(launch?.kind).toBe("native");
+      expect(launch?.command).toBe(path.join(gameDir, "FoundryDedicatedServer.exe"));
+      expect(launch?.args).toEqual(["-log", "-batchmode", "-nographics"]);
+      expect(launch?.env.SteamAppId).toBe(FOUNDRY_STEAM_CLIENT_APP_ID);
+      const cfg = fs.readFileSync(path.join(gameDir, "app.cfg"), "utf8");
+      expect(cfg).toMatch(/server_is_public=false/);
+      expect(cfg).toMatch(/server_persistent_data_override_folder=/);
+      expect(fs.readFileSync(path.join(gameDir, "steam_appid.txt"), "utf8").trim()).toBe(
+        FOUNDRY_STEAM_CLIENT_APP_ID,
+      );
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rewrites a public Foundry App.cfg so the dedi does not exit after boot", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-foundry-cfg-"));
+    const gameDir = path.join(root, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+    fs.writeFileSync(path.join(gameDir, "app.cfg"), "server_is_public=true\nserver_name=Vendor\n");
+    try {
+      ensureFoundryAppCfg(gameDir);
+      const cfg = fs.readFileSync(path.join(gameDir, "app.cfg"), "utf8");
+      expect(cfg).toMatch(/server_is_public=false/);
+      expect(cfg).toMatch(/server_name=Vendor/);
+      expect(cfg).toContain(path.join(gameDir, "save"));
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }

@@ -62,6 +62,11 @@ import {
   type RconEndpoint,
 } from "./rcon.js";
 import {
+  foundryLanAppCfg,
+  foundryLaunchEnv,
+  foundryPreferStartScript,
+  FOUNDRY_STEAM_CLIENT_APP_ID,
+  isFoundrySkill,
   nativeGamePort,
   nativeRconPort,
   resolveNativeArgs,
@@ -974,14 +979,28 @@ export class ServerService {
     
     // Read managedFrom from skill marker (may be node-authoritative)
     const marker = readSkillMarker(server.dataPath);
-    const baseEnv: Record<string, string> = { PLAYON_SERVER_ID: server.id, ...(native?.env ?? {}) };
+    const baseEnv: Record<string, string> = isFoundrySkill(skillName)
+      ? foundryLaunchEnv({ PLAYON_SERVER_ID: server.id, ...(native?.env ?? {}) })
+      : { PLAYON_SERVER_ID: server.id, ...(native?.env ?? {}) };
     if (marker?.managedFrom) {
       baseEnv.PLAYON_MANAGED_FROM = marker.managedFrom;
+    }
+
+    if (isFoundrySkill(skillName)) {
+      // SteamCMD / skip-existing overlay can leave vendor App.cfg with
+      // server_is_public=true — that dedi exits after "now running!".
+      const store = this.openFiles(server, { locality: "remote" });
+      await store.writeText("game/app.cfg", foundryLanAppCfg()).catch(() => undefined);
+      await store
+        .writeText("game/steam_appid.txt", `${FOUNDRY_STEAM_CLIENT_APP_ID}\n`)
+        .catch(() => undefined);
     }
     
     // Windows nodes have no /bin/bash start.sh contract — PE binary, or skill start.bat / start.ps1.
     if (nodeOs === "windows") {
-      const preferScript = native?.preferStartScript !== false;
+      const preferScript = isFoundrySkill(skillName)
+        ? foundryPreferStartScript()
+        : native?.preferStartScript !== false;
       const overlayBat =
         preferScript && skillEntry?.path
           ? listSkillGameOverlayFiles(skillEntry.path).find(

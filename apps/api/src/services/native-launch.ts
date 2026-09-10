@@ -228,7 +228,9 @@ function resolveBinaryLaunch(
   const binary = path.join(gameDir, ...rel.split("/"));
   if (!fs.existsSync(binary)) return null;
 
-  const env: Record<string, string> = { PLAYON_GAME: "native", ...native.env };
+  const env: Record<string, string> = isFoundrySkill(skillName)
+    ? foundryLaunchEnv({ PLAYON_GAME: "native", ...native.env })
+    : { PLAYON_GAME: "native", ...native.env };
   if (!isWin && native.libraryPathRelative.length > 0) {
     const parts = [
       ...native.libraryPathRelative.map((p) => path.join(gameDir, ...p.split("/"))),
@@ -272,6 +274,109 @@ function resolveBinaryLaunch(
  * Bannerlord: PLAYON_BANNERLORD_AUTH_TOKEN → /dedicatedcustomserverauthtoken
  * (TaleWorlds rejects anonymous hosting; token from client customserver.gettoken).
  */
+export const FOUNDRY_SKILL_NAME = "games.foundry";
+/** Client Steam app id — steamclient / steam_appid.txt (Survival Servers + official launcher). */
+export const FOUNDRY_STEAM_CLIENT_APP_ID = "983870";
+export const FOUNDRY_GAME_PORT = 3724;
+/**
+ * Unity headless flags. FoundryDedicatedServer.exe is a Windows-subsystem PE.
+ * Catalog start.bat uses `start /wait` (new window). playon-win-1's node-agent
+ * is a Scheduled Task with LogonType S4U — no interactive desktop — so that
+ * wrapper exits immediately (lab: udp_process_not_running) before UDP 3724 binds.
+ */
+export const FOUNDRY_HEADLESS_ARGS = ["-batchmode", "-nographics", "-log"] as const;
+
+export function isFoundrySkill(skillName?: string | null): boolean {
+  return skillName === FOUNDRY_SKILL_NAME;
+}
+
+/** Direct PE launch — never cmd `start /wait` / start.bat on an S4U Windows node. */
+export function foundryPreferStartScript(): boolean {
+  return false;
+}
+
+function hasArgFlag(args: string[], flag: string): boolean {
+  const want = flag.toLowerCase();
+  return args.some((a) => a.toLowerCase() === want);
+}
+
+export function ensureFoundryHeadlessArgs(args: string[]): string[] {
+  const out = [...args];
+  for (const flag of FOUNDRY_HEADLESS_ARGS) {
+    if (!hasArgFlag(out, flag)) out.push(flag);
+  }
+  return out;
+}
+
+export function foundryLaunchEnv(existing?: Record<string, string>): Record<string, string> {
+  const next = { ...(existing ?? {}) };
+  if (!next.SteamAppId?.trim()) next.SteamAppId = FOUNDRY_STEAM_CLIENT_APP_ID;
+  if (!next.SteamGameId?.trim()) next.SteamGameId = FOUNDRY_STEAM_CLIENT_APP_ID;
+  return next;
+}
+
+/** LAN-safe App.cfg. Public Steam listing exits this dedi after boot under PlayOn. */
+export function foundryLanAppCfg(opts?: { saveDir?: string }): string {
+  const lines = [
+    "server_name=PlayOn-Foundry-Lab",
+    "server_world_name=PlayOnLab",
+    "server_password=",
+    "pause_server_when_empty=false",
+    "autosave_interval=300",
+    "server_is_public=false",
+    `server_port=${FOUNDRY_GAME_PORT}`,
+    // Official default is 27015; unused while server_is_public=false.
+    "server_query_port=3725",
+    "server_max_players=8",
+  ];
+  if (opts?.saveDir?.trim()) {
+    lines.push(`server_persistent_data_override_folder=${opts.saveDir.trim()}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+function upsertCfgKey(text: string, key: string, value: string): string {
+  const re = new RegExp(`^${key}=.*$`, "im");
+  if (re.test(text)) return text.replace(re, `${key}=${value}`);
+  const body = text.replace(/\s*$/, "");
+  return `${body}${body ? "\n" : ""}${key}=${value}\n`;
+}
+
+/**
+ * Keep Foundry listening on the jail: force LAN public=false, game port, and
+ * an absolute save folder when we can see the disk (local native).
+ */
+export function ensureFoundryAppCfg(gameDir: string): void {
+  const cfgPath = path.join(gameDir, "app.cfg");
+  const saveDir = path.join(gameDir, "save");
+  try {
+    fs.mkdirSync(saveDir, { recursive: true });
+  } catch {
+    /* best-effort */
+  }
+  let text = "";
+  try {
+    text = fs.readFileSync(cfgPath, "utf8");
+  } catch {
+    text = "";
+  }
+  let next = text.trim() ? text : foundryLanAppCfg({ saveDir });
+  next = upsertCfgKey(next, "server_is_public", "false");
+  next = upsertCfgKey(next, "server_port", String(FOUNDRY_GAME_PORT));
+  next = upsertCfgKey(next, "server_persistent_data_override_folder", saveDir);
+  if (!next.endsWith("\n")) next += "\n";
+  try {
+    fs.writeFileSync(cfgPath, next);
+  } catch {
+    /* best-effort — never block launch */
+  }
+  try {
+    fs.writeFileSync(path.join(gameDir, "steam_appid.txt"), `${FOUNDRY_STEAM_CLIENT_APP_ID}\n`);
+  } catch {
+    /* best-effort */
+  }
+}
+
 export function resolveNativeArgs(opts: {
   args: string[];
   gameDir?: string;
@@ -293,6 +398,9 @@ export function resolveNativeArgs(opts: {
     if (token && !hasTokenArg) {
       args = [...args, "/dedicatedcustomserverauthtoken", token];
     }
+  }
+  if (isFoundrySkill(opts.skillName)) {
+    args = ensureFoundryHeadlessArgs(args);
   }
   return args;
 }
@@ -318,8 +426,13 @@ export function resolveNativeLaunch(opts: {
   if (needsSteamSdk32) {
     ensureLinuxSteamSdk32(gameDir);
   }
+  if (isFoundrySkill(skillName)) {
+    ensureFoundryAppCfg(gameDir);
+  }
 
-  const preferScript = native?.preferStartScript !== false;
+  const preferScript = isFoundrySkill(skillName)
+    ? foundryPreferStartScript()
+    : native?.preferStartScript !== false;
   if (preferScript) {
     const script = resolveScriptLaunch(gameDir);
     if (script) return script;

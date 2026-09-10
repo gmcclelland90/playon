@@ -1,6 +1,7 @@
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import { nodes as nodesTable } from "../db/schema.js";
+import { nodes as nodesTable, servers as serversTable } from "../db/schema.js";
 import { ServerService } from "./servers.js";
 import {
   REMOTE_NODE_ID,
@@ -8,8 +9,11 @@ import {
   fake,
   host,
   node,
+  placeOnRemoteNode,
   remoteNativeServer,
   resetRuntimeHandleFakes,
+  tempEnv,
+  writeFoundrySkill,
 } from "./servers-runtime-handle-fakes.js";
 
 vi.mock("./node-runtime.js", async (importOriginal) => {
@@ -205,5 +209,36 @@ describe("remote native lifecycle through ServerRuntimeHandle", () => {
 
     expect((await servers.get(id))!.status).toBe("running");
     expect(node.jobs).toEqual([]);
+  });
+
+  it("starts Foundry on Windows as the PE, not cmd /c start.bat (#958)", async () => {
+    const { db, config, servers } = tempEnv();
+    writeFoundrySkill(path.join(config.dataRoot!, "skills"));
+    const created = await servers.createFromSkill({ skillName: "games.foundry" });
+    await db
+      .update(serversTable)
+      .set({ runtimeMode: "native" })
+      .where(eq(serversTable.id, created.id));
+    await placeOnRemoteNode(db, created.id, { os: "windows" });
+    node.jobs.length = 0;
+
+    const started = await servers.start(created.id);
+
+    expect(started.status).toBe("running");
+    const start = node.jobs.find((j) => j.kind === "process_start");
+    expect(start?.args).toMatchObject({
+      command: "FoundryDedicatedServer.exe",
+      args: ["-log", "-batchmode", "-nographics"],
+      cwd: `servers/${created.id}/game`,
+    });
+    expect(String(start?.args.command)).not.toMatch(/cmd\.exe/i);
+    expect(start?.args.env).toMatchObject({
+      SteamAppId: "983870",
+      SteamGameId: "983870",
+    });
+    const cfgWrite = node.jobs.find(
+      (j) => j.kind === "fs_write_text" && String(j.args.path).endsWith("game/app.cfg"),
+    );
+    expect(String(cfgWrite?.args.content ?? "")).toMatch(/server_is_public=false/);
   });
 });
