@@ -73,9 +73,57 @@ async function waitForFileContains(file: string, needle: string, timeoutMs = 8_0
 
 const temps: string[] = [];
 
-afterEach(() => {
+function isLockedFsError(err: unknown): boolean {
+  const code =
+    err && typeof err === "object" && "code" in err ? String((err as { code: unknown }).code) : "";
+  return code === "EBUSY" || code === "EPERM" || code === "EACCES";
+}
+
+/**
+ * Windows keeps a dying child's cwd/log handles until the process actually
+ * exits. Immediate `rmSync` then throws EBUSY after green assertions
+ * (windows-latest verify on #963; same class as #952).
+ */
+async function rmTempTree(root: string): Promise<void> {
+  const attempts = process.platform === "win32" ? 10 : 1;
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      fs.rmSync(root, {
+        recursive: true,
+        force: true,
+        maxRetries: process.platform === "win32" ? 8 : 0,
+        retryDelay: 80,
+      });
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (!isLockedFsError(err)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 50 * 2 ** Math.min(i, 5)));
+    }
+  }
+  throw lastErr;
+}
+
+async function waitPidGone(pid: number | undefined, timeoutMs = 5_000): Promise<void> {
+  if (pid == null) return;
+  const gone = (): boolean => {
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  const deadline = Date.now() + timeoutMs;
+  while (!gone() && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 40));
+  }
+}
+
+afterEach(async () => {
   for (const dir of temps.splice(0)) {
-    fs.rmSync(dir, { recursive: true, force: true });
+    await rmTempTree(dir);
   }
 });
 
@@ -98,7 +146,9 @@ describe("NativeProcessSupervisor", () => {
     expect(supervisor.list()).toEqual([
       expect.objectContaining({ id: info.id, name: "echo", status: "running" }),
     ]);
+    const pid = info.pid;
     await supervisor.stop(info.id);
+    await waitPidGone(pid);
     expect(supervisor.list()).toEqual([]);
     const stopped = await supervisor.status(info.id);
     expect(stopped.status).toBe("stopped");
