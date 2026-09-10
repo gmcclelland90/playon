@@ -23,7 +23,7 @@ export PLAYON_LLM_MODE=ollama
 
 `pnpm loop:verify` on the lab host uses a real cloud key (Venice) + Docker — Ollama is never required for the merge bar.
 
-Standing LLM canary (`pnpm lab:llm-canary`, #845): if Ollama is reachable on Home, also two-step-canary preferred tags (`qwen2.5`, then `llama3.2`). If not, the report is `reachable=false` and the Venice path still passes. Do not treat a missing Ollama install — or a weak/degraded optional Ollama model that cannot complete two-step tools — as a merge-bar failure (#945).
+Standing LLM canary (`pnpm lab:llm-canary`, #845 / #836): if Ollama is reachable on Home, also two-step-canary preferred tags (`qwen2.5`, then `llama3.2`). If not, the report is `reachable=false` and the Venice path still passes. Do not treat a missing Ollama install — or a weak/degraded optional Ollama model that cannot complete two-step tools — as a merge-bar failure (#945). Recorded matrix + Home restore/teardown: [llm-model-compat.md](llm-model-compat.md).
 
 
 When you change `@playon/shared` LLM presets, regenerate site facts:

@@ -15,6 +15,7 @@ import {
   mapErrorClass,
   matrixFingerprint,
   priorForMatrixSkill,
+  shouldFileLlmCanaryRow,
   skillFromLabIssue,
 } from "./lab-file-github-issues.mjs";
 
@@ -250,6 +251,14 @@ assert.equal(
   )?.number,
   12,
 );
+
+assert.equal(shouldFileLlmCanaryRow({ ok: false, reason: "mutating_tool" }), true);
+assert.equal(shouldFileLlmCanaryRow({ ok: false, reason: "fake_tool_json" }), true);
+assert.equal(shouldFileLlmCanaryRow({ ok: false, reason: "disconnect" }), false);
+assert.equal(shouldFileLlmCanaryRow({ ok: false, reason: "empty_tool_trace" }), false);
+assert.equal(shouldFileLlmCanaryRow({ ok: false, reason: "partial_trace", degraded: true }), false);
+assert.equal(shouldFileLlmCanaryRow({ ok: false, failureClass: "flake", reason: "http_5xx" }), false);
+assert.equal(shouldFileLlmCanaryRow({ ok: true, reason: "mutating_tool" }), false);
 
 console.log("ok", pathBasename(fileURLToPath(import.meta.url)));
 

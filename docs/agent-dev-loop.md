@@ -13,7 +13,7 @@ PlayOn is built by an agent that **implements → verifies → fixes → next to
 | File issues on red | `pnpm lab:file-issues` | auto after failed `loop:verify` / matrix (disable with `PLAYON_LAB_FILE_ISSUES=0`) |
 | Catalog matrix | `pnpm lab:matrix` | E2E every `games.*` skill — standing cadence on lab, see [lab-matrix.md](lab-matrix.md) |
 | Join-path canary | `pnpm lab:join-path-canary` | Probe published join host, not loopback ([#843](https://github.com/gmcclelland90/playon/issues/843)) |
-| LLM canary | `pnpm lab:llm-canary` | Two-step lab-* tool trace; Ollama optional ([#845](https://github.com/gmcclelland90/playon/issues/845)) |
+| LLM canary | `pnpm lab:llm-canary` | Two-step lab-* tool trace; Ollama optional ([#845](https://github.com/gmcclelland90/playon/issues/845)). Ops Home path: `--home` ([#836](https://github.com/gmcclelland90/playon/issues/836), [llm-model-compat.md](llm-model-compat.md)) |
 | Polish canaries | Playon Ops `playon-polish-canary` | Soak / managed-install / OTA+nodes / site-catalog / WSL Phase 2 on lab fixtures ([#835](https://github.com/gmcclelland90/playon/issues/835), [automations.md](automations.md)) |
 | Lab cadence | `pnpm lab:cadence` / systemd timer | daily verify → matrix → GitHub Issues ([infra/lab](../infra/lab/README.md)) |
 

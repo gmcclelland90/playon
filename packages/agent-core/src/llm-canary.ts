@@ -11,8 +11,35 @@ export const LAB_CANARY_SERVER_ID = "lab-llm-canary";
 export const LAB_CANARY_SERVER_NAME = "lab-llm-canary";
 export const LAB_CANARY_SKILL = "fixtures.lab-docker-server";
 
-/** Cheap Venice default for the standing canary. Override with PLAYON_LLM_CANARY_VENICE_MODELS. */
+/** Cheap Venice default for the in-process canary. Override with PLAYON_LLM_CANARY_VENICE_MODELS. */
 export const DEFAULT_VENICE_CANARY_MODELS = ["llama-3.2-3b"];
+
+/**
+ * Cheap + mid Venice matrix for the Home API path (`pnpm lab:llm-canary --home`).
+ * Skips the production default (grok-4-6). Do not add Gemma (#838).
+ */
+export const DEFAULT_HOME_VENICE_CANARY_MODELS = [
+  "llama-3.2-3b",
+  "qwen3-5-9b",
+  "mistral-small-3-2-24b-instruct",
+  "llama-3.3-70b",
+];
+
+/** Probe models that must not become the restore snapshot if a prior run left them on. */
+export const HOME_CANARY_LEFTOVER_MODELS = [
+  ...DEFAULT_HOME_VENICE_CANARY_MODELS,
+  "google-gemma-3-27b-it",
+  "qwen3-6-27b",
+  "deepseek-v4-flash",
+  "openai-gpt-4o-mini-2024-07-18",
+  "qwen3-next-80b",
+  "kimi-k2-5",
+  "zai-org-glm-4.7-flash",
+];
+
+/** Lab Home heal target when a leftover canary model is on Settings. Does not change the preset default. */
+export const DEFAULT_HOME_RESTORE_PRESET = "venice";
+export const DEFAULT_HOME_RESTORE_MODEL = "grok-4-6";
 
 /**
  * Suggested Ollama tags from Settings. Prefer tool-capable tags first
@@ -170,6 +197,161 @@ export function ollamaModelInstalled(installed: string[], wanted: string): boole
   });
 }
 
+export type LlmCanaryFailureClass = "skip" | "ok" | "product" | "flake" | "degraded";
+
+export const LLM_CANARY_PRODUCT_REASONS = new Set([
+  "mutating_tool",
+  "friend_server",
+  "non_lab_target",
+  "fake_tool_json",
+  "empty_function_name",
+]);
+
+export const LLM_CANARY_FLAKE_REASONS = new Set([
+  "disconnect",
+  "empty_tool_trace",
+  "http_5xx",
+  "timeout",
+  "restore_verify",
+  "teardown_leftover",
+]);
+
+export const LLM_CANARY_DEGRADED_REASONS = new Set([
+  "need_two_tools",
+  "followup_did_not_use_result",
+  "unexpected_first_tool",
+  "partial_trace",
+]);
+
+export function classifyLlmCanaryFailure(row: {
+  ok?: boolean;
+  skipped?: boolean;
+  degraded?: boolean;
+  reason?: string;
+}): LlmCanaryFailureClass {
+  if (row.skipped) return "skip";
+  if (row.ok) return "ok";
+  const reason = String(row.reason ?? "").trim();
+  const lower = reason.toLowerCase();
+  if (LLM_CANARY_PRODUCT_REASONS.has(reason)) return "product";
+  if (LLM_CANARY_FLAKE_REASONS.has(reason)) return "flake";
+  if (LLM_CANARY_DEGRADED_REASONS.has(reason) || row.degraded) return "degraded";
+  if (/\bdisconnect\b|empty.?tool|econnreset|socket hang up/.test(lower)) return "flake";
+  if (/\b(502|503|504|http_5xx)\b/.test(lower)) return "flake";
+  if (/\btimeout\b/.test(lower)) return "flake";
+  if (/fake tool json|emitted fake tool/.test(lower)) return "product";
+  if (/empty function name/.test(lower)) return "product";
+  if (/partial_trace/.test(lower)) return "degraded";
+  return "product";
+}
+
+export function shouldFileLlmCanaryFailure(row: {
+  ok?: boolean;
+  skipped?: boolean;
+  degraded?: boolean;
+  reason?: string;
+  failureClass?: LlmCanaryFailureClass;
+}): boolean {
+  const klass = row.failureClass ?? classifyLlmCanaryFailure(row);
+  return klass === "product";
+}
+
+export type LlmPublicSnapshot = {
+  preset?: string;
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
+};
+
+export function llmSettingsMatch(a?: LlmPublicSnapshot | null, b?: LlmPublicSnapshot | null): boolean {
+  if (!a || !b) return false;
+  return (
+    String(a.preset ?? "") === String(b.preset ?? "") &&
+    String(a.provider ?? "") === String(b.provider ?? "") &&
+    String(a.model ?? "") === String(b.model ?? "")
+  );
+}
+
+export function restorePutBody(snapshot: LlmPublicSnapshot): {
+  preset?: string;
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
+} {
+  const body: { preset?: string; provider?: string; model?: string; baseUrl?: string } = {};
+  if (snapshot.preset) body.preset = snapshot.preset;
+  else if (snapshot.provider) body.provider = snapshot.provider;
+  if (snapshot.model) body.model = snapshot.model;
+  if (snapshot.baseUrl) body.baseUrl = snapshot.baseUrl;
+  return body;
+}
+
+export function isHomeCanaryLeftoverModel(
+  model: string | undefined,
+  leftoverModels: readonly string[] = HOME_CANARY_LEFTOVER_MODELS,
+): boolean {
+  const want = String(model ?? "").trim().toLowerCase();
+  if (!want) return false;
+  return leftoverModels.some((m) => m.toLowerCase() === want);
+}
+
+export function resolveRestoreTarget(opts: {
+  current: LlmPublicSnapshot;
+  persisted?: LlmPublicSnapshot | null;
+  leftoverModels?: readonly string[];
+  healTo?: LlmPublicSnapshot;
+}): { snapshot: LlmPublicSnapshot; healed: boolean; reason: string } {
+  const healTo = opts.healTo ?? {
+    preset: DEFAULT_HOME_RESTORE_PRESET,
+    provider: "openai_compatible",
+    model: DEFAULT_HOME_RESTORE_MODEL,
+  };
+  if (opts.persisted && !llmSettingsMatch(opts.current, opts.persisted)) {
+    return { snapshot: opts.persisted, healed: true, reason: "persisted_restore" };
+  }
+  if (opts.persisted) {
+    return { snapshot: opts.persisted, healed: false, reason: "persisted_match" };
+  }
+  if (isHomeCanaryLeftoverModel(opts.current.model, opts.leftoverModels)) {
+    return { snapshot: healTo, healed: true, reason: "leftover_canary_model" };
+  }
+  return { snapshot: opts.current, healed: false, reason: "current" };
+}
+
+export function isDisposableLlmCanaryFixture(server: { id?: string; name?: string } | null | undefined): boolean {
+  const id = String(server?.id ?? "");
+  const name = String(server?.name ?? "");
+  if (!id && !name) return false;
+  if (FRIEND_SERVER_RE.test(id) || FRIEND_SERVER_RE.test(name)) return false;
+  const labId = id.startsWith("lab-");
+  const labName = name.startsWith("lab-");
+  if (!labId && !labName) return false;
+  return (
+    id === LAB_CANARY_SERVER_ID ||
+    name === LAB_CANARY_SERVER_NAME ||
+    id.startsWith(`${LAB_CANARY_SERVER_ID}`) ||
+    name.startsWith(`${LAB_CANARY_SERVER_NAME}`)
+  );
+}
+
+export function mapHomeChatFailure(err: unknown): { reason: string; flake: boolean } {
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  const lower = message.toLowerCase();
+  if (/\b(502|503|504)\b/.test(lower) || /home_rest_5\d\d/.test(lower)) {
+    return { reason: "http_5xx", flake: true };
+  }
+  if (/\btimeout\b|aborted|abort_error/.test(lower)) {
+    return { reason: "timeout", flake: true };
+  }
+  if (/\bdisconnect\b|econnreset|socket hang up|fetch failed|econnrefused/.test(lower)) {
+    return { reason: "disconnect", flake: true };
+  }
+  if (/empty.?tool|tooltrace/.test(lower)) {
+    return { reason: "empty_tool_trace", flake: true };
+  }
+  return { reason: message.slice(0, 160) || "chat_failed", flake: false };
+}
+
 export type CanaryModelResult = {
   provider: "venice" | "ollama";
   model: string;
@@ -180,15 +362,36 @@ export type CanaryModelResult = {
   reason?: string;
   names?: string[];
   durationMs: number;
+  failureClass?: LlmCanaryFailureClass;
+};
+
+export type LlmCanaryRestoreReport = {
+  ok: boolean;
+  attempts: number;
+  healed: boolean;
+  reason: string;
+  from?: LlmPublicSnapshot;
+  to?: LlmPublicSnapshot;
+  error?: string;
+};
+
+export type LlmCanaryTeardownReport = {
+  ok: boolean;
+  deleted: string[];
+  remaining: string[];
+  error?: string;
 };
 
 export type LlmCanaryReport = {
-  /** Venice two-step path. Ollama miss/fail never flips this to false. */
+  /** Venice two-step path. Ollama miss/fail never flips this to false. Restore/teardown may. */
   ok: boolean;
   veniceOk: boolean;
   ollama: OllamaReachability & { ok: boolean | null };
   models: CanaryModelResult[];
   at: string;
+  mode?: "in-process" | "home";
+  restore?: LlmCanaryRestoreReport;
+  teardown?: LlmCanaryTeardownReport;
 };
 
 export function registerLabCanaryTools(orch: Orchestrator): void {
@@ -270,7 +473,7 @@ async function canaryOneModel(
   llm: LlmClient,
 ): Promise<CanaryModelResult> {
   const result = await runTwoStepCanary(llm);
-  return {
+  const row: CanaryModelResult = {
     provider,
     model,
     ok: result.ok,
@@ -279,6 +482,8 @@ async function canaryOneModel(
     names: result.names,
     durationMs: result.durationMs,
   };
+  row.failureClass = classifyLlmCanaryFailure(row);
+  return row;
 }
 
 export type CanaryClientFactory = (model: string) => LlmClient;
@@ -327,6 +532,7 @@ export async function runLlmModelCanary(opts: {
       skipped: true,
       skipReason: "venice_api_key_required",
       durationMs: 0,
+      failureClass: "skip",
     });
   }
 
@@ -347,6 +553,7 @@ export async function runLlmModelCanary(opts: {
           skipped: true,
           skipReason: "model_not_installed",
           durationMs: 0,
+          failureClass: "skip",
         });
         continue;
       }
@@ -365,5 +572,6 @@ export async function runLlmModelCanary(opts: {
     ollama: { ...ollamaProbe, ok: ollamaOk },
     models,
     at: new Date().toISOString(),
+    mode: "in-process",
   };
 }

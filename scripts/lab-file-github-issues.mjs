@@ -743,6 +743,29 @@ function closeSkillCloneIssues({ apply }) {
   return { groups: groups.length, close: closeN };
 }
 
+export function shouldFileLlmCanaryRow(row) {
+  if (!row || row.skipped || row.ok) return false;
+  if (row.failureClass === "flake" || row.failureClass === "degraded" || row.failureClass === "skip") {
+    return false;
+  }
+  if (row.failureClass === "product") return true;
+  const reason = String(row.reason ?? "");
+  const lower = reason.toLowerCase();
+  if (row.degraded) return false;
+  if (["need_two_tools", "followup_did_not_use_result", "unexpected_first_tool", "partial_trace"].includes(reason)) {
+    return false;
+  }
+  if (["disconnect", "empty_tool_trace", "http_5xx", "timeout", "restore_verify", "teardown_leftover"].includes(reason)) {
+    return false;
+  }
+  if (/\bdisconnect\b|empty.?tool|econnreset|socket hang up|\b(502|503|504|timeout)\b/.test(lower)) {
+    return false;
+  }
+  return ["mutating_tool", "friend_server", "non_lab_target", "fake_tool_json", "empty_function_name"].includes(
+    reason,
+  ) || /fake tool json|empty function name/.test(lower);
+}
+
 function fileLlmCanaryFailures() {
   if (!existsSync(statusLlmCanary)) {
     console.log("skip llm-canary: no tmp/lab-llm-canary-status.json");
@@ -764,6 +787,13 @@ function fileLlmCanaryFailures() {
   for (const row of status.models || []) {
     if (row.skipped) continue;
     if (row.ok) continue;
+    if (!shouldFileLlmCanaryRow(row)) {
+      const klass = row.failureClass || (row.degraded ? "degraded" : row.reason || "unfiled");
+      console.log(
+        `llm-canary skip file ${row.provider || "?"}/${row.model || "?"} class=${klass} (not a product tool-call fail)`,
+      );
+      continue;
+    }
     const provider = row.provider || "unknown";
     const model = row.model || "unknown";
     const reason = row.reason || (row.degraded ? "degraded" : "tool_trace_fail");
