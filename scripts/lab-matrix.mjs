@@ -33,7 +33,12 @@ import { execConsoleCommand } from "../apps/api/dist/services/server-console.js"
 import { createRuntimeAdapters } from "../packages/runtime/dist/factory.js";
 import { listHostContainers } from "../packages/runtime/dist/docker-inventory.js";
 import { defaultHostPortLookup, waitForHostPortsFree } from "../packages/runtime/dist/host-port-bind.js";
-import { LOCAL_NODE_ID, playonContainerName, requiredUdpListenEvidence, udpListenTargets, windowsUdpPortOpenVerdict } from "../packages/shared/dist/index.js";
+import { isStormworksSkill, LOCAL_NODE_ID, playonContainerName, requiredUdpListenEvidence, udpListenTargets, windowsUdpPortOpenVerdict } from "../packages/shared/dist/index.js";
+import {
+  stormworksContinueAfterSteamcmd,
+  stormworksOverlayWrites,
+  stormworksSteamAppId,
+} from "./lab-matrix-stormworks.mjs";
 import {
   HomeClient,
   loadHomeAuth,
@@ -489,6 +494,34 @@ async function pushSkillFilesViaHomeWithRetry(home, serverId, skillPath, opts = 
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
+async function ensureStormworksOverlayViaHome(home, serverId) {
+  let startBat = "";
+  let configXml = "";
+  try {
+    const bat = await home.tool("fs_read", { serverId, path: "game/start.bat", maxBytes: 8000 });
+    startBat = bat.content || bat.text || "";
+  } catch {
+    /* missing */
+  }
+  try {
+    const xml = await home.tool("fs_read", {
+      serverId,
+      path: "game/server_data/server_config.xml",
+      maxBytes: 8000,
+    });
+    configXml = xml.content || xml.text || "";
+  } catch {
+    /* missing */
+  }
+  const writes = stormworksOverlayWrites({ startBat, configXml });
+  const written = [];
+  for (const file of writes) {
+    await home.tool("fs_write", { serverId, path: file.path, content: file.content });
+    written.push(file.path);
+  }
+  return written;
+}
+
 function skillOverlayHasStartBat(skillPath) {
   const bat = path.join(skillPath, "files", "start.bat");
   return fs.existsSync(bat) && fs.statSync(bat).isFile();
@@ -696,7 +729,7 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
       try {
         const install = await home.tool("steamcmd_app_update", {
           serverId,
-          appId: meta.steamAppId,
+          appId: stormworksSteamAppId(meta.steamAppId),
           ...(typeof meta.steamMod === "string" ? { steamMod: meta.steamMod } : {}),
           ...(typeof meta.steamBetaLinux === "string"
             ? { steamBetaLinux: meta.steamBetaLinux }
@@ -754,32 +787,50 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
         // off bare exit=8 — SteamCMD also exits 8 for retryable 0x602 aborts
         // (e.g. ARK ASE 376030 mid-verify), which must surface as install fail.
         if (/steamcmd_no_subscription|No subscription/i.test(msg)) {
-          await safeHomeCleanup(home, serverId);
-          return {
-            skillName: meta.name,
-            ok: true,
-            skipped: true,
-            skipReason: "steamcmd_no_subscription",
-            phases: { ...phases, install: "skipped", cleanup: "ok" },
-            durationMs: Date.now() - startedAt,
-            notes,
-            tail: msg,
-          };
+          if (stormworksContinueAfterSteamcmd(meta.name, msg)) {
+            notes.install = {
+              ...(notes.install && typeof notes.install === "object" ? notes.install : {}),
+              deferredToHostBinary: true,
+              tail: msg,
+            };
+            phases.install = "ok";
+          } else {
+            await safeHomeCleanup(home, serverId);
+            return {
+              skillName: meta.name,
+              ok: true,
+              skipped: true,
+              skipReason: "steamcmd_no_subscription",
+              phases: { ...phases, install: "skipped", cleanup: "ok" },
+              durationMs: Date.now() - startedAt,
+              notes,
+              tail: msg,
+            };
+          }
+        } else if (/steamcmd_empty_depot/i.test(msg)) {
+          if (stormworksContinueAfterSteamcmd(meta.name, msg)) {
+            notes.install = {
+              ...(notes.install && typeof notes.install === "object" ? notes.install : {}),
+              deferredToHostBinary: true,
+              tail: msg,
+            };
+            phases.install = "ok";
+          } else {
+            await safeHomeCleanup(home, serverId);
+            return {
+              skillName: meta.name,
+              ok: true,
+              skipped: true,
+              skipReason: "steamcmd_empty_depot",
+              phases: { ...phases, install: "skipped", cleanup: "ok" },
+              durationMs: Date.now() - startedAt,
+              notes,
+              tail: msg,
+            };
+          }
+        } else {
+          throw err;
         }
-        if (/steamcmd_empty_depot/i.test(msg)) {
-          await safeHomeCleanup(home, serverId);
-          return {
-            skillName: meta.name,
-            ok: true,
-            skipped: true,
-            skipReason: "steamcmd_empty_depot",
-            phases: { ...phases, install: "skipped", cleanup: "ok" },
-            durationMs: Date.now() - startedAt,
-            notes,
-            tail: msg,
-          };
-        }
-        throw err;
       }
     } else {
       phases.install = "skipped";
@@ -805,7 +856,20 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
       };
     }
 
-    if (skillOverlayHasStartBat(skill.path)) {
+    if (isStormworksSkill(meta.name)) {
+      try {
+        const sw = await ensureStormworksOverlayViaHome(home, serverId);
+        if (sw.length) {
+          notes.skillOverlay = Array.isArray(notes.skillOverlay)
+            ? [...notes.skillOverlay, ...sw]
+            : sw;
+        }
+      } catch (err) {
+        notes.stormworksOverlay = err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    if (skillOverlayHasStartBat(skill.path) || isStormworksSkill(meta.name)) {
       const overlayOk = Array.isArray(notes.skillOverlay)
         ? notes.skillOverlay.some((p) => String(p).endsWith("start.bat"))
         : false;
@@ -1125,7 +1189,7 @@ async function runLifecycle(cp, skill, { runTools, windows }) {
       try {
         await steamcmdAppUpdate({
           serverDataPath: created.dataPath,
-          appId: meta.steamAppId,
+          appId: stormworksSteamAppId(meta.steamAppId),
           steamMod: typeof meta.steamMod === "string" ? meta.steamMod : undefined,
           steamBetaLinux:
             typeof meta.steamBetaLinux === "string" ? meta.steamBetaLinux : undefined,
@@ -1180,6 +1244,25 @@ async function runLifecycle(cp, skill, { runTools, windows }) {
       const gameDir = path.join(created.dataPath, "game");
       const copiedSkillOverlay = copySkillFilesLocal(skill.path, gameDir);
       if (copiedSkillOverlay.length) notes.skillOverlay = copiedSkillOverlay;
+      if (isStormworksSkill(meta.name)) {
+        const batPath = path.join(gameDir, "start.bat");
+        const xmlPath = path.join(gameDir, "server_data", "server_config.xml");
+        const writes = stormworksOverlayWrites({
+          startBat: fs.existsSync(batPath) ? fs.readFileSync(batPath, "utf8") : "",
+          configXml: fs.existsSync(xmlPath) ? fs.readFileSync(xmlPath, "utf8") : "",
+        });
+        for (const file of writes) {
+          const dest = path.join(created.dataPath, ...file.path.split("/"));
+          fs.mkdirSync(path.dirname(dest), { recursive: true });
+          fs.writeFileSync(dest, file.content);
+        }
+        if (writes.length) {
+          notes.skillOverlay = [
+            ...(Array.isArray(notes.skillOverlay) ? notes.skillOverlay : []),
+            ...writes.map((f) => f.path),
+          ];
+        }
+      }
       await reapMatrixDockerLeftovers({
         ports: skillHostPorts(meta),
         homeProtect: {

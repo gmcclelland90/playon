@@ -3,6 +3,7 @@ import fs from "node:fs";
 import https from "node:https";
 import os from "node:os";
 import path from "node:path";
+import { resolveSteamInstallAppId } from "@playon/shared";
 import { resolveInJail } from "./path-jail.js";
 
 export interface SteamcmdRunResult {
@@ -371,6 +372,7 @@ export async function steamcmdAppUpdate(args: {
   maxAttempts?: number;
 }): Promise<SteamcmdRunResult> {
   const env = args.env ?? process.env;
+  const appId = resolveSteamInstallAppId(args.appId);
   const { binary, provisioned } = await ensureSteamcmdBinary({
     env,
     autoInstall: args.autoInstall,
@@ -388,9 +390,9 @@ export async function steamcmdAppUpdate(args: {
   ];
   const steamMod = args.steamMod?.trim();
   if (steamMod) {
-    cmdArgs.push("+app_set_config", String(args.appId), "mod", steamMod);
+    cmdArgs.push("+app_set_config", String(appId), "mod", steamMod);
   }
-  cmdArgs.push("+app_update", String(args.appId));
+  cmdArgs.push("+app_update", String(appId));
   const steamBetaLinux = args.steamBetaLinux?.trim();
   if (steamBetaLinux && process.platform === "linux") {
     cmdArgs.push("-beta", steamBetaLinux);
@@ -429,7 +431,7 @@ export async function steamcmdAppUpdate(args: {
       combined,
     );
     if (exitCode === 0 && !invalidPlatform && !noSubscription) {
-      assertSteamAppInstallComplete(installDir, args.appId);
+      assertSteamAppInstallComplete(installDir, appId);
       return {
         ok: true,
         binary,
@@ -437,17 +439,17 @@ export async function steamcmdAppUpdate(args: {
         stdout: stdout.slice(-4_000),
         stderr: stderr.slice(-2_000),
         installDir,
-        appId: args.appId,
+        appId,
         provisioned,
       };
     }
 
     const tail = combined.slice(-600).replace(/\s+/g, " ").trim();
     lastDetail = invalidPlatform
-      ? `steamcmd_invalid_platform: appId=${args.appId} (depot not available on ${process.platform}) ${tail}`
+      ? `steamcmd_invalid_platform: appId=${appId} (depot not available on ${process.platform}) ${tail}`
       : noSubscription
-        ? `steamcmd_no_subscription: appId=${args.appId} (anonymous login has no entitlement) ${tail}`
-        : `steamcmd_failed: exit=${exitCode} appId=${args.appId} ${tail}`;
+        ? `steamcmd_no_subscription: appId=${appId} (anonymous login has no entitlement) ${tail}`
+        : `steamcmd_failed: exit=${exitCode} appId=${appId} ${tail}`;
 
     if (exitCode === 127) {
       throw new SteamcmdNotFoundError(lastDetail);
@@ -457,7 +459,7 @@ export async function steamcmdAppUpdate(args: {
       throw new Error(lastDetail);
     }
     if (isRetryableSteamcmdFailure(combined) && attempt < maxAttempts) {
-      clearStagedSteamDownload(installDir, args.appId);
+      clearStagedSteamDownload(installDir, appId);
       continue;
     }
     throw new Error(lastDetail);
@@ -465,7 +467,7 @@ export async function steamcmdAppUpdate(args: {
 
   throw new Error(
     lastDetail ||
-      `steamcmd_failed: exit=${lastExitCode} appId=${args.appId} ${`${lastStdout}\n${lastStderr}`
+      `steamcmd_failed: exit=${lastExitCode} appId=${appId} ${`${lastStdout}\n${lastStderr}`
         .slice(-600)
         .replace(/\s+/g, " ")
         .trim()}`,

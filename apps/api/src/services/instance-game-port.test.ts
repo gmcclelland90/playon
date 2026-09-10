@@ -260,3 +260,56 @@ describe("instance DefaultPort vs skill default 16261", () => {
     }
   });
 });
+
+describe("Stormworks server_config.xml instance port", () => {
+  it("joinInfoFor reads jail server_data/server_config.xml port", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-sw-port-"));
+    const dbPath = path.join(root, "playon.sqlite");
+    applyBootstrap(dbPath);
+    const { db, sqlite } = createDb(dbPath);
+    temps.push({ root, sqlite });
+    const skillDir = path.join(root, "skills", "games", "stormworks");
+    fs.mkdirSync(path.join(skillDir, "guides"), { recursive: true });
+    fs.writeFileSync(
+      path.join(skillDir, "metadata.yaml"),
+      [
+        "name: games.stormworks",
+        "version: 0.1.0",
+        "game: Stormworks",
+        "containerSupport: none",
+        "ports:",
+        "  - name: game",
+        "    protocol: udp",
+        "    default: 25564",
+        "healthChecks: []",
+        "dependencies: []",
+        "requiredTools: []",
+        "",
+      ].join("\n"),
+    );
+    fs.writeFileSync(path.join(skillDir, "guides", "INSTALL.md"), "# sw\n");
+    const config: AppConfig = {
+      port: 0,
+      dataRoot: root,
+      dbPath,
+      sessionSecret: "sw-port-test",
+      llmMode: "openai_compatible",
+      runtimeMode: "native",
+      skillsRoots: [path.join(root, "skills"), resolveFixturesRoot(findRepoRoot(process.cwd()))],
+      advertiseHost: "127.0.0.1",
+    };
+    const servers = new ServerService(db, config);
+    const created = await servers.createFromSkill({
+      skillName: "games.stormworks",
+      serverName: "SwLab",
+    });
+    const xmlDir = path.join(created.dataPath, "game", "server_data");
+    fs.mkdirSync(xmlDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(xmlDir, "server_config.xml"),
+      `<server_data port="25570" name="custom"/>\n`,
+    );
+    expect(servers.gamePortForSkill("games.stormworks")).toBe(25564);
+    expect(await servers.joinInfoFor(created)).toMatchObject({ port: 25570 });
+  });
+});

@@ -84,6 +84,7 @@ import {
   ensureSkillGameOverlay,
   listSkillGameOverlayFiles,
 } from "./skill-game-overlay.js";
+import { ensureStormworksGameJail, stormworksJailOverlayFiles } from "./stormworks-jail.js";
 import {
   readSkillMarker,
 } from "./skill-marker.js";
@@ -95,6 +96,9 @@ import {
   decideStartInstance,
   deriveNodePresence,
   instanceGamePortFromIniTexts,
+  isStormworksSkill,
+  parseStormworksServerConfigPort,
+  STORMWORKS_CONFIG_REL_PATHS,
   isLocalNodeId,
   isLoopbackJoinHost,
   isWslNodeId,
@@ -898,6 +902,9 @@ export class ServerService {
     if (skillName === BANNERLORD_SKILL) {
       writeBannerlordWindowsOverlayFiles(gameDir);
     }
+    if (isStormworksSkill(skillName)) {
+      ensureStormworksGameJail(gameDir);
+    }
     const launch = resolveNativeLaunch({
       skillName,
       game: server.game,
@@ -959,6 +966,26 @@ export class ServerService {
     }
   }
 
+  /** Pin Stormworks +server_dir / port 25564 on a remote jail (overwrite stub bats). */
+  private async pushStormworksJailOverlayRemote(server: ServerRecord): Promise<void> {
+    const store = this.openFiles(server, { locality: "remote" });
+    let startBat = "";
+    let configXml = "";
+    try {
+      startBat = (await store.readText("game/start.bat")).content ?? "";
+    } catch {
+      /* missing */
+    }
+    try {
+      configXml = (await store.readText("game/server_data/server_config.xml")).content ?? "";
+    } catch {
+      /* missing */
+    }
+    for (const file of stormworksJailOverlayFiles({ startBat, configXml })) {
+      await store.writeText(`game/${file.relPath}`, file.content);
+    }
+  }
+
   private async remoteProcessSpec(
     server: ServerRecord,
     skillName: string,
@@ -966,6 +993,9 @@ export class ServerService {
     const skillEntry = this.resolveSkill(skillName);
     if (skillEntry?.path) {
       await this.pushSkillGameOverlayRemote(server, skillEntry.path).catch(() => undefined);
+    }
+    if (isStormworksSkill(skillName)) {
+      await this.pushStormworksJailOverlayRemote(server).catch(() => undefined);
     }
     const metadata = skillEntry?.metadata;
     const native = metadata?.native;
@@ -1030,6 +1060,18 @@ export class ServerService {
         } catch {
           /* best-effort — still launch start.bat if a prior overlay landed */
         }
+        return {
+          command: "C:\\Windows\\System32\\cmd.exe",
+          args: ["/c", "start.bat"],
+          env: baseEnv,
+          logFile: this.consoleLogRel(server.id),
+          keepStdin,
+        };
+      }
+      // Stormworks: always cmd /c start.bat. The PE lives in client 573090 /
+      // a host Steam library, not at jail-root server64.exe, and must receive
+      // +server_dir so UDP 25564 comes from jail server_config.xml.
+      if (isStormworksSkill(skillName)) {
         return {
           command: "C:\\Windows\\System32\\cmd.exe",
           args: ["/c", "start.bat"],
@@ -1173,6 +1215,12 @@ export class ServerService {
   }
 
   private async readInstanceGamePort(server: ServerRecord): Promise<number | null> {
+    for (const rel of STORMWORKS_CONFIG_REL_PATHS) {
+      const text = await this.readServerText(server, rel);
+      if (!text) continue;
+      const port = parseStormworksServerConfigPort(text);
+      if (port != null) return port;
+    }
     const rels = await this.instanceIniRelPaths(server);
     if (!rels.length) return null;
     const texts: string[] = [];

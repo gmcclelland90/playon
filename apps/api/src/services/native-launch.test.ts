@@ -306,6 +306,27 @@ describe("native-launch", () => {
     }
   });
 
+  it("injects Stormworks +server_dir so the PE does not use %APPDATA%", () => {
+    expect(
+      resolveNativeArgs({
+        skillName: "games.stormworks",
+        args: [],
+      }),
+    ).toEqual(["+server_dir", "server_data"]);
+    expect(
+      resolveNativeArgs({
+        skillName: "games.stormworks",
+        args: ["+server_dir", "server_data"],
+      }),
+    ).toEqual(["+server_dir", "server_data"]);
+    expect(
+      resolveNativeArgs({
+        skillName: "games.hurtworld",
+        args: ["-batchmode"],
+      }),
+    ).toEqual(["-batchmode"]);
+  });
+
   it("injects Bannerlord auth token from env into native args", () => {
     const prev = process.env.PLAYON_BANNERLORD_AUTH_TOKEN;
     process.env.PLAYON_BANNERLORD_AUTH_TOKEN = "tok-abc";
