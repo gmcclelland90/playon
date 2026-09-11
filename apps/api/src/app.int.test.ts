@@ -186,13 +186,17 @@ describe("api integration (real Venice + Docker)", () => {
           "Create a lab docker server named Venice Lab using servers_create_from_skill with skillName fixtures.lab-docker-server, then publish a join panel. Do not ask questions.",
       }),
     });
-    expect(chat.status).toBe(200);
     const body = (await chat.json()) as {
       serverId?: string;
       toolTrace?: Array<{ name: string; result?: { error?: string; serverId?: string } }>;
       reply: string;
       llmMode: string;
+      error?: string;
+      code?: string;
     };
+    expect(chat.status, `chat HTTP ${chat.status}: ${JSON.stringify(body).slice(0, 800)}`).toBe(
+      200,
+    );
     expect(body.llmMode).toBe("openai_compatible");
     const createTrace = body.toolTrace?.find((t) => t.name === "servers_create_from_skill") as
       | { name: string; result?: { error?: string; serverId?: string } }
@@ -235,11 +239,16 @@ describe("api integration (real Venice + Docker)", () => {
         serverId: server.id,
       }),
     });
-    expect(chat.status).toBe(200);
     const chatBody = (await chat.json()) as {
       serverId: string;
       toolTrace?: Array<{ name: string; result?: { error?: string } }>;
+      error?: string;
+      code?: string;
     };
+    expect(
+      chat.status,
+      `chat HTTP ${chat.status}: ${JSON.stringify(chatBody).slice(0, 800)}`,
+    ).toBe(200);
     expect(chatBody.serverId).toBe(server.id);
     expect(
       chatBody.toolTrace?.some(

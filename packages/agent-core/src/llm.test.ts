@@ -1,10 +1,15 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   extractProviderReasoning,
   extractToolCallsFromContent,
+  formatLlmHttpError,
   googleThoughtSignature,
   isGeminiOpenAiCompatBackend,
+  isLlmAbortError,
   isSequentialToolCallingBackend,
+  isTransientLlmHttpStatus,
+  isTransientLlmNetworkError,
+  llmRetryDelayMs,
   looksLikeToolShapedContent,
   OpenAICompatibleLlmClient,
 } from "./llm.js";
@@ -577,6 +582,227 @@ describe("Gemini thought_signature round-trip", () => {
     const assistant = messages.find((m) => m.role === "assistant");
     const toolCalls = assistant?.tool_calls as Array<Record<string, unknown>>;
     expect(toolCalls[0]?.extra_content).toBeUndefined();
+  });
+});
+
+describe("transient LLM HTTP / network classification", () => {
+  it("retries 429/502/503/504 and not 4xx model errors", () => {
+    expect(isTransientLlmHttpStatus(429)).toBe(true);
+    expect(isTransientLlmHttpStatus(502)).toBe(true);
+    expect(isTransientLlmHttpStatus(503)).toBe(true);
+    expect(isTransientLlmHttpStatus(504)).toBe(true);
+    expect(isTransientLlmHttpStatus(400)).toBe(false);
+    expect(isTransientLlmHttpStatus(401)).toBe(false);
+    expect(isTransientLlmHttpStatus(500)).toBe(false);
+  });
+
+  it("treats fetch-failed / reset as transient and abort as terminal", () => {
+    expect(isTransientLlmNetworkError(new TypeError("fetch failed"))).toBe(true);
+    const reset = new Error("socket hang up") as Error & { code?: string };
+    reset.code = "ECONNRESET";
+    expect(isTransientLlmNetworkError(reset)).toBe(true);
+    const wrapped = new TypeError("fetch failed", {
+      cause: Object.assign(new Error("reset"), { code: "UND_ERR_SOCKET" }),
+    });
+    expect(isTransientLlmNetworkError(wrapped)).toBe(true);
+    const abort = new DOMException("The operation was aborted.", "AbortError");
+    expect(isLlmAbortError(abort)).toBe(true);
+    expect(isTransientLlmNetworkError(abort)).toBe(false);
+  });
+
+  it("honors Retry-After seconds and falls back when the header is absent", () => {
+    const withHeader = new Response("", {
+      status: 429,
+      headers: { "retry-after": "2" },
+    });
+    expect(llmRetryDelayMs(withHeader, 400)).toBe(2000);
+    expect(llmRetryDelayMs(new Response("", { status: 502 }), 400)).toBe(400);
+    expect(llmRetryDelayMs(undefined, 800)).toBe(800);
+  });
+
+  it("caps Retry-After and includes attempt count on exhausted HTTP errors", () => {
+    const long = new Response("", {
+      status: 429,
+      headers: { "retry-after": "120" },
+    });
+    expect(llmRetryDelayMs(long, 400)).toBe(10_000);
+    expect(formatLlmHttpError(502, "<html>Bad Gateway</html>", 4).message).toBe(
+      "LLM request failed (502) after 4 attempts: <html>Bad Gateway</html>",
+    );
+    expect(formatLlmHttpError(400, "empty function name", 1).message).toBe(
+      "LLM request failed (400): empty function name",
+    );
+  });
+});
+
+describe("OpenAI-compatible transient retries", () => {
+  const okBody = JSON.stringify({
+    choices: [{ message: { content: "recovered" } }],
+  });
+
+  it("retries Venice HTTP 502 then succeeds without changing the posted body", async () => {
+    const sleeps: number[] = [];
+    let calls = 0;
+    let posted: Record<string, unknown> | undefined;
+    const fetchImpl: typeof fetch = async (_url, init) => {
+      calls += 1;
+      posted = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      if (calls < 3) {
+        return new Response("Bad Gateway", { status: 502 });
+      }
+      return new Response(okBody, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const client = new OpenAICompatibleLlmClient(
+      "https://api.venice.ai/api/v1",
+      "key",
+      "grok-4-5",
+      "openai_compatible",
+      {
+        fetchImpl,
+        transientRetryBaseMs: 250,
+        sleepImpl: async (ms) => {
+          sleeps.push(ms);
+        },
+      },
+    );
+    const result = await client.complete([{ role: "user", content: "hello" }]);
+    expect(result.content).toBe("recovered");
+    expect(calls).toBe(3);
+    expect(sleeps).toEqual([250, 500]);
+    expect(posted?.model).toBe("grok-4-5");
+    expect(posted?.venice_parameters).toEqual({ include_venice_system_prompt: false });
+    expect(warn.mock.calls.some((c) => String(c[0]).includes("LLM transient HTTP 502"))).toBe(
+      true,
+    );
+    warn.mockRestore();
+  });
+
+  it("honors Retry-After on 429 before the successful retry", async () => {
+    const sleeps: number[] = [];
+    let calls = 0;
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response("rate limited", {
+          status: 429,
+          headers: { "retry-after": "1" },
+        });
+      }
+      return new Response(okBody, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const client = new OpenAICompatibleLlmClient(
+      "https://api.venice.ai/api/v1",
+      "key",
+      "grok-4-5",
+      "openai_compatible",
+      {
+        fetchImpl,
+        sleepImpl: async (ms) => {
+          sleeps.push(ms);
+        },
+      },
+    );
+    const result = await client.complete([{ role: "user", content: "hello" }]);
+    expect(result.content).toBe("recovered");
+    expect(calls).toBe(2);
+    expect(sleeps).toEqual([1000]);
+    warn.mockRestore();
+  });
+
+  it("does not retry a 400 model error", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1;
+      return new Response("empty function name", { status: 400 });
+    };
+    const client = new OpenAICompatibleLlmClient(
+      "https://api.venice.ai/api/v1",
+      "key",
+      "grok-4-5",
+      "openai_compatible",
+      { fetchImpl, sleepImpl: async () => undefined },
+    );
+    await expect(client.complete([{ role: "user", content: "hello" }])).rejects.toThrow(
+      /LLM request failed \(400\): empty function name/,
+    );
+    expect(calls).toBe(1);
+  });
+
+  it("fails clearly after exhausting 502 retries", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1;
+      return new Response("<html>Bad Gateway</html>", { status: 502 });
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const client = new OpenAICompatibleLlmClient(
+      "https://api.venice.ai/api/v1",
+      "key",
+      "grok-4-5",
+      "openai_compatible",
+      {
+        fetchImpl,
+        transientRetries: 2,
+        sleepImpl: async () => undefined,
+      },
+    );
+    await expect(client.complete([{ role: "user", content: "hello" }])).rejects.toThrow(
+      /LLM request failed \(502\) after 3 attempts: <html>Bad Gateway<\/html>/,
+    );
+    expect(calls).toBe(3);
+    warn.mockRestore();
+  });
+
+  it("retries fetch-failed then succeeds", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1;
+      if (calls === 1) throw new TypeError("fetch failed");
+      return new Response(okBody, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const client = new OpenAICompatibleLlmClient(
+      "https://api.venice.ai/api/v1",
+      "key",
+      "grok-4-5",
+      "openai_compatible",
+      { fetchImpl, sleepImpl: async () => undefined },
+    );
+    const result = await client.complete([{ role: "user", content: "hello" }]);
+    expect(result.content).toBe("recovered");
+    expect(calls).toBe(2);
+    warn.mockRestore();
+  });
+
+  it("does not retry when the caller already aborted", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1;
+      return new Response("should not run", { status: 502 });
+    };
+    const client = new OpenAICompatibleLlmClient(
+      "https://api.venice.ai/api/v1",
+      "key",
+      "grok-4-5",
+      "openai_compatible",
+      { fetchImpl, sleepImpl: async () => undefined },
+    );
+    const signal = AbortSignal.abort();
+    await expect(
+      client.complete([{ role: "user", content: "hello" }], undefined, { signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(calls).toBe(0);
   });
 });
 

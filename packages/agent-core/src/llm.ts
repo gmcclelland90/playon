@@ -364,6 +364,91 @@ export function extractToolCallsFromContent(content: string): LlmToolCall[] {
   return calls;
 }
 
+/** Extra attempts after the first try for transient 429/502/503/504 and network blips. */
+export const DEFAULT_LLM_TRANSIENT_RETRIES = 3;
+/** Base backoff (ms); doubles each retry. Capped further when Retry-After is present. */
+export const DEFAULT_LLM_TRANSIENT_RETRY_BASE_MS = 400;
+const LLM_RETRY_AFTER_MAX_MS = 10_000;
+
+const TRANSIENT_LLM_HTTP_STATUSES = new Set([429, 502, 503, 504]);
+const TRANSIENT_LLM_NETWORK_CODES = new Set([
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "ECONNREFUSED",
+  "EPIPE",
+  "EAI_AGAIN",
+  "ENETUNREACH",
+  "EHOSTUNREACH",
+  "UND_ERR_SOCKET",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_HEADERS_TIMEOUT",
+  "UND_ERR_BODY_TIMEOUT",
+]);
+
+export function isTransientLlmHttpStatus(status: number): boolean {
+  return TRANSIENT_LLM_HTTP_STATUSES.has(status);
+}
+
+export function isLlmAbortError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const name = (err as { name?: string }).name;
+  return name === "AbortError" || name === "TimeoutError";
+}
+
+export function isTransientLlmNetworkError(err: unknown): boolean {
+  if (isLlmAbortError(err)) return false;
+  if (!(err instanceof Error)) return false;
+  const withCause = err as Error & { code?: string; cause?: unknown };
+  if (withCause.code && TRANSIENT_LLM_NETWORK_CODES.has(withCause.code)) return true;
+  const cause = withCause.cause;
+  if (cause && typeof cause === "object" && cause !== null && "code" in cause) {
+    const code = (cause as { code?: unknown }).code;
+    if (typeof code === "string" && TRANSIENT_LLM_NETWORK_CODES.has(code)) return true;
+  }
+  return err.name === "TypeError" && /fetch failed|network|socket|ECONNRESET/i.test(err.message);
+}
+
+/** Honor Retry-After (seconds or HTTP-date); otherwise use the exponential fallback. Cap at 10s. */
+export function llmRetryDelayMs(res: Response | undefined, fallbackMs: number): number {
+  const fallback = Math.max(0, fallbackMs);
+  const raw = res?.headers.get("retry-after")?.trim();
+  if (!raw) return fallback;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(Math.ceil(seconds * 1000), LLM_RETRY_AFTER_MAX_MS);
+  }
+  const when = Date.parse(raw);
+  if (!Number.isNaN(when)) {
+    return Math.min(Math.max(0, when - Date.now()), LLM_RETRY_AFTER_MAX_MS);
+  }
+  return fallback;
+}
+
+export function formatLlmHttpError(status: number, text: string, attempts: number): Error {
+  const body = text.replace(/\s+/g, " ").trim().slice(0, 800);
+  const attemptNote = attempts > 1 ? ` after ${attempts} attempts` : "";
+  const suffix = body ? `: ${body}` : "";
+  return new Error(`LLM request failed (${status})${attemptNote}${suffix}`);
+}
+
+async function sleepMs(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0) return;
+  if (signal?.aborted) {
+    throw new DOMException("The operation was aborted.", "AbortError");
+  }
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException("The operation was aborted.", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export type OpenAICompatibleLlmClientOptions = {
   /**
    * Advertise parallel tool_calls. Default false (Venice/Ollama/NVIDIA all prefer sequential).
@@ -373,6 +458,12 @@ export type OpenAICompatibleLlmClientOptions = {
   /** Cap native + recovered tool_calls. NVIDIA 8B must be 1. */
   maxToolCallsPerCompletion?: number;
   fetchImpl?: typeof fetch;
+  /** Extra attempts after the first try for transient HTTP/network errors. Default 3. */
+  transientRetries?: number;
+  /** Base backoff in ms (doubles each retry). Default 400. */
+  transientRetryBaseMs?: number;
+  /** Test seam — production uses a signal-aware timer. */
+  sleepImpl?: (ms: number, signal?: AbortSignal) => Promise<void>;
 };
 
 /** Calls POST .../chat/completions on an OpenAI-compatible endpoint (Venice, Ollama, …). */
@@ -381,6 +472,9 @@ export class OpenAICompatibleLlmClient implements LlmClient {
   readonly maxToolCallsPerCompletion?: number;
   private readonly parallelToolCalls: boolean;
   private readonly fetchImpl: typeof fetch;
+  private readonly transientRetries: number;
+  private readonly transientRetryBaseMs: number;
+  private readonly sleepImpl: (ms: number, signal?: AbortSignal) => Promise<void>;
 
   constructor(
     private readonly baseUrl: string,
@@ -393,6 +487,12 @@ export class OpenAICompatibleLlmClient implements LlmClient {
     this.parallelToolCalls = options.parallelToolCalls ?? false;
     this.maxToolCallsPerCompletion = options.maxToolCallsPerCompletion;
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.transientRetries = Math.max(0, options.transientRetries ?? DEFAULT_LLM_TRANSIENT_RETRIES);
+    this.transientRetryBaseMs = Math.max(
+      0,
+      options.transientRetryBaseMs ?? DEFAULT_LLM_TRANSIENT_RETRY_BASE_MS,
+    );
+    this.sleepImpl = options.sleepImpl ?? sleepMs;
   }
 
   async complete(
@@ -460,19 +560,51 @@ export class OpenAICompatibleLlmClient implements LlmClient {
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (this.apiKey) headers.authorization = `Bearer ${this.apiKey}`;
 
-    const res = await this.fetchImpl(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body),
-      signal: opts?.signal,
-    });
+    const payload = JSON.stringify(body);
+    const maxAttempts = this.transientRetries + 1;
+    let data: OpenAiChatResponse | undefined;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (opts?.signal?.aborted) {
+        throw new DOMException("The operation was aborted.", "AbortError");
+      }
+      let res: Response;
+      try {
+        res = await this.fetchImpl(url, {
+          method: "POST",
+          headers,
+          body: payload,
+          signal: opts?.signal,
+        });
+      } catch (err) {
+        if (isLlmAbortError(err) || !isTransientLlmNetworkError(err) || attempt >= maxAttempts) {
+          throw err;
+        }
+        const delay = llmRetryDelayMs(undefined, this.transientRetryBaseMs * 2 ** (attempt - 1));
+        console.warn(
+          `LLM transient network error; retry ${attempt}/${maxAttempts} in ${delay}ms`,
+        );
+        await this.sleepImpl(delay, opts?.signal);
+        continue;
+      }
 
-    if (!res.ok) {
+      if (res.ok) {
+        data = (await res.json()) as OpenAiChatResponse;
+        break;
+      }
+
       const text = await res.text();
-      throw new Error(`LLM request failed (${res.status}): ${text.slice(0, 800)}`);
+      if (!isTransientLlmHttpStatus(res.status) || attempt >= maxAttempts) {
+        throw formatLlmHttpError(res.status, text, attempt);
+      }
+      const delay = llmRetryDelayMs(res, this.transientRetryBaseMs * 2 ** (attempt - 1));
+      console.warn(
+        `LLM transient HTTP ${res.status}; retry ${attempt}/${maxAttempts} in ${delay}ms`,
+      );
+      await this.sleepImpl(delay, opts?.signal);
     }
-
-    const data = (await res.json()) as OpenAiChatResponse;
+    if (!data) {
+      throw new Error("LLM request failed: empty completion after retries");
+    }
     const message = data.choices?.[0]?.message;
     const content = message?.content ?? "";
     let toolCalls = message?.tool_calls?.map((tc) => {

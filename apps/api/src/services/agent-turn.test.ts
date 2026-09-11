@@ -236,4 +236,27 @@ describe("AgentTurn", () => {
       }),
     ).rejects.toMatchObject({ code: "server_not_found" });
   });
+
+  it("surfaces exhausted LLM 502 as chat_failed with the client message", async () => {
+    const { plane, userId } = await tempPlane();
+    const turn = new AgentTurn(plane, {
+      createLlmClient: async () => ({
+        mode: "openai_compatible",
+        async complete() {
+          throw new Error("LLM request failed (502) after 4 attempts: Bad Gateway");
+        },
+      }),
+    });
+    await expect(
+      turn.run({
+        source: "chat",
+        userId,
+        prompt: "hello",
+        abortSignal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({
+      code: "chat_failed",
+      message: "LLM request failed (502) after 4 attempts: Bad Gateway",
+    });
+  });
 });
