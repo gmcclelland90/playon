@@ -19,8 +19,23 @@ function normalizeWinPath(value: string): string {
  */
 function uniqueJailLeaf(root: string): string | undefined {
   const leaf = root.split(/[/\\]/).filter(Boolean).pop();
-  if (leaf && leaf.length >= 8) return leaf.toLowerCase();
+  if (leaf && leaf.length >= 8 && /^[a-z0-9._-]+$/i.test(leaf)) return leaf.toLowerCase();
   return undefined;
+}
+
+/** WMI `-Filter` so we do not enumerate every process on the host (GHA hang). */
+export function windowsCimFilterForRoots(roots: readonly string[]): string | undefined {
+  const clauses: string[] = [];
+  const seen = new Set<string>();
+  for (const root of roots) {
+    const leaf = uniqueJailLeaf(root);
+    if (!leaf || seen.has(leaf)) continue;
+    seen.add(leaf);
+    const esc = leaf.replace(/[%_]/g, "[$&]");
+    clauses.push(`CommandLine LIKE '%${esc}%'`);
+    clauses.push(`ExecutablePath LIKE '%${esc}%'`);
+  }
+  return clauses.length ? clauses.join(" OR ") : undefined;
 }
 
 function pathMentionsUniqueLeaf(normalizedPath: string, root: string): boolean {
@@ -197,8 +212,12 @@ export function pidsMatchingWindowsRoots(
   return out;
 }
 
-function listWindowsProcessRows(): WindowsProcessRow[] {
+function listWindowsProcessRows(roots: readonly string[] = []): WindowsProcessRow[] {
   if (process.platform !== "win32") return [];
+  const filter = windowsCimFilterForRoots(roots);
+  const cim = filter
+    ? `Get-CimInstance Win32_Process -Filter "${filter}"`
+    : "Get-CimInstance Win32_Process";
   try {
     const buf = execFileSync(
       "powershell.exe",
@@ -208,9 +227,9 @@ function listWindowsProcessRows(): WindowsProcessRow[] {
         "-ExecutionPolicy",
         "Bypass",
         "-Command",
-        "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; Get-CimInstance Win32_Process | ForEach-Object { '{0}`t{1}`t{2}' -f $_.ProcessId, $_.ExecutablePath, $_.CommandLine }",
+        `[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; ${cim} | ForEach-Object { '{0}\`t{1}\`t{2}' -f $_.ProcessId, $_.ExecutablePath, $_.CommandLine }`,
       ],
-      { encoding: "buffer", timeout: 15_000, windowsHide: true },
+      { encoding: "buffer", timeout: 8_000, windowsHide: true },
     );
     return parseWindowsProcessListing(decodeWindowsConsoleOutput(buf)).map(expandWindowsProcessRow);
   } catch {
@@ -222,7 +241,7 @@ export function listWindowsPidsMatchingRoots(
   roots: readonly string[],
   excludePids?: Set<number>,
 ): number[] {
-  return pidsMatchingWindowsRoots(listWindowsProcessRows(), roots, {
+  return pidsMatchingWindowsRoots(listWindowsProcessRows(roots), roots, {
     excludePids,
     selfPid: process.pid,
   });

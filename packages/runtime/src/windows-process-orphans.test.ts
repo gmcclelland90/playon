@@ -4,6 +4,7 @@ import {
   isUsableWindowsRoot,
   parseWindowsProcessListing,
   pidsMatchingWindowsRoots,
+  windowsCimFilterForRoots,
   windowsCommandLineMentionsRoot,
   windowsPathContainsRoot,
   windowsRowMatchesRoots,
@@ -95,5 +96,15 @@ describe("parse + select Windows process rows", () => {
     const bom = Buffer.concat([Buffer.from([0xff, 0xfe]), le]);
     expect(parseWindowsProcessListing(decodeWindowsConsoleOutput(bom))[0]?.pid).toBe(8812);
     expect(parseWindowsProcessListing(le.toString("utf8"))[0]?.pid).toBe(8812);
+  });
+
+  it("builds a WMI filter from unique jail leaves so CIM need not scan the host", () => {
+    const filter = windowsCimFilterForRoots([
+      "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\playon-proc-k7x9m2ab",
+      "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\playon-proc-k7x9m2ab\\game",
+    ]);
+    expect(filter).toContain("playon-proc-k7x9m2ab");
+    expect(filter).toMatch(/CommandLine LIKE '%playon-proc-k7x9m2ab%'/);
+    expect(windowsCimFilterForRoots(["C:\\playon-node\\data\\servers\\abc"])).toBeUndefined();
   });
 });

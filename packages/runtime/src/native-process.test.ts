@@ -12,7 +12,7 @@ import {
   shouldReapServerTreeOrphans,
   supervisedChildDetached,
 } from "./native-process.js";
-import { killWindowsOrphansByRoots } from "./windows-process-orphans.js";
+import { killWindowsPidTree } from "./windows-process-orphans.js";
 import { PathJailError } from "./path-jail.js";
 import { spawn } from "node:child_process";
 
@@ -73,6 +73,11 @@ async function waitForFileContains(file: string, needle: string, timeoutMs = 8_0
 }
 
 const temps: string[] = [];
+const trackedPids = new Set<number>();
+
+function trackPid(pid: number | undefined): void {
+  if (typeof pid === "number" && pid > 0) trackedPids.add(pid);
+}
 
 function isLockedFsError(err: unknown): boolean {
   const code =
@@ -138,13 +143,14 @@ async function waitPidGone(pid: number | undefined, timeoutMs = 5_000): Promise<
 }
 
 afterEach(async () => {
+  if (process.platform === "win32") {
+    for (const pid of trackedPids) killWindowsPidTree(pid);
+    trackedPids.clear();
+  }
   for (const dir of temps.splice(0)) {
-    if (process.platform === "win32") {
-      await killWindowsOrphansByRoots([dir, path.join(dir, "game")]);
-    }
     await rmTempTree(dir);
   }
-});
+}, 15_000);
 
 describe("NativeProcessSupervisor", () => {
   it("starts and stops a short-lived process", async () => {
@@ -162,6 +168,7 @@ describe("NativeProcessSupervisor", () => {
 
     expect(info.status).toBe("running");
     expect(info.pid).toBeTypeOf("number");
+    trackPid(info.pid);
     expect(supervisor.list()).toEqual([
       expect.objectContaining({ id: info.id, name: "echo", status: "running" }),
     ]);
@@ -365,6 +372,7 @@ describe("NativeProcessSupervisor", () => {
       args: isWin ? ["/c", path.join(gameDir, "hold.cmd")] : ["30"],
       cwd: "game",
     });
+    trackPid(started.pid);
 
     // A fresh supervisor stands in for a restarted host: no tracked map, same process.
     const restarted = new NativeProcessSupervisor(jail);
@@ -374,7 +382,7 @@ describe("NativeProcessSupervisor", () => {
 
     await first.stop(started.id);
     await waitPidGone(started.pid);
-  });
+  }, 20_000);
 
   it("reclaims a Windows OS orphan whose command line sits in the jail (#968)", async () => {
     if (process.platform !== "win32") return;
@@ -391,6 +399,7 @@ describe("NativeProcessSupervisor", () => {
       windowsHide: true,
     });
     expect(leftover.pid).toBeTypeOf("number");
+    trackPid(leftover.pid);
 
     const supervisor = new NativeProcessSupervisor(jail);
     const found = await waitForFind(supervisor, "server-x", "game");
@@ -400,7 +409,7 @@ describe("NativeProcessSupervisor", () => {
     await supervisor.reclaim("server-x", "game");
     await waitPidGone(leftover.pid);
     expect(() => process.kill(leftover.pid!, 0)).toThrow();
-  });
+  }, 20_000);
 
   it("writes a console line to a process resolved from identity alone", async () => {
     if (process.platform === "win32") return;
