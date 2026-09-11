@@ -11,6 +11,8 @@ export * from "./process-resources.js";
 export * from "./docker-create-options.js";
 export * from "./host-port-bind.js";
 export * from "./leftover-port-holders.js";
+export * from "./windows-process-orphans.js";
+export * from "./rm-tree.js";
 export * from "./dockerode-adapter.js";
 export * from "./factory.js";
 export * from "./server-runtime.js";

@@ -44,6 +44,7 @@ describe("transport error envelope — nodes, snapshots, backups", () => {
       ["/api/nodes/node-a/restart", { method: "POST" }],
       ["/api/nodes/node-a/manage", { method: "POST" }],
       ["/api/nodes/node-a/manage/suggest", { method: "POST" }],
+      ["/api/nodes/node-a/orphan-jails/gc", { method: "POST" }],
       ["/api/nodes/node-a/install-docker", { method: "POST" }],
       ["/api/nodes/node-a/install-docker/token", { method: "POST" }],
     ]);
@@ -55,6 +56,7 @@ describe("transport error envelope — nodes, snapshots, backups", () => {
       ["/api/nodes/ghost", { method: "DELETE" }, "remove_node_failed"],
       ["/api/nodes/ghost/restart", { method: "POST" }, "node_restart_failed"],
       ["/api/nodes/ghost/manage/suggest", { method: "POST" }, "manage_suggest_failed"],
+      ["/api/nodes/ghost/orphan-jails/gc", { method: "POST" }, "orphan_jail_gc_failed"],
       [
         "/api/nodes/ghost/install-docker/token",
         { method: "POST" },
@@ -83,6 +85,15 @@ describe("transport error envelope — nodes, snapshots, backups", () => {
     const body = (await res.json()) as Envelope;
     expect(body.code).toBe("manage_suggest_failed");
     expect(body.error).toMatch(/node_not_online/);
+
+    const gc = await app.request("/api/nodes/stale-node/orphan-jails/gc", {
+      method: "POST",
+      headers: { cookie },
+    });
+    expect(gc.status).toBe(409);
+    const gcBody = (await gc.json()) as Envelope;
+    expect(gcBody.code).toBe("orphan_jail_gc_failed");
+    expect(gcBody.error).toMatch(/node_not_online/);
   });
 
   it("renders node contract failures as 400 invalid_request with issues", async () => {

@@ -14,6 +14,7 @@ import {
   remoteDockerTransport,
   remoteNativeTransport,
   rewriteDockerPortBindError,
+  rmTreeWithRetrySync,
   type ContainerJobDispatch,
   type DockerAdapter,
   type DockerRuntimeTransport,
@@ -49,9 +50,17 @@ import type { EventHub } from "./event-hub.js";
 import { pushServerDirToNode } from "./node-sync.js";
 import {
   openServerFileStore,
+  ServerFileStoreError,
   type FileStoreLocalityMode,
   type ServerFileStore,
 } from "./server-file-store.js";
+import {
+  gcOrphanJails,
+  mergeJailIdentity,
+  parseSkillJsonIdentity,
+  type OrphanJailGcDeps,
+  type OrphanJailGcReport,
+} from "./orphan-jails.js";
 import {
   generateRconPassword,
   parseSourceRconText,
@@ -99,8 +108,10 @@ import {
   isStormworksSkill,
   parseStormworksServerConfigPort,
   STORMWORKS_CONFIG_REL_PATHS,
+  identityFromSkillMarker,
   isLocalNodeId,
   isLoopbackJoinHost,
+  LAB_FIXTURE_MARKER_REL,
   isWslNodeId,
   lanPublishPortsForSkill,
   NODE_AUTHORITATIVE_MARKER,
@@ -111,6 +122,7 @@ import {
 } from "@playon/shared";
 import { listLocalIniRelPaths } from "./instance-game-port-files.js";
 import { dispatchNodeJob, nodeServerRelPath } from "./node-runtime.js";
+import { nodeJobService } from "./node-jobs.js";
 import { checkNodeLoopbackTcp } from "./node-loopback-tcp.js";
 import { ensureWslLanPublish, releaseWslLanPublish } from "./wsl-lan-publish.js";
 
@@ -146,6 +158,12 @@ export interface ServerRuntimeDetail {
 export interface ServerDetail {
   server: ServerRecord;
   runtime: ServerRuntimeDetail;
+}
+
+function isNotFoundFsError(err: unknown): boolean {
+  if (err instanceof ServerFileStoreError && err.code === "not_found") return true;
+  const msg = err instanceof Error ? err.message : String(err);
+  return /not_found/i.test(msg);
 }
 
 function toRecord(row: typeof servers.$inferSelect): ServerRecord {
@@ -1619,7 +1637,53 @@ export class ServerService {
     serverName?: string;
     nodeId?: string;
   }): Promise<ServerRecord> {
-    return this.adoptionService().createFromSkill(args);
+    const record = await this.adoptionService().createFromSkill(args);
+    await this.syncJailIdentityToNode(record).catch(() => undefined);
+    return record;
+  }
+
+  /**
+   * Pin serverName / lab-fixture onto the node so later orphan GC can classify.
+   * Enqueue only — create must not wait for an agent claim (unit tests insert an
+   * online LAN node with no listener; waitFor would trip the 30s vitest cap).
+   */
+  private async syncJailIdentityToNode(server: ServerRecord): Promise<void> {
+    if (!this.isRemoteNode(server) || !server.nodeId) return;
+    if (!(await this.nodeIsOnline(server.nodeId))) return;
+    const skillPath = path.join(server.dataPath, "skill.json");
+    if (!fs.existsSync(skillPath)) return;
+    const content = fs.readFileSync(skillPath, "utf8");
+    try {
+      nodeJobService.enqueue(server.nodeId, "fs_write_text", {
+        path: nodeServerRelPath(server.id, "skill.json"),
+        content,
+      });
+    } catch {
+      return;
+    }
+    const marker = path.join(server.dataPath, ...LAB_FIXTURE_MARKER_REL.split("/"));
+    if (!fs.existsSync(marker)) return;
+    const markerText = fs.readFileSync(marker, "utf8");
+    try {
+      nodeJobService.enqueue(server.nodeId, "fs_ensure_dir", {
+        path: nodeServerRelPath(server.id, ".playon"),
+      });
+      nodeJobService.enqueue(server.nodeId, "fs_write_text", {
+        path: nodeServerRelPath(server.id, ".playon", "lab-fixture"),
+        content: markerText,
+      });
+    } catch {
+      // Older agents may not advertise these kinds.
+    }
+  }
+
+  async gcOrphanJails(nodeId: string, opts?: { dryRun?: boolean }): Promise<OrphanJailGcReport> {
+    if (!isLocalNodeId(nodeId)) {
+      const row = await this.nodeRow(nodeId);
+      if (!row) throw new Error(`unknown_node: ${nodeId}`);
+      if (!(await this.nodeIsOnline(nodeId))) throw new Error(`node_not_online: ${nodeId}`);
+    }
+    return gcOrphanJails(this.orphanJailDeps(nodeId), opts);
   }
 
   /**
@@ -1794,6 +1858,7 @@ export class ServerService {
   /**
    * Stop runtime, remove Docker container, wipe data dir + DB rows.
    * Leaves no server-scoped panel blocks, conversations, snapshots, or agent progress.
+   * The DB row stays if the node/local jail is still present (#968).
    */
   async remove(id: string): Promise<{ id: string; name: string }> {
     const server = await this.getRaw(id);
@@ -1814,6 +1879,9 @@ export class ServerService {
     }
     this.adapters.delete(id);
     this.stopLogFollow(id);
+
+    await this.reapNativeServerTree(server).catch(() => undefined);
+    await this.wipeServerJails(server);
 
     const convRows = await this.db
       .select({ id: conversations.id })
@@ -1840,24 +1908,191 @@ export class ServerService {
       await this.db.delete(watchers).where(eq(watchers.serverId, id));
     }
 
-    // Wipe the node jail before dropping the DB row (needs server identity for jobs).
-    if (this.isRemoteNode(server)) {
-      try {
-        await this.openFiles(server, { locality: "remote" }).delete(".");
-      } catch {
-        // best-effort — orphans are worse than a failed delete
-      }
-    }
-
     await this.db.delete(servers).where(eq(servers.id, id));
-
-    try {
-      fs.rmSync(server.dataPath, { recursive: true, force: true });
-    } catch {
-      // best-effort disk wipe
-    }
 
     this.events?.publish({ type: "server.status", serverId: id, status: "stopped" });
     return { id: server.id, name: server.name };
+  }
+
+  private async wipeServerJails(server: ServerRecord): Promise<void> {
+    if (this.isRemoteNode(server)) {
+      await this.wipeRemoteJail(server);
+    }
+    this.wipeLocalJail(server);
+  }
+
+  private wipeLocalJail(server: ServerRecord): void {
+    if (fs.existsSync(server.dataPath)) {
+      try {
+        rmTreeWithRetrySync(server.dataPath);
+      } catch (err) {
+        if (fs.existsSync(server.dataPath)) {
+          throw new Error(
+            `jail_not_removed: ${server.id} (${err instanceof Error ? err.message : err})`,
+          );
+        }
+      }
+    }
+    if (fs.existsSync(server.dataPath)) {
+      throw new Error(`jail_not_removed: ${server.id}`);
+    }
+  }
+
+  private async wipeRemoteJail(server: ServerRecord): Promise<void> {
+    const files = this.openFiles(server, { locality: "remote" });
+    const attempt = async () => {
+      try {
+        await files.delete(".");
+      } catch (err) {
+        if (isNotFoundFsError(err)) return;
+        throw err;
+      }
+    };
+    try {
+      await attempt();
+    } catch {
+      await this.reapNativeServerTree(server).catch(() => undefined);
+      await attempt();
+    }
+    if (await this.remoteJailStillPresent(server)) {
+      await this.reapNativeServerTree(server).catch(() => undefined);
+      await attempt();
+    }
+    if (await this.remoteJailStillPresent(server)) {
+      throw new Error(`jail_not_removed: ${server.id}`);
+    }
+  }
+
+  private async remoteJailStillPresent(server: ServerRecord): Promise<boolean> {
+    try {
+      await this.openFiles(server, { locality: "remote" }).list(".");
+      return true;
+    } catch (err) {
+      if (isNotFoundFsError(err)) return false;
+      return true;
+    }
+  }
+
+  private orphanJailDeps(nodeId: string): OrphanJailGcDeps {
+    const listKeepIds = async () => {
+      const rows = await this.db.select({ id: servers.id }).from(servers);
+      return rows.map((r) => r.id);
+    };
+    if (isLocalNodeId(nodeId)) {
+      const root = path.join(this.config.dataRoot, "servers");
+      return {
+        nodeId: nodeId || "local",
+        listKeepIds,
+        listJailIds: async () => {
+          if (!fs.existsSync(root)) return [];
+          return fs.readdirSync(root).filter((name) => {
+            try {
+              return fs.statSync(path.join(root, name)).isDirectory();
+            } catch {
+              return false;
+            }
+          });
+        },
+        readIdentity: async (jailId) => {
+          const dataPath = path.join(root, jailId);
+          const skill = identityFromSkillMarker(readSkillMarker(dataPath));
+          let labName: string | undefined;
+          try {
+            labName = fs
+              .readFileSync(path.join(dataPath, ...LAB_FIXTURE_MARKER_REL.split("/")), "utf8")
+              .trim();
+          } catch {
+            /* none */
+          }
+          return mergeJailIdentity(skill, labName);
+        },
+        stopJail: async (jailId) => {
+          await this.ensureRuntime().catch(() => undefined);
+          await this.sharedProcess?.reclaim?.(
+            `server-${jailId}`,
+            path.join(root, jailId, "game"),
+          );
+        },
+        removeJail: async (jailId) => {
+          rmTreeWithRetrySync(path.join(root, jailId));
+        },
+        jailStillPresent: async (jailId) => fs.existsSync(path.join(root, jailId)),
+      };
+    }
+
+    const dispatch = async (
+      kind: "fs_list" | "fs_read_text" | "fs_remove" | "process_stop",
+      args: Record<string, unknown>,
+      timeoutMs: number,
+    ) =>
+      dispatchNodeJob({
+        nodeId,
+        kind,
+        args: args as never,
+        timeoutMs,
+        localHandler: async () => {
+          throw new Error("remote_only");
+        },
+      });
+
+    return {
+      nodeId,
+      listKeepIds,
+      listJailIds: async () => {
+        try {
+          const listed = (await dispatch("fs_list", { path: "servers" }, 60_000)) as {
+            entries: Array<{ name: string; type: string }>;
+          };
+          return listed.entries.filter((e) => e.type === "dir").map((e) => e.name);
+        } catch (err) {
+          if (isNotFoundFsError(err)) return [];
+          throw err;
+        }
+      },
+      readIdentity: async (jailId) => {
+        let skill = {};
+        try {
+          const read = (await dispatch(
+            "fs_read_text",
+            { path: `servers/${jailId}/skill.json`, maxBytes: 32_000 },
+            60_000,
+          )) as { content: string };
+          skill = parseSkillJsonIdentity(read.content);
+        } catch {
+          /* missing */
+        }
+        let labName: string | undefined;
+        try {
+          const read = (await dispatch(
+            "fs_read_text",
+            { path: `servers/${jailId}/${LAB_FIXTURE_MARKER_REL}`, maxBytes: 1024 },
+            30_000,
+          )) as { content: string };
+          labName = read.content.trim();
+        } catch {
+          /* missing */
+        }
+        return mergeJailIdentity(skill, labName);
+      },
+      stopJail: async (jailId) => {
+        await dispatch(
+          "process_stop",
+          { name: `server-${jailId}`, cwd: `servers/${jailId}/game`, serverId: jailId },
+          60_000,
+        );
+      },
+      removeJail: async (jailId) => {
+        await dispatch("fs_remove", { path: `servers/${jailId}` }, 180_000);
+      },
+      jailStillPresent: async (jailId) => {
+        try {
+          await dispatch("fs_list", { path: `servers/${jailId}` }, 30_000);
+          return true;
+        } catch (err) {
+          if (isNotFoundFsError(err)) return false;
+          return true;
+        }
+      },
+    };
   }
 }

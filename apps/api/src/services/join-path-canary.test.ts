@@ -113,16 +113,15 @@ describe("join-path canary (resolveJoinAddress topologies)", () => {
   it("Linux fixture on a LAN node publishes nodes.join_host, not 127.0.0.1", async () => {
     const { db, config } = tempConfig();
     const servers = new ServerService(db, config);
+    const created = await servers.createFromSkill({
+      skillName: JOIN_PATH_CANARY_SKILL,
+      serverName: "Join Path Linux",
+    });
     await insertNode(db, {
       id: "lab-linux-1",
       name: "lab-linux",
       os: "linux",
       joinHost: "172.16.0.156",
-    });
-
-    const created = await servers.createFromSkill({
-      skillName: JOIN_PATH_CANARY_SKILL,
-      serverName: "Join Path Linux",
     });
     await db
       .update(serversTable)
@@ -140,6 +139,10 @@ describe("join-path canary (resolveJoinAddress topologies)", () => {
     const servers = new ServerService(db, config);
     const winId = "playon-win-1";
     const wslId = wslSiblingNodeId(winId);
+    const created = await servers.createFromSkill({
+      skillName: JOIN_PATH_CANARY_SKILL,
+      serverName: "Join Path WSL",
+    });
     await insertNode(db, {
       id: winId,
       name: "win",
@@ -151,11 +154,6 @@ describe("join-path canary (resolveJoinAddress topologies)", () => {
       name: "win-wsl",
       os: "linux",
       joinHost: "172.22.144.1",
-    });
-
-    const created = await servers.createFromSkill({
-      skillName: JOIN_PATH_CANARY_SKILL,
-      serverName: "Join Path WSL",
     });
     await db
       .update(serversTable)
@@ -171,16 +169,15 @@ describe("join-path canary (resolveJoinAddress topologies)", () => {
   it("Windows PE stand-in on playon-win-1 publishes that node's join_host", async () => {
     const { db, config } = tempConfig();
     const servers = new ServerService(db, config);
+    const created = await servers.createFromSkill({
+      skillName: JOIN_PATH_CANARY_SKILL,
+      serverName: "Join Path Win PE stand-in",
+    });
     await insertNode(db, {
       id: "playon-win-1",
       name: "win",
       os: "windows",
       joinHost: "172.16.0.94",
-    });
-
-    const created = await servers.createFromSkill({
-      skillName: JOIN_PATH_CANARY_SKILL,
-      serverName: "Join Path Win PE stand-in",
     });
     await db
       .update(serversTable)

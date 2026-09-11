@@ -53,6 +53,7 @@ import {
   serverIdsFromPlayonDb,
 } from "./lab-matrix-docker-reap.mjs";
 import { summarizeWindowsCoverage } from "./lab-matrix-windows-coverage.mjs";
+import { assertJailGone } from "./lab-matrix-jail-gc.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.chdir(repoRoot);
@@ -764,7 +765,7 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
             if (sizeOnDisk === 0 || sizeOnDisk === null) {
               const msg = `steamcmd_empty_depot: appId=${meta.steamAppId} EmptySteamDepot SizeOnDisk=${sizeOnDisk ?? "unknown"}`;
               notes.install.emptyDepot = true;
-              await safeHomeCleanup(home, serverId);
+              await safeHomeCleanup(home, serverId, winNodeId);
               return {
                 skillName: meta.name,
                 ok: true,
@@ -796,7 +797,7 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
             };
             phases.install = "ok";
           } else {
-            await safeHomeCleanup(home, serverId);
+            await safeHomeCleanup(home, serverId, winNodeId);
             return {
               skillName: meta.name,
               ok: true,
@@ -817,7 +818,7 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
             };
             phases.install = "ok";
           } else {
-            await safeHomeCleanup(home, serverId);
+            await safeHomeCleanup(home, serverId, winNodeId);
             return {
               skillName: meta.name,
               ok: true,
@@ -1033,6 +1034,7 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
     await home.tool("servers_stop", { serverId });
     phases.stop = "ok";
     await home.tool("servers_delete", { serverId });
+    await assertWindowsJailGone(home, winNodeId, serverId);
     phases.cleanup = "ok";
     serverId = null;
 
@@ -1053,8 +1055,13 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
   } catch (err) {
     const tail = err instanceof Error ? err.message : String(err);
     if (serverId) {
-      await safeHomeCleanup(home, serverId);
-      phases.cleanup = phases.cleanup ?? "ok";
+      try {
+        await safeHomeCleanup(home, serverId, winNodeId);
+        phases.cleanup = phases.cleanup ?? "ok";
+      } catch (cleanErr) {
+        phases.cleanup = "fail";
+        notes.cleanup = cleanErr instanceof Error ? cleanErr.message : String(cleanErr);
+      }
     }
     for (const key of Object.keys(phases)) {
       if (phases[key] === null) {
@@ -1075,7 +1082,18 @@ async function runWindowsLifecycle(skill, { home, winNodeId, winHost }) {
   }
 }
 
-async function safeHomeCleanup(home, serverId) {
+async function assertWindowsJailGone(home, winNodeId, serverId) {
+  if (!winNodeId || !serverId) return;
+  let listing;
+  try {
+    listing = await home.tool("node_fs_list", { nodeId: winNodeId, path: `servers/${serverId}` });
+  } catch (err) {
+    listing = { error: err instanceof Error ? err.message : String(err) };
+  }
+  assertJailGone(listing, serverId);
+}
+
+async function safeHomeCleanup(home, serverId, winNodeId) {
   try {
     await home.tool("servers_stop", { serverId });
   } catch {
@@ -1083,8 +1101,19 @@ async function safeHomeCleanup(home, serverId) {
   }
   try {
     await home.tool("servers_delete", { serverId });
-  } catch {
-    /* ignore */
+  } catch (err) {
+    if (winNodeId) {
+      try {
+        await assertWindowsJailGone(home, winNodeId, serverId);
+        return;
+      } catch {
+        throw err;
+      }
+    }
+    return;
+  }
+  if (winNodeId) {
+    await assertWindowsJailGone(home, winNodeId, serverId);
   }
 }
 
