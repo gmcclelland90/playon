@@ -1,6 +1,5 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 export type WindowsProcessRow = {
@@ -139,37 +138,6 @@ function looksLikeUtf16Le(buf: Buffer): boolean {
     if (buf[i + 1] === 0 && buf[i] !== 0 && buf[i]! < 0x80) nulOdds += 1;
   }
   return pairs >= 3 && nulOdds / pairs >= 0.7;
-}
-
-function expandWindowsPath(p: string): string {
-  if (process.platform !== "win32" || !p) return p;
-  try {
-    return fs.realpathSync.native(p);
-  } catch {
-    const cut = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
-    if (cut <= 2) return p;
-    try {
-      return `${fs.realpathSync.native(p.slice(0, cut))}${p.slice(cut)}`;
-    } catch {
-      return p;
-    }
-  }
-}
-
-function expandWindowsCommandLine(cmd: string): string {
-  if (process.platform !== "win32" || !cmd) return cmd;
-  return cmd.replace(/[A-Za-z]:\\[^"'|\r\n]+/g, (m) => {
-    const trimmed = m.replace(/[.,;]+$/, "");
-    return expandWindowsPath(trimmed) + m.slice(trimmed.length);
-  });
-}
-
-function expandWindowsProcessRow(row: WindowsProcessRow): WindowsProcessRow {
-  return {
-    pid: row.pid,
-    executablePath: expandWindowsPath(row.executablePath),
-    commandLine: expandWindowsCommandLine(row.commandLine),
-  };
 }
 
 export function windowsRowMatchesRoots(row: WindowsProcessRow, roots: readonly string[]): boolean {
@@ -326,90 +294,6 @@ function listViaTasklistImages(roots: readonly string[]): number[] {
   }
 }
 
-function listViaWmic(): WindowsProcessRow[] {
-  try {
-    const buf = execFileSync(
-      "wmic.exe",
-      ["process", "get", "ProcessId,ExecutablePath,CommandLine", "/FORMAT:LIST"],
-      { encoding: "buffer", timeout: 2_000, windowsHide: true },
-    );
-    return parseWmicProcessList(decodeWindowsConsoleOutput(buf)).map(expandWindowsProcessRow);
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Get-Process paths first (works when CIM is unavailable). Then cmd.exe
- * command lines via CIM/WMI, each in try/catch so a CIM failure cannot
- * wipe the path list. GHA windows-latest has returned empty CIM/wmic.
- */
-const LIST_CMD_AND_PATHS_PS1 = [
-  "$ErrorActionPreference = 'Continue'",
-  "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false",
-  "Get-Process -ErrorAction SilentlyContinue | ForEach-Object {",
-  "  $path = $null",
-  "  try { $path = $_.Path } catch {}",
-  "  if ($path) { Write-Output ('{0}{1}{2}{1}' -f $_.Id, [char]9, $path) }",
-  "}",
-  "try {",
-  "  Get-CimInstance -ClassName Win32_Process -Filter \"Name='cmd.exe'\" -ErrorAction SilentlyContinue | ForEach-Object {",
-  "    $cmd = ([string]$_.CommandLine) -replace '[\\t\\r\\n]',' '",
-  "    Write-Output ('{0}{1}{2}{1}{3}' -f $_.ProcessId, [char]9, ([string]$_.ExecutablePath), $cmd)",
-  "  }",
-  "} catch {}",
-].join("\n");
-
-function runPowerShellScript(script: string, timeoutMs: number): Buffer {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "playon-wps-"));
-  const file = path.join(dir, "list.ps1");
-  try {
-    fs.writeFileSync(file, `\uFEFF${script}`, "utf8");
-    try {
-      return execFileSync(
-        "powershell.exe",
-        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", file],
-        { encoding: "buffer", timeout: timeoutMs, windowsHide: true },
-      );
-    } catch (err) {
-      const stdout = (err as { stdout?: Buffer }).stdout;
-      return stdout && stdout.length > 0 ? stdout : Buffer.alloc(0);
-    }
-  } finally {
-    try {
-      fs.rmSync(dir, { recursive: true, force: true });
-    } catch {
-      /* ignore */
-    }
-  }
-}
-
-function listViaCmdAndPaths(): WindowsProcessRow[] {
-  const buf = runPowerShellScript(LIST_CMD_AND_PATHS_PS1, 5_000);
-  if (buf.length === 0) return [];
-  return parseWindowsProcessListing(decodeWindowsConsoleOutput(buf)).map(expandWindowsProcessRow);
-}
-
-function mergeProcessRows(chunks: WindowsProcessRow[][]): WindowsProcessRow[] {
-  const byPid = new Map<number, WindowsProcessRow>();
-  for (const rows of chunks) {
-    for (const row of rows) {
-      const prev = byPid.get(row.pid);
-      if (!prev) {
-        byPid.set(row.pid, row);
-        continue;
-      }
-      if (!prev.commandLine && row.commandLine) byPid.set(row.pid, row);
-    }
-  }
-  return [...byPid.values()];
-}
-
-function listWindowsProcessRows(_roots: readonly string[] = []): WindowsProcessRow[] {
-  if (process.platform !== "win32") return [];
-  return mergeProcessRows([listViaWmic(), listViaCmdAndPaths()]);
-}
-
 export function listWindowsProcessDebug(roots: readonly string[]): {
   exeNames: string[];
   tasklistPids: number[];
@@ -420,7 +304,7 @@ export function listWindowsProcessDebug(roots: readonly string[]): {
     exeNames: roots.flatMap((r) => collectExeBasenames(r)),
     tasklistPids: listViaTasklistImages(roots),
     matchingPids: listWindowsPidsMatchingRoots(roots),
-    rowCount: listWindowsProcessRows(roots).length,
+    rowCount: listViaTasklistImages(roots).length,
   };
 }
 
@@ -432,11 +316,10 @@ export function listWindowsPidsMatchingRoots(
   const selfPid = process.pid;
   const seen = new Set<number>();
   const out: number[] = [];
-  const fromPaths = pidsMatchingWindowsRoots(listWindowsProcessRows(roots), roots, {
-    excludePids,
-    selfPid,
-  });
-  for (const pid of [...listViaTasklistImages(roots), ...fromPaths]) {
+  // tasklist only on the hot path. PowerShell/CIM/wmic stay empty or take
+  // seconds on windows-latest and pushed API unit files into vitest's
+  // onTaskUpdate timeout after every assertion already passed (#952).
+  for (const pid of listViaTasklistImages(roots)) {
     if (pid === selfPid || exclude.has(pid) || seen.has(pid)) continue;
     seen.add(pid);
     out.push(pid);
