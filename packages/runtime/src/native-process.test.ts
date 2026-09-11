@@ -115,14 +115,11 @@ async function waitForFind(
   supervisor: NativeProcessSupervisor,
   name: string,
   cwd: string,
-  attempts = 4,
 ) {
-  for (let i = 0; i < attempts; i++) {
-    const found = await supervisor.find(name, cwd);
-    if (found) return found;
-    await new Promise((resolve) => setTimeout(resolve, 400));
-  }
-  return null;
+  const found = await supervisor.find(name, cwd);
+  if (found) return found;
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  return supervisor.find(name, cwd);
 }
 
 async function waitPidGone(pid: number | undefined, timeoutMs = 5_000): Promise<void> {

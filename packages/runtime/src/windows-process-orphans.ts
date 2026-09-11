@@ -215,36 +215,63 @@ export function pidsMatchingWindowsRoots(
   return out;
 }
 
-const LIST_WIN32_PROCESSES_PS1 = [
-  "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false",
-  // -Property only: a full Win32_Process dump hung GHA afterEach. Do not use
-  // WQL -Filter LIKE — that timed out (8s) and returned no rows on windows-latest.
-  "Get-CimInstance -ClassName Win32_Process -Property ProcessId,ExecutablePath,CommandLine | ForEach-Object {",
-  "  $exe = [string]$_.ExecutablePath",
-  "  $cmd = [string]$_.CommandLine",
-  "  $exe = $exe -replace '[\\t\\r\\n]', ' '",
-  "  $cmd = $cmd -replace '[\\t\\r\\n]', ' '",
-  "  '{0}{1}{2}{1}{3}' -f $_.ProcessId, [char]9, $exe, $cmd",
-  "}",
-].join("; ");
+/** `wmic process get … /FORMAT:LIST` (UTF-16). Faster than CIM on GHA. */
+export function parseWmicProcessList(text: string): WindowsProcessRow[] {
+  const normalized = text
+    .replace(/\0/g, "")
+    .replace(/\r\r\n/g, "\n")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n");
+  const out: WindowsProcessRow[] = [];
+  let pid = 0;
+  let executablePath = "";
+  let commandLine = "";
+  const flush = (): void => {
+    if (Number.isInteger(pid) && pid > 0) {
+      out.push({ pid, executablePath, commandLine });
+    }
+    pid = 0;
+    executablePath = "";
+    commandLine = "";
+  };
+  for (const raw of normalized.split("\n")) {
+    const line = raw.trim();
+    if (!line) {
+      // WMIC LIST puts a blank line after every property; flush only once
+      // ProcessId has been seen for this block.
+      if (pid > 0) flush();
+      continue;
+    }
+    const eq = line.indexOf("=");
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq);
+    const val = line.slice(eq + 1);
+    if (key === "ProcessId") pid = Number(val.trim());
+    else if (key === "ExecutablePath") executablePath = val.trim();
+    else if (key === "CommandLine") commandLine = val.trim();
+  }
+  flush();
+  return out;
+}
 
-function runPowerShellEncoded(script: string): Buffer {
-  const encoded = Buffer.from(script, "utf16le").toString("base64");
-  return execFileSync(
-    "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
-    { encoding: "buffer", timeout: 12_000, windowsHide: true },
-  );
+function listViaWmic(): WindowsProcessRow[] {
+  try {
+    const buf = execFileSync(
+      "wmic.exe",
+      ["process", "get", "ProcessId,ExecutablePath,CommandLine", "/FORMAT:LIST"],
+      { encoding: "buffer", timeout: 6_000, windowsHide: true },
+    );
+    return parseWmicProcessList(decodeWindowsConsoleOutput(buf)).map(expandWindowsProcessRow);
+  } catch {
+    return [];
+  }
 }
 
 function listWindowsProcessRows(_roots: readonly string[] = []): WindowsProcessRow[] {
   if (process.platform !== "win32") return [];
-  try {
-    const buf = runPowerShellEncoded(LIST_WIN32_PROCESSES_PS1);
-    return parseWindowsProcessListing(decodeWindowsConsoleOutput(buf)).map(expandWindowsProcessRow);
-  } catch {
-    return [];
-  }
+  const wmic = listViaWmic();
+  if (wmic.length > 0) return wmic;
+  return [];
 }
 
 export function listWindowsPidsMatchingRoots(

@@ -3,6 +3,7 @@ import {
   decodeWindowsConsoleOutput,
   isUsableWindowsRoot,
   parseWindowsProcessListing,
+  parseWmicProcessList,
   pidsMatchingWindowsRoots,
   windowsCimFilterForRoots,
   windowsCommandLineMentionsRoot,
@@ -96,6 +97,43 @@ describe("parse + select Windows process rows", () => {
     const bom = Buffer.concat([Buffer.from([0xff, 0xfe]), le]);
     expect(parseWindowsProcessListing(decodeWindowsConsoleOutput(bom))[0]?.pid).toBe(8812);
     expect(parseWindowsProcessListing(le.toString("utf8"))[0]?.pid).toBe(8812);
+  });
+
+  it("parses wmic /FORMAT:LIST blocks including 8.3 command lines", () => {
+    const text = [
+      "CommandLine=C:\\Windows\\system32\\cmd.exe /c C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\playon-proc-k7x9m2ab\\game\\hold.cmd",
+      "",
+      "ExecutablePath=C:\\Windows\\system32\\cmd.exe",
+      "",
+      "ProcessId=8812",
+      "",
+      "",
+      "CommandLine=ping -n 40 127.0.0.1",
+      "",
+      "ExecutablePath=C:\\Windows\\system32\\ping.exe",
+      "",
+      "ProcessId=9001",
+      "",
+    ].join("\r\r\n");
+    const rows = parseWmicProcessList(text);
+    expect(rows).toEqual([
+      {
+        pid: 8812,
+        executablePath: "C:\\Windows\\system32\\cmd.exe",
+        commandLine:
+          "C:\\Windows\\system32\\cmd.exe /c C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\playon-proc-k7x9m2ab\\game\\hold.cmd",
+      },
+      {
+        pid: 9001,
+        executablePath: "C:\\Windows\\system32\\ping.exe",
+        commandLine: "ping -n 40 127.0.0.1",
+      },
+    ]);
+    expect(
+      pidsMatchingWindowsRoots(rows, [
+        "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\playon-proc-k7x9m2ab",
+      ]),
+    ).toEqual([8812]);
   });
 
   it("builds a WMI filter from unique jail leaves so CIM need not scan the host", () => {
