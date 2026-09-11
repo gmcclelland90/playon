@@ -259,7 +259,7 @@ function listViaWmic(): WindowsProcessRow[] {
     const buf = execFileSync(
       "wmic.exe",
       ["process", "get", "ProcessId,ExecutablePath,CommandLine", "/FORMAT:LIST"],
-      { encoding: "buffer", timeout: 6_000, windowsHide: true },
+      { encoding: "buffer", timeout: 2_000, windowsHide: true },
     );
     return parseWmicProcessList(decodeWindowsConsoleOutput(buf)).map(expandWindowsProcessRow);
   } catch {
@@ -267,11 +267,76 @@ function listViaWmic(): WindowsProcessRow[] {
   }
 }
 
+/**
+ * `Name='cmd.exe'` is an indexed WQL equality (not LIKE). Combined with
+ * `Get-Process` paths this covers start.cmd wrappers and jail-launched exes
+ * without a host-wide CIM dump.
+ */
+const LIST_CMD_AND_PATHS_PS1 = [
+  "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false",
+  "Get-CimInstance -ClassName Win32_Process -Filter \"Name='cmd.exe'\" | ForEach-Object {",
+  "  $cmd = ([string]$_.CommandLine) -replace '[\\t\\r\\n]',' '",
+  "  '{0}{1}{2}{1}{3}' -f $_.ProcessId, [char]9, ([string]$_.ExecutablePath), $cmd",
+  "}",
+  "Get-Process -ErrorAction SilentlyContinue | ForEach-Object {",
+  "  $path = $null",
+  "  try { $path = $_.Path } catch {}",
+  "  if ($path) { '{0}{1}{2}{1}' -f $_.Id, [char]9, $path }",
+  "}",
+].join("; ");
+
+function runPowerShellEncoded(script: string, timeoutMs: number): Buffer {
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  return execFileSync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
+    { encoding: "buffer", timeout: timeoutMs, windowsHide: true },
+  );
+}
+
+function listViaCmdAndPaths(): WindowsProcessRow[] {
+  try {
+    const buf = runPowerShellEncoded(LIST_CMD_AND_PATHS_PS1, 5_000);
+    return parseWindowsProcessListing(decodeWindowsConsoleOutput(buf)).map(expandWindowsProcessRow);
+  } catch {
+    return [];
+  }
+}
+
+function mergeProcessRows(chunks: WindowsProcessRow[][]): WindowsProcessRow[] {
+  const byPid = new Map<number, WindowsProcessRow>();
+  for (const rows of chunks) {
+    for (const row of rows) {
+      const prev = byPid.get(row.pid);
+      if (!prev) {
+        byPid.set(row.pid, row);
+        continue;
+      }
+      if (!prev.commandLine && row.commandLine) byPid.set(row.pid, row);
+    }
+  }
+  return [...byPid.values()];
+}
+
 function listWindowsProcessRows(_roots: readonly string[] = []): WindowsProcessRow[] {
   if (process.platform !== "win32") return [];
-  const wmic = listViaWmic();
-  if (wmic.length > 0) return wmic;
-  return [];
+  return mergeProcessRows([listViaWmic(), listViaCmdAndPaths()]);
+}
+
+export function listWindowsProcessDebug(roots: readonly string[]): {
+  rowCount: number;
+  matchingPids: number[];
+  cmdHints: string[];
+} {
+  const rows = listWindowsProcessRows(roots);
+  return {
+    rowCount: rows.length,
+    matchingPids: pidsMatchingWindowsRoots(rows, roots, { selfPid: process.pid }),
+    cmdHints: rows
+      .filter((r) => /playon-proc|hold\.cmd|cmd\.exe/i.test(`${r.executablePath} ${r.commandLine}`))
+      .slice(0, 8)
+      .map((r) => `${r.pid}:${r.commandLine.slice(0, 180)}`),
+  };
 }
 
 export function listWindowsPidsMatchingRoots(

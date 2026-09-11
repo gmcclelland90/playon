@@ -12,7 +12,7 @@ import {
   shouldReapServerTreeOrphans,
   supervisedChildDetached,
 } from "./native-process.js";
-import { killWindowsPidTree, listWindowsPidsMatchingRoots } from "./windows-process-orphans.js";
+import { killWindowsPidTree, listWindowsProcessDebug } from "./windows-process-orphans.js";
 import { PathJailError } from "./path-jail.js";
 import { spawn } from "node:child_process";
 
@@ -374,9 +374,7 @@ describe("NativeProcessSupervisor", () => {
     const restarted = new NativeProcessSupervisor(jail);
     const found = await waitForFind(restarted, "server-x", "game");
     if (!found && process.platform === "win32") {
-      throw new Error(
-        `find() missed survivor; cimPids=${JSON.stringify(listWindowsPidsMatchingRoots([jail, gameDir]))} jail=${jail}`,
-      );
+      throw new Error(`find() missed survivor; ${JSON.stringify(listWindowsProcessDebug([jail, gameDir]))} jail=${jail}`);
     }
     expect(found?.status).toBe("running");
     expect(found?.name).toBe("server-x");
@@ -406,7 +404,7 @@ describe("NativeProcessSupervisor", () => {
     const found = await waitForFind(supervisor, "server-x", "game");
     if (!found) {
       throw new Error(
-        `find() missed OS orphan pid=${leftover.pid}; cimPids=${JSON.stringify(listWindowsPidsMatchingRoots([jail, gameDir]))} jail=${jail}`,
+        `find() missed OS orphan pid=${leftover.pid}; ${JSON.stringify(listWindowsProcessDebug([jail, gameDir]))} jail=${jail}`,
       );
     }
     expect(found?.status).toBe("running");
