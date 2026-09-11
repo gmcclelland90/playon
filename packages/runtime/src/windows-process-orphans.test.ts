@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  decodeWindowsConsoleOutput,
   isUsableWindowsRoot,
   parseWindowsProcessListing,
   pidsMatchingWindowsRoots,
@@ -65,6 +66,12 @@ describe("windows path matching", () => {
     expect(
       windowsPathContainsRoot("C:\\Users\\RUNNER~1\\other\\game", "C:\\Users\\runner\\servers\\game"),
     ).toBe(false);
+    expect(
+      windowsPathContainsRoot(
+        "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\playon-proc-k7x9m2ab\\game\\hold.cmd",
+        "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\playon-proc-k7x9m2ab",
+      ),
+    ).toBe(true);
   });
 });
 
@@ -79,5 +86,14 @@ describe("parse + select Windows process rows", () => {
     expect(
       windowsRowMatchesRoots(rows[2]!, ["C:\\playon-node\\data\\servers\\abc"]),
     ).toBe(false);
+  });
+
+  it("decodes UTF-16LE PowerShell listings and still parses pids", () => {
+    const text = "8812\tC:\\jail\\game\\foo.exe\tC:\\jail\\game\\foo.exe\n";
+    const le = Buffer.from(text, "utf16le");
+    expect(parseWindowsProcessListing(decodeWindowsConsoleOutput(le))[0]?.pid).toBe(8812);
+    const bom = Buffer.concat([Buffer.from([0xff, 0xfe]), le]);
+    expect(parseWindowsProcessListing(decodeWindowsConsoleOutput(bom))[0]?.pid).toBe(8812);
+    expect(parseWindowsProcessListing(le.toString("utf8"))[0]?.pid).toBe(8812);
   });
 });

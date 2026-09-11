@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 
 export type WindowsProcessRow = {
   pid: number;
@@ -28,6 +29,34 @@ function pathMentionsUniqueLeaf(normalizedPath: string, root: string): boolean {
   return normalizedPath.includes(`/${leaf}/`) || normalizedPath.endsWith(`/${leaf}`);
 }
 
+/** `RUNNER~1` ↔ `runneradmin` for intermediate dirs only (not the unique jail leaf). */
+function dot83Prefix(seg: string): string | null {
+  const m = /^(.{1,6})~\d+$/i.exec(seg);
+  return m ? m[1]!.toLowerCase() : null;
+}
+
+function intermediateSegMatches(a: string, b: string): boolean {
+  if (a === b) return true;
+  const sa = dot83Prefix(a);
+  const sb = dot83Prefix(b);
+  if (sa && b.startsWith(sa)) return true;
+  if (sb && a.startsWith(sb)) return true;
+  return false;
+}
+
+function windowsPathContainsRootAllowing83(candidate: string, root: string): boolean {
+  const a = candidate.split("/").filter(Boolean);
+  const b = root.split("/").filter(Boolean);
+  if (a.length < b.length) return false;
+  for (let i = 0; i < b.length; i++) {
+    const last = i === b.length - 1;
+    if (a[i] === b[i]) continue;
+    if (last) return false;
+    if (!intermediateSegMatches(a[i]!, b[i]!)) return false;
+  }
+  return true;
+}
+
 /** Reject drive-only / tiny roots so a bad cwd cannot tree-kill the host. */
 export function isUsableWindowsRoot(root: string): boolean {
   const n = normalizeWinPath(root);
@@ -41,7 +70,8 @@ export function windowsPathContainsRoot(candidate: string, root: string): boolea
   const b = normalizeWinPath(root);
   if (!a || !b || !isUsableWindowsRoot(root)) return false;
   if (a === b || a.startsWith(`${b}/`)) return true;
-  return pathMentionsUniqueLeaf(a, root);
+  if (pathMentionsUniqueLeaf(a, root)) return true;
+  return windowsPathContainsRootAllowing83(a, b);
 }
 
 export function windowsCommandLineMentionsRoot(commandLine: string, root: string): boolean {
@@ -58,7 +88,68 @@ export function windowsCommandLineMentionsRoot(commandLine: string, root: string
     }
     from = i + 1;
   }
-  return pathMentionsUniqueLeaf(cmd, root);
+  if (pathMentionsUniqueLeaf(cmd, root)) return true;
+  for (const token of commandLine.split(/\s+/)) {
+    const cleaned = token.replace(/^"+|"+$/g, "");
+    if (cleaned !== commandLine && windowsPathContainsRoot(cleaned, root)) return true;
+  }
+  return false;
+}
+
+/**
+ * Windows PowerShell 5.1 (`powershell.exe`) writes UTF-16LE when stdout is
+ * redirected. Decoding that as UTF-8 yields NULs so every pid parse fails and
+ * `find()` / reclaim see no orphans.
+ */
+export function decodeWindowsConsoleOutput(buf: Buffer): string {
+  if (buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xfe) {
+    return buf.toString("utf16le");
+  }
+  if (looksLikeUtf16Le(buf)) return buf.toString("utf16le");
+  return buf.toString("utf8").replace(/^\uFEFF/, "");
+}
+
+function looksLikeUtf16Le(buf: Buffer): boolean {
+  if (buf.length < 6) return false;
+  const n = Math.min(buf.length, 64);
+  let nulOdds = 0;
+  let pairs = 0;
+  for (let i = 0; i + 1 < n; i += 2) {
+    pairs += 1;
+    if (buf[i + 1] === 0 && buf[i] !== 0 && buf[i]! < 0x80) nulOdds += 1;
+  }
+  return pairs >= 3 && nulOdds / pairs >= 0.7;
+}
+
+function expandWindowsPath(p: string): string {
+  if (process.platform !== "win32" || !p) return p;
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    const cut = Math.max(p.lastIndexOf("\\"), p.lastIndexOf("/"));
+    if (cut <= 2) return p;
+    try {
+      return `${fs.realpathSync.native(p.slice(0, cut))}${p.slice(cut)}`;
+    } catch {
+      return p;
+    }
+  }
+}
+
+function expandWindowsCommandLine(cmd: string): string {
+  if (process.platform !== "win32" || !cmd) return cmd;
+  return cmd.replace(/[A-Za-z]:\\[^"'|\r\n]+/g, (m) => {
+    const trimmed = m.replace(/[.,;]+$/, "");
+    return expandWindowsPath(trimmed) + m.slice(trimmed.length);
+  });
+}
+
+function expandWindowsProcessRow(row: WindowsProcessRow): WindowsProcessRow {
+  return {
+    pid: row.pid,
+    executablePath: expandWindowsPath(row.executablePath),
+    commandLine: expandWindowsCommandLine(row.commandLine),
+  };
 }
 
 export function windowsRowMatchesRoots(row: WindowsProcessRow, roots: readonly string[]): boolean {
@@ -73,7 +164,7 @@ export function windowsRowMatchesRoots(row: WindowsProcessRow, roots: readonly s
 export function parseWindowsProcessListing(text: string): WindowsProcessRow[] {
   const out: WindowsProcessRow[] = [];
   for (const rawLine of text.split(/\r?\n/)) {
-    const line = rawLine.trim();
+    const line = rawLine.replace(/\0/g, "").trim();
     if (!line) continue;
     const tab = line.indexOf("\t");
     if (tab < 0) continue;
@@ -109,7 +200,7 @@ export function pidsMatchingWindowsRoots(
 function listWindowsProcessRows(): WindowsProcessRow[] {
   if (process.platform !== "win32") return [];
   try {
-    const out = execFileSync(
+    const buf = execFileSync(
       "powershell.exe",
       [
         "-NoProfile",
@@ -117,11 +208,11 @@ function listWindowsProcessRows(): WindowsProcessRow[] {
         "-ExecutionPolicy",
         "Bypass",
         "-Command",
-        "Get-CimInstance Win32_Process | ForEach-Object { '{0}`t{1}`t{2}' -f $_.ProcessId, $_.ExecutablePath, $_.CommandLine }",
+        "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; Get-CimInstance Win32_Process | ForEach-Object { '{0}`t{1}`t{2}' -f $_.ProcessId, $_.ExecutablePath, $_.CommandLine }",
       ],
-      { encoding: "utf8", timeout: 15_000, windowsHide: true },
+      { encoding: "buffer", timeout: 15_000, windowsHide: true },
     );
-    return parseWindowsProcessListing(out);
+    return parseWindowsProcessListing(decodeWindowsConsoleOutput(buf)).map(expandWindowsProcessRow);
   } catch {
     return [];
   }

@@ -12,6 +12,7 @@ import {
   shouldReapServerTreeOrphans,
   supervisedChildDetached,
 } from "./native-process.js";
+import { killWindowsOrphansByRoots } from "./windows-process-orphans.js";
 import { PathJailError } from "./path-jail.js";
 import { spawn } from "node:child_process";
 
@@ -105,6 +106,21 @@ async function rmTempTree(root: string): Promise<void> {
   throw lastErr;
 }
 
+async function waitForFind(
+  supervisor: NativeProcessSupervisor,
+  name: string,
+  cwd: string,
+  timeoutMs = 5_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let found = await supervisor.find(name, cwd);
+  while (!found && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    found = await supervisor.find(name, cwd);
+  }
+  return found;
+}
+
 async function waitPidGone(pid: number | undefined, timeoutMs = 5_000): Promise<void> {
   if (pid == null) return;
   const gone = (): boolean => {
@@ -123,6 +139,9 @@ async function waitPidGone(pid: number | undefined, timeoutMs = 5_000): Promise<
 
 afterEach(async () => {
   for (const dir of temps.splice(0)) {
+    if (process.platform === "win32") {
+      await killWindowsOrphansByRoots([dir, path.join(dir, "game")]);
+    }
     await rmTempTree(dir);
   }
 });
@@ -349,7 +368,7 @@ describe("NativeProcessSupervisor", () => {
 
     // A fresh supervisor stands in for a restarted host: no tracked map, same process.
     const restarted = new NativeProcessSupervisor(jail);
-    const found = await restarted.find("server-x", "game");
+    const found = await waitForFind(restarted, "server-x", "game");
     expect(found?.status).toBe("running");
     expect(found?.name).toBe("server-x");
 
@@ -374,7 +393,7 @@ describe("NativeProcessSupervisor", () => {
     expect(leftover.pid).toBeTypeOf("number");
 
     const supervisor = new NativeProcessSupervisor(jail);
-    const found = await supervisor.find("server-x", "game");
+    const found = await waitForFind(supervisor, "server-x", "game");
     expect(found?.status).toBe("running");
     expect(found?.pid).toBe(leftover.pid);
 
