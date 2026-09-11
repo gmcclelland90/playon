@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 export type WindowsProcessRow = {
   pid: number;
@@ -268,39 +270,54 @@ function listViaWmic(): WindowsProcessRow[] {
 }
 
 /**
- * `Name='cmd.exe'` is an indexed WQL equality (not LIKE). Combined with
- * `Get-Process` paths this covers start.cmd wrappers and jail-launched exes
- * without a host-wide CIM dump.
+ * Get-Process paths first (works when CIM is unavailable). Then cmd.exe
+ * command lines via CIM/WMI, each in try/catch so a CIM failure cannot
+ * wipe the path list. GHA windows-latest has returned empty CIM/wmic.
  */
 const LIST_CMD_AND_PATHS_PS1 = [
+  "$ErrorActionPreference = 'Continue'",
   "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false",
-  "Get-CimInstance -ClassName Win32_Process -Filter \"Name='cmd.exe'\" | ForEach-Object {",
-  "  $cmd = ([string]$_.CommandLine) -replace '[\\t\\r\\n]',' '",
-  "  '{0}{1}{2}{1}{3}' -f $_.ProcessId, [char]9, ([string]$_.ExecutablePath), $cmd",
-  "}",
   "Get-Process -ErrorAction SilentlyContinue | ForEach-Object {",
   "  $path = $null",
   "  try { $path = $_.Path } catch {}",
-  "  if ($path) { '{0}{1}{2}{1}' -f $_.Id, [char]9, $path }",
+  "  if ($path) { Write-Output ('{0}`t{1}`t' -f $_.Id, $path) }",
   "}",
-].join("; ");
+  "try {",
+  "  Get-CimInstance -ClassName Win32_Process -Filter \"Name='cmd.exe'\" -ErrorAction SilentlyContinue | ForEach-Object {",
+  "    $cmd = ([string]$_.CommandLine) -replace '[\\t\\r\\n]',' '",
+  "    Write-Output ('{0}`t{1}`t{2}' -f $_.ProcessId, ([string]$_.ExecutablePath), $cmd)",
+  "  }",
+  "} catch {}",
+].join("\n");
 
-function runPowerShellEncoded(script: string, timeoutMs: number): Buffer {
-  const encoded = Buffer.from(script, "utf16le").toString("base64");
-  return execFileSync(
-    "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
-    { encoding: "buffer", timeout: timeoutMs, windowsHide: true },
-  );
+function runPowerShellScript(script: string, timeoutMs: number): Buffer {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "playon-wps-"));
+  const file = path.join(dir, "list.ps1");
+  try {
+    fs.writeFileSync(file, `\uFEFF${script}`, "utf8");
+    try {
+      return execFileSync(
+        "powershell.exe",
+        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", file],
+        { encoding: "buffer", timeout: timeoutMs, windowsHide: true },
+      );
+    } catch (err) {
+      const stdout = (err as { stdout?: Buffer }).stdout;
+      return stdout && stdout.length > 0 ? stdout : Buffer.alloc(0);
+    }
+  } finally {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 function listViaCmdAndPaths(): WindowsProcessRow[] {
-  try {
-    const buf = runPowerShellEncoded(LIST_CMD_AND_PATHS_PS1, 5_000);
-    return parseWindowsProcessListing(decodeWindowsConsoleOutput(buf)).map(expandWindowsProcessRow);
-  } catch {
-    return [];
-  }
+  const buf = runPowerShellScript(LIST_CMD_AND_PATHS_PS1, 5_000);
+  if (buf.length === 0) return [];
+  return parseWindowsProcessListing(decodeWindowsConsoleOutput(buf)).map(expandWindowsProcessRow);
 }
 
 function mergeProcessRows(chunks: WindowsProcessRow[][]): WindowsProcessRow[] {
@@ -333,7 +350,7 @@ export function listWindowsProcessDebug(roots: readonly string[]): {
     rowCount: rows.length,
     matchingPids: pidsMatchingWindowsRoots(rows, roots, { selfPid: process.pid }),
     cmdHints: rows
-      .filter((r) => /playon-proc|hold\.cmd|cmd\.exe/i.test(`${r.executablePath} ${r.commandLine}`))
+      .filter((r) => /playon-proc|hold\.(cmd|exe)|cmd\.exe/i.test(`${r.executablePath} ${r.commandLine}`))
       .slice(0, 8)
       .map((r) => `${r.pid}:${r.commandLine.slice(0, 180)}`),
   };

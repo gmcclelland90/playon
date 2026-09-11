@@ -79,6 +79,14 @@ function trackPid(pid: number | undefined): void {
   if (typeof pid === "number" && pid > 0) trackedPids.add(pid);
 }
 
+/** Copy ping.exe into the jail so Get-Process.Path mentions the unique leaf. */
+function stageWindowsHoldExe(gameDir: string): string {
+  const src = path.join(process.env.WINDIR ?? "C:\\Windows", "System32", "ping.exe");
+  const dest = path.join(gameDir, "hold.exe");
+  fs.copyFileSync(src, dest);
+  return dest;
+}
+
 function isLockedFsError(err: unknown): boolean {
   const code =
     err && typeof err === "object" && "code" in err ? String((err as { code: unknown }).code) : "";
@@ -357,15 +365,13 @@ describe("NativeProcessSupervisor", () => {
     fs.mkdirSync(gameDir, { recursive: true });
 
     const isWin = process.platform === "win32";
-    if (isWin) {
-      fs.writeFileSync(path.join(gameDir, "hold.cmd"), "@echo off\r\nping -n 40 127.0.0.1 >nul\r\n");
-    }
+    const holdExe = isWin ? stageWindowsHoldExe(gameDir) : "";
 
     const first = new NativeProcessSupervisor(jail);
     const started = await first.start({
       name: "server-x",
-      command: isWin ? "cmd.exe" : "sleep",
-      args: isWin ? ["/c", path.join(gameDir, "hold.cmd"), "&", "rem", path.basename(jail)] : ["30"],
+      command: isWin ? holdExe : "sleep",
+      args: isWin ? ["-n", "40", "127.0.0.1"] : ["30"],
       cwd: "game",
     });
     trackPid(started.pid);
@@ -389,10 +395,9 @@ describe("NativeProcessSupervisor", () => {
     temps.push(jail);
     const gameDir = path.join(jail, "game");
     fs.mkdirSync(gameDir, { recursive: true });
-    const hold = path.join(gameDir, "hold.cmd");
-    fs.writeFileSync(hold, "@echo off\r\nping -n 40 127.0.0.1 >nul\r\n");
+    const holdExe = stageWindowsHoldExe(gameDir);
 
-    const leftover = spawn("cmd.exe", ["/c", hold, "&", "rem", path.basename(jail)], {
+    const leftover = spawn(holdExe, ["-n", "40", "127.0.0.1"], {
       cwd: gameDir,
       stdio: "ignore",
       windowsHide: true,
