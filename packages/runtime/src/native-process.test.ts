@@ -79,10 +79,11 @@ function trackPid(pid: number | undefined): void {
   if (typeof pid === "number" && pid > 0) trackedPids.add(pid);
 }
 
-/** Copy ping.exe into the jail so Get-Process.Path mentions the unique leaf. */
+/** Copy ping.exe as `<jail-leaf>.exe` so tasklist image name is unique. */
 function stageWindowsHoldExe(gameDir: string): string {
+  const leaf = path.basename(path.dirname(gameDir));
   const src = path.join(process.env.WINDIR ?? "C:\\Windows", "System32", "ping.exe");
-  const dest = path.join(gameDir, "hold.exe");
+  const dest = path.join(gameDir, `${leaf}.exe`);
   fs.copyFileSync(src, dest);
   return dest;
 }

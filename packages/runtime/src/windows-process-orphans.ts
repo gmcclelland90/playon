@@ -256,6 +256,76 @@ export function parseWmicProcessList(text: string): WindowsProcessRow[] {
   return out;
 }
 
+const GENERIC_WIN_IMAGES = new Set([
+  "cmd.exe",
+  "powershell.exe",
+  "pwsh.exe",
+  "conhost.exe",
+  "ping.exe",
+  "java.exe",
+  "javaw.exe",
+  "explorer.exe",
+  "svchost.exe",
+]);
+
+/** `tasklist /FO CSV /NH`: `"image.exe","pid","session","#","mem"` */
+export function parseTasklistCsv(text: string): { pid: number; image: string }[] {
+  const out: { pid: number; image: string }[] = [];
+  for (const raw of text.replace(/\0/g, "").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) continue;
+    const m = line.match(/^"([^"]+)"\s*,\s*"(\d+)"/);
+    if (!m) continue;
+    const pid = Number(m[2]);
+    if (!Number.isInteger(pid) || pid <= 0) continue;
+    out.push({ image: m[1]!, pid });
+  }
+  return out;
+}
+
+export function collectExeBasenames(root: string, maxFiles = 80): string[] {
+  const out: string[] = [];
+  const walk = (dir: string, depth: number): void => {
+    if (depth > 4 || out.length >= maxFiles) return;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      if (out.length >= maxFiles) return;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) walk(full, depth + 1);
+      else if (e.isFile() && /\.exe$/i.test(e.name)) out.push(e.name);
+    }
+  };
+  walk(root, 0);
+  return out;
+}
+
+function listViaTasklistImages(roots: readonly string[]): number[] {
+  const wanted = new Set<string>();
+  for (const root of roots) {
+    for (const name of collectExeBasenames(root)) {
+      if (!GENERIC_WIN_IMAGES.has(name.toLowerCase())) wanted.add(name.toLowerCase());
+    }
+  }
+  if (wanted.size === 0) return [];
+  try {
+    const buf = execFileSync("tasklist.exe", ["/FO", "CSV", "/NH"], {
+      encoding: "buffer",
+      timeout: 5_000,
+      windowsHide: true,
+    });
+    return parseTasklistCsv(decodeWindowsConsoleOutput(buf))
+      .filter((r) => wanted.has(r.image.toLowerCase()))
+      .map((r) => r.pid);
+  } catch {
+    return [];
+  }
+}
+
 function listViaWmic(): WindowsProcessRow[] {
   try {
     const buf = execFileSync(
@@ -341,18 +411,16 @@ function listWindowsProcessRows(_roots: readonly string[] = []): WindowsProcessR
 }
 
 export function listWindowsProcessDebug(roots: readonly string[]): {
-  rowCount: number;
+  exeNames: string[];
+  tasklistPids: number[];
   matchingPids: number[];
-  cmdHints: string[];
+  rowCount: number;
 } {
-  const rows = listWindowsProcessRows(roots);
   return {
-    rowCount: rows.length,
-    matchingPids: pidsMatchingWindowsRoots(rows, roots, { selfPid: process.pid }),
-    cmdHints: rows
-      .filter((r) => /playon-proc|hold\.(cmd|exe)|cmd\.exe/i.test(`${r.executablePath} ${r.commandLine}`))
-      .slice(0, 8)
-      .map((r) => `${r.pid}:${r.commandLine.slice(0, 180)}`),
+    exeNames: roots.flatMap((r) => collectExeBasenames(r)),
+    tasklistPids: listViaTasklistImages(roots),
+    matchingPids: listWindowsPidsMatchingRoots(roots),
+    rowCount: listWindowsProcessRows(roots).length,
   };
 }
 
@@ -360,10 +428,20 @@ export function listWindowsPidsMatchingRoots(
   roots: readonly string[],
   excludePids?: Set<number>,
 ): number[] {
-  return pidsMatchingWindowsRoots(listWindowsProcessRows(roots), roots, {
+  const exclude = new Set(excludePids ?? []);
+  const selfPid = process.pid;
+  const seen = new Set<number>();
+  const out: number[] = [];
+  const fromPaths = pidsMatchingWindowsRoots(listWindowsProcessRows(roots), roots, {
     excludePids,
-    selfPid: process.pid,
+    selfPid,
   });
+  for (const pid of [...listViaTasklistImages(roots), ...fromPaths]) {
+    if (pid === selfPid || exclude.has(pid) || seen.has(pid)) continue;
+    seen.add(pid);
+    out.push(pid);
+  }
+  return out;
 }
 
 export function killWindowsPidTree(pid: number): boolean {

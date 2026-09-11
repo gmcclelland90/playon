@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   decodeWindowsConsoleOutput,
   isUsableWindowsRoot,
+  parseTasklistCsv,
   parseWindowsProcessListing,
   parseWmicProcessList,
   pidsMatchingWindowsRoots,
@@ -88,6 +89,16 @@ describe("parse + select Windows process rows", () => {
     expect(
       windowsRowMatchesRoots(rows[2]!, ["C:\\playon-node\\data\\servers\\abc"]),
     ).toBe(false);
+  });
+
+  it("parses tasklist CSV and skips generic image names when collecting jail exes", () => {
+    const rows = parseTasklistCsv(
+      '"playon-proc-orphan-ad4eCw.exe","3976","Console","1","1,024 K"\r\n"cmd.exe","100","Console","1","2,048 K"\r\n',
+    );
+    expect(rows).toEqual([
+      { image: "playon-proc-orphan-ad4eCw.exe", pid: 3976 },
+      { image: "cmd.exe", pid: 100 },
+    ]);
   });
 
   it("parses TSV rows that use a real tab (PowerShell [char]9), not a backtick-t", () => {
