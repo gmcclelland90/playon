@@ -6,7 +6,7 @@ import type Database from "better-sqlite3";
 import type { AppConfig } from "../config.js";
 import { createDb, type Db } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
-import { servers } from "../db/schema.js";
+import { servers as serversTable } from "../db/schema.js";
 import { LAB_DOCKER_SKILL, resolveFixturesRoot } from "../lab-games-root.js";
 import { LAB_FIXTURE_MARKER_REL } from "@playon/shared";
 import { eq } from "drizzle-orm";
@@ -71,7 +71,7 @@ describe("server jail teardown + local orphan GC (#968)", () => {
     const removed = await servers.remove(created.id);
     expect(removed.id).toBe(created.id);
     expect(fs.existsSync(created.dataPath)).toBe(false);
-    const rows = await db.select().from(servers).where(eq(servers.id, created.id));
+    const rows = await db.select().from(serversTable).where(eq(serversTable.id, created.id));
     expect(rows).toHaveLength(0);
   });
 

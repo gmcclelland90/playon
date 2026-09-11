@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { assertJailGone, jailListLooksGone, onlineNodeIds } from "./lab-matrix-jail-gc.mjs";
 
 assert.equal(jailListLooksGone({ error: "not_found: servers/abc" }), true);
-assert.equal(jailListLooksGone({ result: { entries: [] } }), true);
-assert.equal(jailListLooksGone({ entries: [] }), true);
+assert.equal(jailListLooksGone({ result: { entries: [] } }), false);
+assert.equal(jailListLooksGone({ entries: [] }), false);
 assert.equal(jailListLooksGone({ result: { entries: [{ name: "game", type: "dir" }] } }), false);
 assert.equal(jailListLooksGone({}), false);
 

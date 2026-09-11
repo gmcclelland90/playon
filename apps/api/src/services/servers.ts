@@ -1967,8 +1967,8 @@ export class ServerService {
 
   private async remoteJailStillPresent(server: ServerRecord): Promise<boolean> {
     try {
-      const entries = await this.openFiles(server, { locality: "remote" }).list(".");
-      return entries.length > 0;
+      await this.openFiles(server, { locality: "remote" }).list(".");
+      return true;
     } catch (err) {
       if (isNotFoundFsError(err)) return false;
       return true;
@@ -2088,10 +2088,8 @@ export class ServerService {
       },
       jailStillPresent: async (jailId) => {
         try {
-          const listed = (await dispatch("fs_list", { path: `servers/${jailId}` }, 30_000)) as {
-            entries: unknown[];
-          };
-          return listed.entries.length > 0;
+          await dispatch("fs_list", { path: `servers/${jailId}` }, 30_000);
+          return true;
         } catch (err) {
           if (isNotFoundFsError(err)) return false;
           return true;

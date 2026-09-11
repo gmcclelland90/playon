@@ -5,9 +5,8 @@
 export function jailListLooksGone(listing) {
   if (listing == null) return false;
   const err = String(listing.error ?? listing.message ?? "");
-  if (/not_found/i.test(err)) return true;
-  const entries = listing.result?.entries ?? listing.entries ?? [];
-  return Array.isArray(entries) && entries.length === 0;
+  // An empty directory still occupies the jail path — only not_found is gone.
+  return /not_found/i.test(err);
 }
 
 export function assertJailGone(listing, serverId) {
