@@ -8,7 +8,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { nanoid } from "nanoid";
-import { isLocalNodeId, NODE_AUTHORITATIVE_MARKER } from "@playon/shared";
+import {
+  isLabFixtureServerName,
+  isLocalNodeId,
+  jailIdentityExtras,
+  LAB_FIXTURE_MARKER_REL,
+  NODE_AUTHORITATIVE_MARKER,
+} from "@playon/shared";
 import type { AppConfig } from "../config.js";
 import { eq } from "drizzle-orm";
 import type { Db } from "../db/client.js";
@@ -183,6 +189,13 @@ export class ServerAdoptionService {
     fs.writeFileSync(path.join(dataPath, NODE_AUTHORITATIVE_MARKER), `${nodeId}\n`);
   }
 
+  writeLabFixtureMarker(dataPath: string, serverName: string): void {
+    if (!isLabFixtureServerName(serverName)) return;
+    const full = path.join(dataPath, ...LAB_FIXTURE_MARKER_REL.split("/"));
+    fs.mkdirSync(path.dirname(full), { recursive: true });
+    fs.writeFileSync(full, `${serverName}\n`);
+  }
+
   async insertServerRow(args: InsertServerRowArgs): Promise<void> {
     await this.db.insert(servers).values({
       id: args.id,
@@ -233,13 +246,14 @@ export class ServerAdoptionService {
   }): Promise<ServerRecord> {
     const target = await this.resolveTarget(args.skillName, args.nodeId);
     const home = this.allocateHome();
+    const name = args.serverName ?? target.skill.metadata.game ?? target.skill.metadata.name;
     await this.materializeSkillHome(
       { ...home, nodeId: target.nodeId },
       target.skill,
       target.runtimeMode,
+      jailIdentityExtras(name),
     );
-
-    const name = args.serverName ?? target.skill.metadata.game ?? target.skill.metadata.name;
+    this.writeLabFixtureMarker(home.dataPath, name);
     await this.insertServerRow({
       id: home.id,
       name,
@@ -267,7 +281,9 @@ export class ServerAdoptionService {
       { id: existing.id, dataPath: existing.dataPath, nodeId: target.nodeId },
       target.skill,
       target.runtimeMode,
+      jailIdentityExtras(existing.name),
     );
+    this.writeLabFixtureMarker(existing.dataPath, existing.name);
     return target;
   }
 

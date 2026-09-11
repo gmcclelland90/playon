@@ -4,6 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { resolveInJail } from "./path-jail.js";
 import type { ProcessInfo, ProcessSpec, ProcessSupervisor } from "./types.js";
+import {
+  killWindowsOrphansByRoots,
+  killWindowsPidTree,
+  listWindowsPidsMatchingRoots,
+} from "./windows-process-orphans.js";
 
 interface TrackedProcess {
   info: ProcessInfo;
@@ -63,6 +68,18 @@ export function cmdlineOrphanRoots(cwd: string): string[] {
  * `process_start` / `process_stop` whose cwd happens to sit under that
  * jail must not SIGTERM the dedicated server / JVM (#909).
  */
+function windowsMatchRoots(cwd: string): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const root of [serverTreeRoot(cwd), ...cmdlineOrphanRoots(cwd)]) {
+    const key = root.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(root);
+  }
+  return out;
+}
+
 export function shouldReapServerTreeOrphans(name: string, cwd: string): boolean {
   if (!name || name === "server-unknown") return false;
   if (!name.startsWith("server-")) return false;
@@ -340,7 +357,7 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     // Children may re-parent outside the process group after detach.
     // Only the server identity may tree-reap — a diagnostic stop with
     // cwd under the game jail must not SIGTERM the JVM (#909).
-    if (process.platform !== "win32" && shouldReapServerTreeOrphans(name, cwd)) {
+    if (shouldReapServerTreeOrphans(name, cwd)) {
       await this.killOrphansByCwd(cwd);
     }
   }
@@ -357,7 +374,11 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     const resolved = this.jailRoot ? resolveInJail(this.jailRoot, cwd) : cwd;
     const tracked = this.findTracked(name, resolved);
     if (tracked) return { ...tracked.info };
-    if (process.platform === "win32") return null;
+    if (process.platform === "win32") {
+      const pid = listWindowsPidsMatchingRoots(windowsMatchRoots(resolved))[0];
+      if (pid == null) return null;
+      return { id: `native-orphan-${pid}`, name, pid, status: "running" };
+    }
     const pid =
       listPidsWithCwdUnder(serverTreeRoot(resolved))[0] ?? firstPidWithCmdlineUnderRoots(resolved);
     if (pid == null) return null;
@@ -379,7 +400,7 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
       tracked.info.pid = undefined;
       this.closeLogFd(tracked);
     }
-    if (process.platform !== "win32" && shouldReapServerTreeOrphans(name, cwd)) {
+    if (shouldReapServerTreeOrphans(name, cwd)) {
       await this.killOrphansByCwd(cwd, excludePids);
     }
   }
@@ -476,6 +497,15 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
 
   private signalTracked(tracked: TrackedProcess): void {
     const pid = tracked.child.pid;
+    if (pid && process.platform === "win32") {
+      killWindowsPidTree(pid);
+      try {
+        tracked.child.kill();
+      } catch {
+        // already gone
+      }
+      return;
+    }
     if (pid && process.platform !== "win32") {
       try {
         process.kill(-pid, "SIGTERM");
@@ -497,6 +527,10 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
 
   /** SIGTERM then SIGKILL any process whose /proc cwd is under this server tree. */
   private async killOrphansByCwd(cwd: string, excludePids?: Set<number>): Promise<void> {
+    if (process.platform === "win32") {
+      await killWindowsOrphansByRoots(windowsMatchRoots(cwd), excludePids);
+      return;
+    }
     const target = serverTreeRoot(cwd.replace(/\/+$/, ""));
     if (!target || target === "/") return;
     const cmdlineRoots = cmdlineOrphanRoots(cwd);

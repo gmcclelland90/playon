@@ -2253,6 +2253,24 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     }
   });
 
+  app.post("/api/nodes/:nodeId/orphan-jails/gc", async (c) => {
+    requireCan(c, "servers.manage");
+    const raw = await c.req.json().catch(() => ({}));
+    const dryRun = Boolean(
+      raw && typeof raw === "object" && "dryRun" in raw && (raw as { dryRun?: unknown }).dryRun,
+    );
+    try {
+      return c.json(await serverService.gcOrphanJails(c.req.param("nodeId"), { dryRun }));
+    } catch (err) {
+      throw serviceHttpError(err, {
+        fallback: "orphan_jail_gc_failed",
+        code: "orphan_jail_gc_failed",
+        notFoundPrefixes: NODE_NOT_FOUND,
+        statusPrefixes: NODE_OFFLINE,
+      });
+    }
+  });
+
   app.post("/api/nodes/:nodeId/manage/suggest", async (c) => {
     requireCan(c, "servers.manage");
     try {

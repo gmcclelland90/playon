@@ -329,17 +329,21 @@ describe("NativeProcessSupervisor", () => {
   });
 
   it("finds an untracked survivor by its cwd, so a lost id is not a lost process", async () => {
-    if (process.platform === "win32") return;
     const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-orphan-"));
     temps.push(jail);
     const gameDir = path.join(jail, "game");
     fs.mkdirSync(gameDir, { recursive: true });
 
+    const isWin = process.platform === "win32";
+    if (isWin) {
+      fs.writeFileSync(path.join(gameDir, "hold.cmd"), "@echo off\r\nping -n 40 127.0.0.1 >nul\r\n");
+    }
+
     const first = new NativeProcessSupervisor(jail);
     const started = await first.start({
       name: "server-x",
-      command: "sleep",
-      args: ["30"],
+      command: isWin ? "cmd.exe" : "sleep",
+      args: isWin ? ["/c", path.join(gameDir, "hold.cmd")] : ["30"],
       cwd: "game",
     });
 
@@ -350,6 +354,33 @@ describe("NativeProcessSupervisor", () => {
     expect(found?.name).toBe("server-x");
 
     await first.stop(started.id);
+    await waitPidGone(started.pid);
+  });
+
+  it("reclaims a Windows OS orphan whose command line sits in the jail (#968)", async () => {
+    if (process.platform !== "win32") return;
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-win-orphan-"));
+    temps.push(jail);
+    const gameDir = path.join(jail, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+    const hold = path.join(gameDir, "hold.cmd");
+    fs.writeFileSync(hold, "@echo off\r\nping -n 40 127.0.0.1 >nul\r\n");
+
+    const leftover = spawn("cmd.exe", ["/c", hold], {
+      cwd: gameDir,
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    expect(leftover.pid).toBeTypeOf("number");
+
+    const supervisor = new NativeProcessSupervisor(jail);
+    const found = await supervisor.find("server-x", "game");
+    expect(found?.status).toBe("running");
+    expect(found?.pid).toBe(leftover.pid);
+
+    await supervisor.reclaim("server-x", "game");
+    await waitPidGone(leftover.pid);
+    expect(() => process.kill(leftover.pid!, 0)).toThrow();
   });
 
   it("writes a console line to a process resolved from identity alone", async () => {
