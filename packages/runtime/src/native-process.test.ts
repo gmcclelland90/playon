@@ -12,7 +12,7 @@ import {
   shouldReapServerTreeOrphans,
   supervisedChildDetached,
 } from "./native-process.js";
-import { killWindowsPidTree } from "./windows-process-orphans.js";
+import { killWindowsPidTree, listWindowsPidsMatchingRoots } from "./windows-process-orphans.js";
 import { PathJailError } from "./path-jail.js";
 import { spawn } from "node:child_process";
 
@@ -115,15 +115,14 @@ async function waitForFind(
   supervisor: NativeProcessSupervisor,
   name: string,
   cwd: string,
-  timeoutMs = 5_000,
+  attempts = 4,
 ) {
-  const deadline = Date.now() + timeoutMs;
-  let found = await supervisor.find(name, cwd);
-  while (!found && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 80));
-    found = await supervisor.find(name, cwd);
+  for (let i = 0; i < attempts; i++) {
+    const found = await supervisor.find(name, cwd);
+    if (found) return found;
+    await new Promise((resolve) => setTimeout(resolve, 400));
   }
-  return found;
+  return null;
 }
 
 async function waitPidGone(pid: number | undefined, timeoutMs = 5_000): Promise<void> {
@@ -369,7 +368,7 @@ describe("NativeProcessSupervisor", () => {
     const started = await first.start({
       name: "server-x",
       command: isWin ? "cmd.exe" : "sleep",
-      args: isWin ? ["/c", path.join(gameDir, "hold.cmd")] : ["30"],
+      args: isWin ? ["/c", path.join(gameDir, "hold.cmd"), "&", "rem", path.basename(jail)] : ["30"],
       cwd: "game",
     });
     trackPid(started.pid);
@@ -377,6 +376,11 @@ describe("NativeProcessSupervisor", () => {
     // A fresh supervisor stands in for a restarted host: no tracked map, same process.
     const restarted = new NativeProcessSupervisor(jail);
     const found = await waitForFind(restarted, "server-x", "game");
+    if (!found && process.platform === "win32") {
+      throw new Error(
+        `find() missed survivor; cimPids=${JSON.stringify(listWindowsPidsMatchingRoots([jail, gameDir]))} jail=${jail}`,
+      );
+    }
     expect(found?.status).toBe("running");
     expect(found?.name).toBe("server-x");
 
@@ -393,7 +397,7 @@ describe("NativeProcessSupervisor", () => {
     const hold = path.join(gameDir, "hold.cmd");
     fs.writeFileSync(hold, "@echo off\r\nping -n 40 127.0.0.1 >nul\r\n");
 
-    const leftover = spawn("cmd.exe", ["/c", hold], {
+    const leftover = spawn("cmd.exe", ["/c", hold, "&", "rem", path.basename(jail)], {
       cwd: gameDir,
       stdio: "ignore",
       windowsHide: true,
@@ -403,6 +407,11 @@ describe("NativeProcessSupervisor", () => {
 
     const supervisor = new NativeProcessSupervisor(jail);
     const found = await waitForFind(supervisor, "server-x", "game");
+    if (!found) {
+      throw new Error(
+        `find() missed OS orphan pid=${leftover.pid}; cimPids=${JSON.stringify(listWindowsPidsMatchingRoots([jail, gameDir]))} jail=${jail}`,
+      );
+    }
     expect(found?.status).toBe("running");
     expect(found?.pid).toBe(leftover.pid);
 

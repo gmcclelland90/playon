@@ -376,11 +376,7 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     if (tracked) return { ...tracked.info };
     if (process.platform === "win32") {
       const roots = windowsMatchRoots(resolved);
-      let pid = listWindowsPidsMatchingRoots(roots)[0];
-      if (pid == null) {
-        await sleep(150);
-        pid = listWindowsPidsMatchingRoots(roots)[0];
-      }
+      const pid = listWindowsPidsMatchingRoots(roots)[0];
       if (pid == null) return null;
       return { id: `native-orphan-${pid}`, name, pid, status: "running" };
     }
