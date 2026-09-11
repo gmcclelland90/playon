@@ -388,6 +388,7 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
   }
 
   async reclaim(name: string, cwd: string): Promise<void> {
+    const resolved = this.jailRoot ? resolveInJail(this.jailRoot, cwd) : cwd;
     const excludePids = new Set<number>();
     for (const tracked of this.procs.values()) {
       if (tracked.info.status !== "running") continue;
@@ -401,8 +402,8 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
       tracked.info.pid = undefined;
       this.closeLogFd(tracked);
     }
-    if (shouldReapServerTreeOrphans(name, cwd)) {
-      await this.killOrphansByCwd(cwd, excludePids);
+    if (shouldReapServerTreeOrphans(name, resolved)) {
+      await this.killOrphansByCwd(resolved, excludePids);
     }
   }
 
