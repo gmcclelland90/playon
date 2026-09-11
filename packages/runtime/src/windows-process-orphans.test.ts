@@ -90,6 +90,16 @@ describe("parse + select Windows process rows", () => {
     ).toBe(false);
   });
 
+  it("parses TSV rows that use a real tab (PowerShell [char]9), not a backtick-t", () => {
+    const line = ["4242", "C:\\jail\\game\\hold.exe", ""].join("\t");
+    expect(parseWindowsProcessListing(`${line}\n`)[0]).toEqual({
+      pid: 4242,
+      executablePath: "C:\\jail\\game\\hold.exe",
+      commandLine: "",
+    });
+    expect(parseWindowsProcessListing("4242`tC:\\jail\\game\\hold.exe`t\n")).toEqual([]);
+  });
+
   it("decodes UTF-16LE PowerShell listings and still parses pids", () => {
     const text = "8812\tC:\\jail\\game\\foo.exe\tC:\\jail\\game\\foo.exe\n";
     const le = Buffer.from(text, "utf16le");
