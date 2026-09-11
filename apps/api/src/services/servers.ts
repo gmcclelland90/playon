@@ -122,6 +122,7 @@ import {
 } from "@playon/shared";
 import { listLocalIniRelPaths } from "./instance-game-port-files.js";
 import { dispatchNodeJob, nodeServerRelPath } from "./node-runtime.js";
+import { nodeJobService } from "./node-jobs.js";
 import { checkNodeLoopbackTcp } from "./node-loopback-tcp.js";
 import { ensureWslLanPublish, releaseWslLanPublish } from "./wsl-lan-publish.js";
 
@@ -1641,42 +1642,39 @@ export class ServerService {
     return record;
   }
 
-  /** Pin serverName / lab-fixture onto the node so later orphan GC can classify. */
+  /**
+   * Pin serverName / lab-fixture onto the node so later orphan GC can classify.
+   * Enqueue only — create must not wait for an agent claim (unit tests insert an
+   * online LAN node with no listener; waitFor would trip the 30s vitest cap).
+   */
   private async syncJailIdentityToNode(server: ServerRecord): Promise<void> {
     if (!this.isRemoteNode(server) || !server.nodeId) return;
+    if (!(await this.nodeIsOnline(server.nodeId))) return;
     const skillPath = path.join(server.dataPath, "skill.json");
     if (!fs.existsSync(skillPath)) return;
     const content = fs.readFileSync(skillPath, "utf8");
-    await dispatchNodeJob({
-      nodeId: server.nodeId,
-      kind: "fs_write_text",
-      args: { path: nodeServerRelPath(server.id, "skill.json"), content },
-      timeoutMs: 60_000,
-      localHandler: async () => ({ path: "skill.json", bytes: Buffer.byteLength(content) }),
-    });
+    try {
+      nodeJobService.enqueue(server.nodeId, "fs_write_text", {
+        path: nodeServerRelPath(server.id, "skill.json"),
+        content,
+      });
+    } catch {
+      return;
+    }
     const marker = path.join(server.dataPath, ...LAB_FIXTURE_MARKER_REL.split("/"));
     if (!fs.existsSync(marker)) return;
     const markerText = fs.readFileSync(marker, "utf8");
-    await dispatchNodeJob({
-      nodeId: server.nodeId,
-      kind: "fs_ensure_dir",
-      args: { path: nodeServerRelPath(server.id, ".playon") },
-      timeoutMs: 30_000,
-      localHandler: async () => ({ path: ".playon", ok: true }),
-    });
-    await dispatchNodeJob({
-      nodeId: server.nodeId,
-      kind: "fs_write_text",
-      args: {
+    try {
+      nodeJobService.enqueue(server.nodeId, "fs_ensure_dir", {
+        path: nodeServerRelPath(server.id, ".playon"),
+      });
+      nodeJobService.enqueue(server.nodeId, "fs_write_text", {
         path: nodeServerRelPath(server.id, ".playon", "lab-fixture"),
         content: markerText,
-      },
-      timeoutMs: 30_000,
-      localHandler: async () => ({
-        path: ".playon/lab-fixture",
-        bytes: Buffer.byteLength(markerText),
-      }),
-    });
+      });
+    } catch {
+      // Older agents may not advertise these kinds.
+    }
   }
 
   async gcOrphanJails(nodeId: string, opts?: { dryRun?: boolean }): Promise<OrphanJailGcReport> {

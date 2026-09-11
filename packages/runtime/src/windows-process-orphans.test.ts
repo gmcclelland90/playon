@@ -47,6 +47,25 @@ describe("windows path matching", () => {
       ),
     ).toBe(false);
   });
+
+  it("matches CIM 8.3 short paths that share a unique jail leaf", () => {
+    const longRoot = "C:\\Users\\runner\\AppData\\Local\\Temp\\playon-proc-k7x9m2ab";
+    expect(
+      windowsPathContainsRoot(
+        "C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\playon-proc-k7x9m2ab",
+        longRoot,
+      ),
+    ).toBe(true);
+    expect(
+      windowsCommandLineMentionsRoot(
+        "cmd.exe /c C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\playon-proc-k7x9m2ab\\game\\hold.cmd",
+        longRoot,
+      ),
+    ).toBe(true);
+    expect(
+      windowsPathContainsRoot("C:\\Users\\RUNNER~1\\other\\game", "C:\\Users\\runner\\servers\\game"),
+    ).toBe(false);
+  });
 });
 
 describe("parse + select Windows process rows", () => {

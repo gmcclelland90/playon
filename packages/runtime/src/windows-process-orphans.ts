@@ -10,6 +10,24 @@ function normalizeWinPath(value: string): string {
   return value.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 }
 
+/**
+ * Last jail folder (e.g. `playon-proc-*` / nanoid). CIM often reports the 8.3
+ * short path (`C:\Users\RUNNER~1\...`) while Node used the long form
+ * (`C:\Users\runner\...`) — prefix match fails, but the leaf is unique.
+ * Short leaves (`game`, `abc`) are skipped so we never match a sibling folder.
+ */
+function uniqueJailLeaf(root: string): string | undefined {
+  const leaf = root.split(/[/\\]/).filter(Boolean).pop();
+  if (leaf && leaf.length >= 8) return leaf.toLowerCase();
+  return undefined;
+}
+
+function pathMentionsUniqueLeaf(normalizedPath: string, root: string): boolean {
+  const leaf = uniqueJailLeaf(root);
+  if (!leaf) return false;
+  return normalizedPath.includes(`/${leaf}/`) || normalizedPath.endsWith(`/${leaf}`);
+}
+
 /** Reject drive-only / tiny roots so a bad cwd cannot tree-kill the host. */
 export function isUsableWindowsRoot(root: string): boolean {
   const n = normalizeWinPath(root);
@@ -22,7 +40,8 @@ export function windowsPathContainsRoot(candidate: string, root: string): boolea
   const a = normalizeWinPath(candidate);
   const b = normalizeWinPath(root);
   if (!a || !b || !isUsableWindowsRoot(root)) return false;
-  return a === b || a.startsWith(`${b}/`);
+  if (a === b || a.startsWith(`${b}/`)) return true;
+  return pathMentionsUniqueLeaf(a, root);
 }
 
 export function windowsCommandLineMentionsRoot(commandLine: string, root: string): boolean {
@@ -32,14 +51,14 @@ export function windowsCommandLineMentionsRoot(commandLine: string, root: string
   let from = 0;
   while (from <= cmd.length) {
     const i = cmd.indexOf(r, from);
-    if (i < 0) return false;
+    if (i < 0) break;
     const after = cmd[i + r.length];
     if (after === undefined || after === "/" || after === " " || after === '"' || after === "'") {
       return true;
     }
     from = i + 1;
   }
-  return false;
+  return pathMentionsUniqueLeaf(cmd, root);
 }
 
 export function windowsRowMatchesRoots(row: WindowsProcessRow, roots: readonly string[]): boolean {

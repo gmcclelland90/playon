@@ -6,10 +6,11 @@ import type Database from "better-sqlite3";
 import type { AppConfig } from "../config.js";
 import { createDb, type Db } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
-import { servers as serversTable } from "../db/schema.js";
+import { nodes, servers as serversTable } from "../db/schema.js";
 import { LAB_DOCKER_SKILL, resolveFixturesRoot } from "../lab-games-root.js";
 import { LAB_FIXTURE_MARKER_REL } from "@playon/shared";
 import { eq } from "drizzle-orm";
+import { nodeJobService } from "./node-jobs.js";
 import { ServerService } from "./servers.js";
 
 const temps: Array<{ root: string; sqlite: Database.Database }> = [];
@@ -109,5 +110,39 @@ describe("server jail teardown + local orphan GC (#968)", () => {
     expect(fs.existsSync(path.join(serversRoot, unmarkedId))).toBe(true);
     expect(fs.existsSync(live.dataPath)).toBe(true);
     expect(report.kept.map((k) => k.id).sort()).toEqual([frontierId, unmarkedId].sort());
+  });
+
+  it("createFromSkill enqueues remote jail identity without waiting for the agent", async () => {
+    const { servers, db } = tempEnv();
+    await db.insert(nodes).values({
+      id: "node-lan-gc",
+      name: "lanbox",
+      os: "linux",
+      docker: true,
+      native: true,
+      steamcmd: true,
+      freeDiskBytes: 1e11,
+      lastSeenAt: new Date(),
+      kind: "lan",
+      tunnelStatus: "none",
+      joinHost: "172.16.0.109",
+    });
+    const started = Date.now();
+    const created = await servers.createFromSkill({
+      skillName: LAB_DOCKER_SKILL,
+      serverName: "lab-matrix-paper-sync",
+      nodeId: "node-lan-gc",
+    });
+    expect(Date.now() - started).toBeLessThan(8_000);
+    expect(created.nodeId).toBe("node-lan-gc");
+    const queued: string[] = [];
+    for (;;) {
+      const job = nodeJobService.claimNext("node-lan-gc");
+      if (!job) break;
+      queued.push(`${job.kind}:${String(job.args.path ?? "")}`);
+    }
+    expect(queued).toContain(`fs_write_text:servers/${created.id}/skill.json`);
+    expect(queued).toContain(`fs_ensure_dir:servers/${created.id}/.playon`);
+    expect(queued).toContain(`fs_write_text:servers/${created.id}/.playon/lab-fixture`);
   });
 });
