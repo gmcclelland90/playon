@@ -9,6 +9,7 @@ const execFileAsync = promisify(execFile);
 import {
   createRuntime,
   resolveInJail,
+  rmTreeWithRetrySync,
   steamcmdAppUpdate,
   probeUdpListen,
   type DockerAdapter,
@@ -431,7 +432,7 @@ export async function executeJob(
   if (job.kind === "fs_remove") {
     const { path: rel } = parseNodeJobArgs("fs_remove", job.args);
     const target = resolveInJail(dataRoot, rel);
-    fs.rmSync(target, { recursive: true, force: true });
+    rmTreeWithRetrySync(target);
     return parseNodeJobResult("fs_remove", { path: rel, ok: true });
   }
 

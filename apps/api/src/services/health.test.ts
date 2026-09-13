@@ -147,6 +147,12 @@ describe("HealthService", () => {
   it("resolves LAN joinHost for join/probe address", async () => {
     const { db, config } = tempConfig();
     const servers = new ServerService(db, config);
+    // Create locally first — an online LAN node with no agent must not be
+    // placement's pick (create would enqueue remote jobs; older code waited).
+    const created = await servers.createFromSkill({
+      skillName: LAB_DOCKER_SKILL,
+      serverName: "LAN Paper",
+    });
     await db.insert(nodes).values({
       id: "node-lan-1",
       name: "lanbox",
@@ -159,11 +165,6 @@ describe("HealthService", () => {
       kind: "lan",
       tunnelStatus: "none",
       joinHost: "172.16.0.109",
-    });
-
-    const created = await servers.createFromSkill({
-      skillName: LAB_DOCKER_SKILL,
-      serverName: "LAN Paper",
     });
     await db
       .update(serversTable)
@@ -243,6 +244,10 @@ describe("HealthService", () => {
     }));
     const health = new HealthService(servers, net, config, undefined, joinReady);
 
+    const created = await servers.createFromSkill({
+      skillName: LAB_DOCKER_SKILL,
+      serverName: "Health Join Split",
+    });
     await db.insert(nodes).values({
       id: "node-lan-split",
       name: "lan",
@@ -255,10 +260,6 @@ describe("HealthService", () => {
       kind: "lan",
       tunnelStatus: "none",
       joinHost: lan,
-    });
-    const created = await servers.createFromSkill({
-      skillName: LAB_DOCKER_SKILL,
-      serverName: "Health Join Split",
     });
     stubGet(servers, asRunning(created, { nodeId: "node-lan-split" }));
     // Host bind is up; advertised join host is closed — publish gap, not dead.
@@ -288,6 +289,10 @@ describe("HealthService", () => {
     const joinReady = new JoinReadyService(servers, net, config);
     const health = new HealthService(servers, net, config, undefined, joinReady);
 
+    const created = await servers.createFromSkill({
+      skillName: LAB_DOCKER_SKILL,
+      serverName: "Health Soak Split",
+    });
     await db.insert(nodes).values({
       id: "playon-win-1-wsl",
       name: "wsl",
@@ -300,10 +305,6 @@ describe("HealthService", () => {
       kind: "lan",
       tunnelStatus: "none",
       joinHost: null,
-    });
-    const created = await servers.createFromSkill({
-      skillName: LAB_DOCKER_SKILL,
-      serverName: "Health Soak Split",
     });
     stubGet(servers, asRunning(created, { nodeId: "playon-win-1-wsl" }));
     servers.portsBoundOverride = async () => true;

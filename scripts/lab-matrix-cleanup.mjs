@@ -5,6 +5,7 @@
  * - Removes abandoned /tmp/playon-lab-matrix-* trees
  * - When no lab-matrix.mjs is running: stop+delete durable Home lab-matrix-* servers
  *   (never touches Minecraft / Zomboid / non-lab names)
+ * - GC node `servers/` jails with no Home row that look like lab fixtures (#968)
  *
  * Usage:
  *   pnpm lab:matrix-cleanup
@@ -27,6 +28,7 @@ import {
   knownLeftoverNamesFromTempRoots,
   reapLabMatrixDockerLeftovers,
 } from "./lab-matrix-docker-reap.mjs";
+import { onlineNodeIds } from "./lab-matrix-jail-gc.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 process.chdir(repoRoot);
@@ -221,6 +223,77 @@ async function sweepHomeOrphans(pids) {
   return { deleted, skipped: false };
 }
 
+async function sweepNodeOrphanJails(pids) {
+  if (pids.length) {
+    console.log(`skip node orphan jails: ${pids.length} lab-matrix.mjs still running`);
+    return { nodes: 0, purged: 0, kept: 0, errors: 0, skipped: true };
+  }
+  const cfg = windowsPlacementConfig(repoRoot);
+  let auth;
+  try {
+    auth = await loadHomeAuth(cfg);
+  } catch (err) {
+    console.warn(`home auth unavailable: ${err instanceof Error ? err.message : err}`);
+    return { nodes: 0, purged: 0, kept: 0, errors: 0, skipped: true };
+  }
+  const home = new HomeClient(auth);
+  let nodesPayload;
+  try {
+    nodesPayload = await home.rest("/api/nodes");
+  } catch (err) {
+    console.warn(`nodes list failed: ${err instanceof Error ? err.message : err}`);
+    return { nodes: 0, purged: 0, kept: 0, errors: 0, skipped: true };
+  }
+  const ids = onlineNodeIds(nodesPayload);
+  let purged = 0;
+  let kept = 0;
+  let errors = 0;
+  for (const nodeId of ids) {
+    if (dryRun) {
+      try {
+        const report = await home.rest(`/api/nodes/${encodeURIComponent(nodeId)}/orphan-jails/gc`, {
+          method: "POST",
+          body: { dryRun: true },
+        });
+        const nPurged = Array.isArray(report?.purged) ? report.purged.length : 0;
+        const nKept = Array.isArray(report?.kept) ? report.kept.length : 0;
+        purged += nPurged;
+        kept += nKept;
+        console.log(`dry-run: node ${nodeId} would purge ${nPurged} keep ${nKept}`);
+      } catch (err) {
+        errors++;
+        console.warn(`orphan gc failed ${nodeId}: ${err instanceof Error ? err.message : err}`);
+      }
+      continue;
+    }
+    try {
+      const report = await home.rest(`/api/nodes/${encodeURIComponent(nodeId)}/orphan-jails/gc`, {
+        method: "POST",
+        body: { dryRun: false },
+      });
+      const nPurged = Array.isArray(report?.purged) ? report.purged.length : 0;
+      const nKept = Array.isArray(report?.kept) ? report.kept.length : 0;
+      const nErr = Array.isArray(report?.errors) ? report.errors.length : 0;
+      purged += nPurged;
+      kept += nKept;
+      errors += nErr;
+      if (nPurged || nKept || nErr) {
+        console.log(
+          `node ${nodeId} orphan jails purged=${nPurged} kept=${nKept} errors=${nErr}` +
+            (nPurged ? ` ids=${(report.purged || []).join(",")}` : ""),
+        );
+      }
+      for (const row of report?.errors ?? []) {
+        console.warn(`orphan gc ${nodeId} ${row.id}: ${row.error}`);
+      }
+    } catch (err) {
+      errors++;
+      console.warn(`orphan gc failed ${nodeId}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  return { nodes: ids.length, purged, kept, errors, skipped: false };
+}
+
 async function sweepDockerLeftovers(pids) {
   const known = knownLeftoverNamesFromTempRoots({
     createDb,
@@ -267,6 +340,10 @@ async function main() {
   console.log(`home lab-matrix deleted=${home.deleted}${home.skipped ? " (skipped)" : ""}`);
   const docker = await sweepDockerLeftovers(pids);
   console.log(`docker leftovers removed=${docker.removed}${docker.dryRun ? " (dry-run)" : ""}`);
+  const jails = await sweepNodeOrphanJails(pids);
+  console.log(
+    `node orphan jails nodes=${jails.nodes} purged=${jails.purged} kept=${jails.kept} errors=${jails.errors}${jails.skipped ? " (skipped)" : ""}`,
+  );
 }
 
 main().catch((err) => {
