@@ -54,6 +54,7 @@ describe("in-app chat tool catalog scope", () => {
     expect(installNames).toContain("placement_suggest");
     expect(installNames).toContain("panel_publish");
     expect(installNames).toContain("servers_list");
+    expect(installNames).toContain("servers_get");
 
     for (const name of INSTALL_EXCLUDED_TOOLS) {
       expect(installNames, `${name} should not be on a spin-up turn`).not.toContain(name);
@@ -117,6 +118,10 @@ describe("in-app chat tool catalog scope", () => {
       restrictTargets: true,
     });
     await expect(registry.invoke("servers_list", {})).resolves.toEqual([]);
+    await expect(registry.invoke("servers_get", { serverId: "minecraft-small" })).resolves.toMatchObject({
+      error: "session_target_forbidden",
+      requestedServerId: "minecraft-small",
+    });
   });
 
   it("keeps the full catalog for MCP-style unbound registries", () => {

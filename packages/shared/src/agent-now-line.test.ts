@@ -36,6 +36,7 @@ describe("nowLineForTool", () => {
 
   it("never echoes the raw tool name", () => {
     expect(nowLineForTool("servers_list")).not.toMatch(/servers_list/);
+    expect(nowLineForTool("servers_get")).toBe("Checking a server");
     expect(nowLineForTool("weird_custom_tool")).toBe("Working…");
   });
 

@@ -3,10 +3,15 @@ import { runToolInvocation, type ConfirmPolicy, type ToolEntry } from "./invoke-
 import { looksLikeToolShapedContent, type LlmClient, type LlmMessage } from "./llm.js";
 import {
   catalogSystemPrompt,
+  CONTINUE_AFTER_EMPTY_PROMPT,
+  CONTINUE_AFTER_PARTIAL_TRACE_PROMPT,
+  isEmptyAssistantContent,
   isSessionCreatedStop,
+  LOOP_UNTIL_DONE_PROMPT,
   SEQUENTIAL_TOOLS_PROMPT,
   SESSION_CREATE_TOOLS,
   serverIdFromToolResult,
+  userAskedForMultiStepTools,
   type ToolCatalogStage,
 } from "./tool-catalog.js";
 import { toLlmToolDefinition, type ToolDefinition, type ToolHandler } from "./tools.js";
@@ -230,6 +235,8 @@ export class Orchestrator {
         : undefined;
     if (maxToolCalls === 1) {
       systemMessages.push({ role: "system", content: SEQUENTIAL_TOOLS_PROMPT });
+    } else if (this.tools.size > 0) {
+      systemMessages.push({ role: "system", content: LOOP_UNTIL_DONE_PROMPT });
     }
     if (RESUME_USER_RE.test(userMessage.trim())) {
       systemMessages.push({ role: "system", content: RESUME_SYSTEM_PROMPT });
@@ -245,6 +252,8 @@ export class Orchestrator {
     const stream = this.options.stream;
     const abortSignal = this.options.abortSignal;
     let selfHealNudged = false;
+    let emptyContinueNudged = false;
+    let partialContinueNudged = false;
 
     for (let i = 0; i < MAX_TOOL_ITERATIONS; i++) {
       throwIfAborted(abortSignal);
@@ -263,6 +272,24 @@ export class Orchestrator {
       }
 
       if (!completion.toolCalls?.length) {
+        const emptyReply = isEmptyAssistantContent(completion.content);
+        // Mid-size Venice often returns "" / whitespace after the first tool
+        // result and would otherwise abort the loop as a final answer (#980).
+        if (toolTrace.length > 0 && emptyReply && !emptyContinueNudged) {
+          emptyContinueNudged = true;
+          messages.push({ role: "system", content: CONTINUE_AFTER_EMPTY_PROMPT });
+          continue;
+        }
+        if (
+          toolTrace.length === 1 &&
+          !emptyReply &&
+          userAskedForMultiStepTools(userMessage) &&
+          !partialContinueNudged
+        ) {
+          partialContinueNudged = true;
+          messages.push({ role: "system", content: CONTINUE_AFTER_PARTIAL_TRACE_PROMPT });
+          continue;
+        }
         emitContentTokens(stream, completion.content);
         const degradedMode =
           toolTrace.length === 0 &&

@@ -353,6 +353,121 @@ describe("Orchestrator thinking sink", () => {
   });
 });
 
+describe("Orchestrator continue after first tool (#980)", () => {
+  it("nudges once when the model returns empty content after the first tool", async () => {
+    const seen: string[] = [];
+    let round = 0;
+    const orch = new Orchestrator({
+      mode: "openai_compatible",
+      async complete(messages) {
+        seen.push(...messages.filter((m) => m.role === "system").map((m) => m.content));
+        round += 1;
+        if (round === 1) {
+          return {
+            content: "",
+            toolCalls: [{ id: "1", name: "servers_list", arguments: {} }],
+          };
+        }
+        if (round === 2) {
+          return { content: "   " };
+        }
+        if (round === 3) {
+          return {
+            content: "",
+            toolCalls: [{ id: "2", name: "servers_get", arguments: { serverId: "lab-1" } }],
+          };
+        }
+        return { content: "lab-1 is the fixture." };
+      },
+    });
+    orch.registerTool(
+      { name: "servers_list", description: "list", parameters: {} },
+      async () => ({ servers: [{ id: "lab-1" }] }),
+    );
+    orch.registerTool(
+      { name: "servers_get", description: "get", parameters: {} },
+      async (args) => ({ server: { id: args.serverId } }),
+    );
+
+    const result = await orch.handle("list then get lab-1");
+    expect(result.toolTrace.map((t) => t.name)).toEqual(["servers_list", "servers_get"]);
+    expect(result.content).toBe("lab-1 is the fixture.");
+    expect(seen.some((c) => /empty after a tool result/i.test(c))).toBe(true);
+    expect(seen.some((c) => /host runs a tool loop/i.test(c))).toBe(true);
+  });
+
+  it("nudges a numbered two-step request that answers after only servers_list", async () => {
+    let round = 0;
+    const orch = new Orchestrator({
+      mode: "openai_compatible",
+      async complete() {
+        round += 1;
+        if (round === 1) {
+          return {
+            content: "",
+            toolCalls: [{ id: "1", name: "servers_list", arguments: {} }],
+          };
+        }
+        if (round === 2) {
+          return { content: "The only server is lab-llm-canary." };
+        }
+        if (round === 3) {
+          return {
+            content: "",
+            toolCalls: [
+              { id: "2", name: "servers_get", arguments: { serverId: "lab-llm-canary" } },
+            ],
+          };
+        }
+        return { content: "got it" };
+      },
+    });
+    orch.registerTool(
+      { name: "servers_list", description: "list", parameters: {} },
+      async () => ({ servers: [{ id: "lab-llm-canary" }] }),
+    );
+    orch.registerTool(
+      { name: "servers_get", description: "get", parameters: {} },
+      async (args) => ({ server: { id: args.serverId } }),
+    );
+
+    const result = await orch.handle(
+      [
+        "Disposable lab fixture only.",
+        "1. Call servers_list.",
+        "2. Then call servers_get using the serverId from that list (it will be lab-llm-canary).",
+      ].join(" "),
+    );
+    expect(result.toolTrace.map((t) => t.name)).toEqual(["servers_list", "servers_get"]);
+    expect(result.content).toBe("got it");
+  });
+
+  it("does not nudge a normal prose stop after one tool when the user did not ask for two steps", async () => {
+    let round = 0;
+    const orch = new Orchestrator({
+      mode: "openai_compatible",
+      async complete() {
+        round += 1;
+        if (round === 1) {
+          return {
+            content: "",
+            toolCalls: [{ id: "1", name: "servers_list", arguments: {} }],
+          };
+        }
+        return { content: "You have one lab server." };
+      },
+    });
+    orch.registerTool(
+      { name: "servers_list", description: "list", parameters: {} },
+      async () => ({ servers: [{ id: "lab-1" }] }),
+    );
+    const result = await orch.handle("what servers do I have?");
+    expect(round).toBe(2);
+    expect(result.toolTrace.map((t) => t.name)).toEqual(["servers_list"]);
+    expect(result.content).toBe("You have one lab server.");
+  });
+});
+
 describe("Orchestrator Gemini thought_signature", () => {
   it("passes extraContent through to the next complete() so the client can echo it", async () => {
     const seen: LlmMessage[][] = [];

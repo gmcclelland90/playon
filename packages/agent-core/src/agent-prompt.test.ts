@@ -9,5 +9,6 @@ describe("AGENT_SYSTEM_PROMPT", () => {
     expect(AGENT_SYSTEM_PROMPT).toMatch(/loopback_open_join_host_closed/);
     expect(AGENT_SYSTEM_PROMPT).toMatch(/net_port_check on 127\.0\.0\.1/);
     expect(AGENT_SYSTEM_PROMPT).toMatch(/netsh portproxy/);
+    expect(AGENT_SYSTEM_PROMPT).toMatch(/Do not stop after the first tool/);
   });
 });

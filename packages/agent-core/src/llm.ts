@@ -509,6 +509,7 @@ export class OpenAICompatibleLlmClient implements LlmClient {
             role: "tool",
             content: m.content,
             tool_call_id: m.toolCallId,
+            ...(m.name ? { name: m.name } : {}),
           };
         }
         if (m.role === "assistant" && m.toolCalls?.length) {

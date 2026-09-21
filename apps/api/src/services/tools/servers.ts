@@ -237,6 +237,33 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
 
     serverTool({
       def: {
+        name: "servers_get",
+        description:
+          "Get one server by id (name, game, status, ready). Use after servers_list when you need that row.",
+        parameters: {
+          type: "object",
+          properties: { serverId: { type: "string" } },
+          required: ["serverId"],
+        },
+      },
+      surface: { skill: "orchestrator", activityVerb: "run" },
+      handler: async (_args, { serverId }) => {
+        const server = await servers.get(serverId);
+        if (!server) return { error: "not_found", serverId };
+        const cached = plane.joinReady.cached(server.id);
+        return {
+          id: server.id,
+          name: server.name,
+          game: server.game,
+          status: server.status,
+          ready: cached?.ready,
+          runtimeMode: server.runtimeMode,
+        };
+      },
+    }),
+
+    serverTool({
+      def: {
         name: "servers_health_check",
         description:
           "Run skill-declared health checks plus the advertised join-path gate. ready=true only when the panel join host:port is reachable. Set remediate=true to auto-restart on known restartable process failures (not join-path publish gaps).",
