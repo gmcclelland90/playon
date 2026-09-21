@@ -91,6 +91,19 @@ Ollama: `reachable=false` (does not fail Venice).
 
 **Infra:** restore verify false-positive left Home on `venice` / `llama-3.3-70b`; teardown false-positive left `lab-llm-canary` fixtures. Ops remediates back to `venice` / `grok-4-6`. The `--home` runner now persists the snapshot, GET-verifies restore, treats 404 as teardown success, and heals leftover probe models.
 
+### 2026-09-21 — Mon canary (mid-size partial_trace)
+
+Home **0.2.13**. Restored `venice` / `grok-4-6`. Fixture torn down. Ollama `reachable=false`.
+
+| Model | Result | Class | Notes |
+|-------|--------|-------|-------|
+| qwen3-5-9b | FAIL | product/regress | `partial_trace` — only `servers_list`; had PASS on 2026-09-10 ([#980](https://github.com/gmcclelland90/playon/issues/980)) |
+| mistral-small-3-2-24b-instruct | FAIL | product/regress | `partial_trace` — only `servers_list` ([#980](https://github.com/gmcclelland90/playon/issues/980)) |
+| llama-3.2-3b | FAIL | flake | Home 502 wrapping CF/Venice 530; standing weak |
+| llama-3.3-70b | FAIL | billing | Venice 402 — parked [#978](https://github.com/gmcclelland90/playon/issues/978); do not reopen for this alone |
+
+**Fix (#980):** orchestrator continues once after empty-after-tools or a numbered two-step that stopped at the first inspect; install/maintain catalog includes `servers_get`. Re-check with `pnpm lab:llm-canary --home` (or in-process `pnpm lab:llm-canary` with `PLAYON_LLM_CANARY_VENICE_MODELS=qwen3-5-9b,mistral-small-3-2-24b-instruct`). Expect toolTrace ≥2 (`servers_list` then `servers_get` or a second list/get that uses the lab id).
+
 ## Product follow-ups
 
 | Symptom | Issue | Notes |

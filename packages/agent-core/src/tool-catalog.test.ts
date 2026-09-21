@@ -4,11 +4,14 @@ import {
   filterToolDefs,
   INSTALL_EXCLUDED_TOOLS,
   INSTALL_TOOL_NAMES,
+  isEmptyAssistantContent,
   isSessionCreatedStop,
+  LOOP_UNTIL_DONE_PROMPT,
   serializedToolPayloadBytes,
   serverIdFromToolResult,
   toolNamesForCatalog,
   USAGE_BAR_LIFECYCLE_TOOLS,
+  userAskedForMultiStepTools,
 } from "./tool-catalog.js";
 import type { ToolDefinition } from "./tools.js";
 
@@ -32,6 +35,7 @@ describe("tool catalog stages", () => {
     expect(install.has("placement_suggest")).toBe(true);
     expect(install.has("panel_publish")).toBe(true);
     expect(install.has("servers_list")).toBe(true);
+    expect(install.has("servers_get")).toBe(true);
   });
 
   it("keeps rcon/wsl/snapshot/watcher-delete/skill_promote off install", () => {
@@ -96,6 +100,24 @@ describe("tool catalog stages", () => {
   it("describes the install stage to the model", () => {
     expect(catalogSystemPrompt("install")).toMatch(/install\/lifecycle/);
     expect(catalogSystemPrompt("full")).toBeUndefined();
+  });
+
+  it("detects empty assistant completions after a tool round", () => {
+    expect(isEmptyAssistantContent("")).toBe(true);
+    expect(isEmptyAssistantContent("   \n")).toBe(true);
+    expect(isEmptyAssistantContent(undefined)).toBe(true);
+    expect(isEmptyAssistantContent("listed the lab fixture")).toBe(false);
+    expect(LOOP_UNTIL_DONE_PROMPT).toMatch(/tool loop/);
+  });
+
+  it("detects numbered two-step tool requests like the llm canary", () => {
+    expect(
+      userAskedForMultiStepTools(
+        "1. Call servers_list.\n2. Then call servers_get using the serverId from that list.",
+      ),
+    ).toBe(true);
+    expect(userAskedForMultiStepTools("list then snapshot")).toBe(false);
+    expect(userAskedForMultiStepTools("just list the servers")).toBe(false);
   });
 });
 

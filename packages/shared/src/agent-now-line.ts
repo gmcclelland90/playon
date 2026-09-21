@@ -71,6 +71,7 @@ const TOOL_NOW: Record<string, (args?: Record<string, unknown>) => string> = {
     return "Creating a server";
   },
   servers_list: () => "Checking servers",
+  servers_get: () => "Checking a server",
   servers_health_check: () => "Checking health",
   servers_relocate: (args) => {
     const name = serverNoun(args);

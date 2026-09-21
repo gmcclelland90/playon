@@ -582,6 +582,9 @@ describe("Gemini thought_signature round-trip", () => {
     const assistant = messages.find((m) => m.role === "assistant");
     const toolCalls = assistant?.tool_calls as Array<Record<string, unknown>>;
     expect(toolCalls[0]?.extra_content).toBeUndefined();
+    const tool = messages.find((m) => m.role === "tool");
+    expect(tool?.name).toBe("servers_list");
+    expect(tool?.tool_call_id).toBe("1");
   });
 });
 

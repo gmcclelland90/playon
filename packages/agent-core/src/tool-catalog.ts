@@ -25,6 +25,7 @@ export const INSTALL_TOOL_NAMES = [
   "servers_stop",
   "servers_health_check",
   "servers_list",
+  "servers_get",
   "servers_logs_tail",
   "servers_query",
   "panel_publish",
@@ -123,7 +124,7 @@ export function serializedToolPayloadBytes(defs: readonly ToolDefinition[]): num
 export function catalogSystemPrompt(stage: ToolCatalogStage): string | undefined {
   if (stage === "install") {
     return [
-      "This turn's tools are the install/lifecycle set: skills, placement, create/start/stop/health/list, and panel.",
+      "This turn's tools are the install/lifecycle set: skills, placement, create/start/stop/health/list/get, and panel.",
       "rcon, snapshots, watchers, WSL, node enroll, and skill promote are not available this turn.",
       "Do not invent or call tools outside the offered list.",
     ].join(" ");
@@ -139,6 +140,38 @@ export function catalogSystemPrompt(stage: ToolCatalogStage): string | undefined
 
 export const SEQUENTIAL_TOOLS_PROMPT =
   "Call exactly one tool per response. The host loops until the task is done. Never emit multiple tool_calls in one completion.";
+
+/**
+ * Venice and other OpenAI-compat backends send `parallel_tool_calls=false` but
+ * are not NVIDIA-capped. Mid-size models then emit one tool and stop because
+ * the budget line says to finish in as few rounds as possible (#980).
+ */
+export const LOOP_UNTIL_DONE_PROMPT =
+  "The host runs a tool loop. After each tool result, either call the next needed tool or give the final answer. Do not stop after the first tool if the user asked for another step.";
+
+export const CONTINUE_AFTER_EMPTY_PROMPT =
+  "Your last reply was empty after a tool result. Continue: call the next needed tool, or give a short final answer.";
+
+export const CONTINUE_AFTER_PARTIAL_TRACE_PROMPT =
+  "The host asked for more than one tool step. Call the next required tool now using the previous tool result. Do not finish after only the first tool.";
+
+const TOOLISH_NAME_RE = /\b[a-z][a-z0-9]*_[a-z0-9_]+\b/g;
+
+export function isEmptyAssistantContent(content: string | undefined | null): boolean {
+  return !String(content ?? "").trim();
+}
+
+/**
+ * Numbered "1. Call X / 2. Then call Y" requests (llm-model-compat two-step
+ * canary and similar host prompts). Used to continue once after a single inspect.
+ */
+export function userAskedForMultiStepTools(userMessage: string): boolean {
+  const text = userMessage.trim();
+  if (!/1\.\s/.test(text) || !/2\.\s/.test(text)) return false;
+  const unique = new Set(text.toLowerCase().match(TOOLISH_NAME_RE) ?? []);
+  if (unique.size >= 2) return true;
+  return /\bthen call\b/i.test(text);
+}
 
 export function serverIdFromToolResult(result: unknown): string | undefined {
   if (!result || typeof result !== "object") return undefined;

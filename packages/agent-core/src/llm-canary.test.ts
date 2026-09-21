@@ -135,6 +135,26 @@ describe("runTwoStepCanary", () => {
     expect(result.degraded).toBe(false);
   });
 
+  it("recovers a two-step trace when the model returns empty after servers_list", async () => {
+    const result = await runTwoStepCanary(
+      scriptedLlm([
+        {
+          content: "",
+          toolCalls: [{ id: "1", name: "servers_list", arguments: {} }],
+        },
+        { content: "" },
+        {
+          content: "",
+          toolCalls: [{ id: "2", name: "servers_get", arguments: { serverId: "lab-llm-canary" } }],
+        },
+        { content: "lab-llm-canary is the disposable fixture." },
+      ]),
+    );
+    expect(result.ok).toBe(true);
+    expect(result.names).toEqual(["servers_list", "servers_get"]);
+    expect(result.degraded).toBe(false);
+  });
+
   it("refuses a create/start follow-up even on a lab id", async () => {
     const llm = scriptedLlm([
       {
