@@ -36,6 +36,7 @@ import {
   NodeJobKindSchema,
   NodeSettingsPutRequestSchema,
   FetchSettingsPutRequestSchema,
+  FalSettingsPutRequestSchema,
   OllamaInstallRequestSchema,
   OllamaPullRequestSchema,
   PanelInputRequestSchema,
@@ -133,6 +134,9 @@ import {
   llmSettingsFromPut,
   toPublicCloudSettings,
   toPublicFetchSettings,
+  FAL_SETTINGS_KEY,
+  toPublicFalSettings,
+  type FalSettings,
   toPublicLlmSettings,
   toPublicNodeSettings,
   type FetchSettings,
@@ -897,6 +901,26 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     const stored = await getSetting<LlmSettings>(db, LLM_SETTINGS_KEY);
     return fromBody?.trim() || stored?.baseUrl?.trim() || DEFAULT_OLLAMA_OPENAI_BASE;
   };
+
+  app.get("/api/settings/fal", async (c) => {
+    requireCan(c, "settings.llm");
+    const stored = await getSetting<FalSettings>(db, FAL_SETTINGS_KEY);
+    return c.json({ fal: toPublicFalSettings(stored) });
+  });
+
+  app.put("/api/settings/fal", async (c) => {
+    requireCan(c, "settings.llm");
+    const body = await jsonBody(c, FalSettingsPutRequestSchema);
+    const existing = (await getSetting<FalSettings>(db, FAL_SETTINGS_KEY)) ?? {};
+    const next: FalSettings = { ...existing };
+    if (body.apiKey !== undefined) {
+      next.apiKeyEncrypted = body.apiKey.trim()
+        ? encryptSecret(config.sessionSecret, body.apiKey.trim())
+        : undefined;
+    }
+    await setSetting(db, FAL_SETTINGS_KEY, next);
+    return c.json({ fal: toPublicFalSettings(next) });
+  });
 
   app.get("/api/settings/llm/ollama/status", async (c) => {
     requireCan(c, "settings.llm");

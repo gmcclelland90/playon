@@ -34,6 +34,7 @@ const ALL_TOOLS = [
   "mods_lua_check",
   "mods_scaffold",
   "mods_deploy",
+  "mods_assets_generate",
   "experiences_export",
   "experiences_install",
   "rcon_exec",
@@ -110,6 +111,7 @@ const SERVER_SCOPED_TOOLS = [
   "mods_lua_check",
   "mods_scaffold",
   "mods_deploy",
+  "mods_assets_generate",
   "experiences_export",
   "experiences_install",
   "rcon_exec",
@@ -298,6 +300,9 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(surface.skill("mods_deploy")).toBe("modder");
     expect(surface.activityVerb("mods_deploy")).toBe("write");
     expect(surface.get("mods_deploy")?.requiresConfirm).toBe(true);
+    expect(surface.skill("mods_assets_generate")).toBe("modder");
+    expect(surface.activityVerb("mods_assets_generate")).toBe("write");
+    expect(surface.get("mods_assets_generate")?.requiresConfirm).toBe(true);
     expect(surface.confirmAction("mods_deploy")).toBe(
       "snapshot this server and install the authored mod",
     );

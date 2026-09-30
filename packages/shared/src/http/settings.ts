@@ -57,6 +57,12 @@ export const FetchSettingsPutRequestSchema = z.object({
 
 export type FetchSettingsPutRequest = z.infer<typeof FetchSettingsPutRequestSchema>;
 
+/** Host BYO fal key — empty string clears; omit to leave unchanged. */
+export const FalSettingsPutRequestSchema = z.object({
+  apiKey: z.string().max(512).optional(),
+});
+export type FalSettingsPutRequest = z.infer<typeof FalSettingsPutRequestSchema>;
+
 export const CreateAccessTokenRequestSchema = z.object({
   name: z.string().min(1).max(80).default("MCP token"),
   autoApproveConfirms: z.boolean().optional(),

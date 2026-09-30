@@ -49,6 +49,7 @@ export const MAINTAIN_EXTRA_TOOL_NAMES = [
   "mods_lua_check",
   "mods_scaffold",
   "mods_deploy",
+  "mods_assets_generate",
   "experiences_export",
   "experiences_install",
   "rcon_exec",
@@ -98,6 +99,7 @@ export const INSTALL_EXCLUDED_TOOLS = [
   "servers_delete",
   "mods_scaffold",
   "mods_deploy",
+  "mods_assets_generate",
   "experiences_export",
   "experiences_install",
 ] as const;

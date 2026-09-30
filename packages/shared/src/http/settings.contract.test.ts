@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CreateAccessTokenRequestSchema,
   FetchSettingsPutRequestSchema,
+  FalSettingsPutRequestSchema,
   LlmSettingsPutRequestSchema,
   NodeSettingsPutRequestSchema,
   OllamaInstallRequestSchema,
@@ -79,5 +80,13 @@ describe("settings route request contracts", () => {
       state: "s",
       code: "c",
     });
+  });
+});
+
+describe("FalSettingsPutRequestSchema", () => {
+  it("accepts omit, empty clear, and key string", () => {
+    expect(FalSettingsPutRequestSchema.parse({})).toEqual({});
+    expect(FalSettingsPutRequestSchema.parse({ apiKey: "" })).toEqual({ apiKey: "" });
+    expect(FalSettingsPutRequestSchema.parse({ apiKey: "fal-key" }).apiKey).toBe("fal-key");
   });
 });
