@@ -19,5 +19,6 @@ describe("AGENT_SYSTEM_PROMPT", () => {
     expect(AGENT_SYSTEM_PROMPT).toMatch(/mods_errors/);
     expect(AGENT_SYSTEM_PROMPT).toMatch(/mods-src/);
     expect(AGENT_SYSTEM_PROMPT).toMatch(/ai-modding-loop\.md/);
+    expect(AGENT_SYSTEM_PROMPT).toMatch(/mods_workshop_prepare/);
   });
 });

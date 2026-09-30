@@ -313,6 +313,14 @@ Lint can be a function called from deploy (warn) and from experience export (har
 
 Do not bake a second image model into the orchestrator.
 
+## Steam Workshop publish (PZ, human-gated)
+
+- Tool `mods_workshop_prepare` (confirm, `modder`) packages `mods-src/<modId>/` into `workshop-out/<modId>/<modId>-workshop.zip` + `workshop-preview.json` (Workshop-style `mods/<modId>/…` layout). Dry-run only; never contacts Steam.
+- `livePublish=true` still stages the zip, then returns `blocked_human` / `steam_credentials_human_gate`. Steam account ownership + publish credentials stay parked until a host provides them.
+- Do not invent Workshop publishedfile ids or write Workshop cache dirs.
+
+
+
 ## Host UX (v1)
 
 Player panel surfaces `clientNeed` (`none` / `auto` / `manual`) from experience install via `client_setup` (chip + steps). Aggregate = worst of packed mods unless panel overrides.

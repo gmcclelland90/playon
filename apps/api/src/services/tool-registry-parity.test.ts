@@ -35,6 +35,7 @@ const ALL_TOOLS = [
   "mods_scaffold",
   "mods_deploy",
   "mods_assets_generate",
+  "mods_workshop_prepare",
   "experiences_export",
   "experiences_install",
   "rcon_exec",
@@ -112,6 +113,7 @@ const SERVER_SCOPED_TOOLS = [
   "mods_scaffold",
   "mods_deploy",
   "mods_assets_generate",
+  "mods_workshop_prepare",
   "experiences_export",
   "experiences_install",
   "rcon_exec",
@@ -303,6 +305,9 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(surface.skill("mods_assets_generate")).toBe("modder");
     expect(surface.activityVerb("mods_assets_generate")).toBe("write");
     expect(surface.get("mods_assets_generate")?.requiresConfirm).toBe(true);
+    expect(surface.skill("mods_workshop_prepare")).toBe("modder");
+    expect(surface.activityVerb("mods_workshop_prepare")).toBe("write");
+    expect(surface.get("mods_workshop_prepare")?.requiresConfirm).toBe(true);
     expect(surface.confirmAction("mods_deploy")).toBe(
       "snapshot this server and install the authored mod",
     );

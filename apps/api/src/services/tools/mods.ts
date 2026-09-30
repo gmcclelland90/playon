@@ -22,6 +22,10 @@ import {
   generateFalImage,
   resolveFalApiKey,
 } from "../fal-assets.js";
+import {
+  ModsWorkshopError,
+  preparePzWorkshopDryRun,
+} from "../mods-workshop.js";
 import { FAL_SETTINGS_KEY, getSetting, type FalSettings } from "../settings.js";
 import { checkPzLuaSources } from "../mods-lua-check.js";
 import { ServerFileStoreError, type ServerFileStore } from "../server-file-store.js";
@@ -404,6 +408,75 @@ export const modsToolModule: ToolModule = ({ plane }) => {
           };
         } catch (err) {
           if (err instanceof FalAssetsError) {
+            return { error: err.code, detail: err.message };
+          }
+          return toolError(err);
+        }
+      },
+    }),
+
+    serverTool({
+      def: {
+        name: "mods_workshop_prepare",
+        description:
+          "Dry-run package an AI-authored Project Zomboid mods-src/<modId>/ into workshop-out/<modId>/ (zip + preview). Never uploads to Steam. Confirm-gated. Set livePublish=true to request live publish — always returns blocked_human / steam_credentials_human_gate until Steam credentials exist on the host.",
+        requiresConfirm: true,
+        parameters: {
+          type: "object",
+          properties: {
+            serverId: { type: "string" },
+            modId: { type: "string" },
+            livePublish: {
+              type: "boolean",
+              description: "If true, stage dry-run then return blocked_human (no Steam upload).",
+            },
+            title: { type: "string", description: "Optional Workshop title override" },
+            description: { type: "string", description: "Optional Workshop description override" },
+          },
+          required: ["serverId", "modId"],
+        },
+      },
+      surface: {
+        skill: "modder",
+        confirmAction: "prepare a Steam Workshop package (dry-run; no live upload)",
+        activityVerb: "write",
+      },
+      handler: async (args, { serverId }) => {
+        const server = await servers.get(serverId);
+        if (!server) return { error: `unknown_server: ${serverId}` };
+        let modId: string;
+        try {
+          modId = assertSafeModId(String(args.modId));
+        } catch (err) {
+          return toolError(err);
+        }
+        try {
+          const files = await servers.files(serverId);
+          const result = await preparePzWorkshopDryRun({
+            files,
+            modId,
+            livePublish: args.livePublish === true,
+            title: typeof args.title === "string" ? args.title : undefined,
+            description: typeof args.description === "string" ? args.description : undefined,
+          });
+          if (!result.ok) {
+            return {
+              serverId,
+              dryRun: true,
+              ...result.blockedHuman,
+              preview: result.preview,
+              bytes: result.bytes,
+            };
+          }
+          return {
+            serverId,
+            dryRun: true,
+            ok: true,
+            preview: result.preview,
+            bytes: result.bytes,
+          };
+        } catch (err) {
+          if (err instanceof ModsWorkshopError) {
             return { error: err.code, detail: err.message };
           }
           return toolError(err);
