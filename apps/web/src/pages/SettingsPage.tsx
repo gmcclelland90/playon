@@ -35,6 +35,7 @@ type SettingsSectionId =
   | "panel"
   | "nodes"
   | "llm"
+  | "fal"
   | "mcp"
   | "backups"
   | "accounts"
@@ -45,6 +46,7 @@ const SETTINGS_SECTIONS: Array<{ id: SettingsSectionId; label: string }> = [
   { id: "panel", label: "Panel URL" },
   { id: "nodes", label: "Nodes" },
   { id: "llm", label: "In-app agents" },
+  { id: "fal", label: "Mod assets" },
   { id: "mcp", label: "External agents" },
   { id: "backups", label: "Off-node backups" },
   { id: "accounts", label: "Accounts" },
@@ -136,10 +138,22 @@ export function SettingsPage({ user }: { user: PublicUser }) {
   });
 
   const llm = useQuery({ queryKey: ["llm"], queryFn: api.getLlmSettings });
+  const falSettings = useQuery({ queryKey: ["settings", "fal"], queryFn: api.getFalSettings });
+  const saveFal = useMutation({
+    mutationFn: (apiKeyValue: string) => api.putFalSettings({ apiKey: apiKeyValue }),
+    onSuccess: async () => {
+      setFalApiKey("");
+      setFalSaved(true);
+      await qc.invalidateQueries({ queryKey: ["settings", "fal"] });
+      window.setTimeout(() => setFalSaved(false), 3000);
+    },
+  });
   const [preset, setPreset] = useState<LlmPresetId>("venice");
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
+  const [falApiKey, setFalApiKey] = useState("");
+  const [falSaved, setFalSaved] = useState(false);
   const [saved, setSaved] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<{
     baseUrl?: string;
@@ -1773,7 +1787,77 @@ export function SettingsPage({ user }: { user: PublicUser }) {
         <McpAccessTokensSection />
       </div>
 
-      <form
+      
+      <div hidden={!showSection("fal")}>
+
+        <section id="fal" className="stack settings-section">
+          <h3 className="section-title">Mod assets (fal.ai BYO)</h3>
+          <p className="muted status-inline">
+            Optional. Paste your own fal API key so the agent can generate images into{" "}
+            <code>mods-src/&lt;modId&gt;/assets/</code>. You pay fal directly — PlayOn never bills
+            fal. Keys are stored encrypted and never shown again or sent to the player panel.
+          </p>
+          <p className="muted status-inline">
+            Get a key at{" "}
+            <a
+              href={falSettings.data?.fal.keysUrl ?? "https://fal.ai/dashboard/keys"}
+              target="_blank"
+              rel="noreferrer"
+            >
+              fal.ai/dashboard/keys
+            </a>
+            .
+          </p>
+          <label className="field">
+            <span>
+              fal API key{" "}
+              {falSettings.data?.fal.hasApiKey
+                ? "(saved — leave blank to keep; use Clear to remove)"
+                : ""}
+            </span>
+            <input
+              type="password"
+              autoComplete="off"
+              value={falApiKey}
+              onChange={(e) => setFalApiKey(e.target.value)}
+              placeholder={falSettings.data?.fal.hasApiKey ? "••••••••" : "Key …"}
+            />
+          </label>
+          <div className="btn-row">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={saveFal.isPending || falSettings.isLoading || !falApiKey.trim()}
+              onClick={() => saveFal.mutate(falApiKey.trim())}
+            >
+              {saveFal.isPending ? "Saving…" : "Save fal key"}
+            </button>
+            {falSettings.data?.fal.hasApiKey ? (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={saveFal.isPending}
+                onClick={() => saveFal.mutate("")}
+              >
+                Clear key
+              </button>
+            ) : null}
+            {falSaved ? <span className="muted">Saved</span> : null}
+          </div>
+          {saveFal.isError ? (
+            <p className="error">
+              {(saveFal.error as Error).message || "Could not save fal settings."}
+            </p>
+          ) : null}
+          {!falSettings.data?.fal.hasApiKey ? (
+            <p className="muted">Asset tools stay disabled until a key is saved.</p>
+          ) : (
+            <p className="muted">Asset tools enabled for AI modding / experiences.</p>
+          )}
+        </section>
+
+      </div>
+<form
         className="panel stack tight settings-section"
         id="settings-backups"
         onSubmit={(e) => {

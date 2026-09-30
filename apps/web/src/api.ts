@@ -721,6 +721,13 @@ export const api = {
       body: JSON.stringify({ userCode }),
     }),
   getLlmSettings: () => request<{ llm: LlmPublic }>("/api/settings/llm"),
+  getFalSettings: () =>
+    request<{ fal: { hasApiKey: boolean; keysUrl: string } }>("/api/settings/fal"),
+  putFalSettings: (body: { apiKey?: string }) =>
+    request<{ fal: { hasApiKey: boolean; keysUrl: string } }>("/api/settings/fal", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
   putLlmSettings: (body: {
     preset: LlmPresetId;
     baseUrl?: string;

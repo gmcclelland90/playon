@@ -304,14 +304,12 @@ Before an authored mod is exported as an experience (later), a lint runs in-proc
 
 Lint can be a function called from deploy (warn) and from experience export (hard fail). A dedicated `mods_lint` tool is optional; do not block #990–#991 on it.
 
-## Optional asset generation
+## Optional asset generation (fal BYO)
 
-Out of v1. If added later:
-
-- Confirm-gated, `modder` surface, writes **only** under `mods-src/<modId>/`.
-- Provider is Settings-configured (same secret hygiene as Venice). Never echo keys into logs or the player panel.
-- Host spend is a human gate (`blocked-human` if a new paid provider is introduced).
-- Generated binaries still pass publish lint.
+- Settings → Mod assets: host BYO fal API key (encrypted; never echoed; never on player panel).
+- Tool `mods_assets_generate` (confirm, `modder`) writes **only** under `mods-src/<modId>/assets/`.
+- Empty key → tool returns `fal_key_missing` + https://fal.ai/dashboard/keys hint. Hosts pay fal directly (no PlayOn spend/cap).
+- Default model `fal-ai/flux/schnell`. See `docs/fal-assets.md`.
 
 Do not bake a second image model into the orchestrator.
 

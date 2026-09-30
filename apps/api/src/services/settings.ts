@@ -168,3 +168,24 @@ export function toPublicNodeSettings(stored: NodeSettings | null): {
     localComputeEnabled: stored?.localComputeEnabled ?? true,
   };
 }
+
+export const FAL_SETTINGS_KEY = "assets.fal";
+
+export type FalSettings = {
+  apiKeyEncrypted?: string;
+};
+
+export type FalSettingsPublic = {
+  hasApiKey: boolean;
+  /** Dashboard URL for hosts to create a key (never includes secrets). */
+  keysUrl: string;
+};
+
+export const FAL_KEYS_URL = "https://fal.ai/dashboard/keys";
+
+export function toPublicFalSettings(stored: FalSettings | null): FalSettingsPublic {
+  return {
+    hasApiKey: Boolean(stored?.apiKeyEncrypted),
+    keysUrl: FAL_KEYS_URL,
+  };
+}

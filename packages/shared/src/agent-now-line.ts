@@ -127,6 +127,7 @@ const TOOL_NOW: Record<string, (args?: Record<string, unknown>) => string> = {
   mods_lua_check: () => "Checking mod Lua APIs",
   mods_scaffold: () => "Creating a mod workspace",
   mods_deploy: () => "Installing an authored mod",
+  mods_assets_generate: () => "Generating a mod asset",
   experiences_export: () => "Exporting an experience package",
   experiences_install: () => "Installing an experience package",
   steamcmd_app_update: () => "Updating via Steam",

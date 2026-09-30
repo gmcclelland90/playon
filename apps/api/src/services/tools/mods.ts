@@ -9,10 +9,20 @@ import {
 import {
   PRE_MOD_DEPLOY_LABEL,
   ModsWorkspaceError,
+  assertSafeModId,
   collectModsSrcLuaSources,
   deployAuthoredMod,
+  jailRel,
+  modsSrcRel,
   scaffoldModWorkspace,
 } from "../mods-workspace.js";
+import {
+  FalAssetsError,
+  extensionForContentType,
+  generateFalImage,
+  resolveFalApiKey,
+} from "../fal-assets.js";
+import { FAL_SETTINGS_KEY, getSetting, type FalSettings } from "../settings.js";
 import { checkPzLuaSources } from "../mods-lua-check.js";
 import { ServerFileStoreError, type ServerFileStore } from "../server-file-store.js";
 import { withSnapshot } from "../snapshots.js";
@@ -63,7 +73,7 @@ function toolError(err: unknown): { error: string; detail?: string } {
  * confirm-gated snapshot-then-deploy into dialect live paths.
  */
 export const modsToolModule: ToolModule = ({ plane }) => {
-  const { servers, snapshots } = plane;
+  const { servers, snapshots, db, config } = plane;
 
   return [
     serverTool({
@@ -309,6 +319,93 @@ export const modsToolModule: ToolModule = ({ plane }) => {
             restartRequired: true as const,
           };
         } catch (err) {
+          return toolError(err);
+        }
+      },
+    }),
+
+    serverTool({
+      def: {
+        name: "mods_assets_generate",
+        description:
+          "Generate an image asset with the host's BYO fal.ai key and write it under mods-src/<modId>/assets/ (jailed). Disabled until Settings → Mod assets has a fal key (hosts pay fal directly). Confirm-gated. Never echoes the key.",
+        requiresConfirm: true,
+        parameters: {
+          type: "object",
+          properties: {
+            serverId: { type: "string" },
+            modId: { type: "string" },
+            prompt: { type: "string", description: "Text-to-image prompt" },
+            fileName: {
+              type: "string",
+              description: "Optional filename under assets/ (default asset-<ts>.png)",
+            },
+            model: {
+              type: "string",
+              description: "Optional fal model id (default fal-ai/flux/schnell)",
+            },
+          },
+          required: ["serverId", "modId", "prompt"],
+        },
+      },
+      surface: {
+        skill: "modder",
+        confirmAction: "generate a mod asset with your fal.ai key",
+        activityVerb: "write",
+      },
+      handler: async (args, { serverId }) => {
+        const server = await servers.get(serverId);
+        if (!server) return { error: `unknown_server: ${serverId}` };
+        const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
+        if (!prompt) return { error: "prompt_required" };
+        let modId: string;
+        try {
+          modId = assertSafeModId(String(args.modId));
+        } catch (err) {
+          return toolError(err);
+        }
+        const stored = await getSetting<FalSettings>(db, FAL_SETTINGS_KEY);
+        const apiKey = resolveFalApiKey(stored, config.sessionSecret);
+        if (!apiKey) {
+          return {
+            error: "fal_key_missing",
+            hint: "Add your fal.ai API key in Settings → Mod assets (https://fal.ai/dashboard/keys). PlayOn does not bill fal.",
+          };
+        }
+        try {
+          const files = await servers.files(serverId);
+          const listing = await files.list(modsSrcRel(modId)).catch(() => null);
+          if (!listing) {
+            return { error: "workspace_not_found", detail: `mods-src/${modId}` };
+          }
+          const generated = await generateFalImage({
+            apiKey,
+            prompt,
+            model: typeof args.model === "string" ? args.model : undefined,
+          });
+          const ext = extensionForContentType(generated.contentType);
+          const rawName =
+            typeof args.fileName === "string" && args.fileName.trim()
+              ? args.fileName.trim()
+              : `asset-${Date.now()}.${ext}`;
+          const base = rawName.replace(/\\/g, "/").split("/").pop() || rawName;
+          if (!base || base.includes("..")) return { error: "unsafe_fileName" };
+          const dest = jailRel(modsSrcRel(modId), "assets", base);
+          await files.ensureDir(jailRel(modsSrcRel(modId), "assets"));
+          await files.writeBytes(dest, Buffer.from(generated.bytes));
+          return {
+            serverId,
+            modId,
+            path: dest,
+            model: generated.model,
+            bytes: generated.bytes.byteLength,
+            contentType: generated.contentType,
+            // Do not return fal CDN URL to avoid leaking into player panel accidentally.
+          };
+        } catch (err) {
+          if (err instanceof FalAssetsError) {
+            return { error: err.code, detail: err.message };
+          }
           return toolError(err);
         }
       },
