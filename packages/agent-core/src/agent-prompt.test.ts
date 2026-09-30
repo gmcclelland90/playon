@@ -11,4 +11,12 @@ describe("AGENT_SYSTEM_PROMPT", () => {
     expect(AGENT_SYSTEM_PROMPT).toMatch(/netsh portproxy/);
     expect(AGENT_SYSTEM_PROMPT).toMatch(/Do not stop after the first tool/);
   });
+
+  it("documents AI-authored mods_scaffold → deploy → restart → mods_errors loop", () => {
+    expect(AGENT_SYSTEM_PROMPT).toMatch(/mods_scaffold/);
+    expect(AGENT_SYSTEM_PROMPT).toMatch(/mods_deploy/);
+    expect(AGENT_SYSTEM_PROMPT).toMatch(/mods_errors/);
+    expect(AGENT_SYSTEM_PROMPT).toMatch(/mods-src/);
+    expect(AGENT_SYSTEM_PROMPT).toMatch(/ai-modding-loop\.md/);
+  });
 });

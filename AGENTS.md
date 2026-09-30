@@ -32,6 +32,7 @@ pnpm dev # api + web + local node-agent
 ```
 
 Autonomous loop protocol: [docs/agent-dev-loop.md](docs/agent-dev-loop.md)  
+AI-authored mods loop: [docs/ai-modding-loop.md](docs/ai-modding-loop.md)  
 Linux lab host notes: [docs/linux-dev-host.md](docs/linux-dev-host.md)  
 Home release / playon.games CI/CD: [docs/release.md](docs/release.md)  
 SDLC / intake: [docs/sdlc.md](docs/sdlc.md) · triage: [docs/issue-triage.md](docs/issue-triage.md) · testing plan: [docs/testing-plan.md](docs/testing-plan.md) · automations: [docs/automations.md](docs/automations.md) · cockpit: [docs/observability.md](docs/observability.md)
