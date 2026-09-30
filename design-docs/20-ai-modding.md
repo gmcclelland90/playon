@@ -317,6 +317,9 @@ Do not bake a second image model into the orchestrator.
 
 ## Host UX (v1)
 
+Player panel surfaces `clientNeed` (`none` / `auto` / `manual`) from experience install via `client_setup` (chip + steps). Aggregate = worst of packed mods unless panel overrides.
+
+
 Per-server **Mods** panel (Controls dock) lists `mods-src/` workspaces (`authored` until `playon-deploy.json` exists, then `deployed`) and the same structured hits as `mods_errors`. Chat starter **Make a mod that…** prefills the composer; it does not send. Confirm gates stay on scaffold/deploy.
 
 ## `experiences.*` (v1 tools)

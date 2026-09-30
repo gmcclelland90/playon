@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { ModClientNeedSchema, PlayonModDialectSchema } from "./playon-mod.js";
+import {
+  ModClientNeedSchema,
+  PlayonModDialectSchema,
+  worstClientNeed,
+  type ModClientNeed,
+} from "./playon-mod.js";
 
 /** Catalog/name prefix for experience packages (sibling of games.* / platform.*). */
 export const EXPERIENCE_NAME_PREFIX = "experiences.";
@@ -35,6 +40,8 @@ export const ExperiencePanelCopySchema = z.object({
   documentJson: z.string().optional(),
   /** Short host-facing blurb for the agent / Mods panel. */
   summary: z.string().optional(),
+  /** Aggregate player install need (defaults to worst of mods[] when omitted). */
+  clientNeed: ModClientNeedSchema.optional(),
 });
 
 /**
@@ -61,3 +68,9 @@ export const ExperienceManifestSchema = z.object({
 export type ExperienceManifest = z.infer<typeof ExperienceManifestSchema>;
 
 export const PLAYON_EXPERIENCE_JSON = "playon-experience.json";
+
+/** Resolve player-facing clientNeed for an experience (explicit panel value or worst mod). */
+export function experienceClientNeed(manifest: ExperienceManifest): ModClientNeed {
+  if (manifest.panel?.clientNeed) return manifest.panel.clientNeed;
+  return worstClientNeed(manifest.mods.map((m) => m.clientNeed));
+}

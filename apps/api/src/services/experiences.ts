@@ -8,7 +8,9 @@ import {
   ExperienceManifestSchema,
   PLAYON_EXPERIENCE_JSON,
   assertExperienceName,
+  experienceClientNeed,
   type ExperienceManifest,
+  type ModClientNeed,
 } from "@playon/shared";
 import { checkPzLuaSources } from "./mods-lua-check.js";
 
@@ -170,11 +172,13 @@ export function planExperienceInstall(opts: {
   overlayPaths: string[];
   seedPaths: string[];
   panelSummary?: string;
+  clientNeed: ModClientNeed;
 } {
   return {
     modIds: opts.manifest.mods.map((m) => m.modId),
     overlayPaths: opts.manifest.overlays.map((o) => o.path),
     seedPaths: Object.keys(opts.files).filter((p) => p.startsWith("seed/")),
     panelSummary: opts.manifest.panel?.summary,
+    clientNeed: experienceClientNeed(opts.manifest),
   };
 }
