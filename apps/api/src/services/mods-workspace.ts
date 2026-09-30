@@ -1,6 +1,7 @@
 import {
   INSTANCE_INI_HINT_DIRS,
   MODS_SRC_DIR,
+  PLAYON_DEPLOY_JSON,
   PLAYON_MOD_JSON,
   PlayonModManifestSchema,
   normalizePlayonModDialect,
@@ -447,7 +448,12 @@ async function copyWorkspaceMinusManifest(
   let copied = 0;
   for (const src of all) {
     const relFromSrc = src.slice(srcDir.length).replace(/^\/+/, "");
-    if (!relFromSrc || relFromSrc === PLAYON_MOD_JSON || relFromSrc.endsWith(`/${PLAYON_MOD_JSON}`)) {
+    const base = relFromSrc.split("/").pop() ?? relFromSrc;
+    if (
+      !relFromSrc ||
+      base === PLAYON_MOD_JSON ||
+      base === PLAYON_DEPLOY_JSON
+    ) {
       continue;
     }
     const dest = jailRel(destDir, relFromSrc);
@@ -529,6 +535,17 @@ export async function mutateDeployMod(opts: {
     enablePatched = true;
   }
 
+  const stamp = {
+    destPath: dest.destPath,
+    copied,
+    enablePatched,
+    deployedAt: new Date().toISOString(),
+  };
+  await opts.files.writeText(
+    jailRel(src, PLAYON_DEPLOY_JSON),
+    `${JSON.stringify(stamp, null, 2)}\n`,
+  );
+
   return {
     destPath: dest.destPath,
     enablePatched,
@@ -537,6 +554,73 @@ export async function mutateDeployMod(opts: {
   };
 }
 
+
+export type AuthoredModDeployStatus = "authored" | "deployed";
+
+export type AuthoredModRow = {
+  modId: string;
+  displayName: string;
+  dialect: PlayonModDialect;
+  clientNeed: ModClientNeed;
+  version: string;
+  deployStatus: AuthoredModDeployStatus;
+  destPath: string | null;
+  deployedAt: string | null;
+  copied: number | null;
+};
+
+/** List jailed mods-src workspaces. Invalid folders are skipped, not thrown. */
+export async function listAuthoredMods(files: ServerFileStore): Promise<AuthoredModRow[]> {
+  const entries = await dirEntries(files, MODS_SRC_DIR);
+  if (!entries) return [];
+  const rows: AuthoredModRow[] = [];
+  for (const entry of entries) {
+    if (entry.type !== "dir") continue;
+    let modId: string;
+    try {
+      modId = assertSafeModId(entry.name);
+    } catch {
+      continue;
+    }
+    let manifest: PlayonModManifest;
+    try {
+      manifest = await readPlayonModManifest(files, modId);
+    } catch {
+      continue;
+    }
+    let destPath: string | null = null;
+    let deployedAt: string | null = null;
+    let copied: number | null = null;
+    try {
+      const raw = await files.readText(jailRel(modsSrcRel(modId), PLAYON_DEPLOY_JSON));
+      const parsed = JSON.parse(raw.content) as {
+        destPath?: unknown;
+        deployedAt?: unknown;
+        copied?: unknown;
+      };
+      if (typeof parsed.destPath === "string" && parsed.destPath.trim()) {
+        destPath = parsed.destPath;
+        deployedAt = typeof parsed.deployedAt === "string" ? parsed.deployedAt : null;
+        copied = typeof parsed.copied === "number" ? parsed.copied : null;
+      }
+    } catch {
+      /* authored, not yet deployed */
+    }
+    rows.push({
+      modId,
+      displayName: manifest.displayName,
+      dialect: manifest.dialect,
+      clientNeed: manifest.clientNeed,
+      version: manifest.version,
+      deployStatus: destPath ? "deployed" : "authored",
+      destPath,
+      deployedAt,
+      copied,
+    });
+  }
+  rows.sort((a, b) => a.modId.localeCompare(b.modId));
+  return rows;
+}
 
 /** Read all `.lua` files under `mods-src/<modId>/` (jailed) for pre-deploy checks. */
 export async function collectModsSrcLuaSources(

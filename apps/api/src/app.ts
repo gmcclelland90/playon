@@ -169,6 +169,8 @@ import {
   serverFileStoreHttpStatus,
 } from "./services/server-file-store.js";
 import { readSkillMarker } from "./services/skill-marker.js";
+import { buildServerModsPanel } from "./services/mods-panel.js";
+import { resolveModDialect } from "./services/mods-errors.js";
 import { seedWatchersForNewServer } from "./services/watchers.js";
 import { ConfirmService } from "./services/confirm.js";
 import { EventHub } from "./services/event-hub.js";
@@ -1659,6 +1661,23 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
       server: { ...detail.server, ready: joinReady.ready },
       runtime: { ...detail.runtime, ready: joinReady.ready, joinPath: joinReady.joinPath },
     });
+  });
+
+  app.get("/api/servers/:id/mods", async (c) => {
+    requireRole(c, "operator");
+    const serverId = c.req.param("id");
+    const server = await serverService.get(serverId);
+    if (!server) throw HttpError.notFound("not_found", { code: "server_not_found" });
+    const marker = readSkillMarker(server.dataPath);
+    const dialect = resolveModDialect(marker?.skillName ?? server.game);
+    const tail = await serverService.tailLogs(serverId, 200);
+    const files = await serverService.files(serverId);
+    const panel = await buildServerModsPanel({
+      files,
+      dialect,
+      runtimeLog: tail?.lines.join("\n") ?? "",
+    });
+    return c.json({ serverId, ...panel });
   });
 
   app.patch("/api/servers/:id", async (c) => {

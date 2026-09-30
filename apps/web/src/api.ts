@@ -141,6 +141,34 @@ export type ServerDetail = {
   };
 };
 
+export type ServerModRow = {
+  modId: string;
+  displayName: string;
+  dialect: string;
+  clientNeed: "none" | "auto" | "manual";
+  version: string;
+  deployStatus: "authored" | "deployed";
+  destPath: string | null;
+  deployedAt: string | null;
+  copied: number | null;
+};
+
+export type ServerModError = {
+  kind: string;
+  mod?: string;
+  file?: string;
+  line?: number;
+  message: string;
+  excerpt: string;
+};
+
+export type ServerModsResult = {
+  serverId: string;
+  mods: ServerModRow[];
+  errors: ServerModError[];
+  dialect: string;
+  logSource: string;
+};
 
 export type PanelBlockRow = {
   id: string;
@@ -962,6 +990,8 @@ export const api = {
   servers: () =>
     request<{ servers: ServerRow[]; advertiseHost?: string; runtimeMode?: string }>("/api/servers"),
   serverDetail: (id: string) => request<ServerDetail>(`/api/servers/${encodeURIComponent(id)}`),
+  serverMods: (id: string) =>
+    request<ServerModsResult>(`/api/servers/${encodeURIComponent(id)}/mods`),
   serverConsole: (id: string, command: string) =>
     request<ServerConsoleResult>(`/api/servers/${encodeURIComponent(id)}/console`, {
       method: "POST",

@@ -43,6 +43,8 @@ import { mergeNodeContainerInventory } from "../components/agent-canvas/map-node
 import { MapAddNodePanel } from "../components/MapAddNodePanel";
 import { MapManageSuggestPanel } from "../components/MapManageSuggestPanel";
 import { ServerConsoleBubble } from "../components/ServerConsoleBubble";
+import { ServerModsPanel } from "../components/ServerModsPanel";
+import { MAKE_A_MOD_DRAFT } from "../make-a-mod";
 import { ServerUsageMeters } from "../components/UsageMeters";
 import { displayServerStatus, runtimeErrorHint, statusHint, statusLabel } from "../status";
 import { playonSocket } from "../ws";
@@ -249,6 +251,13 @@ export function CanvasPage({ user }: { user: PublicUser }) {
       channelsRef.current = next;
       return next;
     });
+  }
+
+  function startMakeMod() {
+    if (!selectedId) return;
+    setActiveKey(serverChannelKey(selectedId));
+    setDockTab("chat");
+    setMessage(MAKE_A_MOD_DRAFT);
   }
 
   function openInstallChat() {
@@ -894,7 +903,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     : `${user.displayName} · ask the agent to maintain this server`;
   const emptyHint = unbound
     ? "Try “I want a vanilla Minecraft server”."
-    : "Ask about status, config, restarts, snapshots…";
+    : "Ask about status, config, restarts, snapshots… or Make a mod that…";
   const channelItems = listChatChannels({
     servers: (servers.data?.servers ?? []).filter((s) => !s.unmanaged),
     compose: {
@@ -1263,6 +1272,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
               ) : null}
               {opsError ? <p className="error">{opsError}</p> : null}
 
+              <ServerModsPanel serverId={selectedId} onMakeMod={startMakeMod} />
               <AgentSkillsPanel
                 skills={skills}
                 loading={agents.isLoading}
@@ -1415,6 +1425,16 @@ export function CanvasPage({ user }: { user: PublicUser }) {
               />
             </label>
             <div className="btn-row">
+              {selectedId && !unbound ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-compact"
+                  disabled={chatPending}
+                  onClick={startMakeMod}
+                >
+                  Make a mod that…
+                </button>
+              ) : null}
               {chatPending ? (
                 <button
                   type="button"

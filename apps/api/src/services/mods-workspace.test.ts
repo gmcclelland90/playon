@@ -20,6 +20,7 @@ import {
   dialectLiveDest,
   modsSrcRel,
   patchPzModsIni,
+  listAuthoredMods,
   scaffoldModWorkspace,
 } from "./mods-workspace.js";
 
@@ -225,7 +226,22 @@ describe("mods_scaffold workspace", () => {
       }),
     ).resolves.toMatchObject({ overwritten: true });
   });
+
+  it("lists authored mods before deploy as authored", async () => {
+    const { files } = tempJail();
+    await scaffoldModWorkspace({
+      files,
+      modId: "Draft",
+      dialect: "project-zomboid",
+      displayName: "Draft",
+    });
+    const listed = await listAuthoredMods(files);
+    expect(listed).toEqual([
+      expect.objectContaining({ modId: "Draft", deployStatus: "authored", destPath: null }),
+    ]);
+  });
 });
+
 
 describe("mods_deploy mutate + snapshot-first", () => {
   it("copies PZ workspace to mods/ and patches Mods= after snapshot", async () => {
@@ -266,6 +282,16 @@ describe("mods_deploy mutate + snapshot-first", () => {
       true,
     );
     expect(fs.existsSync(path.join(dataPath, "mods", "Locker", "playon-mod.json"))).toBe(false);
+    expect(fs.existsSync(path.join(dataPath, "mods", "Locker", "playon-deploy.json"))).toBe(false);
+    expect(fs.existsSync(path.join(dataPath, "mods-src", "Locker", "playon-deploy.json"))).toBe(true);
+    const listed = await listAuthoredMods(files);
+    expect(listed).toEqual([
+      expect.objectContaining({
+        modId: "Locker",
+        deployStatus: "deployed",
+        destPath: "mods/Locker",
+      }),
+    ]);
     expect(
       fs.readFileSync(path.join(dataPath, "home", "Zomboid", "Server", "servertest.ini"), "utf8"),
     ).toMatch(/Mods=Locker/);
