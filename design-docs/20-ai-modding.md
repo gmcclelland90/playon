@@ -332,18 +332,19 @@ Per-server **Mods** panel (Controls dock) lists `mods-src/` workspaces (`authore
 
 Agent tools `experiences_export` / `experiences_install` (confirm-gated) pack `playon-experience.json` + `mods/` + overlays + optional `seed/` + panel summary. Install targets an **existing** bound server only (snapshot first; never `servers_create_from_skill`). Catalog promotion remains playon-games / human.
 
-## Later: `experiences.*` catalog
+## `experiences.*` catalog (#1000)
 
 A shareable pack of an **authored** (or curated) server-side mod + panel copy, not a full game skill.
 
-| | `games.*` | `experiences.*` (later) |
-|--|-----------|-------------------------|
+| | `games.*` | `experiences.*` |
+|--|-----------|-----------------|
 | Job | Install and run a title | Drop a PlayOn-authored (or library) mod onto an existing server |
-| Format | Existing `.skill.zip` | Same zip envelope if possible; `metadata.yaml` `name: experiences.<id>` |
-| Install | `servers_create_from_skill` | Deploy into an **already bound** server jail + enable-list |
-| Catalog | playon-games | playon-games later; none in this monorepo |
+| Format | `.skill.zip` + `packages/index.json` | `.experience.zip` + `packages/experiences/index.json` |
+| Install | `servers_create_from_skill` / `skill_install_url` | `experiences_install` / `experiences_install_url` on a **bound** server |
+| Home UX | Skills → Games | Skills → Experiences (+ deep link `?tab=experiences&name=`) |
+| Catalog | playon-games | playon-games (site follow-up); Home tolerates 404 empty |
 
-Export = lint + zip of `mods-src/<modId>/` + dialect + `clientNeed`. Import = confirm + snapshot + deploy path. Promotion to the public library is a human/catalog concern ([15](15-playon-games-site-and-skill-library.md)).
+Export = lint + zip via `experiences_export`. Catalog promotion remains a playon-games publish step. Contract: `docs/experiences-catalog.md`, [15](15-playon-games-site-and-skill-library.md).
 
 ## Implementation slices
 

@@ -14,6 +14,8 @@ Curated `games.*` skill content lives in sibling **playon-games** (not this repo
 | `mods_assets_generate` | Confirm-gated. BYO fal image → `mods-src/<modId>/assets/` (see `docs/fal-assets.md`). |
 | `mods_lua_check` | Read-only (PZ). Static B42 Lua API guard on `mods-src` before deploy. |
 | `mods_errors` | Read-only. Parses dialect logs (PZ Lua, Paper) for mod name / file / line / message. |
+| `experiences_export` / `experiences_install` | Confirm-gated pack/install on an existing server. |
+| `experiences_search` / `experiences_install_url` | Public playon.games experiences catalog (#1000). |
 
 ## Loop
 

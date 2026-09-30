@@ -99,6 +99,7 @@ export function llmSettingsFromPut(body: {
 
 export const CLOUD_SETTINGS_KEY = "cloud.vultr";
 export const SKILLS_CATALOG_KEY = "skills.catalog";
+export const EXPERIENCES_CATALOG_KEY = "experiences.catalog";
 export const NODE_SETTINGS_KEY = "nodes";
 export const FETCH_SETTINGS_KEY = "fetch";
 export const WG_HOME_SETTINGS_KEY = "cloud.wireguard.home";
@@ -113,6 +114,11 @@ export type VultrCloudSettings = {
 
 export type SkillsCatalogSettings = {
   /** Default https://playon.games/packages/index.json */
+  catalogUrl: string;
+};
+
+export type ExperiencesCatalogSettings = {
+  /** Default https://playon.games/packages/experiences/index.json */
   catalogUrl: string;
 };
 

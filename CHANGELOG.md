@@ -6,6 +6,8 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ### Added
 
+- **Experiences catalog share (#1000)** — Home browses `experiences.*` beside Games (Skills → Experiences), deep links `/skills?tab=experiences&name=…`, and installs from `https://playon.games/packages/experiences/index.json` onto an existing server (`experiences_search` / `experiences_install_url`). playon-games site listing deferred when repo write unavailable; 404 catalog → empty list. See `docs/experiences-catalog.md`.
+
 - **LLM model-compat Home canary** — `pnpm lab:llm-canary --home` snapshots Settings before the first `PUT`, persists `tmp/lab-llm-canary-restore.json`, GET-verifies restore (never sends `apiKey`), and deletes only `lab-llm-canary*` leftovers (404 = already gone). Cheap-model `partial_trace` and disconnect/empty `toolTrace` are degraded/flake, not filed as product bugs. Matrix + restore contract: `docs/llm-model-compat.md` (`#836`).
 
 ### Fixed

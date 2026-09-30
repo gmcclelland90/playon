@@ -1,21 +1,29 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { can, roleAtLeast, type PublicUser } from "@playon/shared";
+import {
+  buildExperienceInstallDeepLink,
+  can,
+  EXPERIENCES_SITE_PATH,
+  roleAtLeast,
+  type PublicUser,
+} from "@playon/shared";
 import {
   api,
+  type CatalogExperienceRow,
   type CatalogSkillRow,
   type SkillDetail,
   type SkillDraftRow,
   type SkillRow,
 } from "../api";
 
-type TabId = "platform" | "installed" | "catalog" | "drafts";
+type TabId = "platform" | "installed" | "catalog" | "experiences" | "drafts";
 type CatalogFilter = "all" | "official" | "available";
 
 type Selection =
   | { kind: "local"; name: string }
   | { kind: "catalog"; name: string }
+  | { kind: "experience"; name: string }
   | { kind: "draft"; slug: string; name: string }
   | null;
 
@@ -74,6 +82,7 @@ function SkillBadges({
 
 export function SkillsPage({ user }: { user: PublicUser }) {
   const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const canPackage = can(user.role, "skills.package");
   const canBrowse = roleAtLeast(user.role, "operator");
 
@@ -85,6 +94,10 @@ export function SkillsPage({ user }: { user: PublicUser }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [installingSkill, setInstallingSkill] = useState<string | null>(null);
+  const [expQuery, setExpQuery] = useState("");
+  const [expSearch, setExpSearch] = useState("");
+  const [installServerId, setInstallServerId] = useState("");
+  const [installingExperience, setInstallingExperience] = useState<string | null>(null);
   const [pendingUninstall, setPendingUninstall] = useState<{
     name: string;
     servers: Array<{ id: string; name: string }>;
@@ -112,6 +125,18 @@ export function SkillsPage({ user }: { user: PublicUser }) {
     queryKey: ["skills-catalog", catalogSearch],
     queryFn: () => api.skillsCatalog(catalogSearch),
     enabled: canBrowse,
+  });
+
+  const experiencesCatalog = useQuery({
+    queryKey: ["experiences-catalog", expSearch],
+    queryFn: () => api.experiencesCatalog(expSearch),
+    enabled: canBrowse,
+  });
+
+  const servers = useQuery({
+    queryKey: ["servers"],
+    queryFn: () => api.servers(),
+    enabled: canBrowse && tab === "experiences",
   });
 
   const detailName =
@@ -144,6 +169,13 @@ export function SkillsPage({ user }: { user: PublicUser }) {
     return catalog.data?.skills.find((s) => s.name === selection.name) ?? null;
   }, [selection, catalog.data?.skills]);
 
+  const experienceSelection: CatalogExperienceRow | null = useMemo(() => {
+    if (selection?.kind !== "experience") return null;
+    return (
+      experiencesCatalog.data?.experiences.find((e) => e.name === selection.name) ?? null
+    );
+  }, [selection, experiencesCatalog.data?.experiences]);
+
   const filteredCatalog = useMemo(() => {
     const rows = catalog.data?.skills ?? [];
     if (catalogFilter === "official") return rows.filter((s) => s.official);
@@ -159,9 +191,24 @@ export function SkillsPage({ user }: { user: PublicUser }) {
   useEffect(() => {
     if (defaultsApplied.current || skills.isLoading) return;
     defaultsApplied.current = true;
+    const tabParam = searchParams.get("tab");
+    const nameParam = searchParams.get("name");
+    if (tabParam === "experiences") {
+      setTab("experiences");
+      if (nameParam?.startsWith("experiences.")) {
+        setSelection({ kind: "experience", name: nameParam });
+      }
+      return;
+    }
     if (installedSkills.length > 0) setTab("installed");
     else setTab("catalog");
-  }, [skills.isLoading, installedSkills.length]);
+  }, [skills.isLoading, installedSkills.length, searchParams]);
+
+  useEffect(() => {
+    if (tab !== "experiences") return;
+    const handle = window.setTimeout(() => setExpSearch(expQuery.trim()), 350);
+    return () => window.clearTimeout(handle);
+  }, [expQuery, tab]);
 
   useEffect(() => {
     if (!selection) return;
@@ -264,6 +311,7 @@ export function SkillsPage({ user }: { user: PublicUser }) {
           [
             ["installed", "Installed", installedSkills.length],
             ["catalog", "Games", catalog.data?.skills?.length],
+            ["experiences", "Experiences", experiencesCatalog.data?.experiences?.length],
             ["platform", "Platform", platformSkills.length],
             ["drafts", "Drafts", drafts.data?.drafts?.length],
           ] as const
@@ -540,11 +588,13 @@ export function SkillsPage({ user }: { user: PublicUser }) {
               <p className="muted status-inline">
                 {tab === "catalog"
                   ? "Search or select a game on the left. Install puts it on this host; create the server on the Map."
-                  : tab === "installed"
-                    ? "Installed packages power servers on this host. Add more from the Games tab."
-                    : tab === "drafts"
-                      ? "Agent-invented packages land here until you promote them."
-                      : "Built-in Home platform packages. They cannot be uninstalled."}
+                  : tab === "experiences"
+                    ? "Select an experience, pick an existing server, then install (snapshot first). Deep link: /skills?tab=experiences&name=experiences.*"
+                    : tab === "installed"
+                      ? "Installed packages power servers on this host. Add more from the Games tab."
+                      : tab === "drafts"
+                        ? "Agent-invented packages land here until you promote them."
+                        : "Built-in Home platform packages. They cannot be uninstalled."}
               </p>
               {tab === "installed" ? (
                 <button
@@ -577,6 +627,41 @@ export function SkillsPage({ user }: { user: PublicUser }) {
               canPackage={canPackage}
               installing={installingSkill === catalogSelection.name}
               onInstall={() => installFromCatalog.mutate(catalogSelection.name)}
+            />
+          ) : null}
+
+          {selection?.kind === "experience" && experienceSelection ? (
+            <ExperienceCatalogDetail
+              experience={experienceSelection}
+              canPackage={canPackage}
+              servers={(servers.data?.servers ?? []).map((s) => ({
+                id: s.id,
+                name: s.name,
+                game: s.game,
+              }))}
+              serverId={installServerId}
+              onServerId={setInstallServerId}
+              installing={installingExperience === experienceSelection.name}
+              onInstall={() => {
+                if (!installServerId) {
+                  setError("Pick an existing server to install onto.");
+                  return;
+                }
+                setInstallingExperience(experienceSelection.name);
+                setError(null);
+                void api
+                  .installExperienceFromCatalog({
+                    serverId: installServerId,
+                    name: experienceSelection.name,
+                  })
+                  .then((result) => {
+                    flash(
+                      `Installed ${result.experience} on ${result.serverId}. Restart when ready.`,
+                    );
+                  })
+                  .catch((err: Error) => setError(err.message))
+                  .finally(() => setInstallingExperience(null));
+              }}
             />
           ) : null}
 
@@ -761,6 +846,117 @@ export function SkillsPage({ user }: { user: PublicUser }) {
           ) : null}
         </aside>
       </div>
+    </div>
+  );
+}
+
+
+function ExperienceCatalogDetail({
+  experience,
+  canPackage,
+  servers,
+  serverId,
+  onServerId,
+  installing,
+  onInstall,
+}: {
+  experience: CatalogExperienceRow;
+  canPackage: boolean;
+  servers: Array<{ id: string; name: string; game?: string | null }>;
+  serverId: string;
+  onServerId: (id: string) => void;
+  installing: boolean;
+  onInstall: () => void;
+}) {
+  const deepLink = buildExperienceInstallDeepLink({
+    homeBase: typeof window !== "undefined" ? window.location.origin : "http://playon.local",
+    name: experience.name,
+  });
+  const options = servers;
+  return (
+    <div className="stack tight">
+      <h3>{experience.displayName}</h3>
+      {experience.official ? (
+        <span className="skills-badge skills-badge-cyan">Official</span>
+      ) : null}
+      <p className="muted status-inline">
+        v{experience.version} · base {experience.baseGame}
+        {experience.clientNeed ? ` · client ${experience.clientNeed}` : ""}
+      </p>
+      {experience.description ? <p>{experience.description}</p> : null}
+      {canPackage ? (
+        <div className="stack tight">
+          <label className="field">
+            <span>Install onto existing server</span>
+            <select
+              value={serverId}
+              onChange={(e) => onServerId(e.target.value)}
+              disabled={installing || !options.length}
+            >
+              <option value="">Select server…</option>
+              {options.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                  {s.game ? ` (${s.game})` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <p className="muted status-inline">
+            Expects base skill <code>{experience.baseGame}</code> on the target server.
+            {!options.length
+              ? " No servers yet — install the base game from Games, create a server on the Map, then return here."
+              : ""}
+          </p>
+          <div className="btn-row skills-detail-actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={installing || !serverId}
+              onClick={onInstall}
+            >
+              {installing ? "Installing…" : "Install experience"}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <p className="muted status-inline">Admins can install catalog experiences on this host.</p>
+      )}
+      <details className="skills-advanced-meta">
+        <summary className="muted small">Share / deep link</summary>
+        <dl className="skills-meta">
+          <div>
+            <dt>Package id</dt>
+            <dd>
+              <code>{experience.name}</code>
+            </dd>
+          </div>
+          <div>
+            <dt>Home install link</dt>
+            <dd>
+              <code>{deepLink}</code>
+            </dd>
+          </div>
+          <div>
+            <dt>Site (playon-games)</dt>
+            <dd>
+              <a
+                href={`https://playon.games${EXPERIENCES_SITE_PATH}/${encodeURIComponent(experience.name)}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                playon.games{EXPERIENCES_SITE_PATH}/{experience.name}
+              </a>
+            </dd>
+          </div>
+          {experience.tags?.length ? (
+            <div>
+              <dt>Tags</dt>
+              <dd>{experience.tags.join(", ")}</dd>
+            </div>
+          ) : null}
+        </dl>
+      </details>
     </div>
   );
 }
