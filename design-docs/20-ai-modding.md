@@ -315,7 +315,11 @@ Out of v1. If added later:
 
 Do not bake a second image model into the orchestrator.
 
-## Later: `experiences.*`
+## `experiences.*` (v1 tools)
+
+Agent tools `experiences_export` / `experiences_install` (confirm-gated) pack `playon-experience.json` + `mods/` + overlays + optional `seed/` + panel summary. Install targets an **existing** bound server only (snapshot first; never `servers_create_from_skill`). Catalog promotion remains playon-games / human.
+
+## Later: `experiences.*` catalog
 
 A shareable pack of an **authored** (or curated) server-side mod + panel copy, not a full game skill.
 

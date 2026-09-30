@@ -34,6 +34,8 @@ const ALL_TOOLS = [
   "mods_lua_check",
   "mods_scaffold",
   "mods_deploy",
+  "experiences_export",
+  "experiences_install",
   "rcon_exec",
   "rcon_say",
   "steamcmd_app_update",
@@ -108,6 +110,8 @@ const SERVER_SCOPED_TOOLS = [
   "mods_lua_check",
   "mods_scaffold",
   "mods_deploy",
+  "experiences_export",
+  "experiences_install",
   "rcon_exec",
   "rcon_say",
   "steamcmd_app_update",
@@ -297,6 +301,10 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(surface.confirmAction("mods_deploy")).toBe(
       "snapshot this server and install the authored mod",
     );
+    expect(surface.skill("experiences_export")).toBe("modder");
+    expect(surface.get("experiences_export")?.requiresConfirm).toBe(true);
+    expect(surface.skill("experiences_install")).toBe("modder");
+    expect(surface.get("experiences_install")?.requiresConfirm).toBe(true);
     expect(surface.skill("wsl_status")).toBe("installer");
     expect(surface.activityVerb("wsl_status")).toBe("search");
     expect(surface.confirmAction("wsl_enable")).toBe(

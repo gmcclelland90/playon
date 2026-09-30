@@ -49,6 +49,8 @@ export const MAINTAIN_EXTRA_TOOL_NAMES = [
   "mods_lua_check",
   "mods_scaffold",
   "mods_deploy",
+  "experiences_export",
+  "experiences_install",
   "rcon_exec",
   "rcon_say",
   "servers_restart",
@@ -96,6 +98,8 @@ export const INSTALL_EXCLUDED_TOOLS = [
   "servers_delete",
   "mods_scaffold",
   "mods_deploy",
+  "experiences_export",
+  "experiences_install",
 ] as const;
 
 export const SESSION_CREATE_TOOLS = new Set([
