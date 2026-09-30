@@ -50,6 +50,7 @@ export const MAINTAIN_EXTRA_TOOL_NAMES = [
   "mods_scaffold",
   "mods_deploy",
   "mods_assets_generate",
+  "mods_workshop_prepare",
   "experiences_export",
   "experiences_install",
   "rcon_exec",
@@ -100,6 +101,7 @@ export const INSTALL_EXCLUDED_TOOLS = [
   "mods_scaffold",
   "mods_deploy",
   "mods_assets_generate",
+  "mods_workshop_prepare",
   "experiences_export",
   "experiences_install",
 ] as const;

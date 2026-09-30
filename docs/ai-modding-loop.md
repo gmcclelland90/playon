@@ -10,6 +10,8 @@ Curated `games.*` skill content lives in sibling **playon-games** (not this repo
 | ---- | ---- |
 | `mods_scaffold` | Confirm-gated. Creates `mods-src/<modId>/` + dialect skeleton + `playon-mod.json`. |
 | `mods_deploy` | Confirm-gated. `snapshot_create` first, then copies into the live dialect path (e.g. PZ `mods/`, Paper `plugins/`) and patches enable lists. Refuses Workshop cache paths. |
+| `mods_workshop_prepare` | Confirm-gated. PZ dry-run zip under `workshop-out/<modId>/`. `livePublish` → `blocked_human` / `steam_credentials_human_gate` (no Steam upload). |
+| `mods_assets_generate` | Confirm-gated. BYO fal image → `mods-src/<modId>/assets/` (see `docs/fal-assets.md`). |
 | `mods_lua_check` | Read-only (PZ). Static B42 Lua API guard on `mods-src` before deploy. |
 | `mods_errors` | Read-only. Parses dialect logs (PZ Lua, Paper) for mod name / file / line / message. |
 
