@@ -7,6 +7,7 @@ export const WATCHER_SCRIPT_TOOLS = [
   "servers_stop",
   "servers_restart",
   "servers_logs_tail",
+  "mods_errors",
   "servers_query",
   "snapshot_create",
   "panel_publish",

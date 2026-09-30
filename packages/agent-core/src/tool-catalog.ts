@@ -45,6 +45,7 @@ export const MAINTAIN_EXTRA_TOOL_NAMES = [
   "fs_copy",
   "archive_extract",
   "fetch_url",
+  "mods_errors",
   "rcon_exec",
   "rcon_say",
   "servers_restart",

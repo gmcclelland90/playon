@@ -30,6 +30,7 @@ afterEach(() => {
 const ALL_TOOLS = [
   "archive_extract",
   "fetch_url",
+  "mods_errors",
   "rcon_exec",
   "rcon_say",
   "steamcmd_app_update",
@@ -100,6 +101,7 @@ const ALL_TOOLS = [
 const SERVER_SCOPED_TOOLS = [
   "archive_extract",
   "fetch_url",
+  "mods_errors",
   "rcon_exec",
   "rcon_say",
   "steamcmd_app_update",
@@ -271,6 +273,9 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(surface.confirmAction("fetch_url")).toBe("download a file into the server folder");
     expect(surface.skill("fetch_url")).toBe("modder");
     expect(surface.activityVerb("fetch_url")).toBe("fetch");
+    expect(surface.skill("mods_errors")).toBe("modder");
+    expect(surface.activityVerb("mods_errors")).toBe("read");
+    expect(surface.get("mods_errors")?.requiresConfirm).toBeFalsy();
     expect(surface.skill("wsl_status")).toBe("installer");
     expect(surface.activityVerb("wsl_status")).toBe("search");
     expect(surface.confirmAction("wsl_enable")).toBe(

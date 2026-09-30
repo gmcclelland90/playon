@@ -123,6 +123,7 @@ const TOOL_NOW: Record<string, (args?: Record<string, unknown>) => string> = {
   fs_copy: () => "Copying files",
   archive_extract: () => "Extracting an archive",
   fetch_url: () => "Fetching a file",
+  mods_errors: () => "Reading mod errors",
   steamcmd_app_update: () => "Updating via Steam",
   panel_publish: () => "Updating the player panel",
   panel_list: () => "Checking the panel",
