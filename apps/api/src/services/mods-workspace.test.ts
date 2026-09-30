@@ -166,6 +166,9 @@ describe("dialect dest map", () => {
     expect(again.changed).toBe(false);
     const added = patchPzModsIni("DefaultPort=16261\n", "Locker");
     expect(added.text).toContain("Mods=Locker");
+    const empty = patchPzModsIni("PublicName=Lab\nMods=\n", "Locker");
+    expect(empty.text).toMatch(/^Mods=Locker$/m);
+    expect(empty.text).not.toMatch(/^Locker$/m);
   });
 });
 

@@ -138,7 +138,7 @@ export function dialectLiveDest(dialect: string, modId: string): DialectLiveDest
 /** Append `modFolder` to a PZ `Mods=` line (semicolon-separated). */
 export function patchPzModsIni(content: string, modFolder: string): { text: string; changed: boolean } {
   const id = assertSafeModId(modFolder);
-  const re = /^(\s*Mods\s*=\s*)(.*)$/im;
+  const re = /^([ \t]*Mods[ \t]*=[ \t]*)(.*)$/im;
   const match = content.match(re);
   if (!match) {
     const suffix = !content || content.endsWith("\n") ? "" : "\n";
