@@ -10,13 +10,15 @@ Curated `games.*` skill content lives in sibling **playon-games** (not this repo
 | ---- | ---- |
 | `mods_scaffold` | Confirm-gated. Creates `mods-src/<modId>/` + dialect skeleton + `playon-mod.json`. |
 | `mods_deploy` | Confirm-gated. `snapshot_create` first, then copies into the live dialect path (e.g. PZ `mods/`, Paper `plugins/`) and patches enable lists. Refuses Workshop cache paths. |
+| `mods_lua_check` | Read-only (PZ). Static B42 Lua API guard on `mods-src` before deploy. |
 | `mods_errors` | Read-only. Parses dialect logs (PZ Lua, Paper) for mod name / file / line / message. |
 
 ## Loop
 
 1. `mods_scaffold` with a stable `modId` (and display name).
 2. Edit only under `mods-src/<modId>/` via `fs_*` (jailed).
-3. `mods_deploy` (host confirms) — never hand-patch live mod dirs when this tool exists.
+3. `mods_lua_check` (PZ) — fix findings before deploy.
+4. `mods_deploy` (host confirms) — never hand-patch live mod dirs when this tool exists.
 4. `servers_restart` (or equivalent skill restart).
 5. `mods_errors` — if dirty, fix sources in `mods-src` and redeploy.
 6. Short host reply when clean (or when blocked on dialect/API limits).

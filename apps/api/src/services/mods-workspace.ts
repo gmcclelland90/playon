@@ -537,6 +537,31 @@ export async function mutateDeployMod(opts: {
   };
 }
 
+
+/** Read all `.lua` files under `mods-src/<modId>/` (jailed) for pre-deploy checks. */
+export async function collectModsSrcLuaSources(
+  files: ServerFileStore,
+  modId: string,
+): Promise<Record<string, string>> {
+  const id = assertSafeModId(modId);
+  const src = modsSrcRel(id);
+  const listing = await dirEntries(files, src);
+  if (!listing) {
+    throw new ModsWorkspaceError("workspace_not_found", `workspace_not_found: ${src}`);
+  }
+  const rels = await walkFiles(files, src);
+  const out: Record<string, string> = {};
+  for (const absRel of rels) {
+    if (!absRel.toLowerCase().endsWith(".lua")) continue;
+    const raw = await files.readText(absRel);
+    // Store path relative to mods-src/<id>/ for stable finding.file fields
+    const prefix = `${src}/`;
+    const short = absRel.startsWith(prefix) ? absRel.slice(prefix.length) : absRel;
+    out[short] = raw.content;
+  }
+  return out;
+}
+
 /**
  * Snapshot-then-mutate deploy. `snapshotFirst` must run the snapshot (e.g.
  * `withSnapshot`) *before* invoking `fn`. Tests inject a recorder; the tool

@@ -9,9 +9,11 @@ import {
 import {
   PRE_MOD_DEPLOY_LABEL,
   ModsWorkspaceError,
+  collectModsSrcLuaSources,
   deployAuthoredMod,
   scaffoldModWorkspace,
 } from "../mods-workspace.js";
+import { checkPzLuaSources } from "../mods-lua-check.js";
 import { ServerFileStoreError, type ServerFileStore } from "../server-file-store.js";
 import { withSnapshot } from "../snapshots.js";
 import { serverTool, type ToolModule } from "./types.js";
@@ -200,6 +202,44 @@ export const modsToolModule: ToolModule = ({ plane }) => {
 
     serverTool({
       def: {
+        name: "mods_lua_check",
+        description:
+          "Static B42 Lua API guard over mods-src/<modId>/ (jailed). Flags known-nil calls such as getFavoriteHeight() and InventoryItemFactory.CreateItem. Run before mods_deploy for Project Zomboid.",
+        parameters: {
+          type: "object",
+          properties: {
+            serverId: { type: "string" },
+            modId: { type: "string" },
+          },
+          required: ["serverId", "modId"],
+        },
+      },
+      surface: {
+        skill: "modder",
+        activityVerb: "read",
+      },
+      handler: async (args, { serverId }) => {
+        const server = await servers.get(serverId);
+        if (!server) return { error: `unknown_server: ${serverId}` };
+        try {
+          const files = await servers.files(serverId);
+          const sources = await collectModsSrcLuaSources(files, String(args.modId));
+          const result = checkPzLuaSources(sources);
+          return {
+            serverId,
+            modId: String(args.modId),
+            ok: result.ok,
+            scannedFiles: result.scannedFiles,
+            findings: result.findings,
+          };
+        } catch (err) {
+          return toolError(err);
+        }
+      },
+    }),
+
+    serverTool({
+      def: {
         name: "mods_deploy",
         description:
           "Snapshot the server (pre-mod-deploy), then copy mods-src/<modId>/ (minus playon-mod.json) into the dialect live path and patch enable lists. Does not restart. PZ: mods/<id>/ + Mods=; Paper: plugins/ by presence.",
@@ -233,6 +273,20 @@ export const modsToolModule: ToolModule = ({ plane }) => {
         );
         try {
           const files = await servers.files(serverId);
+          if (dialect === "project-zomboid") {
+            const sources = await collectModsSrcLuaSources(files, String(args.modId));
+            const check = checkPzLuaSources(sources);
+            if (!check.ok) {
+              return {
+                error: "lua_api_check_failed",
+                code: "lua_api_check_failed",
+                modId: String(args.modId),
+                scannedFiles: check.scannedFiles,
+                findings: check.findings.filter((f) => f.severity === "error"),
+                hint: "Fix mods-src Lua (see findings) or run mods_lua_check; deploy refused before snapshot.",
+              };
+            }
+          }
           let snapshotId: string | undefined;
           const deployed = await deployAuthoredMod({
             files,

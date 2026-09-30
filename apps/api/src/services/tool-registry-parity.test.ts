@@ -31,6 +31,7 @@ const ALL_TOOLS = [
   "archive_extract",
   "fetch_url",
   "mods_errors",
+  "mods_lua_check",
   "mods_scaffold",
   "mods_deploy",
   "rcon_exec",
@@ -104,6 +105,7 @@ const SERVER_SCOPED_TOOLS = [
   "archive_extract",
   "fetch_url",
   "mods_errors",
+  "mods_lua_check",
   "mods_scaffold",
   "mods_deploy",
   "rcon_exec",
@@ -280,6 +282,9 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(surface.skill("mods_errors")).toBe("modder");
     expect(surface.activityVerb("mods_errors")).toBe("read");
     expect(surface.get("mods_errors")?.requiresConfirm).toBeFalsy();
+    expect(surface.skill("mods_lua_check")).toBe("modder");
+    expect(surface.activityVerb("mods_lua_check")).toBe("read");
+    expect(surface.get("mods_lua_check")?.requiresConfirm).toBeFalsy();
     expect(surface.skill("mods_scaffold")).toBe("modder");
     expect(surface.activityVerb("mods_scaffold")).toBe("write");
     expect(surface.get("mods_scaffold")?.requiresConfirm).toBe(true);

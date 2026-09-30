@@ -46,6 +46,7 @@ export const MAINTAIN_EXTRA_TOOL_NAMES = [
   "archive_extract",
   "fetch_url",
   "mods_errors",
+  "mods_lua_check",
   "mods_scaffold",
   "mods_deploy",
   "rcon_exec",

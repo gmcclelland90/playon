@@ -124,6 +124,7 @@ const TOOL_NOW: Record<string, (args?: Record<string, unknown>) => string> = {
   archive_extract: () => "Extracting an archive",
   fetch_url: () => "Fetching a file",
   mods_errors: () => "Reading mod errors",
+  mods_lua_check: () => "Checking mod Lua APIs",
   mods_scaffold: () => "Creating a mod workspace",
   mods_deploy: () => "Installing an authored mod",
   steamcmd_app_update: () => "Updating via Steam",

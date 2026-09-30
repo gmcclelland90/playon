@@ -14,6 +14,7 @@ describe("AGENT_SYSTEM_PROMPT", () => {
 
   it("documents AI-authored mods_scaffold → deploy → restart → mods_errors loop", () => {
     expect(AGENT_SYSTEM_PROMPT).toMatch(/mods_scaffold/);
+    expect(AGENT_SYSTEM_PROMPT).toMatch(/mods_lua_check/);
     expect(AGENT_SYSTEM_PROMPT).toMatch(/mods_deploy/);
     expect(AGENT_SYSTEM_PROMPT).toMatch(/mods_errors/);
     expect(AGENT_SYSTEM_PROMPT).toMatch(/mods-src/);
