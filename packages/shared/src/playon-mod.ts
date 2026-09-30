@@ -69,4 +69,6 @@ export const PlayonModManifestSchema = z.object({
 export type PlayonModManifest = z.infer<typeof PlayonModManifestSchema>;
 
 export const PLAYON_MOD_JSON = "playon-mod.json";
+/** Written under mods-src/<modId>/ after a successful mods_deploy. Not copied live. */
+export const PLAYON_DEPLOY_JSON = "playon-deploy.json";
 export const MODS_SRC_DIR = "mods-src";

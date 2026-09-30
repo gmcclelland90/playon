@@ -315,6 +315,10 @@ Out of v1. If added later:
 
 Do not bake a second image model into the orchestrator.
 
+## Host UX (v1)
+
+Per-server **Mods** panel (Controls dock) lists `mods-src/` workspaces (`authored` until `playon-deploy.json` exists, then `deployed`) and the same structured hits as `mods_errors`. Chat starter **Make a mod that…** prefills the composer; it does not send. Confirm gates stay on scaffold/deploy.
+
 ## `experiences.*` (v1 tools)
 
 Agent tools `experiences_export` / `experiences_install` (confirm-gated) pack `playon-experience.json` + `mods/` + overlays + optional `seed/` + panel summary. Install targets an **existing** bound server only (snapshot first; never `servers_create_from_skill`). Catalog promotion remains playon-games / human.
