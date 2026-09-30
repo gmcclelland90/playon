@@ -24,6 +24,7 @@ import {
   ImportSftpServerRequestSchema,
   ImportSkillZipRequestSchema,
   InstallDockerRequestSchema,
+  InstallExperienceFromCatalogRequestSchema,
   InstallSkillFromCatalogRequestSchema,
   LOCAL_NODE_ID,
   LOCAL_WSL_NODE_ID,
@@ -129,6 +130,7 @@ import {
   LLM_SETTINGS_KEY,
   NODE_SETTINGS_KEY,
   FETCH_SETTINGS_KEY,
+  EXPERIENCES_CATALOG_KEY,
   SKILLS_CATALOG_KEY,
   setSetting,
   llmSettingsFromPut,
@@ -142,6 +144,7 @@ import {
   type FetchSettings,
   type LlmSettings,
   type NodeSettings,
+  type ExperiencesCatalogSettings,
   type SkillsCatalogSettings,
   type VultrCloudSettings,
 } from "./services/settings.js";
@@ -160,6 +163,15 @@ import {
   resolveSkillsCatalogUrl,
   searchCatalog,
 } from "./services/skills-catalog.js";
+import {
+  downloadCatalogExperienceZip,
+  fetchExperiencesCatalogDetailed,
+  findCatalogExperience,
+  resolveExperiencesCatalogUrl,
+  searchExperiencesCatalog,
+} from "./services/experiences-catalog.js";
+import { applyExperienceInstall } from "./services/experiences.js";
+
 import { createControlPlane, type ControlPlane } from "./control-plane.js";
 import {
   classifySkillSource,
@@ -1156,6 +1168,102 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
           404: ["catalog_skill_not_found"],
           409: ["skill_exists"],
           502: ["skills_catalog_fetch"],
+        },
+      });
+    }
+  });
+
+
+  app.get("/api/experiences/catalog", async (c) => {
+    requireRole(c, "operator");
+    const stored = await getSetting<ExperiencesCatalogSettings>(db, EXPERIENCES_CATALOG_KEY);
+    const catalogUrl = resolveExperiencesCatalogUrl(
+      process.env.PLAYON_EXPERIENCES_CATALOG_URL,
+      stored?.catalogUrl,
+    );
+    const q = c.req.query("q")?.trim() || "";
+    try {
+      const fetched = await fetchExperiencesCatalogDetailed(catalogUrl);
+      const experiences = searchExperiencesCatalog(fetched.experiences, q);
+      return c.json({
+        catalogUrl,
+        experiences,
+        warnings: fetched.warnings,
+        updatedAt: fetched.updatedAt,
+        unavailable: fetched.unavailable,
+      });
+    } catch (err) {
+      throw HttpError.badGateway(messageFromError(err, "catalog_unavailable"), {
+        code: "experiences_catalog_unavailable",
+        details: { catalogUrl },
+        cause: err,
+      });
+    }
+  });
+
+  app.post("/api/experiences/install-from-catalog", async (c) => {
+    requireCan(c, "skills.package");
+    const body = await jsonBody(c, InstallExperienceFromCatalogRequestSchema);
+    if (!body.name && !body.downloadUrl) {
+      throw HttpError.badRequest("name_or_downloadUrl_required", {
+        code: "name_or_downloadUrl_required",
+      });
+    }
+    const server = await serverService.get(body.serverId);
+    if (!server) throw HttpError.notFound("server_not_found", { code: "server_not_found" });
+    try {
+      const stored = await getSetting<ExperiencesCatalogSettings>(db, EXPERIENCES_CATALOG_KEY);
+      const catalogUrl = resolveExperiencesCatalogUrl(
+        process.env.PLAYON_EXPERIENCES_CATALOG_URL,
+        stored?.catalogUrl,
+      );
+      const fetched = await fetchExperiencesCatalogDetailed(catalogUrl);
+      if (fetched.unavailable === "not_found") {
+        throw HttpError.notFound("experiences_catalog_not_found", {
+          code: "experiences_catalog_not_found",
+          details: { catalogUrl },
+        });
+      }
+      const entry = findCatalogExperience(fetched.experiences, {
+        name: body.name,
+        downloadUrl: body.downloadUrl,
+      });
+      if (!entry) {
+        throw HttpError.notFound("catalog_experience_not_found", {
+          code: "catalog_experience_not_found",
+        });
+      }
+      const { bytes, sha256 } = await downloadCatalogExperienceZip(
+        entry.downloadUrl,
+        entry.sha256,
+      );
+      const filesStore = await serverService.files(body.serverId);
+      const slug = entry.name.replace(/^experiences\./, "");
+      const outRel = `experiences-out/${slug}-${entry.version}.experience.zip`;
+      await filesStore.ensureDir("experiences-out");
+      await filesStore.writeBytes(outRel, Buffer.from(bytes));
+      const result = await applyExperienceInstall({
+        serverId: body.serverId,
+        zipBytes: bytes,
+        filesStore,
+        snapshots: snapshotService,
+        playerPanel,
+      });
+      return c.json({
+        ...result,
+        catalogUrl,
+        downloadUrl: entry.downloadUrl,
+        sha256,
+        zipPath: outRel,
+      });
+    } catch (err) {
+      if (err instanceof HttpError) throw err;
+      throw serviceHttpError(err, {
+        fallback: "experience_catalog_install_failed",
+        code: "experience_catalog_install_failed",
+        statusPrefixes: {
+          404: ["catalog_experience_not_found", "experiences_catalog_not_found"],
+          502: ["experiences_catalog_fetch"],
         },
       });
     }

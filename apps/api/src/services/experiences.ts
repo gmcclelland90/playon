@@ -7,12 +7,18 @@ import { strFromU8, unzipSync, zipSync } from "fflate";
 import {
   ExperienceManifestSchema,
   PLAYON_EXPERIENCE_JSON,
+  PLAYON_MOD_JSON,
   assertExperienceName,
+  clientNeedPlayerCopy,
   experienceClientNeed,
   type ExperienceManifest,
   type ModClientNeed,
 } from "@playon/shared";
 import { checkPzLuaSources } from "./mods-lua-check.js";
+import { deployAuthoredMod } from "./mods-workspace.js";
+import type { PlayerPanel } from "./player-panel.js";
+import type { ServerFileStore } from "./server-file-store.js";
+import { withSnapshot, type SnapshotService } from "./snapshots.js";
 
 const SECRET_RE =
   /(?:rcon[_-]?password|api[_-]?key|secret|token)\s*[:=]\s*["']?[^\s"']+/i;
@@ -180,5 +186,105 @@ export function planExperienceInstall(opts: {
     seedPaths: Object.keys(opts.files).filter((p) => p.startsWith("seed/")),
     panelSummary: opts.manifest.panel?.summary,
     clientNeed: experienceClientNeed(opts.manifest),
+  };
+}
+
+
+export type ExperienceInstallResult = {
+  serverId: string;
+  snapshotId: string | null;
+  experience: string;
+  plan: ReturnType<typeof planExperienceInstall>;
+  clientNeed: ModClientNeed;
+  restartRequired: true;
+  note: string;
+};
+
+/** Snapshot + apply an experience zip onto an existing server jail. */
+export async function applyExperienceInstall(opts: {
+  serverId: string;
+  zipBytes: Uint8Array;
+  filesStore: ServerFileStore;
+  snapshots: SnapshotService;
+  playerPanel: PlayerPanel;
+}): Promise<ExperienceInstallResult> {
+  const parsed = parseExperienceZip(opts.zipBytes);
+  if (parsed.findings.some((f) => f.severity === "error")) {
+    throw new ExperiencePackageError(
+      "experience_lint_failed",
+      "experience_lint_failed",
+      parsed.findings.filter((f) => f.severity === "error"),
+    );
+  }
+  const plan = planExperienceInstall(parsed);
+  let snapshotId: string | undefined;
+  await withSnapshot(opts.snapshots, opts.serverId, "pre-experience-install", async () => {
+    const snaps = await opts.snapshots.list(opts.serverId);
+    snapshotId = snaps.find((s) => s.label === "pre-experience-install")?.id;
+    for (const overlay of parsed.manifest.overlays) {
+      const path = overlay.path.replace(/\\/g, "/");
+      if (!path || path.includes("..")) {
+        throw new ExperiencePackageError(`unsafe_overlay: ${overlay.path}`, "unsafe_path");
+      }
+      await opts.filesStore.writeText(path, overlay.content);
+    }
+    for (const [rel, content] of Object.entries(parsed.files)) {
+      if (!rel.startsWith("seed/")) continue;
+      await opts.filesStore.ensureDir("seed");
+      await opts.filesStore.writeText(rel, content);
+    }
+    for (const mod of parsed.manifest.mods) {
+      const prefix = `mods/${mod.modId}/`;
+      for (const [rel, content] of Object.entries(parsed.files)) {
+        if (!rel.startsWith(prefix)) continue;
+        const dest = `mods-src/${mod.modId}/${rel.slice(prefix.length)}`;
+        const dir = dest.includes("/") ? dest.slice(0, dest.lastIndexOf("/")) : "mods-src";
+        await opts.filesStore.ensureDir(dir);
+        await opts.filesStore.writeText(dest, content);
+      }
+      const meta = {
+        dialect: mod.dialect,
+        displayName: mod.modId,
+        clientNeed: mod.clientNeed,
+        version: parsed.manifest.version,
+      };
+      await opts.filesStore.writeText(
+        `mods-src/${mod.modId}/${PLAYON_MOD_JSON}`,
+        `${JSON.stringify(meta, null, 2)}\n`,
+      );
+      await deployAuthoredMod({
+        files: opts.filesStore,
+        modId: mod.modId,
+        dialect: mod.dialect,
+        snapshotFirst: async (fn) => fn(),
+      });
+    }
+  });
+  const clientNeed = experienceClientNeed(parsed.manifest);
+  const copy = clientNeedPlayerCopy(clientNeed);
+  const summaryBits = [parsed.manifest.panel?.summary?.trim(), copy.notes].filter(Boolean);
+  try {
+    await opts.playerPanel.upsertFromAgent(opts.serverId, [
+      {
+        type: "client_setup",
+        title: copy.label,
+        body: {
+          clientNeed,
+          notes: summaryBits.join("\n\n"),
+          steps: copy.steps,
+        },
+      },
+    ]);
+  } catch {
+    /* panel upsert best-effort */
+  }
+  return {
+    serverId: opts.serverId,
+    snapshotId: snapshotId ?? null,
+    experience: parsed.manifest.name,
+    plan,
+    clientNeed,
+    restartRequired: true as const,
+    note: "Does not create a sibling server; restart host when ready. Player panel client_setup updated for clientNeed.",
   };
 }

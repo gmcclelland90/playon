@@ -131,6 +131,8 @@ const TOOL_NOW: Record<string, (args?: Record<string, unknown>) => string> = {
   mods_workshop_prepare: () => "Preparing Workshop package (dry-run)",
   experiences_export: () => "Exporting an experience package",
   experiences_install: () => "Installing an experience package",
+  experiences_search: () => "Searching experiences",
+  experiences_install_url: () => "Installing an experience from the catalog",
   steamcmd_app_update: () => "Updating via Steam",
   panel_publish: () => "Updating the player panel",
   panel_list: () => "Checking the panel",

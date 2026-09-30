@@ -38,6 +38,8 @@ const ALL_TOOLS = [
   "mods_workshop_prepare",
   "experiences_export",
   "experiences_install",
+  "experiences_search",
+  "experiences_install_url",
   "rcon_exec",
   "rcon_say",
   "steamcmd_app_update",
@@ -116,6 +118,7 @@ const SERVER_SCOPED_TOOLS = [
   "mods_workshop_prepare",
   "experiences_export",
   "experiences_install",
+  "experiences_install_url",
   "rcon_exec",
   "rcon_say",
   "steamcmd_app_update",
@@ -315,6 +318,10 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(surface.get("experiences_export")?.requiresConfirm).toBe(true);
     expect(surface.skill("experiences_install")).toBe("modder");
     expect(surface.get("experiences_install")?.requiresConfirm).toBe(true);
+    expect(surface.skill("experiences_search")).toBe("modder");
+    expect(surface.get("experiences_search")?.requiresConfirm).toBeFalsy();
+    expect(surface.skill("experiences_install_url")).toBe("modder");
+    expect(surface.get("experiences_install_url")?.requiresConfirm).toBe(true);
     expect(surface.skill("wsl_status")).toBe("installer");
     expect(surface.activityVerb("wsl_status")).toBe("search");
     expect(surface.confirmAction("wsl_enable")).toBe(

@@ -49,6 +49,10 @@ function detailFor(toolName: string, args: Record<string, unknown>): string | un
       const downloadUrl = asNonEmptyString(args.downloadUrl);
       return skill ? clip(skill) : downloadUrl ? clip(downloadUrl) : undefined;
     }
+    case "experiences_install_url": {
+      const downloadUrl = asNonEmptyString(args.downloadUrl);
+      return skill ? clip(skill) : downloadUrl ? clip(downloadUrl) : undefined;
+    }
     case "servers_import_local":
     case "servers_import_sftp":
     case "skill_import":

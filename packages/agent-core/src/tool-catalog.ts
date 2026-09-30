@@ -53,6 +53,8 @@ export const MAINTAIN_EXTRA_TOOL_NAMES = [
   "mods_workshop_prepare",
   "experiences_export",
   "experiences_install",
+  "experiences_search",
+  "experiences_install_url",
   "rcon_exec",
   "rcon_say",
   "servers_restart",
@@ -104,6 +106,7 @@ export const INSTALL_EXCLUDED_TOOLS = [
   "mods_workshop_prepare",
   "experiences_export",
   "experiences_install",
+  "experiences_install_url",
 ] as const;
 
 export const SESSION_CREATE_TOOLS = new Set([

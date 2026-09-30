@@ -30,3 +30,4 @@ export * from "./wsl-lan-publish.js";
 export * from "./lab-jail-gc.js";
 export * from "./playon-mod.js";
 export * from "./experience.js";
+export * from "./experience-catalog.js";

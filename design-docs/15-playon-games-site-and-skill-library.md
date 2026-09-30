@@ -105,3 +105,17 @@ Keep the first viewport brand-led (see frontend design rules). Library pages are
 ## Success metric
 
 A fresh PlayOn install with `minimal` profile can install `games.minecraft-paper` from the library URL and reach a joinable LAN server without any Game package being bundled in the binary.
+
+## Experiences library (#1000)
+
+Shareable `experiences.*` packs are listed **beside** games (not mixed into `skills[]`).
+
+| Route / artifact | Purpose |
+|------------------|---------|
+| `/experiences` | Browse experiences catalog |
+| `/experiences/{name}` | Detail + Open in Home deep link |
+| `/packages/experiences/index.json` | Catalog index (`experiences[]`) |
+| `/packages/experiences/*-.experience.zip` | Download artifacts |
+
+Home deep link: `/skills?tab=experiences&name=experiences.<id>`. Install targets an existing server only. See `docs/experiences-catalog.md`.
+

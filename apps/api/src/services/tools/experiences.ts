@@ -1,25 +1,33 @@
 import {
+  EXPERIENCE_NAME_PREFIX,
   ExperienceManifestSchema,
   PLAYON_MOD_JSON,
-  clientNeedPlayerCopy,
-  experienceClientNeed,
   type ExperienceManifest,
 } from "@playon/shared";
 import {
   ExperiencePackageError,
+  applyExperienceInstall,
   buildExperienceZip,
-  parseExperienceZip,
-  planExperienceInstall,
 } from "../experiences.js";
 import {
   collectModsSrcTextSources,
-  deployAuthoredMod,
   readPlayonModManifest,
 } from "../mods-workspace.js";
 import { checkPzLuaSources } from "../mods-lua-check.js";
 import { ServerFileStoreError } from "../server-file-store.js";
-import { withSnapshot } from "../snapshots.js";
-import { serverTool, type ToolModule } from "./types.js";
+import {
+  downloadCatalogExperienceZip,
+  fetchExperiencesCatalogDetailed,
+  findCatalogExperience,
+  resolveExperiencesCatalogUrl,
+  searchExperiencesCatalog,
+} from "../experiences-catalog.js";
+import {
+  EXPERIENCES_CATALOG_KEY,
+  getSetting,
+  type ExperiencesCatalogSettings,
+} from "../settings.js";
+import { globalTool, serverTool, type ToolModule } from "./types.js";
 
 function toolError(err: unknown): { error: string; detail?: string; findings?: unknown } {
   if (err instanceof ExperiencePackageError) {
@@ -39,10 +47,18 @@ function base64ToBytes(b64: string): Uint8Array {
 }
 
 /**
- * experiences.* author/install tools (#995). Install never creates a sibling server.
+ * experiences.* author/install + public catalog share tools (#995 / #1000). Install never creates a sibling server.
  */
 export const experiencesToolModule: ToolModule = ({ plane }) => {
-  const { servers, snapshots, playerPanel } = plane;
+  const { servers, snapshots, playerPanel, db } = plane;
+
+  async function catalogUrl(): Promise<string> {
+    const stored = await getSetting<ExperiencesCatalogSettings>(db, EXPERIENCES_CATALOG_KEY);
+    return resolveExperiencesCatalogUrl(
+      process.env.PLAYON_EXPERIENCES_CATALOG_URL,
+      stored?.catalogUrl,
+    );
+  }
 
   return [
     serverTool({
@@ -198,95 +214,145 @@ export const experiencesToolModule: ToolModule = ({ plane }) => {
           } else {
             return { error: "zipBase64_or_zipPath_required" };
           }
-          const parsed = parseExperienceZip(zipBytes);
-          if (parsed.findings.some((f) => f.severity === "error")) {
+          return await applyExperienceInstall({
+            serverId,
+            zipBytes,
+            filesStore,
+            snapshots,
+            playerPanel,
+          });
+
+        } catch (err) {
+          return toolError(err);
+        }
+      },
+    }),
+
+    globalTool({
+      def: {
+        name: "experiences_search",
+        description:
+          "Search the public playon.games experiences.* catalog (beside games.*). Empty query lists the catalog. Empty/404 catalog is ok (site not published yet).",
+        parameters: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description: "Experience name, base game, or tags. Empty returns the full catalog.",
+            },
+          },
+        },
+      },
+      surface: { skill: "modder", activityVerb: "read" },
+      handler: async (args) => {
+        const url = await catalogUrl();
+        const q = args.query !== undefined ? String(args.query) : "";
+        try {
+          const fetched = await fetchExperiencesCatalogDetailed(url);
+          const experiences = searchExperiencesCatalog(fetched.experiences, q);
+          return {
+            catalogUrl: url,
+            experiences,
+            warnings: fetched.warnings,
+            updatedAt: fetched.updatedAt,
+            unavailable: fetched.unavailable,
+            note:
+              fetched.unavailable === "not_found"
+                ? "Experiences catalog not published on playon.games yet; Home deep links and tools are ready."
+                : undefined,
+          };
+        } catch (err) {
+          return {
+            catalogUrl: url,
+            experiences: [],
+            error: err instanceof Error ? err.message : "catalog_unavailable",
+          };
+        }
+      },
+    }),
+
+    serverTool({
+      def: {
+        name: "experiences_install_url",
+        description:
+          "Download an experiences.* zip from the public catalog and install onto this *existing* server (confirm + snapshot). Prefer name from experiences_search. Never creates a sibling server.",
+        requiresConfirm: true,
+        parameters: {
+          type: "object",
+          properties: {
+            serverId: { type: "string" },
+            name: {
+              type: "string",
+              description: `Catalog experience name, e.g. ${EXPERIENCE_NAME_PREFIX}demo-locker`,
+            },
+            downloadUrl: {
+              type: "string",
+              description: "Exact downloadUrl from experiences_search",
+            },
+          },
+          required: ["serverId"],
+        },
+      },
+      surface: {
+        skill: "modder",
+        confirmAction: "download an experience from the catalog and install it on this server",
+        activityVerb: "write",
+        xp: { xp: 15, reason: "experience_catalog_install" },
+      },
+      handler: async (args, { serverId }) => {
+        const server = await servers.get(serverId);
+        if (!server) return { error: `unknown_server: ${serverId}` };
+        const name = args.name !== undefined ? String(args.name).trim() : "";
+        const downloadUrl =
+          args.downloadUrl !== undefined ? String(args.downloadUrl).trim() : "";
+        if (!name && !downloadUrl) {
+          return { error: "name_or_downloadUrl_required" };
+        }
+        try {
+          const url = await catalogUrl();
+          const fetched = await fetchExperiencesCatalogDetailed(url);
+          if (fetched.unavailable === "not_found") {
             return {
-              error: "experience_lint_failed",
-              findings: parsed.findings.filter((f) => f.severity === "error"),
+              error: "experiences_catalog_not_found",
+              catalogUrl: url,
+              note: "playon.games experiences index not published yet",
             };
           }
-          const plan = planExperienceInstall(parsed);
-          let snapshotId: string | undefined;
-          await withSnapshot(snapshots, serverId, "pre-experience-install", async () => {
-            const snaps = await snapshots.list(serverId);
-            snapshotId = snaps.find((s) => s.label === "pre-experience-install")?.id;
-            // Overlays
-            for (const overlay of parsed.manifest.overlays) {
-              const path = overlay.path.replace(/\\/g, "/");
-              if (!path || path.includes("..")) {
-                throw new ExperiencePackageError(`unsafe_overlay: ${overlay.path}`, "unsafe_path");
-              }
-              await filesStore.writeText(path, overlay.content);
-            }
-            // Seed files (non-destructive copy into jail seed/ or paths as packed)
-            for (const [rel, content] of Object.entries(parsed.files)) {
-              if (!rel.startsWith("seed/")) continue;
-              await filesStore.ensureDir("seed");
-              await filesStore.writeText(rel, content);
-            }
-            // Materialize mods into mods-src then dialect-deploy
-            for (const mod of parsed.manifest.mods) {
-              const prefix = `mods/${mod.modId}/`;
-              for (const [rel, content] of Object.entries(parsed.files)) {
-                if (!rel.startsWith(prefix)) continue;
-                const dest = `mods-src/${mod.modId}/${rel.slice(prefix.length)}`;
-                const dir = dest.includes("/") ? dest.slice(0, dest.lastIndexOf("/")) : "mods-src";
-                await filesStore.ensureDir(dir);
-                await filesStore.writeText(dest, content);
-              }
-              // Ensure playon-mod.json
-              const meta = {
-                dialect: mod.dialect,
-                displayName: mod.modId,
-                clientNeed: mod.clientNeed,
-                version: parsed.manifest.version,
-              };
-              await filesStore.writeText(
-                `mods-src/${mod.modId}/${PLAYON_MOD_JSON}`,
-                `${JSON.stringify(meta, null, 2)}\n`,
-              );
-              await deployAuthoredMod({
-                files: filesStore,
-                modId: mod.modId,
-                dialect: mod.dialect,
-                snapshotFirst: async (fn) => fn(), // already snapshotted
-              });
-            }
+          const entry = findCatalogExperience(fetched.experiences, {
+            name: name || undefined,
+            downloadUrl: downloadUrl || undefined,
           });
-          const clientNeed = experienceClientNeed(parsed.manifest);
-          const copy = clientNeedPlayerCopy(clientNeed);
-          const summaryBits = [
-            parsed.manifest.panel?.summary?.trim(),
-            copy.notes,
-          ].filter(Boolean);
-          try {
-            await playerPanel.upsertFromAgent(serverId, [
-              {
-                type: "client_setup",
-                title: copy.label,
-                body: {
-                  clientNeed,
-                  notes: summaryBits.join("\n\n"),
-                  steps: copy.steps,
-                },
-              },
-            ]);
-          } catch {
-            /* panel upsert is best-effort; install already succeeded */
+          if (!entry) {
+            return { error: "catalog_experience_not_found", catalogUrl: url, name, downloadUrl };
           }
-          return {
+          const { bytes, sha256 } = await downloadCatalogExperienceZip(
+            entry.downloadUrl,
+            entry.sha256,
+          );
+          const filesStore = await servers.files(serverId);
+          const slug = entry.name.replace(/^experiences\./, "");
+          const outRel = `experiences-out/${slug}-${entry.version}.experience.zip`;
+          await filesStore.ensureDir("experiences-out");
+          await filesStore.writeBytes(outRel, Buffer.from(bytes));
+          const result = await applyExperienceInstall({
             serverId,
-            snapshotId: snapshotId ?? null,
-            experience: parsed.manifest.name,
-            plan,
-            clientNeed,
-            restartRequired: true as const,
-            note: "Does not create a sibling server; restart host when ready. Player panel client_setup updated for clientNeed.",
+            zipBytes: bytes,
+            filesStore,
+            snapshots,
+            playerPanel,
+          });
+          return {
+            ...result,
+            catalogUrl: url,
+            downloadUrl: entry.downloadUrl,
+            sha256,
+            zipPath: outRel,
           };
         } catch (err) {
           return toolError(err);
         }
       },
     }),
+
   ];
 };

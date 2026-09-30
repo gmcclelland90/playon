@@ -222,6 +222,19 @@ export type SkillDetail = {
   dependencies: Array<{ name: string; present: boolean }>;
 };
 
+export type CatalogExperienceRow = {
+  name: string;
+  version: string;
+  displayName: string;
+  description?: string;
+  baseGame: string;
+  tags: string[];
+  downloadUrl: string;
+  sha256?: string;
+  official?: boolean;
+  clientNeed?: string;
+};
+
 export type CatalogSkillRow = {
   name: string;
   version: string;
@@ -982,6 +995,33 @@ export const api = {
       updatedAt?: string;
       error?: string;
     }>(`/api/skills/catalog${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`),
+  experiencesCatalog: (q = "") =>
+    request<{
+      catalogUrl: string;
+      experiences: CatalogExperienceRow[];
+      warnings?: CatalogWarning[];
+      updatedAt?: string;
+      unavailable?: "not_found" | "fetch_failed";
+      error?: string;
+    }>(`/api/experiences/catalog${q.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""}`),
+  installExperienceFromCatalog: (body: {
+    serverId: string;
+    name?: string;
+    downloadUrl?: string;
+  }) =>
+    request<{
+      serverId: string;
+      experience: string;
+      catalogUrl: string;
+      downloadUrl: string;
+      sha256: string;
+      zipPath: string;
+      restartRequired: boolean;
+      note?: string;
+    }>("/api/experiences/install-from-catalog", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   installSkillFromCatalog: (body: { name?: string; downloadUrl?: string; overwrite?: boolean }) =>
     request<{
       skill: { skillName: string; path: string; version: string };
