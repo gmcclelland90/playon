@@ -64,6 +64,9 @@ describe("Watcher schemas", () => {
     ).toThrow();
     expect(isWatcherScriptTool("servers_restart")).toBe(true);
     expect(isWatcherScriptTool("servers_delete")).toBe(false);
+    expect(isWatcherScriptTool("mods_errors")).toBe(true);
+    expect(isWatcherScriptTool("mods_scaffold")).toBe(false);
+    expect(isWatcherScriptTool("mods_deploy")).toBe(false);
   });
 
   it("skill metadata accepts watcher templates", () => {

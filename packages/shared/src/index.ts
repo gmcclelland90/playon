@@ -28,3 +28,4 @@ export * from "./instance-game-port.js";
 export * from "./stormworks.js";
 export * from "./wsl-lan-publish.js";
 export * from "./lab-jail-gc.js";
+export * from "./playon-mod.js";

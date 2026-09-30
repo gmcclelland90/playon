@@ -46,6 +46,8 @@ export const MAINTAIN_EXTRA_TOOL_NAMES = [
   "archive_extract",
   "fetch_url",
   "mods_errors",
+  "mods_scaffold",
+  "mods_deploy",
   "rcon_exec",
   "rcon_say",
   "servers_restart",
@@ -91,6 +93,8 @@ export const INSTALL_EXCLUDED_TOOLS = [
   "nodes_add",
   "nodes_remove",
   "servers_delete",
+  "mods_scaffold",
+  "mods_deploy",
 ] as const;
 
 export const SESSION_CREATE_TOOLS = new Set([
