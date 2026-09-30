@@ -562,6 +562,32 @@ export async function collectModsSrcLuaSources(
   return out;
 }
 
+const EXPERIENCE_SKIP_EXT = [".dll", ".so", ".dylib", ".exe", ".sys", ".asi", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bin"];
+
+/** Read all text-ish files under `mods-src/<modId>/` for experience export (skips natives/images). */
+export async function collectModsSrcTextSources(
+  files: ServerFileStore,
+  modId: string,
+): Promise<Record<string, string>> {
+  const id = assertSafeModId(modId);
+  const src = modsSrcRel(id);
+  const listing = await dirEntries(files, src);
+  if (!listing) {
+    throw new ModsWorkspaceError("workspace_not_found", `workspace_not_found: ${src}`);
+  }
+  const rels = await walkFiles(files, src);
+  const out: Record<string, string> = {};
+  const prefix = `${src}/`;
+  for (const absRel of rels) {
+    const lower = absRel.toLowerCase();
+    if (EXPERIENCE_SKIP_EXT.some((ext) => lower.endsWith(ext))) continue;
+    const raw = await files.readText(absRel);
+    const short = absRel.startsWith(prefix) ? absRel.slice(prefix.length) : absRel;
+    out[short] = raw.content;
+  }
+  return out;
+}
+
 /**
  * Snapshot-then-mutate deploy. `snapshotFirst` must run the snapshot (e.g.
  * `withSnapshot`) *before* invoking `fn`. Tests inject a recorder; the tool

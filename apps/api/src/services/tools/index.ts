@@ -3,6 +3,7 @@ import { toolNamesForCatalog } from "@playon/agent-core";
 import { contentToolModule } from "./content.js";
 import { fsToolModule } from "./fs.js";
 import { metaToolModule } from "./meta.js";
+import { experiencesToolModule } from "./experiences.js";
 import { modsToolModule } from "./mods.js";
 import { nodesToolModule } from "./nodes.js";
 import { panelToolModule } from "./panel.js";
@@ -28,6 +29,7 @@ export const TOOL_MODULES: readonly ToolModule[] = [
   contentToolModule,
   fsToolModule,
   metaToolModule,
+  experiencesToolModule,
   modsToolModule,
   nodesToolModule,
   panelToolModule,
