@@ -151,8 +151,23 @@ describe("dialect dest map", () => {
       enable: "presence",
     });
     expect(dialectLiveDest("factorio", "pack")).toMatchObject({
-      ok: false,
-      error: "unsupported_dialect",
+      ok: true,
+      dialect: "factorio",
+      destPath: "mods",
+      enable: "factorio_mod_list",
+    });
+    expect(dialectLiveDest("rust-oxide", "MyPlugin")).toMatchObject({
+      ok: true,
+      destPath: "oxide/plugins",
+      enable: "presence",
+    });
+    expect(dialectLiveDest("garrys-mod", "my_addon")).toMatchObject({
+      ok: true,
+      enable: "presence",
+    });
+    expect(dialectLiveDest("terraria-tmod", "ExampleMod")).toMatchObject({
+      ok: true,
+      enable: "tmod_enabled_json",
     });
     expect(dialectLiveDest("none", "x")).toMatchObject({ ok: false, error: "unknown_dialect" });
     expect(dialectLiveDest("unknown", "x")).toMatchObject({ ok: false, error: "unknown_dialect" });
@@ -298,22 +313,11 @@ describe("mods_deploy mutate + snapshot-first", () => {
     expect(fs.existsSync(path.join(dataPath, "mods", "Locker"))).toBe(false);
   });
 
-  it("refuses unknown/unsupported dialects before snapshot", async () => {
-    const { files } = tempJail();
-    await scaffoldModWorkspace({ files, modId: "Pack", dialect: "factorio" });
-    let snap = 0;
-    await expect(
-      deployAuthoredMod({
-        files,
-        modId: "Pack",
-        dialect: "factorio",
-        snapshotFirst: async (fn) => {
-          snap += 1;
-          return fn();
-        },
-      }),
-    ).rejects.toMatchObject({ code: "unsupported_dialect" });
-    expect(snap).toBe(0);
+  it("marks unknown dialect strings as unknown_dialect", () => {
+    expect(dialectLiveDest("totally-unknown-game", "x")).toMatchObject({
+      ok: false,
+      error: "unknown_dialect",
+    });
   });
 });
 

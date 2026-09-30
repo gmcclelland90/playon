@@ -60,3 +60,58 @@ describe("extractModErrors minecraft-paper", () => {
     expect(errors.some((e) => e.kind === "plugin_load")).toBe(true);
   });
 });
+
+const OXIDE_FIXTURE = `
+Failed to compile plugin MyRaidPlugin
+error CS0117: MyRaidPlugin.cs
+Failed to initialize plugin BrokenOxide
+`.trim();
+
+const GMOD_FIXTURE = `
+[ERROR] addons/bad_addon/lua/autorun/server/sv_bad.lua:12: attempt to index a nil value
+Addon 'bad_addon' failed to load
+`.trim();
+
+const TMOD_FIXTURE = `
+An error occurred while loading ExampleMod
+tModLoader.Error: missing dependency
+`.trim();
+
+const FACTORIO_FIXTURE = `
+Failed to load mod 'example-mod'
+Error while loading example-mod
+Mods to be disabled: example-mod
+`.trim();
+
+describe("extractModErrors rust-oxide", () => {
+  it("captures compile and init failures", () => {
+    const errors = extractModErrors("rust-oxide", OXIDE_FIXTURE);
+    expect(errors.some((e) => e.kind === "compile")).toBe(true);
+    expect(errors.some((e) => e.mod?.includes("BrokenOxide") || e.message.includes("BrokenOxide"))).toBe(
+      true,
+    );
+  });
+});
+
+describe("extractModErrors garrys-mod", () => {
+  it("captures lua errors and addon failures", () => {
+    const errors = extractModErrors("garrys-mod", GMOD_FIXTURE);
+    expect(errors.some((e) => e.kind === "lua_stack" && e.line === 12)).toBe(true);
+    expect(errors.some((e) => e.mod === "bad_addon")).toBe(true);
+  });
+});
+
+describe("extractModErrors terraria-tmod", () => {
+  it("captures load failures", () => {
+    const errors = extractModErrors("terraria-tmod", TMOD_FIXTURE);
+    expect(errors.some((e) => e.kind === "plugin_load")).toBe(true);
+  });
+});
+
+describe("extractModErrors factorio", () => {
+  it("captures load and dependency lines", () => {
+    const errors = extractModErrors("factorio", FACTORIO_FIXTURE);
+    expect(errors.some((e) => e.kind === "plugin_load" && e.mod === "example-mod")).toBe(true);
+    expect(errors.some((e) => e.kind === "dependency")).toBe(true);
+  });
+});

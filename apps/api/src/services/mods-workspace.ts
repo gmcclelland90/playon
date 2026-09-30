@@ -99,7 +99,7 @@ export function assertAllowedDeployRel(rel: string): void {
   }
 }
 
-export type DeployEnableKind = "pz_mods_ini" | "presence";
+export type DeployEnableKind = "pz_mods_ini" | "presence" | "factorio_mod_list" | "tmod_enabled_json";
 
 export type DialectLiveDest =
   | {
@@ -123,14 +123,24 @@ export function dialectLiveDest(dialect: string, modId: string): DialectLiveDest
     assertAllowedDeployRel("plugins");
     return { ok: true, dialect: "minecraft-paper", destPath: "plugins", enable: "presence" };
   }
-  if (
-    normalized === "rust-oxide" ||
-    normalized === "rust-carbon" ||
-    normalized === "garrys-mod" ||
-    normalized === "terraria-tmod" ||
-    normalized === "factorio"
-  ) {
-    return { ok: false, error: "unsupported_dialect", dialect: normalized };
+  if (normalized === "rust-oxide" || normalized === "rust-carbon") {
+    const destPath = normalized === "rust-carbon" ? "carbon/plugins" : "oxide/plugins";
+    assertAllowedDeployRel(destPath);
+    return { ok: true, dialect: "rust-oxide", destPath, enable: "presence" };
+  }
+  if (normalized === "garrys-mod") {
+    const destPath = jailRel("garrysmod/addons", id);
+    assertAllowedDeployRel(destPath);
+    return { ok: true, dialect: "garrys-mod", destPath, enable: "presence" };
+  }
+  if (normalized === "terraria-tmod") {
+    const destPath = jailRel("Mods", id);
+    assertAllowedDeployRel(destPath);
+    return { ok: true, dialect: "terraria-tmod", destPath, enable: "tmod_enabled_json" };
+  }
+  if (normalized === "factorio") {
+    assertAllowedDeployRel("mods");
+    return { ok: true, dialect: "factorio", destPath: "mods", enable: "factorio_mod_list" };
   }
   return { ok: false, error: "unknown_dialect", dialect: normalized || dialect };
 }
@@ -151,6 +161,49 @@ export function patchPzModsIni(content: string, modFolder: string): { text: stri
   if (existing.includes(id)) return { text: content, changed: false };
   const next = [...existing, id].join(";");
   return { text: content.replace(re, `$1${next}`), changed: true };
+}
+
+
+/** Ensure Factorio mod-list.json enables `modId` (directory or zip stem). */
+export function patchFactorioModList(
+  content: string,
+  modId: string,
+): { text: string; changed: boolean } {
+  const id = assertSafeModId(modId);
+  let parsed: { mods?: Array<{ name: string; enabled?: boolean }> };
+  try {
+    parsed = JSON.parse(content || "{}");
+  } catch {
+    parsed = { mods: [] };
+  }
+  if (!Array.isArray(parsed.mods)) parsed.mods = [];
+  const hit = parsed.mods.find((m) => m && m.name === id);
+  if (hit) {
+    if (hit.enabled === true) return { text: content, changed: false };
+    hit.enabled = true;
+    return { text: `${JSON.stringify(parsed, null, 2)}\n`, changed: true };
+  }
+  parsed.mods.push({ name: id, enabled: true });
+  return { text: `${JSON.stringify(parsed, null, 2)}\n`, changed: true };
+}
+
+/** Patch tModLoader enabled.json to include modId. */
+export function patchTmodEnabledJson(
+  content: string,
+  modId: string,
+): { text: string; changed: boolean } {
+  const id = assertSafeModId(modId);
+  let list: string[] = [];
+  try {
+    const parsed = JSON.parse(content || "[]");
+    if (Array.isArray(parsed)) list = parsed.map(String);
+    else if (parsed && Array.isArray(parsed.enabled)) list = parsed.enabled.map(String);
+  } catch {
+    list = [];
+  }
+  if (list.includes(id)) return { text: content, changed: false };
+  list.push(id);
+  return { text: `${JSON.stringify(list, null, 2)}\n`, changed: true };
 }
 
 export type ScaffoldResult = {
@@ -236,12 +289,62 @@ function skeletonFiles(
       ].join("\n"),
     };
   }
+  if (dialect === "rust-oxide") {
+    return {
+      [`${modId}.cs`]: [
+        `// PlayOn scaffold: ${displayName}`,
+        "// Oxide/Carbon C# plugin — deploy into oxide/plugins or carbon/plugins.",
+        `namespace Oxide.Plugins {{`,
+        `  [Info("PlayOn${modId}", "PlayOn", "0.1.0")]`,
+        `  public class PlayOn${modId} : RustPlugin {{`,
+        `    void Init() {{ Puts("[PlayOn] ${modId} loaded"); }}`,
+        `  }}`,
+        `}}`,
+        "",
+      ].join("\n"),
+    };
+  }
+  if (dialect === "garrys-mod") {
+    return {
+      "addon.json": `${JSON.stringify({ title: displayName, type: "ServerContent", tags: ["roleplay"], ignore: [] }, null, 2)}\n`,
+      "lua/autorun/server/sv_playon.lua": [
+        `-- PlayOn scaffold: ${displayName}`,
+        `print("[PlayOn] ${modId} loaded")`,
+        "",
+      ].join("\n"),
+    };
+  }
+  if (dialect === "terraria-tmod") {
+    return {
+      "description.txt": `${displayName}\n`,
+      "build.txt": [
+        `displayName = ${displayName}`,
+        `author = PlayOn`,
+        `version = 0.1.0`,
+        "",
+      ].join("\n"),
+      [`${modId}.cs`]: [
+        `// PlayOn scaffold: ${displayName} (tModLoader)`,
+        "// Build a .tmod externally; mods_deploy copies this folder into Mods/.",
+        "",
+      ].join("\n"),
+    };
+  }
+  if (dialect === "factorio") {
+    return {
+      "info.json": `${JSON.stringify({ name: modId, version: "0.1.0", title: displayName, author: "PlayOn", factorio_version: "2.0" }, null, 2)}\n`,
+      "control.lua": [
+        `-- PlayOn scaffold: ${displayName}`,
+        `script.on_init(function() log("[PlayOn] ${modId} loaded") end)`,
+        "",
+      ].join("\n"),
+    };
+  }
   return {
     "README.md": [
       `# ${displayName}`,
       "",
-      `Dialect \`${dialect}\` is not deployable in v1 (unsupported_dialect).`,
-      "Author files here; `mods_deploy` will refuse until a dest map lands.",
+      `Dialect \`${dialect}\` scaffold placeholder.`,
       "",
     ].join("\n"),
   };
@@ -396,6 +499,34 @@ export async function mutateDeployMod(opts: {
     } else {
       enablePatched = false;
     }
+  } else if (dest.enable === "factorio_mod_list") {
+    const listRel = "mods/mod-list.json";
+    assertAllowedDeployRel(listRel);
+    let current = "{\n  \"mods\": []\n}\n";
+    try {
+      current = (await opts.files.readText(listRel)).content;
+    } catch {
+      await opts.files.ensureDir("mods");
+    }
+    const patched = patchFactorioModList(current, modId);
+    if (patched.changed) {
+      await opts.files.writeText(listRel, patched.text);
+    }
+    enablePatched = true;
+  } else if (dest.enable === "tmod_enabled_json") {
+    const listRel = "Mods/enabled.json";
+    assertAllowedDeployRel(listRel);
+    let current = "[]\n";
+    try {
+      current = (await opts.files.readText(listRel)).content;
+    } catch {
+      await opts.files.ensureDir("Mods");
+    }
+    const patched = patchTmodEnabledJson(current, modId);
+    if (patched.changed) {
+      await opts.files.writeText(listRel, patched.text);
+    }
+    enablePatched = true;
   }
 
   return {
