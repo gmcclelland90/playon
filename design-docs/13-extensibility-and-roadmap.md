@@ -19,6 +19,8 @@
 
 **Shipping:** [Watchers](18-watchers.md) — schedule + event/hook automations that run tool scripts or Monitor agent turns.
 
+**Designing:** [AI modding](20-ai-modding.md) — host asks the agent to author a server-side mod, deploy it into the jail, read dialect errors, iterate (epic [#988](https://github.com/gmcclelland90/playon/issues/988)).
+
 ## Longer-Term / Exploratory
 
 - “Computer use” agents inside isolated VMs for stubborn proprietary launchers
