@@ -29,6 +29,7 @@ The system is designed primarily for LAN parties and rapid multiplayer setup, wi
 | 17 | [MCP & External Agents](17-mcp-and-external-agents.md) | Same tool registry via Venice, Ollama, or MCP; PATs for external agents |
 | 18 | [Watchers](18-watchers.md) | Scheduled / event-driven automations that wake Monitor tools or agent turns |
 | 19 | [Windows WSL2 Linux runtime](19-wsl-linux-runtime.md) | Optional WSL-backed `local-wsl` node so Windows Home can run linux-only skills |
+| 20 | [AI Modding](20-ai-modding.md) | Agent authors/deploys/iterates server-side mods (dialects, jailed `mods-src/`, proposed tools) |
 
 ## How to Use
 
