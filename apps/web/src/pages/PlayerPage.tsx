@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { parsePanelBody, type PanelBlockType } from "@playon/shared";
+import { clientNeedPlayerCopy, parsePanelBody, type PanelBlockType } from "@playon/shared";
 import { api, type PanelBlockRow } from "../api";
 import { groupPanelByServer, joinEndpoint } from "../panel-view";
 import { panelSocket } from "../panel-ws";
@@ -92,12 +92,32 @@ function setupHeroHint(rest: PanelBlockRow[]): string {
   const setup = rest.find((b) => b.type === "client_setup");
   if (setup) {
     const body = parsePanelBody("client_setup", setup.body);
+    const need =
+      body.clientNeed === "none" || body.clientNeed === "auto" || body.clientNeed === "manual"
+        ? body.clientNeed
+        : null;
+    if (need) {
+      const copy = clientNeedPlayerCopy(need);
+      const notes = typeof body.notes === "string" ? body.notes.trim() : "";
+      // Prefer host/experience notes when present; else dialect default.
+      return notes || copy.notes;
+    }
     const notes = typeof body.notes === "string" ? body.notes.trim() : "";
     if (notes) return notes;
     const instructions = typeof body.instructions === "string" ? body.instructions.trim() : "";
     if (instructions) return instructions;
   }
   return "Copy the address above and paste it in your game client";
+}
+
+function clientNeedChip(rest: PanelBlockRow[]): string | null {
+  const setup = rest.find((b) => b.type === "client_setup");
+  if (!setup) return null;
+  const body = parsePanelBody("client_setup", setup.body);
+  if (body.clientNeed === "none" || body.clientNeed === "auto" || body.clientNeed === "manual") {
+    return clientNeedPlayerCopy(body.clientNeed).label;
+  }
+  return null;
 }
 
 function sectionTitle(join: PanelBlockRow | undefined, themeGame?: string): string {
@@ -441,6 +461,11 @@ export function PlayerPage() {
               </p>
             ) : null}
             <p className="muted status-inline">{setupHeroHint(group.rest)}</p>
+                    {clientNeedChip(group.rest) ? (
+                      <span className="chip" title="Client install need">
+                        {clientNeedChip(group.rest)}
+                      </span>
+                    ) : null}
 
             {playerList.length ? (
               <div className="panel-block">
@@ -492,7 +517,8 @@ export function PlayerPage() {
                 if (block.type !== "client_setup") return true;
                 const body = parsePanelBody("client_setup", block.body);
                 const steps = Array.isArray(body.steps) ? body.steps : [];
-                return steps.length > 0;
+                if (steps.length > 0) return true;
+                return body.clientNeed === "auto" || body.clientNeed === "manual";
               })
               .map((block) => (
               <PanelBlockCard
@@ -637,9 +663,16 @@ function PanelBlockCard({
   const level = body.level === "warn" || body.level === "fun" || body.level === "info" ? body.level : undefined;
   const levelClass = level ? ` level-${level}` : "";
 
+  const needChip =
+    type === "client_setup" &&
+    (body.clientNeed === "none" || body.clientNeed === "auto" || body.clientNeed === "manual")
+      ? clientNeedPlayerCopy(body.clientNeed).label
+      : null;
+
   return (
     <article className={`panel-block block${levelClass}`}>
       <span className="chip">{chipLabel(block.type)}</span>
+      {needChip ? <span className="chip">{needChip}</span> : null}
       <h2>{block.title}</h2>
       {typeof body.summary === "string" ? <p>{body.summary}</p> : null}
       {typeof body.notes === "string" ? <p>{body.notes}</p> : null}

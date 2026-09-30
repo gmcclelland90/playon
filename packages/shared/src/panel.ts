@@ -1,3 +1,4 @@
+import { ModClientNeedSchema } from "./playon-mod.js";
 import { z } from "zod";
 
 export const PanelBlockTypeSchema = z.enum([
@@ -101,6 +102,8 @@ export const PanelClientSetupBodySchema = z.object({
   notes: z.string().optional(),
   instructions: z.string().optional(),
   steps: z.array(z.string()).optional(),
+  /** Experience / authored-mod client install burden for player UI. */
+  clientNeed: ModClientNeedSchema.optional(),
 });
 export type PanelClientSetupBody = z.infer<typeof PanelClientSetupBodySchema>;
 

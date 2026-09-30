@@ -1,6 +1,8 @@
 import {
   ExperienceManifestSchema,
   PLAYON_MOD_JSON,
+  clientNeedPlayerCopy,
+  experienceClientNeed,
   type ExperienceManifest,
 } from "@playon/shared";
 import {
@@ -40,7 +42,7 @@ function base64ToBytes(b64: string): Uint8Array {
  * experiences.* author/install tools (#995). Install never creates a sibling server.
  */
 export const experiencesToolModule: ToolModule = ({ plane }) => {
-  const { servers, snapshots } = plane;
+  const { servers, snapshots, playerPanel } = plane;
 
   return [
     serverTool({
@@ -251,13 +253,35 @@ export const experiencesToolModule: ToolModule = ({ plane }) => {
               });
             }
           });
+          const clientNeed = experienceClientNeed(parsed.manifest);
+          const copy = clientNeedPlayerCopy(clientNeed);
+          const summaryBits = [
+            parsed.manifest.panel?.summary?.trim(),
+            copy.notes,
+          ].filter(Boolean);
+          try {
+            await playerPanel.upsertFromAgent(serverId, [
+              {
+                type: "client_setup",
+                title: copy.label,
+                body: {
+                  clientNeed,
+                  notes: summaryBits.join("\n\n"),
+                  steps: copy.steps,
+                },
+              },
+            ]);
+          } catch {
+            /* panel upsert is best-effort; install already succeeded */
+          }
           return {
             serverId,
             snapshotId: snapshotId ?? null,
             experience: parsed.manifest.name,
             plan,
+            clientNeed,
             restartRequired: true as const,
-            note: "Does not create a sibling server; restart host when ready.",
+            note: "Does not create a sibling server; restart host when ready. Player panel client_setup updated for clientNeed.",
           };
         } catch (err) {
           return toolError(err);
