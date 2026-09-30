@@ -124,6 +124,8 @@ const TOOL_NOW: Record<string, (args?: Record<string, unknown>) => string> = {
   archive_extract: () => "Extracting an archive",
   fetch_url: () => "Fetching a file",
   mods_errors: () => "Reading mod errors",
+  mods_scaffold: () => "Creating a mod workspace",
+  mods_deploy: () => "Installing an authored mod",
   steamcmd_app_update: () => "Updating via Steam",
   panel_publish: () => "Updating the player panel",
   panel_list: () => "Checking the panel",
@@ -182,6 +184,7 @@ export function nowLineForTool(
   }
   if (toolName.startsWith("skill_")) return "Working on a skill";
   if (toolName.startsWith("fs_")) return "Working with files";
+  if (toolName.startsWith("mods_")) return "Working on a mod";
   if (toolName.startsWith("servers_")) return "Working on the server";
   if (toolName.startsWith("nodes_") || toolName.startsWith("node_")) {
     return updateCopyLine(args) ?? "Working on a node";
