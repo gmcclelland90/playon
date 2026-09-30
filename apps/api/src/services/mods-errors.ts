@@ -20,6 +20,8 @@ export type ModErrorKind =
   | "exception"
   | "plugin_enable"
   | "plugin_load"
+  | "compile"
+  | "dependency"
   | "other";
 
 export type ModError = {
@@ -69,6 +71,14 @@ export function dialectLogRelPaths(dialect: ModErrorDialect): string[] {
       return ["console.txt", "server-console.txt"];
     case "minecraft-paper":
       return ["logs/latest.log", "logs/latest.log.gz"];
+    case "rust-oxide":
+      return ["oxide/logs/oxide_log.txt", "carbon/logs/Carbon.log", "logs/oxide_log.txt"];
+    case "garrys-mod":
+      return ["garrysmod/console.log", "garrysmod/logs/console.log"];
+    case "terraria-tmod":
+      return ["tModLoader-Logs/server.log", "Logs/server.log", "server.log"];
+    case "factorio":
+      return ["factorio-current.log", "factorio-previous.log"];
     default:
       return [];
   }
@@ -215,6 +225,139 @@ function extractPaper(text: string): ModError[] {
   return out;
 }
 
+
+const OXIDE_FAIL_RE =
+  /Failed to (?:compile|initialize) (?:plugin )?(?<mod>\S+)/i;
+const OXIDE_CS_RE =
+  /(?:error CS\d+|Compilation failed).*?(?<mod>\S+\.cs)/i;
+const GMOD_LUA_RE =
+  /\[ERROR\](?<file>[^:]+):(?<line>\d+):\s*(?<message>.+)/i;
+const GMOD_ADDON_RE =
+  /Addon ['\"](?<mod>[^'\"]+)['\"] (?:failed|error)/i;
+const TMOD_LOAD_RE =
+  /An error occurred while loading(?: mod)?\s*(?<mod>\S+)?/i;
+const TMOD_EX_RE =
+  /tModLoader(?:\.|\s)+(?:Error|Exception).*/i;
+const FACTORIO_FAIL_RE =
+  /Failed to load mod(?:\s+['\"]?(?<mod>[^'\"]+)['\"]?)?/i;
+const FACTORIO_ERR_RE =
+  /Error while loading(?: mod)?\s*(?<mod>\S+)?/i;
+const FACTORIO_DEP_RE =
+  /Mods to be disabled:(?<rest>.*)/i;
+
+function extractOxide(text: string): ModError[] {
+  const lines = text.split(/\r?\n/);
+  const out: ModError[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const fail = line.match(OXIDE_FAIL_RE);
+    if (fail?.groups?.mod) {
+      pushUnique(out, {
+        kind: /compile/i.test(line) ? "compile" : "plugin_load",
+        mod: fail.groups.mod.replace(/[,.:]$/, ""),
+        message: line.trim(),
+        excerpt: excerptAround(lines, i, 3),
+      });
+      continue;
+    }
+    const cs = line.match(OXIDE_CS_RE);
+    if (cs?.groups?.mod) {
+      pushUnique(out, {
+        kind: "compile",
+        mod: cs.groups.mod,
+        file: cs.groups.mod,
+        message: line.trim(),
+        excerpt: excerptAround(lines, i, 2),
+      });
+    }
+  }
+  return out;
+}
+
+function extractGmod(text: string): ModError[] {
+  const lines = text.split(/\r?\n/);
+  const out: ModError[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const err = line.match(GMOD_LUA_RE);
+    if (err?.groups) {
+      const file = err.groups.file?.trim();
+      const lineNo = err.groups.line ? Number(err.groups.line) : undefined;
+      pushUnique(out, {
+        kind: "lua_stack",
+        file,
+        line: Number.isFinite(lineNo) ? lineNo : undefined,
+        message: (err.groups.message ?? line).trim(),
+        excerpt: excerptAround(lines, i, 2),
+      });
+      continue;
+    }
+    const addon = line.match(GMOD_ADDON_RE);
+    if (addon?.groups?.mod) {
+      pushUnique(out, {
+        kind: "plugin_load",
+        mod: addon.groups.mod,
+        message: line.trim(),
+        excerpt: excerptAround(lines, i, 2),
+      });
+    }
+  }
+  return out;
+}
+
+function extractTmod(text: string): ModError[] {
+  const lines = text.split(/\r?\n/);
+  const out: ModError[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const load = line.match(TMOD_LOAD_RE);
+    if (load) {
+      pushUnique(out, {
+        kind: "plugin_load",
+        mod: load.groups?.mod?.replace(/[,.:]$/, ""),
+        message: line.trim(),
+        excerpt: excerptAround(lines, i, 3),
+      });
+      continue;
+    }
+    if (TMOD_EX_RE.test(line)) {
+      pushUnique(out, {
+        kind: "exception",
+        message: line.trim(),
+        excerpt: excerptAround(lines, i, 3),
+      });
+    }
+  }
+  return out;
+}
+
+function extractFactorio(text: string): ModError[] {
+  const lines = text.split(/\r?\n/);
+  const out: ModError[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    const fail = line.match(FACTORIO_FAIL_RE) || line.match(FACTORIO_ERR_RE);
+    if (fail) {
+      pushUnique(out, {
+        kind: "plugin_load",
+        mod: fail.groups?.mod?.replace(/[,.:]$/, ""),
+        message: line.trim(),
+        excerpt: excerptAround(lines, i, 3),
+      });
+      continue;
+    }
+    const dep = line.match(FACTORIO_DEP_RE);
+    if (dep) {
+      pushUnique(out, {
+        kind: "dependency",
+        message: line.trim(),
+        excerpt: excerptAround(lines, i, 2),
+      });
+    }
+  }
+  return out;
+}
+
 /** Extract mod/plugin errors for a dialect from concatenated log text. */
 export function extractModErrors(
   dialect: ModErrorDialect,
@@ -226,8 +369,15 @@ export function extractModErrors(
       return extractPz(text);
     case "minecraft-paper":
       return extractPaper(text);
+    case "rust-oxide":
+      return extractOxide(text);
+    case "garrys-mod":
+      return extractGmod(text);
+    case "terraria-tmod":
+      return extractTmod(text);
+    case "factorio":
+      return extractFactorio(text);
     default:
-      // v1: no pattern sets yet for other dialects (#994).
       return [];
   }
 }
