@@ -31,6 +31,8 @@ const ALL_TOOLS = [
   "archive_extract",
   "fetch_url",
   "mods_errors",
+  "mods_scaffold",
+  "mods_deploy",
   "rcon_exec",
   "rcon_say",
   "steamcmd_app_update",
@@ -102,6 +104,8 @@ const SERVER_SCOPED_TOOLS = [
   "archive_extract",
   "fetch_url",
   "mods_errors",
+  "mods_scaffold",
+  "mods_deploy",
   "rcon_exec",
   "rcon_say",
   "steamcmd_app_update",
@@ -276,6 +280,12 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(surface.skill("mods_errors")).toBe("modder");
     expect(surface.activityVerb("mods_errors")).toBe("read");
     expect(surface.get("mods_errors")?.requiresConfirm).toBeFalsy();
+    expect(surface.skill("mods_scaffold")).toBe("modder");
+    expect(surface.confirmAction("mods_scaffold")).toBe("create a mod workspace in this server folder");
+    expect(surface.get("mods_scaffold")?.requiresConfirm).toBe(true);
+    expect(surface.skill("mods_deploy")).toBe("modder");
+    expect(surface.confirmAction("mods_deploy")).toBe("snapshot this server and install the authored mod");
+    expect(surface.get("mods_deploy")?.requiresConfirm).toBe(true);
     expect(surface.skill("wsl_status")).toBe("installer");
     expect(surface.activityVerb("wsl_status")).toBe("search");
     expect(surface.confirmAction("wsl_enable")).toBe(
