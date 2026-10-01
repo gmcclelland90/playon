@@ -4,10 +4,17 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+## [0.2.14] — 2026-10-01
+
 ### Added
 
-- **Experiences catalog share (#1000)** — Home browses `experiences.*` beside Games (Skills → Experiences), deep links `/skills?tab=experiences&name=…`, and installs from `https://playon.games/packages/experiences/index.json` onto an existing server (`experiences_search` / `experiences_install_url`). playon-games site listing deferred when repo write unavailable; 404 catalog → empty list. See `docs/experiences-catalog.md`.
+- **AI modding loop (epic #988)** — host can ask the in-app/MCP agent to author a server-side mod, deploy it into the jail, read dialect errors, and iterate. Design: `design-docs/20-ai-modding.md` (`#993` / `#989`).
+- **`mods_errors`** — read-only `modder` tool that extracts Project Zomboid Lua/`STACK TRACE` blocks and Paper plugin enable/load exceptions from runtime logs (+ well-known files). Path-jailed; on maintain catalog (`#1002` / `#990`).
+- **Jailed `mods-src/` + confirm-gated deploy** — `mods_scaffold` writes `mods-src/<modId>/` + dialect skeleton + Zod `playon-mod.json`; `mods_deploy` snapshots first (`pre-mod-deploy`) then copies into PZ `mods/` + `Mods=` or Paper `plugins/`. No restart; Workshop-cache / worlds / saves refused (`#1011` / `#991`).
+- **Agent guidance for the mod loop** — system prompt + `docs/ai-modding-loop.md` (linked from `AGENTS.md`) document author → deploy → restart → `mods_errors` (`#1012` / `#992`).
 
+- **Experiences catalog share (#1000)** — Home browses `experiences.*` beside Games (Skills → Experiences), deep links `/skills?tab=experiences&name=…`, and installs from `https://playon.games/packages/experiences/index.json` onto an existing server (`experiences_search` / `experiences_install_url`). playon-games site listing deferred when repo write unavailable; 404 catalog → empty list. See `docs/experiences-catalog.md`.
+- **Server rename** — rename a managed server from the board, dock, and dashboard (`#933` / `#932`).
 - **LLM model-compat Home canary** — `pnpm lab:llm-canary --home` snapshots Settings before the first `PUT`, persists `tmp/lab-llm-canary-restore.json`, GET-verifies restore (never sends `apiKey`), and deletes only `lab-llm-canary*` leftovers (404 = already gone). Cheap-model `partial_trace` and disconnect/empty `toolTrace` are degraded/flake, not filed as product bugs. Matrix + restore contract: `docs/llm-model-compat.md` (`#836`).
 
 ### Fixed
@@ -19,6 +26,14 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 - **Bannerlord Windows start** — `games.bannerlord` on a Windows node no longer reports start ok and then dies as `udp_process_not_running`. Home overwrites `start.bat` with a Session-0 `start /b /wait` that cds into `bin\\Win64_Shipping_Server`, forwards `PLAYON_BANNERLORD_AUTH_TOKEN` on the process env (not only unused native.args), and writes a TDM config that calls `start_game_and_mission`. Matrix skips as `host_supplied_token` when the token is unset (`#956`).
 - **Lab host-port leftovers** — Docker start no longer fails with an opaque 500 when a leftover `playon-*` container still holds a published port (CS2 / Factorio matrix both died on `0.0.0.0:27015/tcp`). The runtime exclusive-binds advertised host ports first and rewrites bind-in-use as `host_port_in_use` naming the container or process. Matrix + `lab:matrix-cleanup` reap unreaped `playon-*` leftovers (never `playon-ollama`, NZL-shaped names, or durable Home inventory). Factorio still publishes game `34197/udp` plus RCON `27015/tcp` when the skill declares them — not a Source game remap (`#941` / `#942`).
 - **Lab host-port 27015 regression** — After #943, matrix `games.cs2` / `games.factorio` still failed start with `host_port_in_use: 27015/tcp held by holder unknown` when a prior skill’s TIME_WAIT, dying `docker-proxy`, or libnetwork reservation lingered. Publish pre-check now matches Docker (`SO_REUSEADDR`), TIME_WAIT / hidden listen sockets are named, create/start retries unknown leftovers, stopped unpublished `playon-*` leftovers are reaped, and matrix waits after cleanup / before the next start. NZL / Home / `playon-ollama` stay protected (`#955`).
+
+### Notes
+
+- **Do not tag or publish yet** — this PR only bumps version + CHANGELOG. Glenn publishes: squash-merge, then tag `v0.2.14` so `release-home` runs.
+- Tip includes overnight epic #988 slices `#989`–`#992` (PRs `#993`, `#1002`, `#1011`, `#1012`) plus later main landings through `d4de16e` (experiences catalog `#1000` / `#1023`, Steam Workshop unit mock `#1018` / `#987`, fal/player-panel/workshop-prepare slices). Epic #988 stays open for later packaging / shareable-experience work.
+- **Venice #979 parked** — lab Venice credit / int 402 stay deferred; do not reopen in this cut.
+- Update Home via OTA after the tag lands, then Update nodes from **Settings → Nodes** when the agent stamp matters.
+- Other post-0.2.13 main landings (Windows node claim/watchdog, Docker jail teardown, Foundry/Stormworks/Enshrouded matrix fixes, etc.) ship on this tip even when not restated above.
 
 ## [0.2.13] — 2026-08-28
 
