@@ -390,7 +390,11 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                     const live = s.status === "running" || s.status === "starting";
                     const host = nodeName(s.nodeId);
                     return (
-                      <li key={s.id} className={`dash-row state-${st}${live ? "" : " is-idle"}`}>
+                      <li
+                        key={s.id}
+                        className={`dash-row state-${st}${live ? "" : " is-idle"}`}
+                        data-game={s.game ?? undefined}
+                      >
                         <div className="dash-row-id">
                           <span className={`dash-dot state-${st}`} aria-hidden />
                           <div className="dash-row-text">
