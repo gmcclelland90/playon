@@ -31,3 +31,7 @@ Other model ids are refused with `fal_model_not_allowed` so the agent can't run 
 ## Out of scope
 
 PlayOn-billed fal credits or spend caps. 3D models (no supported game loads fal's GLB output directly yet).
+
+## Live smoke
+
+`pnpm smoke:fal` makes a PZ-size icon and a 2-second sound with the key saved in Settings (or `FAL_KEY`), writes them to a temp folder, and prints `fal_smoke=ok`. It touches no game server and costs a few cents of fal credit. Pass kinds to choose: `pnpm smoke:fal icon texture sprite`.

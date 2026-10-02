@@ -32,6 +32,7 @@
     "sync:install-scripts": "node scripts/sync-install-scripts.mjs",
     "sync:llm-presets": "pnpm --filter @playon/shared build && node scripts/sync-llm-presets.mjs",
     "smoke:venice": "pnpm --filter @playon/api smoke:venice",
+    "smoke:fal": "pnpm --filter @playon/api smoke:fal",
     "smoke:paper-docker": "node scripts/paper-docker-smoke.mjs",
     "lab:join-path-canary": "node scripts/join-path-canary.mjs",
     "lab:matrix": "node scripts/lab-matrix.mjs",
