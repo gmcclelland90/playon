@@ -17,10 +17,16 @@ import {
   scaffoldModWorkspace,
 } from "../mods-workspace.js";
 import {
+  FAL_ALLOWED_MODELS,
+  FAL_ASSET_KINDS,
+  FAL_ASSET_SIZES,
   FalAssetsError,
   extensionForContentType,
-  generateFalImage,
+  generateFalAsset,
+  normalizeFalAssetKind,
+  placementHint,
   resolveFalApiKey,
+  resolveFalModel,
 } from "../fal-assets.js";
 import {
   ModsWorkshopError,
@@ -332,21 +338,35 @@ export const modsToolModule: ToolModule = ({ plane }) => {
       def: {
         name: "mods_assets_generate",
         description:
-          "Generate an image asset with the host's BYO fal.ai key and write it under mods-src/<modId>/assets/ (jailed). Disabled until Settings → Mod assets has a fal key (hosts pay fal directly). Confirm-gated. Never echoes the key.",
+          "Generate a game-ready asset with the host's BYO fal.ai key and write it under mods-src/<modId>/assets/ (jailed). kind: image (raw), sprite (transparent), icon (transparent, resized to the game's icon size), texture (square, resized to the game's texture size), sound (short clip). Models are allowlisted per kind. Returns placementHint for where the game loads it. Disabled until Settings → Mod assets has a fal key (hosts pay fal directly). Confirm-gated. Never echoes the key.",
         requiresConfirm: true,
         parameters: {
           type: "object",
           properties: {
             serverId: { type: "string" },
             modId: { type: "string" },
-            prompt: { type: "string", description: "Text-to-image prompt" },
+            prompt: { type: "string", description: "What to generate" },
+            kind: {
+              type: "string",
+              enum: [...FAL_ASSET_KINDS],
+              description: "Asset kind (default image)",
+            },
             fileName: {
               type: "string",
-              description: "Optional filename under assets/ (default asset-<ts>.png)",
+              description: "Optional filename under assets/ (default <kind>-<ts>.<ext>)",
             },
             model: {
               type: "string",
-              description: "Optional fal model id (default fal-ai/flux/schnell)",
+              description: `Optional fal model id from the allowlist (image kinds: ${FAL_ALLOWED_MODELS.image.join(", ")}; sound: ${FAL_ALLOWED_MODELS.sound.join(", ")})`,
+            },
+            size: {
+              type: "number",
+              enum: [...FAL_ASSET_SIZES],
+              description: "icon/texture only: override the game's default square size",
+            },
+            seconds: {
+              type: "number",
+              description: "sound only: clip length in seconds (1–47, default 5)",
             },
           },
           required: ["serverId", "modId", "prompt"],
@@ -363,9 +383,14 @@ export const modsToolModule: ToolModule = ({ plane }) => {
         const prompt = typeof args.prompt === "string" ? args.prompt.trim() : "";
         if (!prompt) return { error: "prompt_required" };
         let modId: string;
+        let kind: ReturnType<typeof normalizeFalAssetKind>;
+        let model: string;
         try {
           modId = assertSafeModId(String(args.modId));
+          kind = normalizeFalAssetKind(args.kind);
+          model = resolveFalModel(kind, typeof args.model === "string" ? args.model : undefined);
         } catch (err) {
+          if (err instanceof FalAssetsError) return { error: err.code, detail: err.message };
           return toolError(err);
         }
         const stored = await getSetting<FalSettings>(db, FAL_SETTINGS_KEY);
@@ -382,28 +407,43 @@ export const modsToolModule: ToolModule = ({ plane }) => {
           if (!listing) {
             return { error: "workspace_not_found", detail: `mods-src/${modId}` };
           }
-          const generated = await generateFalImage({
+          const marker = readSkillMarker(server.dataPath);
+          const dialect = resolveBoundDialect(undefined, marker?.skillName, server.game);
+          const generated = await generateFalAsset({
             apiKey,
+            kind,
             prompt,
-            model: typeof args.model === "string" ? args.model : undefined,
+            model,
+            dialect,
+            size: typeof args.size === "number" ? args.size : undefined,
+            seconds: typeof args.seconds === "number" ? args.seconds : undefined,
           });
-          const ext = extensionForContentType(generated.contentType);
+          const ext =
+            kind === "sound" && generated.contentType === "application/octet-stream"
+              ? "wav"
+              : extensionForContentType(generated.contentType);
           const rawName =
             typeof args.fileName === "string" && args.fileName.trim()
               ? args.fileName.trim()
-              : `asset-${Date.now()}.${ext}`;
+              : `${kind}-${Date.now()}.${ext}`;
           const base = rawName.replace(/\\/g, "/").split("/").pop() || rawName;
           if (!base || base.includes("..")) return { error: "unsafe_fileName" };
           const dest = jailRel(modsSrcRel(modId), "assets", base);
           await files.ensureDir(jailRel(modsSrcRel(modId), "assets"));
           await files.writeBytes(dest, Buffer.from(generated.bytes));
+          const hint = placementHint(kind, dialect, base);
           return {
             serverId,
             modId,
+            kind,
             path: dest,
             model: generated.model,
+            ...(generated.steps.length ? { steps: generated.steps } : {}),
             bytes: generated.bytes.byteLength,
             contentType: generated.contentType,
+            ...(generated.width ? { width: generated.width, height: generated.height } : {}),
+            dialect,
+            ...(hint ? { placementHint: hint } : {}),
             // Do not return fal CDN URL to avoid leaking into player panel accidentally.
           };
         } catch (err) {

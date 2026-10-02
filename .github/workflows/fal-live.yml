@@ -1,0 +1,68 @@
+name: fal-live
+
+# Live check of fal mod assets against real fal (#988). Uses the FAL_KEY
+# repo secret (Settings → Secrets and variables → Actions); skips cleanly
+# without it. Each run spends a few cents of fal credit. Touches no game server.
+
+on:
+  workflow_dispatch:
+    inputs:
+      kinds:
+        description: "Kinds to generate (space separated): image sprite icon texture sound"
+        default: "icon texture sound"
+  schedule:
+    - cron: "17 6 * * 1"
+  pull_request:
+    paths:
+      - apps/api/src/services/fal-assets.ts
+      - apps/api/src/services/png-lite.ts
+      - apps/api/src/fal-smoke.ts
+      - .github/workflows/fal-live.yml
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    # Fork PRs never get secrets; don't fail them for it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 20
+    env:
+      FAL_KEY: ${{ secrets.FAL_KEY }}
+      FAL_SMOKE_OUT: ${{ github.workspace }}/fal-smoke-out
+    steps:
+      - name: Check for FAL_KEY
+        id: key
+        shell: bash
+        run: |
+          if [ -z "$FAL_KEY" ]; then
+            echo "::notice::FAL_KEY secret not set; skipping live fal smoke."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.key.outputs.present == 'true'
+      - uses: pnpm/action-setup@v4
+        if: steps.key.outputs.present == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.key.outputs.present == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install
+        if: steps.key.outputs.present == 'true'
+      - name: Live fal smoke
+        if: steps.key.outputs.present == 'true'
+        shell: bash
+        env:
+          KINDS: ${{ github.event.inputs.kinds || 'icon texture sound' }}
+        # KINDS is word-split on purpose; the script rejects anything not a kind.
+        run: pnpm smoke:fal $KINDS | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.key.outputs.present == 'true'
+        with:
+          name: fal-smoke-output
+          path: fal-smoke-out/
+          if-no-files-found: ignore
