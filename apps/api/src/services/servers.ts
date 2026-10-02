@@ -121,6 +121,14 @@ import {
   type SkillMetadata,
 } from "@playon/shared";
 import { listLocalIniRelPaths } from "./instance-game-port-files.js";
+import {
+  iniRelForLaunchName,
+  parseManagedStartEnv,
+  startIsolationViolation,
+  worldIniNamesFromRels,
+  type StartLaunchIdentity,
+  type StartPeer,
+} from "./start-identity.js";
 import { dispatchNodeJob, nodeServerRelPath } from "./node-runtime.js";
 import { nodeJobService } from "./node-jobs.js";
 import { checkNodeLoopbackTcp } from "./node-loopback-tcp.js";
@@ -1241,12 +1249,59 @@ export class ServerService {
     }
     const rels = await this.instanceIniRelPaths(server);
     if (!rels.length) return null;
+    // A managed launch name picks its own <world>.ini; a different world's
+    // DefaultPort is not what the process binds (#1016).
+    const { launchName } = await this.launchIdentity(server);
+    if (launchName && worldIniNamesFromRels(rels).length) {
+      const own = iniRelForLaunchName(rels, launchName);
+      if (!own) return null;
+      const text = await this.readServerText(server, own);
+      return text ? instanceGamePortFromIniTexts([text]) : null;
+    }
     const texts: string[] = [];
     for (const rel of rels) {
       const text = await this.readServerText(server, rel);
       if (text) texts.push(text);
     }
     return instanceGamePortFromIniTexts(texts);
+  }
+
+  /** Launch identity from the managed `game/.playon-start.env`, if any. */
+  private async launchIdentity(server: ServerRecord): Promise<StartLaunchIdentity> {
+    const text = await this.readServerText(server, "game/.playon-start.env");
+    return text ? parseManagedStartEnv(text) : {};
+  }
+
+  /**
+   * Refuse a start that would reuse another server's world name, userdata
+   * home, or game port on the same node — the clone-knocks-NZL-offline
+   * failure (#1016). Throws `start_identity_*` / `start_port_collision`.
+   */
+  async assertStartIsolated(server: ServerRecord): Promise<void> {
+    const sameNode = (other: ServerRecord) =>
+      isLocalNodeId(server.nodeId)
+        ? isLocalNodeId(other.nodeId)
+        : other.nodeId === server.nodeId;
+    const rows = await this.db.select().from(servers);
+    const peers: StartPeer[] = [];
+    for (const other of rows.map(toRecord)) {
+      if (other.id === server.id || !sameNode(other)) continue;
+      peers.push({
+        id: other.id,
+        name: other.name,
+        status: other.status,
+        launchName: (await this.launchIdentity(other)).launchName,
+        gamePort: await this.advertisedGamePort(other).catch(() => null),
+      });
+    }
+    const violation = startIsolationViolation({
+      id: server.id,
+      identity: await this.launchIdentity(server),
+      worldIniNames: worldIniNamesFromRels(await this.instanceIniRelPaths(server)),
+      gamePort: await this.advertisedGamePort(server).catch(() => null),
+      peers,
+    });
+    if (violation) throw new Error(violation);
   }
 
   private async instanceIniRelPaths(server: ServerRecord): Promise<string[]> {
@@ -1787,6 +1842,7 @@ export class ServerService {
       if (remote) {
         await this.prepareRemoteStart(server, skillName);
       }
+      await this.assertStartIsolated(server);
 
       const handle = await this.openRuntime(server);
       const runtime = await handle.status().catch(() => null);
