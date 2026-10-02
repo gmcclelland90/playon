@@ -136,6 +136,23 @@ describe("fal-assets", () => {
     expect(fetchImpl.mock.calls.some(([, init]) => init?.method === "PUT")).toBe(true);
   });
 
+  it("runFalQueue surfaces fal's error detail on 403 without the key", async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(
+      json({ detail: "User is locked. Reason: Exhausted balance. key=secret-key" }, 403),
+    );
+    const err = await runFalQueue({
+      apiKey: "secret-key",
+      model: "fal-ai/flux/schnell",
+      input: {},
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      sleep: noSleep,
+    }).catch((e: unknown) => e as FalAssetsError);
+    expect(err).toBeInstanceOf(FalAssetsError);
+    expect((err as FalAssetsError).code).toBe("fal_http_error");
+    expect((err as FalAssetsError).message).toContain("fal_http_403: User is locked");
+    expect((err as FalAssetsError).message).not.toContain("secret-key");
+  });
+
   it("runFalQueue surfaces a failed request", async () => {
     const model = "fal-ai/flux/schnell";
     const fetchImpl = vi

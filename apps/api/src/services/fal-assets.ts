@@ -156,6 +156,30 @@ function assertQueueUrl(raw: unknown): string {
   return url.toString();
 }
 
+/**
+ * fal's own error text (e.g. locked account, bad key scope) so hosts can act on
+ * a 401/403. Only the short `detail` string, clipped, with the key redacted.
+ */
+async function safeFalDetail(res: Response, apiKey: string): Promise<string | null> {
+  try {
+    const body = (await res.json()) as { detail?: unknown };
+    let detail =
+      typeof body.detail === "string"
+        ? body.detail
+        : Array.isArray(body.detail)
+          ? body.detail
+              .map((d) => (d && typeof d === "object" ? (d as { msg?: unknown }).msg : d))
+              .filter((m): m is string => typeof m === "string")
+              .join("; ")
+          : "";
+    if (!detail) return null;
+    if (apiKey) detail = detail.split(apiKey).join("[redacted]");
+    return detail.replace(/\s+/g, " ").trim().slice(0, 200);
+  } catch {
+    return null;
+  }
+}
+
 /** Submit to fal's queue, poll until COMPLETED, return the model's result JSON. */
 export async function runFalQueue(opts: {
   apiKey: string;
@@ -177,8 +201,10 @@ export async function runFalQueue(opts: {
     headers: { ...auth, "content-type": "application/json" },
     body: JSON.stringify(opts.input),
   });
-  // Never include response bodies in errors in case they echo auth.
-  if (!submit.ok) throw new FalAssetsError(`fal_http_${submit.status}`, "fal_http_error");
+  if (!submit.ok) {
+    const detail = await safeFalDetail(submit, opts.apiKey);
+    throw new FalAssetsError(`fal_http_${submit.status}${detail ? `: ${detail}` : ""}`, "fal_http_error");
+  }
   const queued = (await submit.json()) as Record<string, unknown>;
   const statusUrl = assertQueueUrl(queued.status_url);
   const responseUrl = assertQueueUrl(queued.response_url);
