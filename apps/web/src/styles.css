@@ -2758,8 +2758,13 @@ a.btn {
   max-width: 24rem;
 }
 
+/* Detector: 0.62rem meter labels render under the 11px floor; use the instrument step here. */
+.dash-row-load .usage-meter-label {
+  font-size: 0.75rem;
+}
+
 .dash-row-load .usage-meter-row {
-  grid-template-columns: 1.7rem minmax(2.5rem, 1fr) auto;
+  grid-template-columns: 2.1rem minmax(2.5rem, 1fr) auto;
   gap: var(--space-1);
 }
 
