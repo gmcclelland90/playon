@@ -4,6 +4,10 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+### Changed
+
+- **Game-ready fal assets (epic #988)** — `mods_assets_generate` now takes a `kind`: `image`, `sprite` (background removed), `icon` (transparent, resized to the game's icon size, e.g. PZ 32px / Minecraft 16px), `texture` (square, resized to the game's texture size) or `sound` (short clip). Calls go through fal's queue API with a 5-minute cap and cancel on timeout, so slower models don't hang the request. Models are allowlisted per kind (no free-form model ids on the host's key). Results include a `placementHint` for where the game loads the file. Resizing is pure JS (no native image deps). The key is only ever sent to `queue.fal.run`.
+
 ## [0.2.14] — 2026-10-01
 
 ### Added
