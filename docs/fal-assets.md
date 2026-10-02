@@ -34,4 +34,8 @@ PlayOn-billed fal credits or spend caps. 3D models (no supported game loads fal'
 
 ## Live smoke
 
-`pnpm smoke:fal` makes a PZ-size icon and a 2-second sound with the key saved in Settings (or `FAL_KEY`), writes them to a temp folder, and prints `fal_smoke=ok`. It touches no game server and costs a few cents of fal credit. Pass kinds to choose: `pnpm smoke:fal icon texture sprite`.
+`pnpm smoke:fal` makes a PZ-size icon and a 2-second sound with the key saved in Settings (or `FAL_KEY`), writes them to a temp folder, and prints `fal_smoke=ok`. It touches no game server and costs a few cents of fal credit. Pass kinds to choose: `pnpm smoke:fal icon texture sprite`. It fails unless the output is game-loadable: a 32×32 PNG with transparency for an icon, 256×256 for a texture, real audio bytes for a sound.
+
+### In CI
+
+`.github/workflows/fal-live.yml` runs the same smoke against real fal weekly, on PRs that touch the fal code, and on demand (Actions → fal-live → Run workflow, with a choice of kinds). It needs a `FAL_KEY` repo secret (Settings → Secrets and variables → Actions) and skips cleanly without one. Generated files are uploaded as the `fal-smoke-output` artifact so you can look at them.
