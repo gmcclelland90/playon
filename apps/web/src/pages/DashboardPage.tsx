@@ -58,6 +58,8 @@ function relativeTime(iso: string): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+type AttentionItem = { key: string; tone: "warn" | "danger"; text: string; serverId?: string };
+
 export function DashboardPage({ user }: { user: PublicUser }) {
   const qc = useQueryClient();
   const canRestore = can(user.role, "snapshots.restore");
@@ -166,33 +168,97 @@ export function DashboardPage({ user }: { user: PublicUser }) {
     },
   });
 
+  const nodeList = nodes.data?.nodes ?? [];
+  const nodeName = (id?: string | null) =>
+    id ? nodeList.find((n) => n.id === id)?.name ?? null : null;
+  const serversOnNode = (id: string) => serverList.filter((s) => s.nodeId === id).length;
+  const hostState = (n: (typeof nodeList)[number]) =>
+    n.agentVersion === "pending" && n.status !== "online" ? "offline" : n.status;
+  const hostsOnline = nodeList.filter((n) => n.status === "online").length;
+
+  // Host load alerts already get one Home line from ResourceAlertBanner; only
+  // surface what that banner doesn't: broken servers and hosts that went dark.
+  const attention: AttentionItem[] = [
+    ...serverList.flatMap((s): AttentionItem[] => {
+      const st = displayServerStatus(s.status, s.ready);
+      if (st === "error" || st === "failed") {
+        return [{ key: `s-${s.id}`, tone: "danger", text: `${shortDisplayName(s.name, 28)} failed`, serverId: s.id }];
+      }
+      if (st === "degraded") {
+        return [{ key: `s-${s.id}`, tone: "warn", text: `${shortDisplayName(s.name, 28)} is up but not joinable`, serverId: s.id }];
+      }
+      return [];
+    }),
+    ...nodeList.flatMap((n): AttentionItem[] => {
+      if (n.agentVersion === "pending") return [];
+      if (n.status === "offline") {
+        return [{ key: `n-${n.id}`, tone: "danger", text: `${n.name} is offline` }];
+      }
+      if (n.status === "stale") {
+        return [{ key: `n-${n.id}`, tone: "warn", text: `${n.name} stopped reporting` }];
+      }
+      return [];
+    }),
+  ];
+
   return (
     <div className="pane dashboard dashboard-page">
-      <div className="stack">
-        <header className="page-header">
-          <h2>Dashboard</h2>
-          <p className="lede">Tonight&apos;s host view — what&apos;s live, what to restore, what failed.</p>
+      <div className="stack dash-stack">
+        <header className="dash-head">
+          <div className="page-header">
+            <h2>Dashboard</h2>
+            <p className="lede">Tonight&apos;s host view — what&apos;s live, what to restore, what failed.</p>
+          </div>
+          <p className="dash-pulse" aria-live="polite">
+            {servers.isLoading ? (
+              <span className="muted">Loading servers…</span>
+            ) : servers.isError ? (
+              <span className="error">Couldn’t load servers.</span>
+            ) : (
+              <>
+                <span className={`dash-pulse-live${running ? " is-live" : ""}`}>
+                  <span className="dash-dot" aria-hidden />
+                  <strong>{running}</strong> live
+                </span>
+                <span>
+                  <strong>{stopped}</strong> stopped
+                </span>
+                {errored ? (
+                  <span className="dash-pulse-bad">
+                    <strong>{errored}</strong> failed
+                  </span>
+                ) : null}
+                <span>
+                  <strong>
+                    {hostsOnline}/{nodeList.length}
+                  </strong>{" "}
+                  hosts online
+                </span>
+              </>
+            )}
+          </p>
         </header>
 
-        <p className="dash-summary" aria-live="polite">
-          {servers.isLoading ? (
-            <span>Loading servers…</span>
-          ) : servers.isError ? (
-            <span className="error">Couldn’t load servers.</span>
-          ) : (
-            <>
-              <strong>{running}</strong> running · <strong>{stopped}</strong> stopped
-              {errored ? (
-                <>
-                  {" "}
-                  · <strong>{errored}</strong> failed
-                </>
-              ) : null}
-              {" · "}
-              <strong>{nodes.data?.nodes?.length ?? 0}</strong> nodes
-            </>
-          )}
-        </p>
+        {attention.length ? (
+          <ul className="dash-attention" aria-label="Needs attention">
+            {attention.map((a) => (
+              <li key={a.key} className={`tone-${a.tone}`}>
+                <span className="dash-dot" aria-hidden />
+                <span>{a.text}</span>
+                {a.serverId && canMap ? (
+                  <Link
+                    className="linkish"
+                    to="/"
+                    onClick={() => openServerOnMap(a.serverId!)}
+                  >
+                    On map
+                  </Link>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
 
         {opsNotice ? (
           <p className="ok dash-ops-notice" role="status" aria-live="polite">
@@ -296,255 +362,280 @@ export function DashboardPage({ user }: { user: PublicUser }) {
           </div>
         ) : null}
 
-        <div className="dash-grid">
-          <section className="panel stack dash-primary">
-            <div className="dash-section-head">
-              <h3>Servers</h3>
-              {canMap ? (
-                <Link className="linkish" to="/" title="Conversation-first map">
-                  Map
-                </Link>
+        <div className="dash-layout">
+          <div className="dash-main">
+            <section className="panel dash-section" aria-labelledby="dash-servers-h">
+              <div className="dash-section-head">
+                <h3 id="dash-servers-h">
+                  Servers {serverList.length ? <span className="dash-count">{serverList.length}</span> : null}
+                </h3>
+                {canMap ? (
+                  <Link className="linkish" to="/" title="Conversation-first map">
+                    Open map
+                  </Link>
+                ) : null}
+              </div>
+              {servers.isLoading ? (
+                <div className="skeleton" aria-hidden>
+                  <div className="skeleton-row" />
+                </div>
+              ) : servers.isError ? (
+                <p className="error" role="alert">
+                  {(servers.error as Error).message || "Couldn’t load servers."}
+                </p>
+              ) : serverList.length ? (
+                <ul className="dash-rows">
+                  {serverList.map((s) => {
+                    const st = displayServerStatus(s.status, s.ready);
+                    const live = s.status === "running" || s.status === "starting";
+                    const host = nodeName(s.nodeId);
+                    return (
+                      <li key={s.id} className={`dash-row state-${st}${live ? "" : " is-idle"}`}>
+                        <div className="dash-row-id">
+                          <span className={`dash-dot state-${st}`} aria-hidden />
+                          <div className="dash-row-text">
+                            {canRename ? (
+                              <ServerNameControl
+                                name={s.name}
+                                as="strong"
+                                pending={renameServer.isPending}
+                                error={
+                                  renameServer.isError && renameServer.variables?.id === s.id
+                                    ? (renameServer.error as Error).message
+                                    : null
+                                }
+                                onSave={(name) => renameServer.mutateAsync({ id: s.id, name })}
+                              />
+                            ) : (
+                              <strong title={s.name}>{shortDisplayName(s.name, 28)}</strong>
+                            )}
+                            <p className="dash-row-meta">
+                              <span className={`dash-state state-${st}`}>{statusLabel(st)}</span>
+                              <span title={s.runtimeMode ? `${s.game ?? ""} · ${s.runtimeMode}` : s.game ?? undefined}>
+                                {s.game ?? "—"}
+                              </span>
+                              {host ? <span>{host}</span> : null}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="dash-row-load">
+                          {live ? (
+                            <ServerUsageMeters
+                              compact
+                              cpuPercent={s.cpuPercent}
+                              memUsedBytes={s.memUsedBytes}
+                              history={s.usageHistory}
+                            />
+                          ) : null}
+                        </div>
+                        <div className="btn-row dash-row-actions">
+                          {live ? (
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-compact"
+                              disabled={stopServer.isPending}
+                              onClick={() =>
+                                setPendingStop({
+                                  id: s.id,
+                                  label: shortDisplayName(s.name, 28),
+                                })
+                              }
+                            >
+                              Stop
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              className="btn btn-primary btn-compact"
+                              disabled={startServer.isPending}
+                              onClick={() => startServer.mutate(s.id)}
+                            >
+                              Start
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-compact dash-secondary-action"
+                            disabled={createSnap.isPending}
+                            onClick={() => createSnap.mutate(s.id)}
+                            title="Save a restore point"
+                          >
+                            Snapshot
+                          </button>
+                          {backupTarget.data?.target ? (
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-compact dash-secondary-action"
+                              disabled={offnodeBackup.isPending}
+                              onClick={() => offnodeBackup.mutate(s.id)}
+                            >
+                              USB/NAS
+                            </button>
+                          ) : null}
+                          {canMap ? (
+                            <Link
+                              className="btn btn-ghost btn-compact"
+                              to="/"
+                              onClick={() => openServerOnMap(s.id)}
+                              title={`Open ${s.name} on the map`}
+                            >
+                              On map
+                            </Link>
+                          ) : null}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <div className="empty-hint">
+                  <strong>No servers</strong>
+                  <p className="muted status-inline">
+                    {canMap ? (
+                      <>
+                        Describe a server on the <Link to="/">Map</Link> — agents will install it.
+                      </>
+                    ) : (
+                      <>Ask an Owner to stand up a server on the Map.</>
+                    )}
+                  </p>
+                </div>
+              )}
+              {startServer.isError ? (
+                <p className="error" role="alert">
+                  {runtimeErrorHint((startServer.error as Error).message) ??
+                    (startServer.error as Error).message}
+                </p>
               ) : null}
-            </div>
-            {servers.isLoading ? (
-              <div className="skeleton" aria-hidden>
-                <div className="skeleton-row" />
+              {stopServer.isError ? (
+                <p className="error" role="alert">
+                  {runtimeErrorHint((stopServer.error as Error).message) ??
+                    (stopServer.error as Error).message}
+                </p>
+              ) : null}
+              {createSnap.isError ? (
+                <p className="error">{(createSnap.error as Error).message}</p>
+              ) : null}
+              {offnodeBackup.isError ? (
+                <p className="error">{(offnodeBackup.error as Error).message}</p>
+              ) : null}
+            </section>
+
+            <section className="panel dash-section" aria-labelledby="dash-hosts-h">
+              <div className="dash-section-head">
+                <h3 id="dash-hosts-h">
+                  Hosts {nodeList.length ? <span className="dash-count">{nodeList.length}</span> : null}
+                </h3>
               </div>
-            ) : servers.isError ? (
-              <p className="error" role="alert">
-                {(servers.error as Error).message || "Couldn’t load servers."}
-              </p>
-            ) : serverList.length ? (
-              <ul className="list compact-list">
-                {serverList.map((s) => (
-                  <li key={s.id}>
-                    <div>
-                      {canRename ? (
-                        <ServerNameControl
-                          name={s.name}
-                          as="strong"
-                          pending={renameServer.isPending}
-                          error={
-                            renameServer.isError && renameServer.variables?.id === s.id
-                              ? (renameServer.error as Error).message
-                              : null
-                          }
-                          onSave={(name) => renameServer.mutateAsync({ id: s.id, name })}
-                        />
-                      ) : (
-                        <strong title={s.name}>{shortDisplayName(s.name, 28)}</strong>
-                      )}
-                      <div className="muted canvas-status-row">
-                        <span className={`server-status-pill status-${displayServerStatus(s.status, s.ready)}`}>
-                          {statusLabel(displayServerStatus(s.status, s.ready))}
-                        </span>
-                        <span title={s.runtimeMode ? `${s.game ?? ""} · ${s.runtimeMode}` : s.game ?? undefined}>
-                          {s.game ?? "—"}
-                        </span>
-                      </div>
-                      <ServerUsageMeters
-                        compact
-                        cpuPercent={s.cpuPercent}
-                        memUsedBytes={s.memUsedBytes}
-                        history={s.usageHistory}
-                      />
-                    </div>
-                    <div className="btn-row">
-                      {canMap ? (
-                        <Link
-                          className="btn btn-ghost btn-compact"
-                          to="/"
-                          onClick={() => openServerOnMap(s.id)}
-                          title={`Open ${s.name} on the map`}
-                        >
-                          On map
-                        </Link>
-                      ) : null}
-                      {s.status === "running" || s.status === "starting" ? (
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-compact"
-                          disabled={stopServer.isPending}
-                          onClick={() =>
-                            setPendingStop({
-                              id: s.id,
-                              label: shortDisplayName(s.name, 28),
-                            })
-                          }
-                        >
-                          Stop
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="btn btn-primary btn-compact"
-                          disabled={startServer.isPending}
-                          onClick={() => startServer.mutate(s.id)}
-                        >
-                          Start
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-compact dash-secondary-action"
-                        disabled={createSnap.isPending}
-                        onClick={() => createSnap.mutate(s.id)}
-                        title="Save a restore point"
+              {nodes.isLoading ? (
+                <div className="skeleton" aria-hidden>
+                  <div className="skeleton-row" />
+                </div>
+              ) : nodes.isError ? (
+                <p className="error" role="alert">
+                  {(nodes.error as Error).message || "Couldn’t load nodes."}
+                </p>
+              ) : nodeList.length ? (
+                <ul className="dash-rows">
+                  {nodeList.map((n) => {
+                    const presenceHint = nodePresenceHint({
+                      id: n.id,
+                      status: n.status,
+                      agentVersion: n.agentVersion,
+                    });
+                    const caps = [
+                      n.os,
+                      n.docker ? "Docker" : null,
+                      n.native !== false ? "native" : null,
+                      n.steamcmd ? "SteamCMD" : null,
+                      n.tunnelStatus && n.tunnelStatus !== "none"
+                        ? `tunnel ${n.tunnelStatus}`
+                        : null,
+                      n.agentVersion ? `v${n.agentVersion}` : null,
+                      n.id !== "local" &&
+                      updates.data?.nodes?.some((u) => u.nodeId === n.id && u.updateAvailable)
+                        ? "update available"
+                        : null,
+                    ].filter(Boolean);
+                    const state = hostState(n);
+                    const tag = (() => {
+                      const raw = n.badge ?? n.placement ?? n.kind ?? "";
+                      if (!raw) return null;
+                      const lower = raw.toLowerCase();
+                      if (lower === "local") return "Local";
+                      if (lower.includes(n.name.toLowerCase())) return null;
+                      return raw;
+                    })();
+                    const hosted = serversOnNode(n.id);
+                    const hasUsage =
+                      n.cpuPercent != null || n.memUsedBytes != null || n.freeDiskBytes != null;
+                    return (
+                      <li
+                        key={n.id}
+                        className={`dash-row host-row state-${state}${state === "online" ? "" : " is-idle"}`}
                       >
-                        Snapshot
-                      </button>
-                      {backupTarget.data?.target ? (
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-compact dash-secondary-action"
-                          disabled={offnodeBackup.isPending}
-                          onClick={() => offnodeBackup.mutate(s.id)}
-                        >
-                          USB/NAS
-                        </button>
-                      ) : null}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <div className="empty-hint">
-                <strong>No servers</strong>
-                <p className="muted status-inline">
-                  {canMap ? (
-                    <>
-                      Describe a server on the <Link to="/">Map</Link> — agents will install it.
-                    </>
-                  ) : (
-                    <>Ask an Owner to stand up a server on the Map.</>
-                  )}
-                </p>
-              </div>
-            )}
-            {startServer.isError ? (
-              <p className="error" role="alert">
-                {runtimeErrorHint((startServer.error as Error).message) ??
-                  (startServer.error as Error).message}
-              </p>
-            ) : null}
-            {stopServer.isError ? (
-              <p className="error" role="alert">
-                {runtimeErrorHint((stopServer.error as Error).message) ??
-                  (stopServer.error as Error).message}
-              </p>
-            ) : null}
-            {createSnap.isError ? (
-              <p className="error">{(createSnap.error as Error).message}</p>
-            ) : null}
-            {offnodeBackup.isError ? (
-              <p className="error">{(offnodeBackup.error as Error).message}</p>
-            ) : null}
-          </section>
+                        <div className="dash-row-id">
+                          <span className={`dash-dot state-${state}`} aria-hidden />
+                          <div className="dash-row-text">
+                            <strong>
+                              {n.name}
+                              {tag ? <span className="dash-tag">{tag}</span> : null}
+                            </strong>
+                            <p className="dash-row-meta">
+                              <span className={`dash-state state-${state}`}>
+                                {nodePresenceLabel({
+                                  status: n.status,
+                                  agentVersion: n.agentVersion,
+                                })}
+                              </span>
+                              <span>
+                                {hosted} {hosted === 1 ? "server" : "servers"}
+                              </span>
+                              <span>Seen {relativeTime(String(n.lastSeenAt))}</span>
+                            </p>
+                            {presenceHint ? (
+                              <p className="muted status-inline dash-row-hint">{presenceHint}</p>
+                            ) : null}
+                            {caps.length ? (
+                              <details className="dash-node-caps">
+                                <summary className="linkish">Host details</summary>
+                                <p className="muted small status-inline">{caps.join(" · ")}</p>
+                              </details>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="dash-row-load">
+                          {hasUsage ? (
+                            <HostUsageMeters
+                              compact
+                              cpuPercent={n.cpuPercent}
+                              memUsedBytes={n.memUsedBytes}
+                              memTotalBytes={n.memTotalBytes}
+                              freeDiskBytes={n.freeDiskBytes}
+                              history={n.usageHistory}
+                            />
+                          ) : (
+                            <span className="muted small">No usage yet</span>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <div className="empty-hint">
+                  <strong>Local host only</strong>
+                  <p className="muted status-inline">
+                    Add a LAN or cloud machine from Settings → Nodes, or wait for the local node to
+                    register.
+                  </p>
+                </div>
+              )}
+            </section>
+          </div>
 
-          <div className="dash-secondary">
-          <section className="panel stack">
-            <div className="dash-section-head">
-              <h3>Nodes</h3>
-            </div>
-            {nodes.isLoading ? (
-              <div className="skeleton" aria-hidden>
-                <div className="skeleton-row" />
-              </div>
-            ) : nodes.isError ? (
-              <p className="error" role="alert">
-                {(nodes.error as Error).message || "Couldn’t load nodes."}
-              </p>
-            ) : nodes.data?.nodes?.length ? (
-              <ul className="list compact-list">
-                {nodes.data.nodes.map((n) => {
-                  const presenceHint = nodePresenceHint({
-                    id: n.id,
-                    status: n.status,
-                    agentVersion: n.agentVersion,
-                  });
-                  const caps = [
-                    n.os,
-                    n.docker ? "Docker" : null,
-                    n.native !== false ? "native" : null,
-                    n.steamcmd ? "SteamCMD" : null,
-                    n.tunnelStatus && n.tunnelStatus !== "none"
-                      ? `tunnel ${n.tunnelStatus}`
-                      : null,
-                    n.agentVersion ? `v${n.agentVersion}` : null,
-                    n.id !== "local" &&
-                    updates.data?.nodes?.some((u) => u.nodeId === n.id && u.updateAvailable)
-                      ? "update available"
-                      : null,
-                  ].filter(Boolean);
-                  return (
-                  <li key={n.id}>
-                    <div>
-                      <strong>{n.name}</strong>{" "}
-                      {(() => {
-                        const tag = n.badge ?? n.placement ?? n.kind ?? "";
-                        if (!tag) return null;
-                        const lower = tag.toLowerCase();
-                        if (lower === "local" || lower.includes(n.name.toLowerCase())) {
-                          return lower === "local" ? (
-                            <span className="muted">Local</span>
-                          ) : null;
-                        }
-                        return <span className="muted">{tag}</span>;
-                      })()}
-                      <div className="muted canvas-status-row">
-                        <span
-                          className={`node-status node-${
-                            n.agentVersion === "pending" && n.status !== "online"
-                              ? "offline"
-                              : n.status
-                          }`}
-                        >
-                          {nodePresenceLabel({
-                            status: n.status,
-                            agentVersion: n.agentVersion,
-                          })}
-                        </span>
-                        {n.cpuPercent == null &&
-                        n.memUsedBytes == null &&
-                        n.freeDiskBytes == null ? (
-                          <span>No usage yet</span>
-                        ) : null}
-                        <span>Seen {relativeTime(String(n.lastSeenAt))}</span>
-                      </div>
-                      <HostUsageMeters
-                        compact
-                        cpuPercent={n.cpuPercent}
-                        memUsedBytes={n.memUsedBytes}
-                        memTotalBytes={n.memTotalBytes}
-                        freeDiskBytes={n.freeDiskBytes}
-                        history={n.usageHistory}
-                      />
-                      {presenceHint ? (
-                        <p className="muted status-inline">{presenceHint}</p>
-                      ) : null}
-                      {caps.length ? (
-                        <details className="dash-node-caps">
-                          <summary className="muted small">Host details</summary>
-                          <p className="muted small status-inline">{caps.join(" · ")}</p>
-                        </details>
-                      ) : null}
-                    </div>
-                  </li>
-                  );
-                })}
-              </ul>
-            ) : (
-              <div className="empty-hint">
-                <strong>Local host only</strong>
-                <p className="muted status-inline">
-                  Add a LAN or cloud machine from Settings → Nodes, or wait for the local node to
-                  register.
-                </p>
-              </div>
-            )}
-          </section>
-
-          <section className="panel stack">
+          <aside className="dash-rail" aria-label="Backups and activity">
+          <section className="panel stack dash-section">
             <div className="dash-section-head">
               <h3>Backups</h3>
             </div>
@@ -641,92 +732,89 @@ export function DashboardPage({ user }: { user: PublicUser }) {
               <p className="error">{(restoreOffnode.error as Error).message}</p>
             ) : null}
           </section>
-
-          <div className="dash-quiet">
-            <section className="panel stack">
-              <div className="dash-section-head">
-                <h3>Recent activity</h3>
-                {can(user.role, "watchers.read") ? (
-                  <Link
-                    className="linkish"
-                    to="/settings#watchers"
-                    title="Scheduled health checks and automations"
-                  >
-                    Scheduled checks
-                  </Link>
-                ) : null}
+          <section className="panel stack dash-section dash-quiet">
+            <div className="dash-section-head">
+              <h3>Recent activity</h3>
+              {can(user.role, "watchers.read") ? (
+                <Link
+                  className="linkish"
+                  to="/settings#watchers"
+                  title="Scheduled health checks and automations"
+                >
+                  Scheduled checks
+                </Link>
+              ) : null}
+            </div>
+            {activity.isLoading ? (
+              <div className="skeleton" aria-hidden>
+                <div className="skeleton-row" />
+                <div className="skeleton-row" />
               </div>
-              {activity.isLoading ? (
-                <div className="skeleton" aria-hidden>
-                  <div className="skeleton-row" />
-                  <div className="skeleton-row" />
-                </div>
-              ) : activity.data?.activity?.length ? (
-                (() => {
-                  const now = Date.now();
-                  const recentCutoff = now - 24 * 60 * 60_000;
-                  const failCutoff = now - 12 * 60 * 60_000;
-                  const shown = activity.data.activity
-                    .filter((item) => {
-                      const t = new Date(item.createdAt).getTime();
-                      const failed = item.status === "failed" || item.status === "error";
-                      if (failed) return t >= failCutoff;
-                      return t >= recentCutoff;
-                    })
-                    .slice(0, 8);
-                  if (!shown.length) {
-                    return (
-                      <div className="empty-hint">
-                        <strong>Quiet night</strong>
-                        <p className="muted status-inline">
-                          No agent moves in the last day. Map chat will show up here.
-                        </p>
-                      </div>
-                    );
-                  }
+            ) : activity.data?.activity?.length ? (
+              (() => {
+                const now = Date.now();
+                const recentCutoff = now - 24 * 60 * 60_000;
+                const failCutoff = now - 12 * 60 * 60_000;
+                const shown = activity.data.activity
+                  .filter((item) => {
+                    const t = new Date(item.createdAt).getTime();
+                    const failed = item.status === "failed" || item.status === "error";
+                    if (failed) return t >= failCutoff;
+                    return t >= recentCutoff;
+                  })
+                  .slice(0, 8);
+                if (!shown.length) {
                   return (
-                    <ul className="activity-feed">
-                      {shown.map((item) => {
-                        const failed = item.status === "failed" || item.status === "error";
-                        const sid = activityServerId(item.args);
-                        const label = sid ? serverName(sid) : null;
-                        return (
-                          <li key={item.id}>
-                            <span className="activity-tool">{toolLabel(item.toolName)}</span>
-                            {label ? <span className="muted">{label}</span> : null}
-                            <span className={`activity-status status-${item.status}`}>
-                              {statusLabel(item.status)}
-                            </span>
-                            <span className="muted">{relativeTime(item.createdAt)}</span>
-                            {failed && canMap ? (
-                              <Link
-                                className="linkish"
-                                to="/"
-                                title="Open map to investigate"
-                                onClick={() => {
-                                  if (sid) openServerOnMap(sid);
-                                }}
-                              >
-                                On map
-                              </Link>
-                            ) : null}
-                          </li>
-                        );
-                      })}
-                    </ul>
+                    <div className="empty-hint">
+                      <strong>Quiet night</strong>
+                      <p className="muted status-inline">
+                        No agent moves in the last day. Map chat will show up here.
+                      </p>
+                    </div>
                   );
-                })()
-              ) : (
-                <div className="empty-hint">
-                  <strong>Quiet so far</strong>
-                  <p className="muted status-inline">
-                    Recent agent tool calls from Map chat show up here.
-                  </p>
-                </div>
-              )}
-            </section>
-          </div>
-          </div>
+                }
+                return (
+                  <ul className="activity-feed">
+                    {shown.map((item) => {
+                      const failed = item.status === "failed" || item.status === "error";
+                      const sid = activityServerId(item.args);
+                      const label = sid ? serverName(sid) : null;
+                      return (
+                        <li key={item.id}>
+                          <span className="activity-tool">{toolLabel(item.toolName)}</span>
+                          {label ? <span className="muted activity-server">{label}</span> : null}
+                          <span className={`activity-status status-${item.status}`}>
+                            {statusLabel(item.status)}
+                          </span>
+                          <span className="muted activity-time">{relativeTime(item.createdAt)}</span>
+                          {failed && canMap ? (
+                            <Link
+                              className="linkish"
+                              to="/"
+                              title="Open map to investigate"
+                              onClick={() => {
+                                if (sid) openServerOnMap(sid);
+                              }}
+                            >
+                              On map
+                            </Link>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                );
+              })()
+            ) : (
+              <div className="empty-hint">
+                <strong>Quiet so far</strong>
+                <p className="muted status-inline">
+                  Recent agent tool calls from Map chat show up here.
+                </p>
+              </div>
+            )}
+          </section>
+          </aside>
         </div>
       </div>
     </div>
