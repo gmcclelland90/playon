@@ -384,7 +384,7 @@ a.brand-mark:hover {
 }
 
 .canvas-page.map-dock-open {
-  --map-inset-right: calc(min(400px, 100vw - 2rem) + 2rem);
+  --map-inset-right: calc(min(25rem, 100vw - 2rem) + 2rem);
   --map-inset-top: 1rem;
 }
 
@@ -1495,6 +1495,256 @@ body.server-console-resizing iframe {
   color: var(--ink);
   background: var(--surface-2);
   border-color: oklch(0.78 0.12 185 / 0.35);
+}
+
+/* ---- Always-on side panel (Map) ----
+   The chat never closes: with nothing picked it is the add-server chat.
+   Header, info and tabs stay compact so the conversation gets the height. */
+.canvas-chat-dock {
+  width: min(25rem, calc(100vw - 2rem));
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto auto minmax(0, 1fr) auto;
+  align-content: stretch;
+  gap: var(--space-3);
+  animation: none;
+  box-shadow: 0 18px 50px oklch(0.05 0.02 350 / 0.5);
+}
+
+.canvas-chat-dock > * {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.canvas-dock-head {
+  display: contents;
+}
+
+.canvas-dock-head > * {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.canvas-dock-titlebar {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.canvas-dock-title {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.canvas-dock-title h3,
+.canvas-dock-title .server-name-control {
+  min-width: 0;
+  font-size: 1.25rem;
+}
+
+.canvas-dock-title h3,
+.canvas-dock-title .server-name-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.canvas-dock-titlebar > .btn-row {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
+
+.canvas-chat-dock .chat-channels {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin-top: 0;
+  padding-bottom: 2px;
+}
+
+.canvas-chat-dock .chat-channel-chip {
+  flex: 0 0 auto;
+}
+
+.canvas-chat-dock .canvas-status-row {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.canvas-chat-dock .canvas-dock-head > .usage-meters {
+  grid-column: 2;
+  max-width: none;
+  align-self: center;
+}
+
+.canvas-chat-dock .canvas-join-card {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.4rem 0.35rem 0.85rem;
+  border-radius: 999px;
+}
+
+.canvas-chat-dock .canvas-join-card .dash-section-head {
+  display: contents;
+}
+
+.canvas-chat-dock .canvas-join-card .chip {
+  order: -2;
+  margin: 0;
+}
+
+.canvas-chat-dock .canvas-join-endpoint {
+  order: -1;
+  flex: 1 1 auto;
+  font-size: 0.95rem;
+}
+
+.canvas-chat-dock .canvas-dock-tabs {
+  margin-top: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.canvas-chat-dock .canvas-dock-tabs button {
+  padding: 0.3rem 0.75rem;
+  font-size: 0.82rem;
+}
+
+.canvas-chat-dock .canvas-chat-log,
+.canvas-chat-dock .canvas-maintain {
+  grid-row: 6;
+  min-height: 0;
+  max-height: none;
+}
+
+.canvas-chat-dock .canvas-chat-log {
+  align-content: end;
+}
+
+.canvas-chat-dock .canvas-chat-composer {
+  grid-row: 7;
+}
+
+/* With nothing picked there are no tabs: a hairline still separates the log. */
+.canvas-chat-dock:not(:has(.canvas-dock-tabs)) .canvas-chat-log {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.canvas-chat-log .msg {
+  max-width: 88%;
+  padding: 0.6rem 0.85rem;
+  border: 0;
+  border-radius: 14px;
+}
+
+.canvas-chat-log .msg .meta {
+  display: block;
+  margin-bottom: 0.15rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.canvas-chat-log .msg.user {
+  justify-self: end;
+  background: oklch(0.54 0.18 353 / 0.22);
+  border-bottom-right-radius: 4px;
+}
+
+.canvas-chat-log .msg.user .meta {
+  display: none;
+}
+
+.canvas-chat-log .msg.assistant {
+  justify-self: start;
+  background: var(--surface-2);
+  border-bottom-left-radius: 4px;
+}
+
+.canvas-chat-log .msg.assistant .meta {
+  color: var(--accent);
+}
+
+.canvas-chat-composer {
+  display: grid;
+  gap: 0.35rem;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.canvas-composer-pill {
+  position: relative;
+}
+
+.canvas-composer-pill .field {
+  margin: 0;
+}
+
+/* Translucent on purpose: an opaque control over the WebGL map can leave paint artifacts. */
+.canvas-chat-composer .canvas-composer-pill textarea {
+  min-height: 3.1rem;
+  height: 3.1rem;
+  padding: 0.8rem 6.25rem 0.8rem 1.1rem;
+  border-radius: 999px;
+  background: oklch(0.1 0.01 353 / 0.94);
+  border: 1px solid oklch(0.78 0.12 185 / 0.35);
+  box-shadow: 0 0 0 4px oklch(0.78 0.12 185 / 0.06);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.canvas-composer-pill .btn {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  min-height: 2.4rem;
+  padding: 0.4rem 1rem;
+}
+
+.canvas-composer-pill .btn-primary {
+  box-shadow: 0 4px 16px oklch(0.62 0.16 353 / 0.32);
+}
+
+.canvas-composer-extras {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-inline: 0.9rem;
+  font-size: 0.82rem;
+}
+
+.canvas-composer-extras .canvas-busy-hint {
+  margin-left: auto;
+}
+
+/* The panel never closes, so the map controls sit left of it. */
+.canvas-page.map-dock-open .agent-canvas-add-row {
+  right: calc(min(25rem, 100vw - 2rem) + 2rem);
+}
+
+.canvas-page.map-dock-open .agent-canvas-map-hint {
+  left: calc(18.5rem + (100% - 18.5rem - min(25rem, 100vw - 2rem) - 2rem) / 2);
+}
+
+.canvas-page.map-dock-open .agent-canvas-map-hint .hint-full {
+  display: none;
+}
+
+.canvas-page.map-dock-open .agent-canvas-map-hint .hint-short {
+  display: inline;
+}
+
+.canvas-composer-extras .linkish {
+  white-space: nowrap;
 }
 
 @media (max-width: 720px) {
@@ -4347,5 +4597,50 @@ a.btn {
   *::after {
     animation: none !important;
     transition: none !important;
+  }
+}
+
+/* Map side panel → bottom sheet on phones. Comes last so it wins over the panel grid. */
+@media (max-width: 720px) {
+  .canvas-page {
+    --map-inset-left: 0px;
+    --map-inset-top: 3.5rem;
+  }
+
+  .canvas-page.map-dock-open {
+    --map-inset-right: 0px;
+    --map-inset-top: 0.5rem;
+    --map-inset-bottom: calc(min(58vh, 32rem) + 4.5rem);
+  }
+
+  .canvas-chat-dock {
+    width: auto;
+    height: min(58vh, 32rem);
+    gap: var(--space-2);
+    grid-template-rows: auto auto auto auto auto minmax(0, 1fr) auto;
+  }
+
+  .canvas-chat-dock .canvas-status-row {
+    grid-column: 1 / -1;
+  }
+
+  .canvas-chat-dock .canvas-dock-head > .usage-meters {
+    display: none;
+  }
+
+  .canvas-chat-dock .canvas-dock-tabs {
+    padding-top: var(--space-2);
+  }
+
+  .canvas-chat-log .msg {
+    max-width: 92%;
+  }
+
+  .canvas-composer-extras .canvas-busy-hint {
+    display: none;
+  }
+
+  .canvas-page.map-dock-open .agent-canvas-add-row {
+    right: 0.65rem;
   }
 }

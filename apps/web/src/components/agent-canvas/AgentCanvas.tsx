@@ -238,6 +238,31 @@ function strokePoly(g: Graphics, pts: Array<{ x: number; y: number }>, color: nu
   g.closePath().stroke({ width, color, alpha });
 }
 
+/** Mockup switch for the Neon diorama takes (island | lights | wire); goes away once one is picked. */
+function mapLook(): string {
+  return (globalThis as { __playonMapLook?: string }).__playonMapLook ?? "";
+}
+
+/** Neon edge: wide faint strokes under a crisp one. */
+function glowPoly(
+  g: Graphics,
+  pts: Array<{ x: number; y: number }>,
+  color: number,
+  strength = 1,
+  closed = true,
+): void {
+  for (const [w, a] of [
+    [20, 0.06],
+    [11, 0.14],
+    [5, 0.32],
+  ] as const) {
+    g.moveTo(pts[0]!.x, pts[0]!.y);
+    for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y);
+    if (closed) g.closePath();
+    g.stroke({ width: w, color, alpha: a * strength });
+  }
+}
+
 function drawHostPad(
   g: Graphics,
   presence: string,
@@ -255,16 +280,41 @@ function drawHostPad(
   const bottom = top.map((p) => ({ x: p.x, y: p.y + extrude }));
   const stroke = selected ? 0x5ed4c8 : colors.stroke;
   g.clear();
-  // Ground shadow
-  g.ellipse(4, hd + extrude + 6, hw * 0.92, hd * 0.55).fill({ color: 0x000000, alpha: 0.28 });
+  const look = mapLook();
+  const live = presence === "online";
+  if (look === "island" || look === "lights") {
+    // Floating island: rock keel under the slab, shadow far below on the floor.
+    const apex = { x: 0, y: bottom[2]!.y + hd * 1.1 };
+    g.ellipse(0, apex.y + 54, hw * 0.55, hd * 0.3).fill({ color: 0x000000, alpha: 0.34 });
+    g.ellipse(0, apex.y + 54, hw * 0.85, hd * 0.45).fill({ color: 0x000000, alpha: 0.14 });
+    fillPoly(g, [bottom[3]!, bottom[2]!, apex], shade(colors.fill, 0.38));
+    fillPoly(g, [bottom[2]!, bottom[1]!, apex], shade(colors.fill, 0.5));
+    glowPoly(g, [bottom[3]!, apex, bottom[1]!], colors.stroke, live ? 0.35 : 0.2, false);
+  } else if (look === "wire") {
+    g.ellipse(0, hd + extrude + 10, hw * 1.1, hd * 0.7).fill({ color: colors.stroke, alpha: live ? 0.06 : 0.03 });
+  } else {
+    // Ground shadow
+    g.ellipse(4, hd + extrude + 6, hw * 0.92, hd * 0.55).fill({ color: 0x000000, alpha: 0.28 });
+  }
   if (selected) {
     g.ellipse(0, hd * 0.2, hw * 1.05, hd * 0.7).fill({ color: 0x5ed4c8, alpha: 0.1 });
   }
+  const deck = look === "wire" ? 0x110d13 : look === "lights" ? shade(colors.fill, 0.7) : colors.fill;
   // Side walls (far → near for paint order)
-  fillPoly(g, [top[3]!, top[2]!, bottom[2]!, bottom[3]!], shade(colors.fill, 0.55), 0.95);
-  fillPoly(g, [top[1]!, top[2]!, bottom[2]!, bottom[1]!], shade(colors.fill, 0.7), 0.95);
+  fillPoly(g, [top[3]!, top[2]!, bottom[2]!, bottom[3]!], shade(deck, 0.55), 0.95);
+  fillPoly(g, [top[1]!, top[2]!, bottom[2]!, bottom[1]!], shade(deck, 0.7), 0.95);
   // Top deck
-  fillPoly(g, top, colors.fill, 0.94);
+  fillPoly(g, top, deck, 0.94);
+  if (look) {
+    const glow = live ? 1 : presence === "offline" ? 0.45 : 0.7;
+    glowPoly(g, top, stroke, look === "wire" ? glow * 1.3 : glow);
+    if (look === "wire") {
+      // Lit vertical edges and the near bottom rim.
+      for (const i of [1, 2, 3]) glowPoly(g, [top[i]!, bottom[i]!], stroke, glow * 0.8, false);
+      glowPoly(g, [bottom[3]!, bottom[2]!, bottom[1]!], stroke, glow * 0.8, false);
+      strokePoly(g, [bottom[3]!, bottom[2]!, bottom[1]!, bottom[2]!], stroke, 1.5, 0.9);
+    }
+  }
   strokePoly(g, top, stroke, selected ? 3 : 2, selected ? 1 : 0.92);
   // Rack block on the far edge of the pad
   const rackHw = Math.min(54, hw * 0.35);
@@ -346,6 +396,23 @@ function drawFloorGrid(g: Graphics) {
     const b = isoPoint(n, j);
     g.moveTo(a.x, a.y).lineTo(b.x, b.y);
   }
+  const look = mapLook();
+  if (look) {
+    g.stroke({ width: 1, color: 0xf2e8ee, alpha: 0.015 });
+    // Neon lattice that fades out from the middle of the room.
+    const lit = look === "wire" ? 0x5ed4c8 : 0x9e3a5c;
+    for (let k = -14; k <= 14; k++) {
+      const a = Math.max(0, 1 - Math.abs(k) / 14) * (look === "wire" ? 0.16 : 0.09);
+      const p1 = isoPoint(k, -14);
+      const p2 = isoPoint(k, 14);
+      const q1 = isoPoint(-14, k);
+      const q2 = isoPoint(14, k);
+      g.moveTo(p1.x, p1.y).lineTo(p2.x, p2.y).moveTo(q1.x, q1.y).lineTo(q2.x, q2.y);
+      g.stroke({ width: 1, color: lit, alpha: a });
+    }
+    g.ellipse(0, 60, 760, 260).fill({ color: 0x9e3a5c, alpha: look === "wire" ? 0.03 : 0.06 });
+    return;
+  }
   g.stroke({ width: 1, color: 0xf2e8ee, alpha: 0.04 });
   g.ellipse(0, 36, 520, 160).fill({ color: 0x9e3a5c, alpha: 0.055 });
   g.ellipse(90, -10, 300, 110).fill({ color: 0x3a8a84, alpha: 0.035 });
@@ -396,6 +463,24 @@ function drawCrate(
   const stroke = opts.selected ? 0x5ed4c8 : colors.stroke;
   const top = isoFootprint(hw, hd).map((p) => ({ x: p.x, y: p.y - extrude * 0.35 }));
   const bottom = top.map((p) => ({ x: p.x, y: p.y + extrude }));
+  const look = mapLook();
+  const lit = opts.tone === "live" || opts.tone === "failed";
+  const glowColor =
+    opts.tone === "failed"
+      ? 0xe25b4a
+      : opts.hue != null
+        ? oklchToHex(0.75, 0.15, opts.hue)
+        : colors.stroke;
+  if (look === "lights" && lit) {
+    // The running game spills its colour onto the island.
+    for (const [sx, sy, a] of [
+      [3.6, 2.8, 0.08],
+      [2.5, 2.0, 0.13],
+      [1.6, 1.3, 0.2],
+    ] as const) {
+      g.ellipse(0, bottom[2]!.y - hd * 0.6, hw * sx, hd * sy).fill({ color: glowColor, alpha: a });
+    }
+  }
   g.ellipse(6, bottom[2]!.y + 4, hw * 0.95, hd * 0.55).fill({
     color: 0x000000,
     alpha: opts.size === "other" ? 0.2 : 0.3,
@@ -403,6 +488,10 @@ function drawCrate(
   fillPoly(g, [top[3]!, top[2]!, bottom[2]!, bottom[3]!], shade(fill, 0.55));
   fillPoly(g, [top[1]!, top[2]!, bottom[2]!, bottom[1]!], shade(fill, 0.72));
   fillPoly(g, top, topFill, 0.96);
+  if (look && lit) glowPoly(g, top, glowColor, look === "island" ? 0.6 : 1);
+  if (look === "wire" && lit) {
+    for (const i of [1, 2, 3]) glowPoly(g, [top[i]!, bottom[i]!], glowColor, 0.6, false);
+  }
   strokePoly(g, top, stroke, opts.selected ? 2.5 : 1.5, opts.selected ? 1 : 0.9);
   const midY = (top[2]!.y + bottom[2]!.y) / 2;
   g.moveTo(top[3]!.x, midY - 3)
@@ -613,7 +702,7 @@ export function AgentCanvas({
 
     void (async () => {
       await app.init({
-        background: 0x141016,
+        background: mapLook() ? 0x0b080d : 0x141016,
         antialias: true,
         resizeTo: host,
         resolution: window.devicePixelRatio || 1,
