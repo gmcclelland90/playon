@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gameBadgeText, gameHue } from "./game-badge";
+import { gameBadgeText, gameHue, oklchToHex } from "./game-badge";
 
 describe("game-badge", () => {
   it("uses word initials for multi-word game ids", () => {
@@ -27,5 +27,14 @@ describe("game-badge", () => {
       const dist = Math.min(Math.abs(hue - 353), 360 - Math.abs(hue - 353));
       expect(dist).toBeGreaterThanOrEqual(30);
     }
+  });
+
+  it("converts OKLCH to sRGB hex", () => {
+    expect(oklchToHex(1, 0, 0)).toBe(0xffffff);
+    expect(oklchToHex(0, 0, 0)).toBe(0x000000);
+    // Brand rose oklch(0.62 0.16 353) ≈ #c94f84
+    const rose = oklchToHex(0.62, 0.16, 353);
+    expect((rose >> 16) & 0xff).toBeGreaterThan(180);
+    expect(rose & 0xff).toBeGreaterThan((rose >> 8) & 0xff);
   });
 });

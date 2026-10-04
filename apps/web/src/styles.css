@@ -352,6 +352,42 @@ a.brand-mark:hover {
   min-height: 420px;
 }
 
+/* Banners above the topbar vary in height, so the map takes whatever is left
+   instead of guessing; a fixed calc() clipped the composer under a banner. */
+.app-shell:has(.canvas-page) {
+  height: 100dvh;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-shell:has(.canvas-page) > .main-canvas {
+  flex: 1 1 0;
+}
+
+.app-shell:has(.canvas-page) .canvas-page {
+  height: 100%;
+}
+
+/* Panels over the map publish their footprint so the world frames itself in what's left.
+   Registered as lengths so getComputedStyle hands AgentCanvas resolved px. */
+@property --map-inset-left { syntax: "<length>"; inherits: true; initial-value: 0px; }
+@property --map-inset-right { syntax: "<length>"; inherits: true; initial-value: 0px; }
+@property --map-inset-top { syntax: "<length>"; inherits: true; initial-value: 0px; }
+@property --map-inset-bottom { syntax: "<length>"; inherits: true; initial-value: 0px; }
+
+.canvas-page {
+  --map-inset-left: 18.5rem;
+  --map-inset-right: 0px;
+  --map-inset-top: 4rem;
+  --map-inset-bottom: 2.5rem;
+}
+
+.canvas-page.map-dock-open {
+  --map-inset-right: calc(min(400px, 100vw - 2rem) + 2rem);
+  --map-inset-top: 1rem;
+}
+
 .server-console-bubble {
   position: absolute;
   z-index: 3;
@@ -828,8 +864,8 @@ body.server-console-resizing iframe {
   position: absolute;
   left: 1rem;
   top: 1rem;
-  bottom: 1rem;
-  width: min(15rem, calc(100vw - 2rem));
+  max-height: calc(100% - 2rem);
+  width: min(16.5rem, calc(100vw - 2rem));
   z-index: 2;
   display: flex;
   flex-direction: column;
@@ -912,7 +948,29 @@ body.server-console-resizing iframe {
   gap: 0.05rem 0.4rem;
 }
 
+/* Game servers lead with the same badge as the Dashboard; the agent dot stays for helpers. */
+.agent-canvas-list-item:has(.map-game-badge) .agent-canvas-list-agent {
+  display: none;
+}
+
+.map-game-badge {
+  grid-row: 1 / span 2;
+  align-self: start;
+  margin-top: 0.1rem;
+}
+
+.agent-canvas-list-item:has(.map-game-badge) {
+  grid-template-columns: auto 1fr;
+  column-gap: 0.65rem;
+}
+
+.agent-canvas-list-item:has(.map-game-badge) .dash-state {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
 .agent-canvas-list-item:has(.agent-canvas-list-agent) .muted,
+.agent-canvas-list-item:has(.agent-canvas-list-agent) .dash-state,
 .agent-canvas-list-item:has(.agent-canvas-list-agent) .usage-meters,
 .agent-canvas-list-item:has(.agent-canvas-list-agent) .usage-strip {
   grid-column: 2;
@@ -2685,7 +2743,8 @@ a.btn {
   box-shadow: 0 0 0 2px var(--surface), inset 0 0 0 1.5px currentColor;
 }
 
-.dash-row.is-idle .dash-game-badge {
+.dash-row.is-idle .dash-game-badge,
+.dash-game-badge.is-idle {
   background: oklch(0.26 0.03 var(--game-h));
   box-shadow: inset 0 0 0 1px oklch(0.5 0.05 var(--game-h) / 0.4);
   color: oklch(0.72 0.04 var(--game-h));
@@ -3905,8 +3964,9 @@ a.btn {
 }
 
 .usage-strip-seg {
+  position: relative;
   flex: 1 1 0;
-  height: 1.35rem;
+  height: 1.6rem;
   border-radius: 5px;
   background:
     linear-gradient(to top, oklch(0.78 0.12 185 / 0.07), transparent 42%),
@@ -3916,6 +3976,19 @@ a.btn {
 
 .usage-strip-seg .usage-spark {
   height: 100%;
+}
+
+.usage-strip-key {
+  position: absolute;
+  top: 0.2rem;
+  left: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  color: oklch(0.86 0.02 353 / 0.85);
+  text-shadow: 0 0 3px oklch(0.14 0.01 353), 0 0 1px oklch(0.14 0.01 353);
+  pointer-events: none;
 }
 
 .usage-strip-note {

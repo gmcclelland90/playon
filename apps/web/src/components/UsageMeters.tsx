@@ -78,6 +78,7 @@ function UsageStrip({ rows, label }: { rows: UsageMeterRow[]; label: string }) {
           className={`usage-strip-seg tone-${row.tone}`}
           title={`${row.label} ${row.value}`}
         >
+          <span className="usage-strip-key">{row.label}</span>
           <AreaChart series={row.series} fallback={row.fill} tone={row.tone} height={20} />
         </span>
       ))}

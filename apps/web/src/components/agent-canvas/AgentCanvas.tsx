@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Application, Container, Graphics, Text } from "pixi.js";
 import {
   COMPOSE_CHANNEL_KEY,
@@ -8,6 +8,7 @@ import {
   type UsageTone,
 } from "@playon/shared";
 import type { ServerRow } from "../../api";
+import { gameBadgeText, gameHue, oklchToHex } from "../../game-badge";
 import { HostUsageMeters, ServerUsageMeters } from "../UsageMeters";
 import {
   isPendingNodeSetup,
@@ -125,6 +126,44 @@ function shade(hex: number, factor: number): number {
   const g = Math.min(255, Math.max(0, Math.round(((hex >> 8) & 0xff) * factor)));
   const b = Math.min(255, Math.max(0, Math.round((hex & 0xff) * factor)));
   return (r << 16) | (g << 8) | b;
+}
+
+/** Zoom cap when fitting, so a lone host doesn't balloon. */
+const FIT_MAX_ZOOM = 1.05;
+
+function cssInset(el: HTMLElement, name: string): number {
+  const v = parseFloat(getComputedStyle(el).getPropertyValue(name));
+  return Number.isFinite(v) ? v : 0;
+}
+
+/**
+ * Frame every host pad and crate inside the part of the canvas that panels
+ * don't cover. Panels publish their footprint as --map-inset-* on the host.
+ */
+type FitBox = { x: number; y: number; w: number; h: number };
+
+function fitWorldToContent(world: Container, host: HTMLElement, boxes: FitBox[]): void {
+  if (!boxes.length) return;
+  const local = {
+    minX: Math.min(...boxes.map((b) => b.x - b.w / 2)),
+    maxX: Math.max(...boxes.map((b) => b.x + b.w / 2)),
+    minY: Math.min(...boxes.map((b) => b.y - b.h / 2)),
+    maxY: Math.max(...boxes.map((b) => b.y + b.h / 2)),
+  };
+  const left = cssInset(host, "--map-inset-left");
+  const right = cssInset(host, "--map-inset-right");
+  const top = cssInset(host, "--map-inset-top");
+  const bottom = cssInset(host, "--map-inset-bottom");
+  const availW = Math.max(160, host.clientWidth - left - right);
+  const availH = Math.max(160, host.clientHeight - top - bottom);
+  const contentW = Math.max(1, local.maxX - local.minX);
+  const contentH = Math.max(1, (local.maxY - local.minY) * WORLD_Y_SQUASH);
+  const zoom = Math.min(FIT_MAX_ZOOM, (availW * 0.86) / contentW, (availH * 0.8) / contentH);
+  setWorldZoom(world, zoom);
+  const cx = (local.minX + local.maxX) / 2;
+  const cy = (local.minY + local.maxY) / 2;
+  world.x = left + availW / 2 - cx * world.scale.x;
+  world.y = top + availH / 2 - cy * world.scale.y;
 }
 
 function setWorldZoom(world: Container, zoom: number): void {
@@ -312,14 +351,32 @@ function drawFloorGrid(g: Graphics) {
   g.ellipse(90, -10, 300, 110).fill({ color: 0x3a8a84, alpha: 0.035 });
 }
 
-type CrateTone = "live" | "idle" | "inventory" | "lab";
+type CrateTone = "live" | "idle" | "failed" | "inventory" | "lab";
 
 const CRATE_TONES: Record<CrateTone, { fill: number; top: number; stroke: number }> = {
   live: { fill: 0x2f6f6c, top: 0x3d8f8a, stroke: 0x6ab8b0 },
   idle: { fill: 0x3a4048, top: 0x4a5058, stroke: 0x6a7080 },
   inventory: { fill: 0x3a3840, top: 0x4a4650, stroke: 0x6a6670 },
   lab: { fill: 0x3a3540, top: 0x4a4050, stroke: 0x7a6880 },
+  failed: { fill: 0x4a2a2a, top: 0x5c3330, stroke: 0xe25b4a },
 };
+
+/** Live and idle game crates take the game's hue, so a server looks the same here as on the Dashboard. */
+function crateColors(tone: CrateTone, hue?: number): { fill: number; top: number; stroke: number } {
+  if (hue == null || (tone !== "live" && tone !== "idle")) return CRATE_TONES[tone];
+  if (tone === "live") {
+    return {
+      fill: oklchToHex(0.46, 0.09, hue),
+      top: oklchToHex(0.6, 0.11, hue),
+      stroke: oklchToHex(0.8, 0.11, hue),
+    };
+  }
+  return {
+    fill: oklchToHex(0.33, 0.02, hue),
+    top: oklchToHex(0.39, 0.025, hue),
+    stroke: oklchToHex(0.55, 0.035, hue),
+  };
+}
 
 function crateMetrics(size: CrateSize): { hw: number; hd: number; extrude: number } {
   if (size === "hero") return { hw: 44, hd: 24, extrude: 54 };
@@ -329,11 +386,11 @@ function crateMetrics(size: CrateSize): { hw: number; hd: number; extrude: numbe
 
 function drawCrate(
   g: Graphics,
-  opts: { selected: boolean; tone: CrateTone; size: CrateSize },
+  opts: { selected: boolean; tone: CrateTone; size: CrateSize; hue?: number },
 ) {
   g.clear();
   const { hw, hd, extrude } = crateMetrics(opts.size);
-  const colors = CRATE_TONES[opts.tone];
+  const colors = crateColors(opts.tone, opts.hue);
   const fill = colors.fill;
   const topFill = colors.top;
   const stroke = opts.selected ? 0x5ed4c8 : colors.stroke;
@@ -352,11 +409,12 @@ function drawCrate(
     .lineTo(top[2]!.x, midY + hd * 0.15)
     .lineTo(top[1]!.x, midY - 3)
     .stroke({ width: opts.size === "other" ? 3 : 5, color: 0x2a1f28, alpha: 0.45 });
-  if (opts.tone === "live") {
-    g.circle(top[1]!.x - 8, top[1]!.y + 6, opts.size === "hero" ? 4 : 3.5).fill({
-      color: 0x5ed4c8,
-      alpha: 0.95,
-    });
+  if (opts.tone === "live" || opts.tone === "failed") {
+    const r = opts.size === "hero" ? 6 : 5;
+    const dot = { x: top[1]!.x - 10, y: top[1]!.y + 8 };
+    const color = opts.tone === "live" ? 0x5ed4c8 : 0xe25b4a;
+    g.circle(dot.x, dot.y, r + 3).fill({ color, alpha: 0.22 });
+    g.circle(dot.x, dot.y, r).fill({ color, alpha: 1 });
   }
   if (opts.selected) {
     const halo = isoFootprint(hw + 10, hd + 6).map((p) => ({
@@ -519,6 +577,11 @@ export function AgentCanvas({
   const worldRef = useRef<Container | null>(null);
   const nodesRef = useRef<Map<string, ServerNode>>(new Map());
   const padsRef = useRef<Map<string, Container>>(new Map());
+  /** World-space footprint of each host pad (with its labels), for auto-framing. */
+  const padBoxesRef = useRef<Map<string, FitBox>>(new Map());
+  /** Set once the user pans or zooms; after that the map stops auto-framing. */
+  const userViewRef = useRef(false);
+  const fitRef = useRef<(() => void) | null>(null);
   const occupantsRef = useRef<Map<string, AgentSprite>>(new Map());
   const onSelectRef = useRef(onSelect);
   const onDescribeRef = useRef(onDescribe);
@@ -583,7 +646,6 @@ export function AgentCanvas({
       let dragMoved = false;
       let lastX = 0;
       let lastY = 0;
-      let userPanned = false;
 
       floor.on("pointertap", () => {
         // Pan-drag should not clear selection / close overlays.
@@ -617,17 +679,20 @@ export function AgentCanvas({
         world.y += dy;
         lastX = e.clientX;
         lastY = e.clientY;
-        userPanned = true;
+        userViewRef.current = true;
       };
       const onWheel = (e: WheelEvent) => {
         e.preventDefault();
+        userViewRef.current = true;
         setWorldZoom(world, world.scale.x * (e.deltaY > 0 ? 0.92 : 1.08));
       };
-      const onResize = () => {
-        if (userPanned) return;
-        world.x = host.clientWidth / 2;
-        world.y = host.clientHeight * 0.42;
+      fitRef.current = () => {
+        if (userViewRef.current) return;
+        fitWorldToContent(world, host, [...padBoxesRef.current.values()]);
       };
+      const onResize = () => fitRef.current?.();
+      const resizeObserver = new ResizeObserver(onResize);
+      resizeObserver.observe(host);
 
       const reduceMotion = prefersReducedMotion();
       const publishAnchor = () => {
@@ -696,6 +761,8 @@ export function AgentCanvas({
 
       (app as Application & { __cleanup?: () => void }).__cleanup = () => {
         app.ticker.remove(tickerFn);
+        resizeObserver.disconnect();
+        fitRef.current = null;
         app.canvas.removeEventListener("pointerdown", onPointerDown);
         window.removeEventListener("pointerup", onPointerUp);
         window.removeEventListener("pointermove", onPointerMove);
@@ -718,6 +785,7 @@ export function AgentCanvas({
       worldRef.current = null;
       nodesRef.current.clear();
       padsRef.current.clear();
+      padBoxesRef.current.clear();
       occupantsRef.current.clear();
     };
   }, []);
@@ -758,7 +826,7 @@ export function AgentCanvas({
         pad.addChild(g);
         const title = new Text({
           text: "",
-          style: { fill: 0xf2e8ee, fontSize: 14, fontFamily: "DM Sans, sans-serif", fontWeight: "600" },
+          style: { fill: 0xf2e8ee, fontSize: 19, fontFamily: "DM Sans, sans-serif", fontWeight: "700" },
         });
         title.anchor.set(0.5, 1);
         title.y = -58;
@@ -766,7 +834,7 @@ export function AgentCanvas({
         pad.addChild(title);
         const sub = new Text({
           text: "",
-          style: { fill: 0xc4b4bc, fontSize: 11, fontFamily: "DM Sans, sans-serif" },
+          style: { fill: 0xc4b4bc, fontSize: 14, fontFamily: "DM Sans, sans-serif" },
         });
         sub.anchor.set(0.5, 1);
         sub.y = -42;
@@ -814,6 +882,13 @@ export function AgentCanvas({
       title.text = cluster.node.name;
       title.style.fill = hostSelected ? 0x5ed4c8 : 0xf2e8ee;
       const padHd = Math.max(48, padH * 0.28);
+      // Title sits above the pad; crate names and status hang ~90 below its centre.
+      padBoxesRef.current.set(cluster.node.id, {
+        x: cluster.origin.x,
+        y: cluster.origin.y + 10,
+        w: padW + 40,
+        h: padHd * 2 + 170,
+      });
       title.y = -padHd - 10;
       const presenceLabel = nodePresenceLabel({
         status: cluster.node.status,
@@ -823,7 +898,7 @@ export function AgentCanvas({
       if (cluster.node.joinHost) bits.push(cluster.node.joinHost);
       const hostMeters = hostMeterRows(cluster.node, cluster.node.usageHistory ?? []);
       sub.text = bits.filter(Boolean).join(" · ");
-      sub.y = title.y + 16;
+      sub.y = title.y + 21;
       drawUsageStrip(
         usageG,
         hostMeters.map((r) => ({ fill: r.fill, tone: r.tone })),
@@ -852,6 +927,20 @@ export function AgentCanvas({
           const crate = new Graphics();
           crate.label = "crate";
           root.addChild(crate);
+
+          const badge = new Text({
+            text: "",
+            style: {
+              fill: 0xffffff,
+              fontSize: 15,
+              fontFamily: "DM Sans, sans-serif",
+              fontWeight: "800",
+              letterSpacing: 0.5,
+            },
+          });
+          badge.anchor.set(0.5, 0.5);
+          badge.label = "badge";
+          root.addChild(badge);
 
           const label = new Text({
             text: "",
@@ -908,6 +997,7 @@ export function AgentCanvas({
         node.root.y = pos.y;
 
         const crate = node.root.getChildByLabel("crate") as Graphics;
+        const badge = node.root.getChildByLabel("badge") as Text | null;
         const name = node.root.getChildByLabel("name") as Text;
         const status = node.root.getChildByLabel("status") as Text;
         let crateUsage = node.root.getChildByLabel("usage") as Graphics | null;
@@ -921,14 +1011,16 @@ export function AgentCanvas({
           placement.role === "hero" ? "hero" : placement.role === "other" ? "other" : "player";
         node.size = size;
         const wrapWidth = size === "hero" ? 156 : size === "other" ? 86 : 128;
-        const fontSize = size === "hero" ? 13 : size === "other" ? 10 : 12;
+        const fontSize = size === "hero" ? 17 : size === "other" ? 13 : 16;
         name.style.fontSize = fontSize;
-        name.style.fontWeight = placement.role === "hero" ? "600" : "400";
+        name.style.fontWeight = size === "other" ? "500" : "700";
         name.style.wordWrap = true;
         name.style.wordWrapWidth = wrapWidth;
         name.style.align = "center";
-        name.style.fill = placement.role === "hero" ? 0xf2e8ee : 0xd8c8d0;
-        status.style.fontSize = size === "other" || isStack ? 9 : 11;
+        name.style.fill = size === "other" ? 0xd8c8d0 : 0xf2e8ee;
+        status.style.fontSize = size === "other" || isStack ? 12 : 14;
+        status.style.fontWeight = "600";
+        status.style.fill = 0xa898a0;
         name.y = size === "hero" ? 42 : size === "other" || isStack ? 22 : 36;
 
         if (isStack) {
@@ -939,11 +1031,26 @@ export function AgentCanvas({
         } else if (server) {
           const kind = boardCrateKind(server);
           const shown = displayServerStatus(server.status, server.ready);
+          const failed = kind === "player" && (shown === "error" || shown === "failed");
+          const tone: CrateTone = failed ? "failed" : boardCrateTone(kind, shown);
+          const hue = kind === "player" ? gameHue(server.game) : undefined;
           drawCrate(crate, {
             selected: Boolean(selected),
-            tone: boardCrateTone(kind, shown),
+            tone,
             size,
+            hue,
           });
+          if (badge) {
+            const { extrude } = crateMetrics(size);
+            badge.visible = kind === "player" && size !== "other";
+            badge.text = gameBadgeText(server.game);
+            badge.style.fontSize = size === "hero" ? 18 : 15;
+            badge.style.fill =
+              tone === "live" && hue != null ? oklchToHex(0.97, 0.03, hue) : 0xc4b4bc;
+            badge.y = -extrude * 0.35;
+          }
+          status.style.fill =
+            tone === "live" ? 0x5ed4c8 : tone === "failed" ? 0xe25b4a : 0xa898a0;
           const nameMax = size === "hero" ? 32 : size === "other" ? 16 : 24;
           name.text = shortDisplayName(server.name, nameMax);
           const baseStatus = boardCrateStatusText(server);
@@ -966,6 +1073,7 @@ export function AgentCanvas({
         world.removeChild(pad);
         pad.destroy({ children: true });
         padsRef.current.delete(id);
+        padBoxesRef.current.delete(id);
       }
     }
     for (const [id, node] of nodesRef.current) {
@@ -975,6 +1083,7 @@ export function AgentCanvas({
         nodesRef.current.delete(id);
       }
     }
+    fitRef.current?.();
   }, [servers, hostNodes, selectedId, selectedHostId, stageReady, expandedOtherNodes]);
 
   // One little occupant per server, plus compose while that add-server turn is in flight.
@@ -1000,7 +1109,7 @@ export function AgentCanvas({
 
         const label = new Text({
           text: "",
-          style: { fill: 0xf2e8ee, fontSize: 9, fontFamily: "DM Sans, sans-serif" },
+          style: { fill: 0xf2e8ee, fontSize: 12, fontFamily: "DM Sans, sans-serif" },
         });
         label.anchor.set(0.5, 0);
         label.y = 16;
@@ -1008,10 +1117,10 @@ export function AgentCanvas({
 
         const statusText = new Text({
           text: "",
-          style: { fill: 0xa898a0, fontSize: 8, fontFamily: "DM Sans, sans-serif" },
+          style: { fill: 0xa898a0, fontSize: 11, fontFamily: "DM Sans, sans-serif" },
         });
         statusText.anchor.set(0.5, 0);
-        statusText.y = 26;
+        statusText.y = 30;
         root.addChild(statusText);
 
         world.addChild(root);
@@ -1258,6 +1367,7 @@ export function AgentCanvas({
                     const occupant = agentByServerId.get(server.id);
                     const busyLabel = serverBusyLabel(server.id);
                     const secondary = !isPlayerGameCrate(server);
+                    const shownState = displayServerStatus(server.status, server.ready);
                     return (
                       <li key={server.id} role="option" aria-selected={selected}>
                         <button
@@ -1280,10 +1390,22 @@ export function AgentCanvas({
                             title={occupant?.nowLine ?? occupant?.mood ?? "idle"}
                             aria-hidden
                           />
+                          {secondary ? null : (
+                            <span
+                              className={`dash-game-badge map-game-badge${shownState === "running" ? "" : " is-idle"}`}
+                              style={{ "--game-h": gameHue(server.game) } as CSSProperties}
+                              aria-hidden
+                            >
+                              {gameBadgeText(server.game)}
+                              <span className={`dash-dot state-${shownState}`} />
+                            </span>
+                          )}
                           <span className="agent-canvas-list-name" title={server.name}>
                             {server.name}
                           </span>
-                          <span className="muted">{busyLabel || boardCrateStatusText(server)}</span>
+                          <span className={busyLabel ? "muted" : `dash-state state-${shownState}`}>
+                            {busyLabel || boardCrateStatusText(server)}
+                          </span>
                           <ServerUsageMeters
                             variant="strip"
                             cpuPercent={server.cpuPercent}
