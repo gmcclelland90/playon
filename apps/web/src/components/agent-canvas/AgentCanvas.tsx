@@ -1,13 +1,17 @@
-import { useEffect, useRef, useState } from "react";
-import { Application, Container, Graphics, Text } from "pixi.js";
+import {
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import {
   COMPOSE_CHANNEL_KEY,
   hostMeterRows,
-  serverMeterRows,
   type ServerAgentPresence,
-  type UsageTone,
 } from "@playon/shared";
 import type { ServerRow } from "../../api";
+import { gameBadgeText, gameHue } from "../../game-badge";
 import { HostUsageMeters, ServerUsageMeters } from "../UsageMeters";
 import {
   isPendingNodeSetup,
@@ -18,8 +22,6 @@ import {
 import {
   boardCrateKind,
   boardCrateStatusText,
-  boardCrateTone,
-  clusterPadSize,
   clusterServersByNode,
   isPlayerGameCrate,
   OTHER_SERVICES_COLLAPSE_AT,
@@ -27,7 +29,15 @@ import {
   padPresenceClass,
   placeClusterCrates,
   type MapNodeInput,
+  type NodeCluster,
 } from "./map-node-layout";
+import {
+  stationSeats,
+  switchSpot,
+  type Box,
+  type Point,
+  type ServerPlayers,
+} from "./lan-room-layout";
 
 export type AgentActivityView = {
   serverId?: string;
@@ -44,13 +54,10 @@ export type AgentSkillView = {
   title: string;
 };
 
-/** Host-local CSS pixels for the top-center of the selected crate. */
+/** Host-local CSS pixels for the top-center of the selected station. */
 export type SelectedAnchor = { x: number; y: number };
 
-export type { MapNodeInput };
-
-/** Iso crate apex sits above node center — used for overlay anchors. */
-const CRATE_TOP_OFFSET = 56;
+export type { MapNodeInput, ServerPlayers };
 
 type Props = {
   servers: ServerRow[];
@@ -58,10 +65,12 @@ type Props = {
   /** True while the servers query has not settled — avoid false empty CTA. */
   serversLoading?: boolean;
   selectedId?: string;
-  /** Host pad / rail selection (Scan panel), independent of server selection. */
+  /** Host table / rail selection (Scan panel), independent of server selection. */
   selectedHostId?: string | null;
-  /** One occupant per managed server (plus compose while in flight). */
+  /** One agent per managed server (plus compose while in flight). */
   agents?: ServerAgentPresence[];
+  /** Who is on each game, from live server_status panel blocks. */
+  players?: Record<string, ServerPlayers>;
   /** Skill roster for accent colors while busy. */
   skills: AgentSkillView[];
   onSelect: (serverId: string | undefined) => void;
@@ -73,77 +82,15 @@ type Props = {
   onAddNode?: () => void;
   /** Remove a stuck pending/offline remote node. */
   onRemoveNode?: (nodeId: string) => void;
-  /** Open Scan / manage panel for an online host pad (incl. local). */
+  /** Open Scan / manage panel for an online host table (incl. local). */
   onSelectHost?: (nodeId: string) => void;
-  /** Click empty map space — parent should deselect and close overlays. */
+  /** Click empty floor — parent should deselect and close overlays. */
   onBackgroundClick?: () => void;
-  /** Screen-space anchor for overlays above the selected crate. */
+  /** Screen-space anchor for overlays above the selected station. */
   onSelectedAnchorChange?: (anchor: SelectedAnchor | null) => void;
   /** Hide floating add when the chat dock already covers that corner. */
   showAddButton?: boolean;
 };
-
-type CrateSize = "hero" | "player" | "other";
-
-type ServerNode = {
-  id: string;
-  x: number;
-  y: number;
-  size?: CrateSize;
-  root: Container;
-};
-
-type AgentSprite = {
-  root: Container;
-  body: Graphics;
-  label: Text;
-  statusText: Text;
-  x: number;
-  y: number;
-  targetX: number;
-  targetY: number;
-  bobPhase: number;
-};
-
-/**
- * Dimetric floor (wider than classic 2:1) — lower camera, more foreshortened ground.
- * Screen Y is further compressed via WORLD_Y_SQUASH on the stage.
- */
-const ISO_TILE_W = 54;
-const ISO_TILE_H = 18;
-/** How many tiles out from origin along each iso axis. */
-const ISO_RANGE = 56;
-const LERP_SPEED = 8;
-/** Extra vertical squash for a lowered 2.5D camera. */
-const WORLD_Y_SQUASH = 0.88;
-const DEFAULT_ZOOM = 0.62;
-const MIN_ZOOM = 0.38;
-const MAX_ZOOM = 1.35;
-
-function shade(hex: number, factor: number): number {
-  const r = Math.min(255, Math.max(0, Math.round(((hex >> 16) & 0xff) * factor)));
-  const g = Math.min(255, Math.max(0, Math.round(((hex >> 8) & 0xff) * factor)));
-  const b = Math.min(255, Math.max(0, Math.round((hex & 0xff) * factor)));
-  return (r << 16) | (g << 8) | b;
-}
-
-function setWorldZoom(world: Container, zoom: number): void {
-  const z = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
-  world.scale.set(z, z * WORLD_Y_SQUASH);
-}
-
-const SKILL_COLORS: Record<string, number> = {
-  installer: 0x5ed4c8,
-  monitor: 0x6aa8e8,
-  configurer: 0xc4a35a,
-  troubleshooter: 0xe08a4a,
-  backup: 0x8a7fd4,
-  player_panel: 0xe05a9c,
-  modder: 0x7bc96f,
-  orchestrator: 0xf2e8ee,
-};
-
-const IDLE_COLOR = 0x5ed4c8;
 
 const SKILL_SHORT: Record<string, string> = {
   installer: "Install",
@@ -160,340 +107,35 @@ export function skillShortLabel(skill: string): string {
   return SKILL_SHORT[skill] ?? skill.replace(/_/g, " ");
 }
 
-export function skillColor(skill: string): number {
-  return SKILL_COLORS[skill] ?? IDLE_COLOR;
+/** Diameter of the LAN switch in CSS px; keep in step with `.lan-switch` in styles.css. */
+const SWITCH_SIZE = 56;
+
+type Cable = { id: string; to: Point; tone: string };
+
+/** Offline and half-set-up hosts can only be removed from the map (never Local). */
+function hostNeedsRemoval(node: MapNodeInput): boolean {
+  return (
+    node.id !== "local" &&
+    (isPendingNodeSetup({
+      agentVersion: node.agentVersion,
+      status: node.status,
+    }) ||
+      node.status === "offline")
+  );
 }
 
-function homeSpot(): { x: number; y: number } {
-  return { x: 0, y: 120 };
-}
-
-const PAD_COLORS: Record<string, { fill: number; stroke: number; accent: number }> = {
-  online: { fill: 0x243632, stroke: 0x5ed4c8, accent: 0x3d8f8a },
-  stale: { fill: 0x3a3224, stroke: 0xc4a35a, accent: 0x8a7340 },
-  offline: { fill: 0x342428, stroke: 0xc45a6a, accent: 0x6a3a48 },
-  pending_setup: { fill: 0x2a2634, stroke: 0x8a7fd4, accent: 0x5a5488 },
-};
-
-/** Iso diamond corners for a footprint of screen half-width / half-depth. */
-function isoFootprint(hw: number, hd: number): Array<{ x: number; y: number }> {
-  return [
-    { x: 0, y: -hd },
-    { x: hw, y: 0 },
-    { x: 0, y: hd },
-    { x: -hw, y: 0 },
-  ];
-}
-
-function fillPoly(g: Graphics, pts: Array<{ x: number; y: number }>, color: number, alpha = 1): void {
-  if (pts.length < 3) return;
-  g.moveTo(pts[0]!.x, pts[0]!.y);
-  for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y);
-  g.closePath().fill({ color, alpha });
-}
-
-function strokePoly(g: Graphics, pts: Array<{ x: number; y: number }>, color: number, width = 1.5, alpha = 1): void {
-  if (pts.length < 2) return;
-  g.moveTo(pts[0]!.x, pts[0]!.y);
-  for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y);
-  g.closePath().stroke({ width, color, alpha });
-}
-
-function drawHostPad(
-  g: Graphics,
-  presence: string,
-  label: string,
-  subtitle: string,
-  width: number,
-  height: number,
-  selected = false,
-): void {
-  const colors = PAD_COLORS[presence] ?? PAD_COLORS.offline!;
-  const hw = Math.max(110, width * 0.42);
-  const hd = Math.max(48, height * 0.28);
-  const extrude = 18;
-  const top = isoFootprint(hw, hd);
-  const bottom = top.map((p) => ({ x: p.x, y: p.y + extrude }));
-  const stroke = selected ? 0x5ed4c8 : colors.stroke;
-  g.clear();
-  // Ground shadow
-  g.ellipse(4, hd + extrude + 6, hw * 0.92, hd * 0.55).fill({ color: 0x000000, alpha: 0.28 });
-  if (selected) {
-    g.ellipse(0, hd * 0.2, hw * 1.05, hd * 0.7).fill({ color: 0x5ed4c8, alpha: 0.1 });
-  }
-  // Side walls (far → near for paint order)
-  fillPoly(g, [top[3]!, top[2]!, bottom[2]!, bottom[3]!], shade(colors.fill, 0.55), 0.95);
-  fillPoly(g, [top[1]!, top[2]!, bottom[2]!, bottom[1]!], shade(colors.fill, 0.7), 0.95);
-  // Top deck
-  fillPoly(g, top, colors.fill, 0.94);
-  strokePoly(g, top, stroke, selected ? 3 : 2, selected ? 1 : 0.92);
-  // Rack block on the far edge of the pad
-  const rackHw = Math.min(54, hw * 0.35);
-  const rackHd = 12;
-  const rackLift = 22;
-  const rackBase = [
-    { x: 0, y: -hd + 10 },
-    { x: rackHw, y: -hd + 10 + rackHd },
-    { x: 0, y: -hd + 10 + rackHd * 2 },
-    { x: -rackHw, y: -hd + 10 + rackHd },
-  ];
-  const rackTop = rackBase.map((p) => ({ x: p.x, y: p.y - rackLift }));
-  fillPoly(g, [rackBase[3]!, rackBase[2]!, rackTop[2]!, rackTop[3]!], shade(colors.accent, 0.55));
-  fillPoly(g, [rackBase[1]!, rackBase[2]!, rackTop[2]!, rackTop[1]!], shade(colors.accent, 0.75));
-  fillPoly(g, rackTop, colors.accent, 0.9);
-  strokePoly(g, rackTop, colors.stroke, 1.25, 0.55);
-  // Status LED near near-corner
-  g.circle(0, hd - 10, 3.5).fill({
-    color: colors.stroke,
-    alpha: presence === "online" ? 0.95 : 0.4,
-  });
-  void label;
-  void subtitle;
-}
-
-function verbOffset(verb: string): { x: number; y: number } {
-  if (verb === "fetch" || verb === "search") return { x: 70, y: -36 };
-  if (verb === "write" || verb === "skill") return { x: -56, y: 28 };
-  if (verb === "run" || verb === "snapshot") return { x: 56, y: 28 };
-  return { x: 64, y: 0 };
-}
-
-/** Screen point for isometric lattice indices (i, j). */
-function isoPoint(i: number, j: number): { x: number; y: number } {
-  return {
-    x: (i - j) * ISO_TILE_W,
-    y: (i + j) * ISO_TILE_H,
-  };
-}
-
-function drawFloorGrid(g: Graphics) {
-  g.clear();
-  const n = ISO_RANGE;
-  const fillRange = 22;
-  for (let i = -fillRange; i < fillRange; i++) {
-    for (let j = -fillRange; j < fillRange; j++) {
-      const tl = isoPoint(i, j);
-      const tr = isoPoint(i + 1, j);
-      const br = isoPoint(i + 1, j + 1);
-      const bl = isoPoint(i, j + 1);
-      const checker = (i + j) & 1;
-      const dist = Math.sqrt(i * i + j * j);
-      const fade = Math.max(0, 1 - dist / (fillRange * 0.95));
-      if (fade <= 0.04) continue;
-      const base = checker ? 0x1a1418 : 0x141018;
-      g.moveTo(tl.x, tl.y)
-        .lineTo(tr.x, tr.y)
-        .lineTo(br.x, br.y)
-        .lineTo(bl.x, bl.y)
-        .closePath()
-        .fill({ color: base, alpha: 0.42 * fade });
-      if ((i * 17 + j * 31) % 9 === 0) {
-        g.moveTo(tl.x, tl.y)
-          .lineTo(tr.x, tr.y)
-          .lineTo(br.x, br.y)
-          .lineTo(bl.x, bl.y)
-          .closePath()
-          .fill({ color: 0x2a1c24, alpha: 0.14 * fade });
-      }
-    }
-  }
-  for (let i = -n; i <= n; i++) {
-    const a = isoPoint(i, -n);
-    const b = isoPoint(i, n);
-    g.moveTo(a.x, a.y).lineTo(b.x, b.y);
-  }
-  for (let j = -n; j <= n; j++) {
-    const a = isoPoint(-n, j);
-    const b = isoPoint(n, j);
-    g.moveTo(a.x, a.y).lineTo(b.x, b.y);
-  }
-  g.stroke({ width: 1, color: 0xf2e8ee, alpha: 0.04 });
-  g.ellipse(0, 36, 520, 160).fill({ color: 0x9e3a5c, alpha: 0.055 });
-  g.ellipse(90, -10, 300, 110).fill({ color: 0x3a8a84, alpha: 0.035 });
-}
-
-type CrateTone = "live" | "idle" | "inventory" | "lab";
-
-const CRATE_TONES: Record<CrateTone, { fill: number; top: number; stroke: number }> = {
-  live: { fill: 0x2f6f6c, top: 0x3d8f8a, stroke: 0x6ab8b0 },
-  idle: { fill: 0x3a4048, top: 0x4a5058, stroke: 0x6a7080 },
-  inventory: { fill: 0x3a3840, top: 0x4a4650, stroke: 0x6a6670 },
-  lab: { fill: 0x3a3540, top: 0x4a4050, stroke: 0x7a6880 },
-};
-
-function crateMetrics(size: CrateSize): { hw: number; hd: number; extrude: number } {
-  if (size === "hero") return { hw: 44, hd: 24, extrude: 54 };
-  if (size === "other") return { hw: 22, hd: 12, extrude: 26 };
-  return { hw: 36, hd: 20, extrude: 44 };
-}
-
-function drawCrate(
-  g: Graphics,
-  opts: { selected: boolean; tone: CrateTone; size: CrateSize },
-) {
-  g.clear();
-  const { hw, hd, extrude } = crateMetrics(opts.size);
-  const colors = CRATE_TONES[opts.tone];
-  const fill = colors.fill;
-  const topFill = colors.top;
-  const stroke = opts.selected ? 0x5ed4c8 : colors.stroke;
-  const top = isoFootprint(hw, hd).map((p) => ({ x: p.x, y: p.y - extrude * 0.35 }));
-  const bottom = top.map((p) => ({ x: p.x, y: p.y + extrude }));
-  g.ellipse(6, bottom[2]!.y + 4, hw * 0.95, hd * 0.55).fill({
-    color: 0x000000,
-    alpha: opts.size === "other" ? 0.2 : 0.3,
-  });
-  fillPoly(g, [top[3]!, top[2]!, bottom[2]!, bottom[3]!], shade(fill, 0.55));
-  fillPoly(g, [top[1]!, top[2]!, bottom[2]!, bottom[1]!], shade(fill, 0.72));
-  fillPoly(g, top, topFill, 0.96);
-  strokePoly(g, top, stroke, opts.selected ? 2.5 : 1.5, opts.selected ? 1 : 0.9);
-  const midY = (top[2]!.y + bottom[2]!.y) / 2;
-  g.moveTo(top[3]!.x, midY - 3)
-    .lineTo(top[2]!.x, midY + hd * 0.15)
-    .lineTo(top[1]!.x, midY - 3)
-    .stroke({ width: opts.size === "other" ? 3 : 5, color: 0x2a1f28, alpha: 0.45 });
-  if (opts.tone === "live") {
-    g.circle(top[1]!.x - 8, top[1]!.y + 6, opts.size === "hero" ? 4 : 3.5).fill({
-      color: 0x5ed4c8,
-      alpha: 0.95,
-    });
-  }
-  if (opts.selected) {
-    const halo = isoFootprint(hw + 10, hd + 6).map((p) => ({
-      x: p.x,
-      y: p.y - extrude * 0.35 - 4,
-    }));
-    strokePoly(g, halo, 0x5ed4c8, 1.5, 0.4);
-  }
-}
-
-function drawStackCrate(g: Graphics, selected: boolean) {
-  g.clear();
-  const offsets = [
-    { x: -14, y: 8, alpha: 0.45 },
-    { x: 12, y: -4, alpha: 0.6 },
-    { x: 0, y: 0, alpha: 0.95 },
-  ];
-  for (const off of offsets) {
-    const { hw, hd, extrude } = crateMetrics("other");
-    const fill = 0x3a3840;
-    const topFill = 0x4a4650;
-    const stroke = selected ? 0x5ed4c8 : 0x6a6670;
-    const top = isoFootprint(hw, hd).map((p) => ({
-      x: p.x + off.x,
-      y: p.y - extrude * 0.35 + off.y,
-    }));
-    const bottom = top.map((p) => ({ x: p.x, y: p.y + extrude }));
-    g.ellipse(off.x + 4, bottom[2]!.y + 3, hw * 0.9, hd * 0.5).fill({
-      color: 0x000000,
-      alpha: 0.16 * off.alpha,
-    });
-    fillPoly(g, [top[3]!, top[2]!, bottom[2]!, bottom[3]!], shade(fill, 0.55), off.alpha);
-    fillPoly(g, [top[1]!, top[2]!, bottom[2]!, bottom[1]!], shade(fill, 0.72), off.alpha);
-    fillPoly(g, top, topFill, 0.92 * off.alpha);
-    strokePoly(g, top, stroke, selected ? 2 : 1.25, 0.85 * off.alpha);
-  }
-}
-
-function phaseRingColor(phase: string | undefined): number {
-  if (phase === "working" || phase === "tool" || phase === "tool_start" || phase === "tool_done") {
-    return 0x5ed4c8;
-  }
-  if (phase === "waiting" || phase === "confirm" || phase === "confirm_wait") return 0xc4a35a;
-  if (phase === "error" || phase === "failed" || phase === "tool_fail") return 0xe05a5a;
-  if (phase === "thinking") return 0x6aa8e8;
-  return 0xe05a9c;
-}
-
-function drawAgentBody(
-  g: Graphics,
-  opts: { busy: boolean; phase?: string; skill?: string; scale?: number },
-) {
-  g.clear();
-  const s = opts.scale ?? 1;
-  const color = opts.busy && opts.skill ? skillColor(opts.skill) : IDLE_COLOR;
-  const hw = 14 * s;
-  const hd = 9 * s;
-  const extrude = 26 * s;
-  const top = isoFootprint(hw, hd).map((p) => ({ x: p.x, y: p.y - 18 * s }));
-  const bottom = top.map((p) => ({ x: p.x, y: p.y + extrude }));
-  g.ellipse(3 * s, bottom[2]!.y + 2 * s, 16 * s, 7 * s).fill({ color: 0x000000, alpha: 0.3 });
-  fillPoly(g, [top[3]!, top[2]!, bottom[2]!, bottom[3]!], shade(color, 0.55), opts.busy ? 1 : 0.78);
-  fillPoly(g, [top[1]!, top[2]!, bottom[2]!, bottom[1]!], shade(color, 0.75), opts.busy ? 1 : 0.82);
-  fillPoly(g, top, color, opts.busy ? 1 : 0.82);
-  g.circle(0, top[0]!.y - 2 * s, 11 * s).fill({ color, alpha: opts.busy ? 1 : 0.86 });
-  g.circle(0, top[0]!.y - 2 * s, 11 * s).stroke({
-    width: 1.25 * s,
-    color: shade(color, 0.65),
-    alpha: 0.8,
-  });
-  if (opts.busy) {
-    g.circle(0, top[0]!.y - 2 * s, 16 * s).stroke({
-      width: 2.25 * s,
-      color: phaseRingColor(opts.phase),
-      alpha: 0.95,
-    });
-    g.circle(0, top[0]!.y - 2 * s, 20 * s).stroke({
-      width: 1 * s,
-      color: phaseRingColor(opts.phase),
-      alpha: 0.28,
-    });
-  }
-  g.roundRect(-8 * s, top[0]!.y - 6 * s, 16 * s, 6 * s, 3 * s).fill({
-    color: 0x111111,
-    alpha: 0.55,
-  });
-  g.circle(-3.5 * s, top[0]!.y - 3 * s, 1.8 * s).fill({ color: 0xf2e8ee, alpha: 0.92 });
-  g.circle(3.5 * s, top[0]!.y - 3 * s, 1.8 * s).fill({ color: 0xf2e8ee, alpha: 0.92 });
-  if (opts.busy && opts.skill) {
-    g.circle(0, top[0]!.y - 16 * s, 3 * s).fill({ color: phaseRingColor(opts.phase), alpha: 0.95 });
-  }
-}
-
-const USAGE_TONE_COLOR: Record<UsageTone, number> = {
-  ok: 0x5ed4c8,
-  warn: 0xe0b44a,
-  danger: 0xe25b4a,
-};
-
-function drawUsageStrip(
-  g: Graphics,
-  rows: Array<{ fill: number; tone: UsageTone }>,
-  width: number,
-): void {
-  g.clear();
-  if (!rows.length) return;
-  const x = -width / 2;
-  let y = 0;
-  for (const row of rows) {
-    const hot = row.tone !== "ok";
-    const rowH = hot ? 6 : 4;
-    g.roundRect(x, y, width, rowH, 2).fill({ color: 0x000000, alpha: 0.32 });
-    const w = Math.max(3, width * Math.min(1, Math.max(0, row.fill)));
-    g.roundRect(x, y, w, rowH, 2).fill({
-      color: USAGE_TONE_COLOR[row.tone],
-      alpha: hot ? 0.95 : 0.62,
-    });
-    y += rowH + 3;
-  }
-}
-
-function occupantOffset(size: CrateSize): { x: number; y: number } {
-  if (size === "hero") return { x: 48, y: -30 };
-  if (size === "other") return { x: 26, y: -16 };
-  return { x: 40, y: -24 };
-}
-
-function prefersReducedMotion(): boolean {
-  try {
-    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  } catch {
-    return false;
-  }
+function stationTone(server: ServerRow): "live" | "idle" | "failed" | "busy" {
+  const shown = displayServerStatus(server.status, server.ready);
+  if (shown === "error" || shown === "failed") return "failed";
+  if (shown === "running") return "live";
+  if (shown === "starting" || shown === "stopping" || shown === "degraded")
+    return "busy";
+  return "idle";
 }
 
 /**
- * Sparse Pixi stage: isometric floor, server crates, a small fleet of occupants.
+ * Top-down LAN party: each host is a table cabled to the switch, each game a station
+ * with its players seated around it. Plain DOM, so it scrolls and stays accessible.
  */
 export function AgentCanvas({
   servers,
@@ -502,6 +144,7 @@ export function AgentCanvas({
   selectedId,
   selectedHostId = null,
   agents = [],
+  players = {},
   skills: _skills,
   onSelect,
   onDescribe,
@@ -515,564 +158,155 @@ export function AgentCanvas({
 }: Props) {
   void _skills;
   const hostRef = useRef<HTMLDivElement>(null);
-  const appRef = useRef<Application | null>(null);
-  const worldRef = useRef<Container | null>(null);
-  const nodesRef = useRef<Map<string, ServerNode>>(new Map());
-  const padsRef = useRef<Map<string, Container>>(new Map());
-  const occupantsRef = useRef<Map<string, AgentSprite>>(new Map());
+  const floorRef = useRef<HTMLDivElement>(null);
+  const roomRef = useRef<HTMLDivElement>(null);
+  const tableRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const stationRefs = useRef<Map<string, HTMLElement>>(new Map());
   const onSelectRef = useRef(onSelect);
   const onDescribeRef = useRef(onDescribe);
   const onAddServerRef = useRef(onAddServer);
   const onRemoveNodeRef = useRef(onRemoveNode);
   const onSelectHostRef = useRef(onSelectHost);
-  const onBackgroundClickRef = useRef(onBackgroundClick);
   const onSelectedAnchorChangeRef = useRef(onSelectedAnchorChange);
-  const selectedIdRef = useRef(selectedId);
   const lastAnchorRef = useRef<SelectedAnchor | null>(null);
-  const [stageReady, setStageReady] = useState(false);
-  const [pendingRemoveNodeId, setPendingRemoveNodeId] = useState<string | null>(null);
-  const [expandedOtherNodes, setExpandedOtherNodes] = useState<Record<string, boolean>>({});
+  const [pendingRemoveNodeId, setPendingRemoveNodeId] = useState<string | null>(
+    null,
+  );
+  const [expandedOtherNodes, setExpandedOtherNodes] = useState<
+    Record<string, boolean>
+  >({});
   const [railOthersOpen, setRailOthersOpen] = useState(false);
+  const [wiring, setWiring] = useState<{
+    hub: Point | null;
+    below: boolean;
+    cables: Cable[];
+  }>({
+    hub: null,
+    below: false,
+    cables: [],
+  });
   onSelectRef.current = onSelect;
   onDescribeRef.current = onDescribe;
   onAddServerRef.current = onAddServer;
   onRemoveNodeRef.current = onRemoveNode;
   onSelectHostRef.current = onSelectHost;
-  onBackgroundClickRef.current = onBackgroundClick;
   onSelectedAnchorChangeRef.current = onSelectedAnchorChange;
-  selectedIdRef.current = selectedId;
 
-  useEffect(() => {
+  const clusters: NodeCluster[] = clusterServersByNode(hostNodes, servers);
+  const serverById = new Map(servers.map((s) => [s.id, s]));
+  const selectedServer = selectedId ? serverById.get(selectedId) : undefined;
+
+  const selectHost = (node: MapNodeInput) => {
+    if (hostNeedsRemoval(node)) {
+      setPendingRemoveNodeId(node.id);
+      return;
+    }
+    if (node.status === "online" || node.id === "local")
+      onSelectHostRef.current?.(node.id);
+  };
+
+  /** Measure tables, place the switch between them and run a cable to each. */
+  const measure = useCallback(() => {
+    const room = roomRef.current;
     const host = hostRef.current;
-    if (!host) return;
-    let destroyed = false;
-    const app = new Application();
-
-    void (async () => {
-      await app.init({
-        background: 0x141016,
-        antialias: true,
-        resizeTo: host,
-        resolution: window.devicePixelRatio || 1,
-        autoDensity: true,
+    if (!room) return;
+    const origin = room.getBoundingClientRect();
+    const boxes: Array<{ id: string; box: Box; tone: string }> = [];
+    for (const [id, el] of tableRefs.current) {
+      const r = el.getBoundingClientRect();
+      boxes.push({
+        id,
+        box: {
+          x: r.left - origin.left,
+          y: r.top - origin.top,
+          w: r.width,
+          h: r.height,
+        },
+        tone: el.dataset.presence ?? "online",
       });
-      if (destroyed) {
-        app.destroy(true);
-        return;
-      }
-      host.appendChild(app.canvas);
-      appRef.current = app;
+    }
+    const hub = switchSpot(
+      boxes.map((b) => b.box),
+      SWITCH_SIZE,
+    );
+    const below = Boolean(
+      hub && boxes.every(({ box }) => hub.y > box.y + box.h),
+    );
+    const cables = hub
+      ? boxes.map(({ id, box, tone }) => ({
+          id,
+          tone,
+          to: { x: box.x + box.w / 2, y: box.y + box.h / 2 },
+        }))
+      : [];
+    setWiring((prev) => {
+      const same =
+        prev.hub?.x === hub?.x &&
+        prev.hub?.y === hub?.y &&
+        prev.below === below &&
+        prev.cables.length === cables.length &&
+        prev.cables.every(
+          (c, i) =>
+            c.id === cables[i]!.id &&
+            c.tone === cables[i]!.tone &&
+            c.to.x === cables[i]!.to.x &&
+            c.to.y === cables[i]!.to.y,
+        );
+      return same ? prev : { hub, below, cables };
+    });
 
-      const world = new Container();
-      world.sortableChildren = true;
-      world.x = host.clientWidth / 2;
-      world.y = host.clientHeight * 0.42;
-      setWorldZoom(world, DEFAULT_ZOOM);
-      worldRef.current = world;
-      app.stage.addChild(world);
+    const cb = onSelectedAnchorChangeRef.current;
+    if (!cb) return;
+    const station = selectedId
+      ? stationRefs.current.get(selectedId)
+      : undefined;
+    let next: SelectedAnchor | null = null;
+    if (station && host) {
+      const hr = host.getBoundingClientRect();
+      const sr = station.getBoundingClientRect();
+      next = { x: sr.left - hr.left + sr.width / 2, y: sr.top - hr.top };
+    }
+    const prev = lastAnchorRef.current;
+    if (
+      (prev === null && next === null) ||
+      (prev &&
+        next &&
+        Math.abs(prev.x - next.x) < 0.5 &&
+        Math.abs(prev.y - next.y) < 0.5)
+    ) {
+      return;
+    }
+    lastAnchorRef.current = next;
+    cb(next);
+  }, [selectedId]);
 
-      const floor = new Graphics();
-      drawFloorGrid(floor);
-      floor.eventMode = "static";
-      floor.cursor = "grab";
-      // Large hit target so empty space between tiles still clears selection.
-      floor.hitArea = {
-        contains: (x: number, y: number) => Math.abs(x) < 8000 && Math.abs(y) < 8000,
-      };
-      let dragging = false;
-      let dragMoved = false;
-      let lastX = 0;
-      let lastY = 0;
-      let userPanned = false;
+  useLayoutEffect(() => {
+    measure();
+  });
 
-      floor.on("pointertap", () => {
-        // Pan-drag should not clear selection / close overlays.
-        if (dragMoved) return;
-        onBackgroundClickRef.current?.();
-      });
-      world.addChild(floor);
-      setStageReady(true);
-
-      app.canvas.style.cursor = "grab";
-
-      const onPointerDown = (e: PointerEvent) => {
-        if (e.button !== 0) return;
-        dragging = true;
-        dragMoved = false;
-        lastX = e.clientX;
-        lastY = e.clientY;
-        app.canvas.style.cursor = "grabbing";
-      };
-      const onPointerUp = () => {
-        dragging = false;
-        app.canvas.style.cursor = "grab";
-      };
-      const onPointerMove = (e: PointerEvent) => {
-        if (!dragging) return;
-        const dx = e.clientX - lastX;
-        const dy = e.clientY - lastY;
-        if (!dragMoved && dx * dx + dy * dy > 36) dragMoved = true;
-        if (!dragMoved) return;
-        world.x += dx;
-        world.y += dy;
-        lastX = e.clientX;
-        lastY = e.clientY;
-        userPanned = true;
-      };
-      const onWheel = (e: WheelEvent) => {
-        e.preventDefault();
-        setWorldZoom(world, world.scale.x * (e.deltaY > 0 ? 0.92 : 1.08));
-      };
-      const onResize = () => {
-        if (userPanned) return;
-        world.x = host.clientWidth / 2;
-        world.y = host.clientHeight * 0.42;
-      };
-
-      const reduceMotion = prefersReducedMotion();
-      const publishAnchor = () => {
-        const cb = onSelectedAnchorChangeRef.current;
-        if (!cb) return;
-        const id = selectedIdRef.current;
-        const world = worldRef.current;
-        if (!id || !world) {
-          if (lastAnchorRef.current !== null) {
-            lastAnchorRef.current = null;
-            cb(null);
-          }
-          return;
-        }
-        const node = nodesRef.current.get(id);
-        if (!node) {
-          if (lastAnchorRef.current !== null) {
-            lastAnchorRef.current = null;
-            cb(null);
-          }
-          return;
-        }
-        const next: SelectedAnchor = {
-          x: world.x + node.x * world.scale.x,
-          y: world.y + (node.y - CRATE_TOP_OFFSET) * world.scale.y,
-        };
-        const prev = lastAnchorRef.current;
-        if (
-          prev &&
-          Math.abs(prev.x - next.x) < 0.5 &&
-          Math.abs(prev.y - next.y) < 0.5
-        ) {
-          return;
-        }
-        lastAnchorRef.current = next;
-        cb(next);
-      };
-
-      const tickerFn = () => {
-        publishAnchor();
-        const dt = Math.min(app.ticker.deltaMS / 1000, 0.05);
-        const t = 1 - Math.exp(-LERP_SPEED * dt);
-        for (const sprite of occupantsRef.current.values()) {
-          if (reduceMotion) {
-            sprite.x = sprite.targetX;
-            sprite.y = sprite.targetY;
-            sprite.root.x = sprite.x;
-            sprite.root.y = sprite.y;
-            continue;
-          }
-          sprite.x += (sprite.targetX - sprite.x) * t;
-          sprite.y += (sprite.targetY - sprite.y) * t;
-          sprite.bobPhase += dt * 3.2;
-          const bob = Math.sin(sprite.bobPhase) * 2.2;
-          sprite.root.x = sprite.x;
-          sprite.root.y = sprite.y + bob;
-        }
-      };
-      app.ticker.add(tickerFn);
-
-      app.canvas.addEventListener("pointerdown", onPointerDown);
-      window.addEventListener("pointerup", onPointerUp);
-      window.addEventListener("pointermove", onPointerMove);
-      app.canvas.addEventListener("wheel", onWheel, { passive: false });
-      window.addEventListener("resize", onResize);
-
-      (app as Application & { __cleanup?: () => void }).__cleanup = () => {
-        app.ticker.remove(tickerFn);
-        app.canvas.removeEventListener("pointerdown", onPointerDown);
-        window.removeEventListener("pointerup", onPointerUp);
-        window.removeEventListener("pointermove", onPointerMove);
-        app.canvas.removeEventListener("wheel", onWheel);
-        window.removeEventListener("resize", onResize);
-      };
-    })();
-
+  useLayoutEffect(() => {
+    const floor = floorRef.current;
+    if (!floor) return;
+    const observer = new ResizeObserver(() => measure());
+    observer.observe(floor);
+    if (roomRef.current) observer.observe(roomRef.current);
+    for (const el of tableRefs.current.values()) observer.observe(el);
+    floor.addEventListener("scroll", measure, { passive: true });
+    window.addEventListener("resize", measure);
     return () => {
-      destroyed = true;
-      setStageReady(false);
+      observer.disconnect();
+      floor.removeEventListener("scroll", measure);
+      window.removeEventListener("resize", measure);
+    };
+  }, [measure, clusters.length]);
+
+  useLayoutEffect(
+    () => () => {
       lastAnchorRef.current = null;
       onSelectedAnchorChangeRef.current?.(null);
-      const app = appRef.current;
-      if (app) {
-        (app as Application & { __cleanup?: () => void }).__cleanup?.();
-        app.destroy(true);
-      }
-      appRef.current = null;
-      worldRef.current = null;
-      nodesRef.current.clear();
-      padsRef.current.clear();
-      occupantsRef.current.clear();
-    };
-  }, []);
-
-  // Sync host pads + server crates (clustered by node)
-  useEffect(() => {
-    const world = worldRef.current;
-    if (!world || !stageReady) return;
-
-    const clusters = clusterServersByNode(hostNodes, servers);
-    const serverById = new Map(servers.map((s) => [s.id, s]));
-    const selectedServer = selectedId ? serverById.get(selectedId) : undefined;
-    const seenPads = new Set<string>();
-    const seenCrates = new Set<string>();
-
-    for (const cluster of clusters) {
-      seenPads.add(cluster.node.id);
-      const presence = padPresenceClass(cluster.node);
-      const clusterServers = cluster.serverIds
-        .map((id) => serverById.get(id))
-        .filter((s): s is ServerRow => Boolean(s));
-      const othersExpanded =
-        Boolean(expandedOtherNodes[cluster.node.id]) ||
-        Boolean(
-          selectedServer &&
-            (selectedServer.nodeId ?? "") === cluster.node.id &&
-            !isPlayerGameCrate(selectedServer),
-        );
-      const placements = placeClusterCrates(clusterServers, { othersExpanded });
-      const { w: padW, h: padH } = clusterPadSize(placements);
-
-      let pad = padsRef.current.get(cluster.node.id);
-      if (!pad) {
-        pad = new Container();
-        pad.zIndex = 0;
-        const g = new Graphics();
-        g.label = "pad";
-        pad.addChild(g);
-        const title = new Text({
-          text: "",
-          style: { fill: 0xf2e8ee, fontSize: 14, fontFamily: "DM Sans, sans-serif", fontWeight: "600" },
-        });
-        title.anchor.set(0.5, 1);
-        title.y = -58;
-        title.label = "title";
-        pad.addChild(title);
-        const sub = new Text({
-          text: "",
-          style: { fill: 0xc4b4bc, fontSize: 11, fontFamily: "DM Sans, sans-serif" },
-        });
-        sub.anchor.set(0.5, 1);
-        sub.y = -42;
-        sub.label = "sub";
-        pad.addChild(sub);
-        const usage = new Graphics();
-        usage.label = "usage";
-        pad.addChild(usage);
-        pad.eventMode = "static";
-        pad.cursor = "pointer";
-        const nodeId = cluster.node.id;
-        pad.on("pointertap", (e) => {
-          e.stopPropagation();
-          const n = hostNodes.find((x) => x.id === nodeId);
-          if (!n) return;
-          if (
-            n.id !== "local" &&
-            (isPendingNodeSetup({ agentVersion: n.agentVersion, status: n.status }) ||
-              n.status === "offline")
-          ) {
-            setPendingRemoveNodeId(n.id);
-            return;
-          }
-          if (n.status === "online" || n.id === "local") {
-            onSelectHostRef.current?.(n.id);
-          }
-        });
-        world.addChild(pad);
-        padsRef.current.set(cluster.node.id, pad);
-      }
-
-      pad.x = cluster.origin.x;
-      pad.y = cluster.origin.y;
-      const g = pad.getChildByLabel("pad") as Graphics;
-      const title = pad.getChildByLabel("title") as Text;
-      const sub = pad.getChildByLabel("sub") as Text;
-      let usageG = pad.getChildByLabel("usage") as Graphics | null;
-      if (!usageG) {
-        usageG = new Graphics();
-        usageG.label = "usage";
-        pad.addChild(usageG);
-      }
-      const hostSelected = cluster.node.id === selectedHostId;
-      drawHostPad(g, presence, cluster.node.name, "", padW, padH, hostSelected);
-      title.text = cluster.node.name;
-      title.style.fill = hostSelected ? 0x5ed4c8 : 0xf2e8ee;
-      const padHd = Math.max(48, padH * 0.28);
-      title.y = -padHd - 10;
-      const presenceLabel = nodePresenceLabel({
-        status: cluster.node.status,
-        agentVersion: cluster.node.agentVersion,
-      });
-      const bits = [cluster.node.badge || cluster.node.kind || "", presenceLabel];
-      if (cluster.node.joinHost) bits.push(cluster.node.joinHost);
-      const hostMeters = hostMeterRows(cluster.node, cluster.node.usageHistory ?? []);
-      sub.text = bits.filter(Boolean).join(" · ");
-      sub.y = title.y + 16;
-      drawUsageStrip(
-        usageG,
-        hostMeters.map((r) => ({ fill: r.fill, tone: r.tone })),
-        Math.min(168, Math.max(110, padW * 0.55)),
-      );
-      usageG.y = sub.y + 8;
-
-      for (const placement of placements) {
-        seenCrates.add(placement.serverId);
-        const pos = {
-          x: cluster.origin.x + placement.offset.x,
-          y: cluster.origin.y + placement.offset.y,
-        };
-        const isStack = placement.role === "stack";
-        const server = isStack ? undefined : serverById.get(placement.serverId);
-        if (!isStack && !server) continue;
-
-        let node = nodesRef.current.get(placement.serverId);
-        if (!node) {
-          const root = new Container();
-          root.zIndex = 2;
-          const clickable = isStack || Boolean(server && !server.unmanaged);
-          root.eventMode = clickable ? "static" : "none";
-          root.cursor = clickable ? "pointer" : "default";
-
-          const crate = new Graphics();
-          crate.label = "crate";
-          root.addChild(crate);
-
-          const label = new Text({
-            text: "",
-            style: {
-              fill: 0xf2e8ee,
-              fontSize: 12,
-              fontFamily: "DM Sans, sans-serif",
-              wordWrap: true,
-              wordWrapWidth: 128,
-              align: "center",
-            },
-          });
-          label.anchor.set(0.5, 0);
-          label.y = 36;
-          label.label = "name";
-          root.addChild(label);
-
-          const status = new Text({
-            text: "",
-            style: { fill: 0xa898a0, fontSize: 11, fontFamily: "DM Sans, sans-serif", align: "center" },
-          });
-          status.anchor.set(0.5, 0);
-          status.y = 52;
-          status.label = "status";
-          root.addChild(status);
-
-          const usage = new Graphics();
-          usage.label = "usage";
-          root.addChild(usage);
-
-          if (isStack) {
-            const nodeId = cluster.node.id;
-            root.on("pointertap", (e) => {
-              e.stopPropagation();
-              setExpandedOtherNodes((prev) => ({ ...prev, [nodeId]: true }));
-              setRailOthersOpen(true);
-            });
-          } else if (server && !server.unmanaged) {
-            const sid = server.id;
-            root.on("pointertap", (e) => {
-              e.stopPropagation();
-              onSelectRef.current(sid);
-            });
-          }
-
-          world.addChild(root);
-          node = { id: placement.serverId, x: pos.x, y: pos.y, root };
-          nodesRef.current.set(placement.serverId, node);
-        }
-
-        node.x = pos.x;
-        node.y = pos.y;
-        node.root.x = pos.x;
-        node.root.y = pos.y;
-
-        const crate = node.root.getChildByLabel("crate") as Graphics;
-        const name = node.root.getChildByLabel("name") as Text;
-        const status = node.root.getChildByLabel("status") as Text;
-        let crateUsage = node.root.getChildByLabel("usage") as Graphics | null;
-        if (!crateUsage) {
-          crateUsage = new Graphics();
-          crateUsage.label = "usage";
-          node.root.addChild(crateUsage);
-        }
-        const selected = !isStack && server?.id === selectedId;
-        const size =
-          placement.role === "hero" ? "hero" : placement.role === "other" ? "other" : "player";
-        node.size = size;
-        const wrapWidth = size === "hero" ? 156 : size === "other" ? 86 : 128;
-        const fontSize = size === "hero" ? 13 : size === "other" ? 10 : 12;
-        name.style.fontSize = fontSize;
-        name.style.fontWeight = placement.role === "hero" ? "600" : "400";
-        name.style.wordWrap = true;
-        name.style.wordWrapWidth = wrapWidth;
-        name.style.align = "center";
-        name.style.fill = placement.role === "hero" ? 0xf2e8ee : 0xd8c8d0;
-        status.style.fontSize = size === "other" || isStack ? 9 : 11;
-        name.y = size === "hero" ? 42 : size === "other" || isStack ? 22 : 36;
-
-        if (isStack) {
-          drawStackCrate(crate, false);
-          name.text = otherServicesStackLabel(placement.stackCount ?? 0);
-          status.text = "Tap to show";
-          crateUsage.clear();
-        } else if (server) {
-          const kind = boardCrateKind(server);
-          const shown = displayServerStatus(server.status, server.ready);
-          drawCrate(crate, {
-            selected: Boolean(selected),
-            tone: boardCrateTone(kind, shown),
-            size,
-          });
-          const nameMax = size === "hero" ? 32 : size === "other" ? 16 : 24;
-          name.text = shortDisplayName(server.name, nameMax);
-          const baseStatus = boardCrateStatusText(server);
-          status.text = baseStatus;
-          const serverMeters =
-            size === "other" ? [] : serverMeterRows(server, server.usageHistory ?? []);
-          drawUsageStrip(
-            crateUsage,
-            serverMeters.map((r) => ({ fill: r.fill, tone: r.tone })),
-            size === "hero" ? 72 : 56,
-          );
-        }
-        status.y = name.y + Math.max(name.height, fontSize + 2) + 2;
-        crateUsage.y = status.y + Math.max(status.height, 12) + 3;
-      }
-    }
-
-    for (const [id, pad] of padsRef.current) {
-      if (!seenPads.has(id)) {
-        world.removeChild(pad);
-        pad.destroy({ children: true });
-        padsRef.current.delete(id);
-      }
-    }
-    for (const [id, node] of nodesRef.current) {
-      if (!seenCrates.has(id)) {
-        world.removeChild(node.root);
-        node.root.destroy({ children: true });
-        nodesRef.current.delete(id);
-      }
-    }
-  }, [servers, hostNodes, selectedId, selectedHostId, stageReady, expandedOtherNodes]);
-
-  // One little occupant per server, plus compose while that add-server turn is in flight.
-  useEffect(() => {
-    const world = worldRef.current;
-    if (!world || !stageReady) return;
-
-    const seen = new Set<string>();
-    for (const presence of agents) {
-      seen.add(presence.key);
-      let sprite = occupantsRef.current.get(presence.key);
-      if (!sprite) {
-        const home = homeSpot();
-        const root = new Container();
-        root.x = home.x;
-        root.y = home.y;
-        root.zIndex = 11;
-        root.eventMode = "none";
-
-        const body = new Graphics();
-        body.label = "body";
-        root.addChild(body);
-
-        const label = new Text({
-          text: "",
-          style: { fill: 0xf2e8ee, fontSize: 9, fontFamily: "DM Sans, sans-serif" },
-        });
-        label.anchor.set(0.5, 0);
-        label.y = 16;
-        root.addChild(label);
-
-        const statusText = new Text({
-          text: "",
-          style: { fill: 0xa898a0, fontSize: 8, fontFamily: "DM Sans, sans-serif" },
-        });
-        statusText.anchor.set(0.5, 0);
-        statusText.y = 26;
-        root.addChild(statusText);
-
-        world.addChild(root);
-        sprite = {
-          root,
-          body,
-          label,
-          statusText,
-          x: home.x,
-          y: home.y,
-          targetX: home.x,
-          targetY: home.y,
-          bobPhase: Math.random() * Math.PI * 2,
-        };
-        occupantsRef.current.set(presence.key, sprite);
-      }
-
-      const busy = presence.mood !== "idle";
-      const scale = presence.key === COMPOSE_CHANNEL_KEY ? 0.78 : 0.62;
-      drawAgentBody(sprite.body, {
-        busy,
-        phase: presence.mood === "working" ? "tool_start" : presence.mood,
-        skill: presence.skill,
-        scale,
-      });
-      sprite.label.text = "";
-      sprite.statusText.text = presence.nowLine ?? "";
-      sprite.statusText.alpha = busy ? 1 : 0;
-      sprite.root.zIndex = busy ? 14 : 11;
-
-      if (presence.key === COMPOSE_CHANNEL_KEY || !presence.serverId) {
-        const home = homeSpot();
-        sprite.targetX = home.x;
-        sprite.targetY = home.y;
-      } else {
-        const node = nodesRef.current.get(presence.serverId);
-        if (node) {
-          const perch = occupantOffset(node.size ?? "player");
-          const fidget = presence.verb ? verbOffset(presence.verb) : { x: 0, y: 0 };
-          sprite.targetX = node.x + perch.x + fidget.x * 0.15;
-          sprite.targetY = node.y + perch.y + fidget.y * 0.15;
-        }
-      }
-
-      if (prefersReducedMotion()) {
-        sprite.x = sprite.targetX;
-        sprite.y = sprite.targetY;
-        sprite.root.x = sprite.x;
-        sprite.root.y = sprite.y;
-      }
-    }
-
-    for (const [key, sprite] of occupantsRef.current) {
-      if (seen.has(key)) continue;
-      world.removeChild(sprite.root);
-      sprite.root.destroy({ children: true });
-      occupantsRef.current.delete(key);
-    }
-
-    world.sortableChildren = true;
-  }, [agents, servers, stageReady]);
+    },
+    [],
+  );
 
   const agentByServerId = new Map(
     agents.filter((row) => row.serverId).map((row) => [row.serverId, row]),
@@ -1082,6 +316,9 @@ export function AgentCanvas({
     if (presence && presence.mood !== "idle") return presence.nowLine;
     return undefined;
   };
+  const composeAgent = agents.find(
+    (a) => a.key === COMPOSE_CHANNEL_KEY && a.mood !== "idle",
+  );
   const mapEmpty = servers.length === 0 && hostNodes.length === 0;
   const playerServers = servers.filter(isPlayerGameCrate);
   const otherServers = servers.filter((s) => !isPlayerGameCrate(s));
@@ -1091,23 +328,240 @@ export function AgentCanvas({
     ? playerServers
     : [...playerServers, ...otherServers];
 
+  const renderStation = (server: ServerRow) => {
+    const tone = stationTone(server);
+    const selected = server.id === selectedId;
+    const occupant = agentByServerId.get(server.id);
+    const busyLine = serverBusyLabel(server.id);
+    const seated = players[server.id];
+    const seats = tone === "live" ? stationSeats(seated) : [];
+    const countText =
+      tone === "live" && seated
+        ? ` · ${seated.count}${seated.max !== undefined ? `/${seated.max}` : ""}`
+        : "";
+    return (
+      <li key={server.id}>
+        <button
+          type="button"
+          ref={(el) => {
+            if (el) stationRefs.current.set(server.id, el);
+            else stationRefs.current.delete(server.id);
+          }}
+          className={[
+            "lan-station",
+            `is-${tone}`,
+            selected ? "is-selected" : "",
+            occupant && occupant.mood !== "idle" ? "has-agent" : "",
+          ]
+            .filter(Boolean)
+            .join(" ")}
+          style={{ "--game-h": gameHue(server.game) } as CSSProperties}
+          aria-pressed={selected}
+          onClick={(e) => {
+            e.stopPropagation();
+            onSelectRef.current(server.id);
+          }}
+        >
+          <span className="lan-station-disc" aria-hidden>
+            {gameBadgeText(server.game)}
+            {seats.map((seat, i) => (
+              <span
+                key={seat.key}
+                className={seat.overflow ? "lan-seat is-more" : "lan-seat"}
+                style={
+                  {
+                    "--seat-a": `${(i / seats.length) * 360}deg`,
+                  } as CSSProperties
+                }
+                title={seat.title}
+              >
+                {seat.label}
+              </span>
+            ))}
+            {occupant && occupant.mood !== "idle" ? (
+              <span className="lan-station-agent" />
+            ) : null}
+          </span>
+          <span className="lan-station-name" title={server.name}>
+            {shortDisplayName(server.name, 28)}
+          </span>
+          <span
+            className={
+              busyLine ? "lan-station-status is-busy" : "lan-station-status"
+            }
+          >
+            {busyLine || `${boardCrateStatusText(server)}${countText}`}
+          </span>
+        </button>
+      </li>
+    );
+  };
+
+  const renderTable = (cluster: NodeCluster) => {
+    const node = cluster.node;
+    const presence = padPresenceClass(node);
+    const asleep = presence !== "online" && node.id !== "local";
+    const clusterServers = cluster.serverIds
+      .map((id) => serverById.get(id))
+      .filter((s): s is ServerRow => Boolean(s));
+    const othersExpanded =
+      Boolean(expandedOtherNodes[node.id]) ||
+      Boolean(
+        selectedServer &&
+        (selectedServer.nodeId ?? "") === node.id &&
+        !isPlayerGameCrate(selectedServer),
+      );
+    const placements = placeClusterCrates(clusterServers, { othersExpanded });
+    const games = placements.filter(
+      (p) => p.role === "hero" || p.role === "player",
+    );
+    const extras = placements.filter(
+      (p) => p.role === "other" || p.role === "stack",
+    );
+    const meters = hostMeterRows(node, node.usageHistory ?? []).filter(
+      (r) => r.key !== "disk",
+    );
+    const hostSelected = node.id === selectedHostId;
+    return (
+      <section
+        key={node.id}
+        ref={(el) => {
+          if (el) tableRefs.current.set(node.id, el);
+          else tableRefs.current.delete(node.id);
+        }}
+        data-presence={presence}
+        className={[
+          "lan-table",
+          `is-${presence}`,
+          hostSelected ? "is-selected" : "",
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        aria-label={`${node.name} host`}
+      >
+        <button
+          type="button"
+          className="lan-table-head"
+          aria-pressed={hostSelected}
+          onClick={(e) => {
+            e.stopPropagation();
+            selectHost(node);
+          }}
+        >
+          <span className="lan-table-name" title={node.name}>
+            {shortDisplayName(node.name, 24)}
+          </span>
+          {asleep ? (
+            <span className="lan-table-meta is-asleep">
+              {nodePresenceLabel({
+                status: node.status,
+                agentVersion: node.agentVersion,
+              })}
+            </span>
+          ) : (
+            <span className="lan-table-meta">
+              {meters.map((row) => (
+                <span key={row.key} className={`lan-meter tone-${row.tone}`} title={row.value}>
+                  <b>{row.label}</b>{" "}
+                  {row.key === "cpu" || row.value.includes("/")
+                    ? `${Math.round(row.fill * 100)}%`
+                    : row.value}
+                </span>
+              ))}
+            </span>
+          )}
+        </button>
+        {asleep ? (
+          <p className="lan-table-note">
+            {presence === "pending_setup" ? "Still setting up" : "Asleep"} · tap
+            the name to remove it
+          </p>
+        ) : (
+          <ul className="lan-stations">
+            {games.map((p) => {
+              const server = serverById.get(p.serverId);
+              return server ? renderStation(server) : null;
+            })}
+            <li>
+              <button
+                type="button"
+                className="lan-station is-add"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAddServerRef.current();
+                }}
+              >
+                <span className="lan-station-disc" aria-hidden>
+                  +
+                </span>
+                <span className="lan-station-name">Add server</span>
+              </button>
+            </li>
+          </ul>
+        )}
+        {extras.length ? (
+          <ul className="lan-gear">
+            {extras.map((p) => {
+              if (p.role === "stack") {
+                return (
+                  <li key={p.serverId}>
+                    <button
+                      type="button"
+                      className="lan-gear-item is-stack"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setExpandedOtherNodes((prev) => ({
+                          ...prev,
+                          [node.id]: true,
+                        }));
+                        setRailOthersOpen(true);
+                      }}
+                    >
+                      {otherServicesStackLabel(p.stackCount ?? 0)}
+                    </button>
+                  </li>
+                );
+              }
+              const server = serverById.get(p.serverId);
+              if (!server) return null;
+              return (
+                <li key={server.id}>
+                  <button
+                    type="button"
+                    disabled={Boolean(server.unmanaged)}
+                    className={[
+                      "lan-gear-item",
+                      `kind-${boardCrateKind(server)}`,
+                      server.id === selectedId ? "is-selected" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                    title={`${server.name} · ${boardCrateStatusText(server)}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!server.unmanaged) onSelectRef.current(server.id);
+                    }}
+                  >
+                    {shortDisplayName(server.name, 18)}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
+      </section>
+    );
+  };
+
   return (
-    <div className="agent-canvas-host">
-      <div
-        ref={hostRef}
-        className="agent-canvas-stage"
-        role="img"
-        aria-label={
-          mapEmpty
-            ? "Decorative empty LAN map. Use Add node or Describe a server."
-            : `Decorative LAN map with ${hostNodes.length} host${hostNodes.length === 1 ? "" : "s"} and ${servers.length} server${servers.length === 1 ? "" : "s"}. Use the Hosts and Servers lists to select.`
-        }
-      />
+    <div className="agent-canvas-host" ref={hostRef}>
       {serversLoading && mapEmpty ? (
         <div className="agent-canvas-empty" aria-busy="true">
           <div className="empty-hint">
             <strong>Loading map…</strong>
-            <p className="muted status-inline">Checking for servers on this host.</p>
+            <p className="muted status-inline">
+              Checking for servers on this host.
+            </p>
           </div>
           <div className="skeleton" aria-hidden>
             <div className="skeleton-row compact" />
@@ -1139,15 +593,61 @@ export function AgentCanvas({
         </div>
       ) : (
         <>
+          <div
+            ref={floorRef}
+            className="lan-room"
+            role="region"
+            aria-label={`LAN room with ${hostNodes.length} host${hostNodes.length === 1 ? "" : "s"} and ${servers.length} server${servers.length === 1 ? "" : "s"}`}
+            onClick={() => onBackgroundClick?.()}
+          >
+            <div
+              ref={roomRef}
+              className={
+                wiring.below ? "lan-room-inner has-hub-below" : "lan-room-inner"
+              }
+            >
+              <svg className="lan-cables" aria-hidden>
+                {wiring.hub
+                  ? wiring.cables.map((c) => (
+                      <line
+                        key={c.id}
+                        className={`lan-cable is-${c.tone}`}
+                        x1={wiring.hub!.x}
+                        y1={wiring.hub!.y}
+                        x2={c.to.x}
+                        y2={c.to.y}
+                      />
+                    ))
+                  : null}
+              </svg>
+              <div className="lan-tables">{clusters.map(renderTable)}</div>
+              {wiring.hub ? (
+                <div
+                  className={
+                    composeAgent ? "lan-switch has-agent" : "lan-switch"
+                  }
+                  style={{ left: wiring.hub.x, top: wiring.hub.y }}
+                  aria-hidden
+                >
+                  LAN
+                </div>
+              ) : null}
+              {composeAgent?.nowLine ? (
+                <p className="lan-compose-line" role="status">
+                  {composeAgent.nowLine}
+                </p>
+              ) : null}
+            </div>
+          </div>
           <p className="agent-canvas-map-hint muted" id="map-gesture-hint">
             <span className="hint-full">
-              Drag to pan · Scroll to zoom · Esc clear · A add · N node · S start · X stop ·
-              Hosts/pad: scan · Games: chat · Other services: tap stack
+              Esc clear · A add · N node · S start · X stop · Tap a host name to
+              scan it · Tap a game to chat
               {hostNodes.some((n) => n.id !== "local")
-                ? " · Pending pad: remove setup"
+                ? " · Tap a sleeping host to remove it"
                 : ""}
             </span>
-            <span className="hint-short">Esc clear · tap host or server</span>
+            <span className="hint-short">Esc clear · tap a host or a game</span>
           </p>
           <div className="agent-canvas-rail">
             <p className="sr-only" role="status" aria-live="polite">
@@ -1166,7 +666,10 @@ export function AgentCanvas({
                 const canSelect =
                   n.id === "local" ||
                   n.status === "online" ||
-                  isPendingNodeSetup({ agentVersion: n.agentVersion, status: n.status }) ||
+                  isPendingNodeSetup({
+                    agentVersion: n.agentVersion,
+                    status: n.status,
+                  }) ||
                   n.status === "offline";
                 return (
                   <li key={n.id}>
@@ -1200,7 +703,9 @@ export function AgentCanvas({
                       <span className="agent-canvas-list-name" title={n.name}>
                         {shortDisplayName(n.name)}
                       </span>
-                      <span className={`node-status node-${padPresenceClass(n)}`}>
+                      <span
+                        className={`node-status node-${padPresenceClass(n)}`}
+                      >
                         {nodePresenceLabel({
                           status: n.status,
                           agentVersion: n.agentVersion,
@@ -1245,7 +750,9 @@ export function AgentCanvas({
                     } else if (e.key === "ArrowUp" || e.key === "ArrowLeft") {
                       e.preventDefault();
                       const prev =
-                        railServers[(idx - 1 + railServers.length) % railServers.length]!;
+                        railServers[
+                          (idx - 1 + railServers.length) % railServers.length
+                        ]!;
                       if (!prev.unmanaged) onSelectRef.current(prev.id);
                     } else if (e.key === "Escape") {
                       e.preventDefault();
@@ -1258,8 +765,16 @@ export function AgentCanvas({
                     const occupant = agentByServerId.get(server.id);
                     const busyLabel = serverBusyLabel(server.id);
                     const secondary = !isPlayerGameCrate(server);
+                    const shownState = displayServerStatus(
+                      server.status,
+                      server.ready,
+                    );
                     return (
-                      <li key={server.id} role="option" aria-selected={selected}>
+                      <li
+                        key={server.id}
+                        role="option"
+                        aria-selected={selected}
+                      >
                         <button
                           type="button"
                           disabled={Boolean(server.unmanaged)}
@@ -1277,13 +792,42 @@ export function AgentCanvas({
                         >
                           <span
                             className={`agent-canvas-list-agent mood-${occupant?.mood ?? "idle"}`}
-                            title={occupant?.nowLine ?? occupant?.mood ?? "idle"}
+                            title={
+                              occupant?.nowLine ?? occupant?.mood ?? "idle"
+                            }
                             aria-hidden
                           />
-                          <span className="agent-canvas-list-name" title={server.name}>
+                          {secondary ? null : (
+                            <span
+                              className={`dash-game-badge map-game-badge${shownState === "running" ? "" : " is-idle"}`}
+                              style={
+                                {
+                                  "--game-h": gameHue(server.game),
+                                } as CSSProperties
+                              }
+                              aria-hidden
+                            >
+                              {gameBadgeText(server.game)}
+                              <span
+                                className={`dash-dot state-${shownState}`}
+                              />
+                            </span>
+                          )}
+                          <span
+                            className="agent-canvas-list-name"
+                            title={server.name}
+                          >
                             {server.name}
                           </span>
-                          <span className="muted">{busyLabel || boardCrateStatusText(server)}</span>
+                          <span
+                            className={
+                              busyLabel
+                                ? "muted"
+                                : `dash-state state-${shownState}`
+                            }
+                          >
+                            {busyLabel || boardCrateStatusText(server)}
+                          </span>
                           <ServerUsageMeters
                             variant="strip"
                             cpuPercent={server.cpuPercent}
@@ -1305,7 +849,9 @@ export function AgentCanvas({
                       setRailOthersOpen(next);
                       if (next) {
                         const nodeIds = new Set(
-                          otherServers.map((s) => s.nodeId).filter((id): id is string => Boolean(id)),
+                          otherServers
+                            .map((s) => s.nodeId)
+                            .filter((id): id is string => Boolean(id)),
                         );
                         setExpandedOtherNodes((prev) => {
                           const copy = { ...prev };
@@ -1346,12 +892,20 @@ export function AgentCanvas({
             </div>
           ) : null}
           {pendingRemoveNodeId ? (
-            <div className="map-inline-confirm" role="alertdialog" aria-labelledby="map-remove-node-title">
+            <div
+              className="map-inline-confirm"
+              role="alertdialog"
+              aria-labelledby="map-remove-node-title"
+            >
               <p id="map-remove-node-title">
                 Remove incomplete node “
-                {hostNodes.find((h) => h.id === pendingRemoveNodeId)?.name ?? pendingRemoveNodeId}”?
+                {hostNodes.find((h) => h.id === pendingRemoveNodeId)?.name ??
+                  pendingRemoveNodeId}
+                ”?
               </p>
-              <p className="muted small">Bootstrap never finished or the agent is offline.</p>
+              <p className="muted small">
+                Bootstrap never finished or the agent is offline.
+              </p>
               <div className="btn-row">
                 <button
                   type="button"
