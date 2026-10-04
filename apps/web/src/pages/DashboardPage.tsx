@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { can, type PublicUser } from "@playon/shared";
 import { api } from "../api";
 import { ServerNameControl } from "../components/ServerNameControl";
 import { HostUsageMeters, ServerUsageMeters } from "../components/UsageMeters";
+import { gameBadgeText, gameHue } from "../game-badge";
 import {
   nodePresenceHint,
   nodePresenceLabel,
@@ -396,7 +397,14 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                         data-game={s.game ?? undefined}
                       >
                         <div className="dash-row-id">
-                          <span className={`dash-dot state-${st}`} aria-hidden />
+                          <span
+                            className="dash-game-badge"
+                            style={{ "--game-h": gameHue(s.game) } as CSSProperties}
+                            aria-hidden
+                          >
+                            {gameBadgeText(s.game)}
+                            <span className={`dash-dot state-${st}`} />
+                          </span>
                           <div className="dash-row-text">
                             {canRename ? (
                               <ServerNameControl
@@ -573,10 +581,16 @@ export function DashboardPage({ user }: { user: PublicUser }) {
                     const hosted = serversOnNode(n.id);
                     const hasUsage =
                       n.cpuPercent != null || n.memUsedBytes != null || n.freeDiskBytes != null;
+                    const hostAlerts = (n.alerts ?? []).filter((a) => a.scope === "host");
+                    const hot = hostAlerts.some((a) => a.tone === "danger")
+                      ? " is-hot tone-danger"
+                      : hostAlerts.length
+                        ? " is-hot tone-warn"
+                        : "";
                     return (
                       <li
                         key={n.id}
-                        className={`dash-row host-row state-${state}${state === "online" ? "" : " is-idle"}`}
+                        className={`dash-row host-row state-${state}${state === "online" ? "" : " is-idle"}${hot}`}
                       >
                         <div className="dash-row-id">
                           <span className={`dash-dot state-${state}`} aria-hidden />

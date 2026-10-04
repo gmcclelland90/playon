@@ -2470,10 +2470,14 @@ a.btn {
 
 .dash-pulse-live.is-live {
   color: var(--accent);
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  background: oklch(0.78 0.12 185 / 0.12);
 }
 
 .dash-pulse-live.is-live strong {
   color: var(--accent);
+  font-size: 1.125rem;
 }
 
 .dash-pulse-bad,
@@ -2645,6 +2649,74 @@ a.btn {
   align-items: flex-start;
   gap: 0.7rem;
   min-width: 0;
+}
+
+/* Arcade hits: each server wears its game as a colored badge; the status dot rides its corner. */
+.dash-game-badge {
+  --game-h: 353;
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--radius-md);
+  background: oklch(0.42 0.12 var(--game-h));
+  box-shadow: inset 0 0 0 1px oklch(0.7 0.14 var(--game-h) / 0.5);
+  color: oklch(0.96 0.04 var(--game-h));
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+.dash-game-badge > .dash-dot {
+  position: absolute;
+  right: -0.2rem;
+  bottom: -0.2rem;
+  width: 0.7rem;
+  height: 0.7rem;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.dash-game-badge > .dash-dot.state-stopped,
+.dash-game-badge > .dash-dot.state-unknown {
+  background: var(--surface);
+  box-shadow: 0 0 0 2px var(--surface), inset 0 0 0 1.5px currentColor;
+}
+
+.dash-row.is-idle .dash-game-badge {
+  background: oklch(0.26 0.03 var(--game-h));
+  box-shadow: inset 0 0 0 1px oklch(0.5 0.05 var(--game-h) / 0.4);
+  color: oklch(0.72 0.04 var(--game-h));
+}
+
+.dash-row:has(.dash-game-badge) .dash-row-id {
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.dash-row:not(.host-row):has(.dash-game-badge) .dash-row-load:not(:empty) {
+  padding-left: 3.1rem;
+}
+
+.dash-row .btn-primary {
+  box-shadow: 0 4px 16px oklch(0.62 0.16 353 / 0.32);
+}
+
+.host-row.is-hot {
+  margin-inline: calc(var(--space-2) * -1);
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-md);
+  background: oklch(0.78 0.12 85 / 0.06);
+}
+
+.host-row.is-hot.tone-danger {
+  background: oklch(0.68 0.18 25 / 0.07);
+}
+
+.host-row.is-hot + .dash-row {
+  border-top-color: transparent;
 }
 
 .dash-row-id > .dash-dot {
@@ -2837,8 +2909,14 @@ a.btn {
   }
 
   .dash-row-load:not(:empty),
-  .dash-row-actions {
+  .dash-row-actions,
+  .dash-row:not(.host-row):has(.dash-game-badge) .dash-row-load:not(:empty) {
     padding-left: 1.25rem;
+  }
+
+  .dash-row:not(.host-row):has(.dash-game-badge) .dash-row-load:not(:empty),
+  .dash-row:not(.host-row):has(.dash-game-badge) .dash-row-actions {
+    padding-left: 3.1rem;
   }
 
   .dash-row-actions {
