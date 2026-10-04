@@ -38,25 +38,6 @@ export type NodeCluster = {
 
 /** Wider spacing reads better at the pulled-back 2.5D camera. */
 const COL_GAP = 480;
-const HOST_ROW_GAP = 400;
-
-/**
- * Host pads fill a near-square grid (2 wide for 3–4 hosts) instead of one long
- * row, so the map can be framed at a readable zoom. Odd rows shift half a
- * column, which reads as an isometric street. Last row is centred.
- */
-export function clusterOrigin(index: number, count: number): { x: number; y: number } {
-  const cols = count <= 2 ? Math.max(count, 1) : Math.ceil(Math.sqrt(count));
-  const rows = Math.ceil(Math.max(count, 1) / cols);
-  const row = Math.floor(index / cols);
-  const col = index % cols;
-  const inRow = row === rows - 1 ? count - row * cols : cols;
-  const stagger = rows > 1 && row % 2 === 1 ? COL_GAP / 4 : 0;
-  const x = (col - (inRow - 1) / 2) * COL_GAP + stagger;
-  const y = -20 + (row - (rows - 1) / 2) * HOST_ROW_GAP;
-  return { x, y };
-}
-
 const ROW_GAP = 150;
 const CRATES_PER_COL = 2;
 
@@ -117,10 +98,13 @@ export function clusterServersByNode(
     return na.name.localeCompare(nb.name);
   });
 
+  const count = Math.max(ids.length, 1);
+  const startX = -((count - 1) * COL_GAP) / 2;
+
   return ids.map((id, index) => ({
     node: byId.get(id)!,
     serverIds: buckets.get(id) ?? [],
-    origin: clusterOrigin(index, ids.length),
+    origin: { x: startX + index * COL_GAP, y: -20 },
   }));
 }
 

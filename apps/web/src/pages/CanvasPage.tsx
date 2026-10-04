@@ -35,6 +35,7 @@ import {
   skillShortLabel,
   type SelectedAnchor,
 } from "../components/agent-canvas/AgentCanvas";
+import { serverPlayersFromPanel } from "../components/agent-canvas/lan-room-layout";
 import { ChatChannelList } from "../components/ChatChannelList";
 import { ChatNowLine } from "../components/ChatNowLine";
 import { ChatMarkdown } from "../components/ChatMarkdown";
@@ -208,6 +209,15 @@ export function CanvasPage({ user }: { user: PublicUser }) {
 
   const servers = useQuery({ queryKey: ["servers"], queryFn: api.servers, refetchInterval: 4000 });
   const nodes = useQuery({ queryKey: ["nodes"], queryFn: api.nodes, refetchInterval: 8_000 });
+  // Live player lists ride on the panel's server_status blocks; they seat players on the map.
+  const panelPlayers = useQuery({
+    queryKey: ["map-players"],
+    queryFn: async () => {
+      const panel = await api.panel();
+      return panel.notModified ? {} : serverPlayersFromPanel(panel.blocks);
+    },
+    refetchInterval: 15_000,
+  });
   const [addNodeOpen, setAddNodeOpen] = useState(false);
   const [scanNodeId, setScanNodeId] = useState<string | null>(null);
   const removeNodeMut = useMutation({
@@ -970,6 +980,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         selectedId={selectedId}
         selectedHostId={scanNodeId}
         agents={serverAgents}
+        players={panelPlayers.data}
         skills={skills.map((s) => ({
           skill: s.skill,
           level: s.level,

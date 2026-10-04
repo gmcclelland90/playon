@@ -369,23 +369,17 @@ a.brand-mark:hover {
   height: 100%;
 }
 
-/* Panels over the map publish their footprint so the world frames itself in what's left.
-   Registered as lengths so getComputedStyle hands AgentCanvas resolved px. */
-@property --map-inset-left { syntax: "<length>"; inherits: true; initial-value: 0px; }
-@property --map-inset-right { syntax: "<length>"; inherits: true; initial-value: 0px; }
-@property --map-inset-top { syntax: "<length>"; inherits: true; initial-value: 0px; }
-@property --map-inset-bottom { syntax: "<length>"; inherits: true; initial-value: 0px; }
+/* Panels over the map publish their footprint so the LAN room fits in what's left. */
 
 .canvas-page {
-  --map-inset-left: 18.5rem;
-  --map-inset-right: 0px;
-  --map-inset-top: 4rem;
-  --map-inset-bottom: 2.5rem;
+  --map-inset-left: 18.25rem;
+  --map-inset-right: 1rem;
+  --map-inset-top: 4.5rem;
+  --map-inset-bottom: 3.25rem;
 }
 
 .canvas-page.map-dock-open {
-  --map-inset-right: calc(min(25rem, 100vw - 2rem) + 2rem);
-  --map-inset-top: 1rem;
+  --map-inset-right: calc(min(25rem, 100vw - 2rem) + 1.75rem);
 }
 
 .server-console-bubble {
@@ -622,15 +616,399 @@ body.server-console-resizing iframe {
   background: oklch(0.12 0.02 350);
 }
 
-.agent-canvas-stage {
+/* ---- Map: top-down LAN room. Hosts are tables cabled to a switch; games are stations. ---- */
+.lan-room {
   position: absolute;
-  inset: 0;
+  inset: var(--map-inset-top) var(--map-inset-right) var(--map-inset-bottom) var(--map-inset-left);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--radius);
+  /* The room's floor: one warm pool of light in the middle, dark at the walls. */
+  background:
+    radial-gradient(70% 60% at 50% 45%, oklch(0.18 0.02 353), transparent),
+    oklch(0.12 0.012 353);
+  border: 1px solid var(--line);
 }
 
-.agent-canvas-stage canvas {
-  display: block;
+.lan-room-inner {
+  position: relative;
+  min-height: 100%;
+  display: grid;
+}
+
+.lan-room-inner.has-hub-below {
+  padding-bottom: 5rem;
+}
+
+.lan-tables {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: center;
+  align-items: flex-start;
+  gap: 4.5rem 2rem;
+  padding: 1.25rem 0.5rem;
+}
+
+.lan-cables {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.lan-cable {
+  stroke: oklch(0.78 0.12 185 / 0.5);
+  stroke-width: 3;
+  stroke-dasharray: 6 6;
+  stroke-linecap: round;
+}
+
+.lan-cable.is-offline,
+.lan-cable.is-pending_setup {
+  stroke: oklch(0.68 0.18 25 / 0.4);
+}
+
+.lan-cable.is-stale {
+  stroke: oklch(0.78 0.12 85 / 0.45);
+}
+
+/* Keep the size in step with SWITCH_SIZE in AgentCanvas.tsx. */
+.lan-switch {
+  position: absolute;
+  z-index: 2;
+  width: 56px;
+  height: 56px;
+  translate: -50% -50%;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: oklch(0.2 0.03 185);
+  border: 2px solid var(--accent);
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  pointer-events: none;
+}
+
+.lan-switch.has-agent {
+  animation: lan-ping 1.6s var(--ease) infinite;
+}
+
+.lan-compose-line {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: 0.75rem;
+  translate: -50% 0;
+  margin: 0;
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  background: oklch(0.2 0.03 185);
+  color: var(--accent);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.lan-table {
+  display: grid;
+  gap: 0.6rem;
+  max-width: 26rem;
+  padding: 0.7rem 0.75rem 0.85rem;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  border: 1px solid oklch(0.96 0.01 353 / 0.14);
+  box-shadow: 0 10px 28px oklch(0.05 0.02 350 / 0.45);
+}
+
+.lan-table.is-selected {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 3px oklch(0.78 0.12 185 / 0.2),
+    0 10px 28px oklch(0.05 0.02 350 / 0.45);
+}
+
+.lan-table.is-offline,
+.lan-table.is-pending_setup {
+  background: oklch(0.17 0.012 353);
+  border-style: dashed;
+  box-shadow: none;
+}
+
+.lan-table-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  padding: 0.15rem 0.25rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lan-table-head:hover .lan-table-name,
+.lan-table.is-selected .lan-table-name {
+  color: var(--accent);
+}
+
+.lan-table-name {
+  font-size: 1.125rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.is-offline .lan-table-name,
+.is-pending_setup .lan-table-name {
+  color: var(--muted);
+}
+
+.lan-table-meta {
+  margin-left: auto;
+  display: flex;
+  gap: 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.lan-table-meta.is-asleep {
+  color: var(--danger);
+}
+
+.lan-meter b {
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--placeholder);
+}
+
+.lan-meter.tone-warn {
+  color: var(--warn);
+  font-weight: 700;
+}
+
+.lan-meter.tone-danger {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.lan-table-note {
+  margin: 0;
+  padding: 0 0.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.lan-stations,
+.lan-gear {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.lan-stations {
+  gap: 0.9rem;
+}
+
+.lan-station {
+  --game-h: 353;
+  min-width: 5.25rem;
+  max-width: 8rem;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 0.2rem;
+  padding: 0 0 0.35rem;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+
+.lan-station-disc {
+  position: relative;
+  width: 3.6rem;
+  height: 3.6rem;
+  margin: 0.95rem 0 0.8rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 1.1rem;
+  font-weight: 900;
+  letter-spacing: -0.01em;
+  background: oklch(0.36 0.03 var(--game-h));
+  color: oklch(0.76 0.03 var(--game-h));
+  transition: transform 160ms var(--ease);
+}
+
+.lan-station:hover .lan-station-disc {
+  transform: scale(1.06);
+}
+
+.lan-station.is-live .lan-station-disc {
+  background: oklch(0.58 0.15 var(--game-h));
+  color: oklch(0.98 0.02 var(--game-h));
+  box-shadow: 0 0 0 5px oklch(0.58 0.15 var(--game-h) / 0.22);
+}
+
+.lan-station.is-busy .lan-station-disc {
+  background: oklch(0.46 0.1 var(--game-h));
+  color: oklch(0.95 0.03 var(--game-h));
+  box-shadow: 0 0 0 5px oklch(0.78 0.12 85 / 0.22);
+}
+
+.lan-station.is-failed .lan-station-disc {
+  background: oklch(0.38 0.11 25);
+  color: oklch(0.9 0.05 25);
+  box-shadow: 0 0 0 5px oklch(0.68 0.18 25 / 0.25);
+}
+
+.lan-station.is-selected .lan-station-disc {
+  outline: 3px solid var(--accent);
+  outline-offset: 6px;
+}
+
+.lan-station.is-add .lan-station-disc {
+  background: none;
+  border: 2px dashed oklch(0.96 0.01 353 / 0.25);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.lan-station.is-add:hover .lan-station-disc {
+  border-color: var(--primary);
+  color: var(--ink);
+}
+
+.lan-seat {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1.1rem;
+  height: 1.1rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 2px solid var(--surface-2);
+  background: oklch(0.85 0.09 185);
+  color: oklch(0.18 0.03 185);
+  font-size: 0.58rem;
+  font-weight: 800;
+  line-height: 1;
+  transform: translate(-50%, -50%) rotate(var(--seat-a)) translateY(-2.35rem) rotate(calc(var(--seat-a) * -1));
+}
+
+.lan-seat.is-more {
+  width: auto;
+  min-width: 1.1rem;
+  padding: 0 0.2rem;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+/* The agent working on this game: a pulsing pip on the station. */
+.lan-station-agent {
+  position: absolute;
+  top: -0.15rem;
+  right: -0.15rem;
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 50%;
+  border: 2px solid var(--surface-2);
+  background: var(--warn);
+  animation: lan-ping 1.4s var(--ease) infinite;
+}
+
+@keyframes lan-ping {
+  0% {
+    box-shadow: 0 0 0 0 oklch(0.78 0.12 85 / 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 10px oklch(0.78 0.12 85 / 0);
+  }
+}
+
+.lan-station-name {
+  font-size: 0.875rem;
+  font-weight: 700;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.lan-station.is-add .lan-station-name {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.lan-station-status {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.lan-station.is-live .lan-station-status {
+  color: var(--accent);
+}
+
+.lan-station.is-failed .lan-station-status {
+  color: var(--danger);
+}
+
+.lan-station-status.is-busy {
+  color: var(--warn);
+}
+
+.lan-gear {
+  gap: 0.35rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--line);
+}
+
+.lan-gear-item {
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.lan-gear-item:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.lan-gear-item.is-selected {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.lan-gear-item.is-stack {
+  border-style: dashed;
+}
+
+.lan-table-head:focus-visible,
+.lan-station:focus-visible,
+.lan-gear-item:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .agent-canvas-empty {
@@ -4600,22 +4978,106 @@ a.btn {
   }
 }
 
-/* Map side panel → bottom sheet on phones. Comes last so it wins over the panel grid. */
+/* Phones: the map page scrolls as one column (hosts strip, add buttons, LAN room, then the
+   chat panel) so the room is never buried under a sheet. Comes last so it wins. */
 @media (max-width: 720px) {
-  .canvas-page {
-    --map-inset-left: 0px;
-    --map-inset-top: 3.5rem;
+  .app-shell:has(.canvas-page) {
+    height: auto;
+    min-height: 100dvh;
   }
 
-  .canvas-page.map-dock-open {
-    --map-inset-right: 0px;
-    --map-inset-top: 0.5rem;
-    --map-inset-bottom: calc(min(58vh, 32rem) + 4.5rem);
+  .app-shell:has(.canvas-page) > .main-canvas {
+    overflow: visible;
+  }
+
+  .app-shell:has(.canvas-page) .canvas-page {
+    height: auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-3);
+  }
+
+  .agent-canvas-host {
+    position: relative;
+    inset: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    background: none;
+  }
+
+  .agent-canvas-rail,
+  .canvas-page.map-dock-open .agent-canvas-rail,
+  .canvas-page.map-overlay-open .agent-canvas-rail {
+    position: static;
+    width: auto;
+    max-height: none;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.45rem;
+    overflow-x: auto;
+    order: -2;
+  }
+
+  .agent-canvas-rail .agent-canvas-rail-label {
+    display: none;
+  }
+
+  .agent-canvas-rail .agent-canvas-list {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 0.25rem;
+    overflow: visible;
+  }
+
+  .agent-canvas-rail .agent-canvas-list-item {
+    width: auto;
+    min-width: max-content;
+    padding: 0.35rem 0.55rem;
+  }
+
+  .agent-canvas-rail .agent-canvas-list-item .node-status,
+  .agent-canvas-rail .agent-canvas-list-item .dash-state,
+  .agent-canvas-rail .agent-canvas-list-item .muted,
+  .agent-canvas-rail .agent-canvas-list-item .usage-strip {
+    display: none;
+  }
+
+  .agent-canvas-add-row,
+  .canvas-page.map-dock-open .agent-canvas-add-row {
+    position: static;
+    order: -1;
+    justify-content: flex-end;
+  }
+
+  .lan-room {
+    position: relative;
+    inset: auto;
+    height: min(62vh, 30rem);
+  }
+
+  .lan-tables {
+    gap: 3.5rem 1rem;
+  }
+
+  .agent-canvas-map-hint,
+  .canvas-page.map-dock-open .agent-canvas-map-hint,
+  .canvas-page.map-overlay-open .agent-canvas-map-hint {
+    display: none;
   }
 
   .canvas-chat-dock {
+    position: relative;
+    inset: auto;
     width: auto;
-    height: min(58vh, 32rem);
+    height: min(80vh, 40rem);
+    max-height: none;
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
     gap: var(--space-2);
     grid-template-rows: auto auto auto auto auto minmax(0, 1fr) auto;
   }
@@ -4638,9 +5100,5 @@ a.btn {
 
   .canvas-composer-extras .canvas-busy-hint {
     display: none;
-  }
-
-  .canvas-page.map-dock-open .agent-canvas-add-row {
-    right: 0.65rem;
   }
 }

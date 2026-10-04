@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  clusterOrigin,
   boardCrateKind,
   boardCrateStatusText,
   clusterPadSize,
@@ -251,17 +250,5 @@ describe("board crate hierarchy", () => {
     const placed = placeClusterCrates([nzl, ...leftovers]);
     expect(placed.some((p) => p.serverId === "nzl" && p.role === "player")).toBe(true);
     expect(placed.some((p) => p.role === "stack" && p.stackCount === 3)).toBe(true);
-  });
-});
-
-describe("clusterOrigin", () => {
-  it("keeps one or two hosts on a single row", () => {
-    expect(clusterOrigin(0, 1)).toEqual({ x: 0, y: -20 });
-    expect(clusterOrigin(0, 2).y).toBe(clusterOrigin(1, 2).y);
-  });
-
-  it("wraps three or more hosts into rows", () => {
-    expect(clusterOrigin(2, 3).y).toBeGreaterThan(clusterOrigin(0, 3).y);
-    expect(clusterOrigin(4, 9).y).toBe(clusterOrigin(3, 9).y);
   });
 });
