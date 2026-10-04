@@ -2273,29 +2273,6 @@ a.btn {
   font-size: 0.9rem;
 }
 
-.dash-summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.35rem 0.65rem;
-  padding: 0.85rem 0;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.95rem;
-}
-
-.dash-summary strong {
-  color: var(--ink);
-  font-weight: 700;
-}
-
-.dash-summary a {
-  margin-left: auto;
-  font-weight: 700;
-}
-
 .dashboard-page {
   max-width: var(--page-max);
   margin: 0 auto;
@@ -2435,31 +2412,6 @@ a.btn {
   text-align: right;
 }
 
-.dash-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-}
-
-.dash-primary {
-  grid-column: 1 / -1;
-}
-
-.dash-secondary {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-}
-
-.dash-quiet {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 1rem;
-  opacity: 0.92;
-}
-
 .dash-node-caps {
   margin-top: 0.15rem;
 }
@@ -2473,25 +2425,513 @@ a.btn {
   display: none;
 }
 
-.dashboard-page .list.compact-list .btn-row {
-  flex-wrap: wrap;
-}
-
-@media (max-width: 520px) {
-  .dashboard-page .list.compact-list .btn-row .dash-secondary-action {
-    display: none;
-  }
-}
-
 .dash-ops-notice {
   margin: 0;
 }
 
-@media (max-width: 820px) {
-  .dash-grid,
-  .dash-secondary,
-  .dash-quiet {
-    grid-template-columns: 1fr;
+/* Dashboard: one pulse line, a "needs you" strip, then servers + hosts as
+   scan rows (identity | load | actions) beside a quieter backups/activity rail. */
+.dash-stack {
+  gap: var(--space-4);
+}
+
+.dash-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-4);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.dash-pulse {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) 1.1rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.dash-pulse strong {
+  color: var(--ink);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-pulse-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--muted);
+}
+
+.dash-pulse-live.is-live {
+  color: var(--accent);
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  background: oklch(0.78 0.12 185 / 0.12);
+}
+
+.dash-pulse-live.is-live strong {
+  color: var(--accent);
+  font-size: 1.125rem;
+}
+
+.dash-pulse-bad,
+.dash-pulse-bad strong {
+  color: var(--danger);
+}
+
+/* Status dot: the one live signal. Running hosts/servers breathe; the rest sit still. */
+.dash-dot {
+  position: relative;
+  flex: 0 0 auto;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.dash-pulse-live.is-live .dash-dot::after,
+.dash-dot.state-running::after,
+.dash-dot.state-online::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: currentColor;
+  animation: dash-live 2.4s var(--ease) infinite;
+}
+
+@keyframes dash-live {
+  0% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  70%,
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+:is(.dash-dot, .dash-state).state-running,
+:is(.dash-dot, .dash-state).state-online {
+  color: var(--accent);
+}
+
+:is(.dash-dot, .dash-state).state-starting,
+:is(.dash-dot, .dash-state).state-stopping,
+:is(.dash-dot, .dash-state).state-degraded,
+:is(.dash-dot, .dash-state).state-stale {
+  color: var(--warn);
+}
+
+:is(.dash-dot, .dash-state).state-error,
+:is(.dash-dot, .dash-state).state-failed,
+:is(.dash-dot, .dash-state).state-offline {
+  color: var(--danger);
+}
+
+:is(.dash-dot, .dash-state).state-stopped,
+:is(.dash-dot, .dash-state).state-unknown {
+  color: var(--placeholder);
+}
+
+.dash-dot.state-stopped,
+.dash-dot.state-unknown {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+
+.dash-attention {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.dash-attention li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.4rem 0.85rem;
+  border-radius: 999px;
+  border: 1px solid oklch(0.78 0.12 85 / 0.35);
+  background: oklch(0.78 0.12 85 / 0.1);
+  color: var(--warn);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.dash-attention li > span:not(.dash-dot) {
+  color: var(--ink);
+}
+
+.dash-attention li.tone-danger {
+  border-color: oklch(0.68 0.18 25 / 0.4);
+  background: oklch(0.68 0.18 25 / 0.12);
+  color: var(--danger);
+}
+
+.dash-layout {
+  display: grid;
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.dash-main,
+.dash-rail {
+  display: grid;
+  gap: var(--space-4);
+  align-content: start;
+  min-width: 0;
+}
+
+@media (min-width: 1100px) {
+  .dash-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(17rem, 21rem);
+  }
+}
+
+.dash-section {
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+}
+
+.dash-count {
+  margin-left: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--placeholder);
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.dash-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "id actions"
+    "load actions";
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--line);
+  transition: opacity 180ms var(--ease);
+}
+
+.dash-row:first-child {
+  border-top: 0;
+  padding-top: var(--space-1);
+}
+
+.dash-row.host-row {
+  grid-template-columns: minmax(13rem, 1fr) minmax(14rem, 1fr);
+  grid-template-areas: "id load";
+}
+
+.dash-row-id {
+  grid-area: id;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+/* Arcade hits: each server wears its game as a colored badge; the status dot rides its corner. */
+.dash-game-badge {
+  --game-h: 353;
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--radius-md);
+  background: oklch(0.42 0.12 var(--game-h));
+  box-shadow: inset 0 0 0 1px oklch(0.7 0.14 var(--game-h) / 0.5);
+  color: oklch(0.96 0.04 var(--game-h));
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+.dash-game-badge > .dash-dot {
+  position: absolute;
+  right: -0.2rem;
+  bottom: -0.2rem;
+  width: 0.7rem;
+  height: 0.7rem;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.dash-game-badge > .dash-dot.state-stopped,
+.dash-game-badge > .dash-dot.state-unknown {
+  background: var(--surface);
+  box-shadow: 0 0 0 2px var(--surface), inset 0 0 0 1.5px currentColor;
+}
+
+.dash-row.is-idle .dash-game-badge {
+  background: oklch(0.26 0.03 var(--game-h));
+  box-shadow: inset 0 0 0 1px oklch(0.5 0.05 var(--game-h) / 0.4);
+  color: oklch(0.72 0.04 var(--game-h));
+}
+
+.dash-row:has(.dash-game-badge) .dash-row-id {
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.dash-row:not(.host-row):has(.dash-game-badge) .dash-row-load:not(:empty) {
+  padding-left: 3.1rem;
+}
+
+.dash-row .btn-primary {
+  box-shadow: 0 4px 16px oklch(0.62 0.16 353 / 0.32);
+}
+
+.host-row.is-hot {
+  margin-inline: calc(var(--space-2) * -1);
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-md);
+  background: oklch(0.78 0.12 85 / 0.06);
+}
+
+.host-row.is-hot.tone-danger {
+  background: oklch(0.68 0.18 25 / 0.07);
+}
+
+.host-row.is-hot + .dash-row {
+  border-top-color: transparent;
+}
+
+.dash-row-id > .dash-dot {
+  margin-top: 0.42rem;
+}
+
+.dash-row-text {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.dash-row-text > strong,
+.dash-row-text .server-name-label {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.dash-row.is-idle .dash-row-text > strong,
+.dash-row.is-idle .dash-row-text .server-name-label {
+  color: var(--muted);
+}
+
+.dash-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1rem 0;
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.dash-row-meta > span {
+  white-space: nowrap;
+}
+
+.dash-row-meta > span + span::before {
+  content: "·";
+  margin: 0 0.45rem;
+  color: var(--placeholder);
+}
+
+.dash-state {
+  font-weight: 700;
+}
+
+.dash-row-hint {
+  font-size: 0.82rem;
+}
+
+.dash-tag {
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  vertical-align: 0.1em;
+}
+
+/* Rename stays reachable but only shows when the row is in hand. */
+.dash-row .server-name-control .linkish {
+  flex: 0 0 auto;
+  max-width: 0;
+  padding-inline: 0;
+  overflow: hidden;
+  font-size: 0.82rem;
+  opacity: 0;
+  transition: opacity 160ms var(--ease);
+}
+
+.dash-row:hover .server-name-control .linkish,
+.dash-row:focus-within .server-name-control .linkish {
+  max-width: 6rem;
+  opacity: 1;
+}
+
+@media (pointer: coarse) {
+  .dash-row .server-name-control .linkish {
+    max-width: 6rem;
+    opacity: 1;
+  }
+}
+
+.dash-row-load {
+  grid-area: load;
+  min-width: 0;
+}
+
+.dash-row:not(.host-row) .dash-row-load:not(:empty) {
+  max-width: 26rem;
+  padding-left: 1.25rem;
+}
+
+.dash-row-load .usage-meters,
+.dash-row-load .usage-meters.compact {
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+  max-width: none;
+  margin: 0;
+}
+
+/* Hosts keep the DESIGN.md cluster: three stacked rows with room for a hot value. */
+.host-row .dash-row-load .usage-meters,
+.host-row .dash-row-load .usage-meters.compact {
+  grid-auto-flow: row;
+  gap: 0.2rem;
+  max-width: 24rem;
+}
+
+/* Detector: 0.62rem meter labels render under the 11px floor; use the instrument step here. */
+.dash-row-load .usage-meter-label {
+  font-size: 0.75rem;
+}
+
+.dash-row-load .usage-meter-row {
+  grid-template-columns: 2.1rem minmax(2.5rem, 1fr) auto;
+  gap: var(--space-1);
+}
+
+.dash-row-actions {
+  grid-area: actions;
+  justify-content: flex-end;
+}
+
+.dash-node-caps summary.linkish,
+.dash-rail .activity-feed .linkish,
+.dash-attention .linkish {
+  padding: 0;
+}
+
+.dash-node-caps summary.linkish {
+  font-size: 0.82rem;
+  width: fit-content;
+}
+
+.dash-rail .activity-feed li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.1rem var(--space-3);
+  align-items: baseline;
+  padding: var(--space-2) 0;
+}
+
+.dash-rail .activity-tool {
+  grid-column: 1;
+  color: var(--ink);
+}
+
+.dash-rail .activity-server {
+  grid-column: 1;
+  font-size: 0.82rem;
+}
+
+.dash-rail .activity-status {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+
+.dash-rail .activity-time {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: end;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-rail .activity-feed .linkish {
+  grid-column: 1;
+  width: fit-content;
+  font-size: 0.82rem;
+}
+
+.dash-rail .panel {
+  background: oklch(0.16 0.012 353 / 0.6);
+}
+
+@media (max-width: 860px) {
+  .dash-row,
+  .dash-row.host-row {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "id"
+      "load"
+      "actions";
+  }
+
+  .dash-row-load:not(:empty),
+  .dash-row-actions,
+  .dash-row:not(.host-row):has(.dash-game-badge) .dash-row-load:not(:empty) {
+    padding-left: 1.25rem;
+  }
+
+  .dash-row:not(.host-row):has(.dash-game-badge) .dash-row-load:not(:empty),
+  .dash-row:not(.host-row):has(.dash-game-badge) .dash-row-actions {
+    padding-left: 3.1rem;
+  }
+
+  .dash-row-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 520px) {
+  .dash-row-actions .dash-secondary-action {
+    display: none;
+  }
+
+  .dash-row-load .usage-meters,
+  .dash-row-load .usage-meters.compact {
+    grid-auto-flow: row;
   }
 }
 
