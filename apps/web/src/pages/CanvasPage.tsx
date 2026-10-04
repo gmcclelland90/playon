@@ -30,11 +30,7 @@ import {
   setAlwaysApproveTool,
   shouldAutoApprove,
 } from "../confirm-prefs";
-import {
-  AgentCanvas,
-  skillShortLabel,
-  type SelectedAnchor,
-} from "../components/agent-canvas/AgentCanvas";
+import { AgentCanvas, skillShortLabel } from "../components/agent-canvas/AgentCanvas";
 import { serverPlayersFromPanel } from "../components/agent-canvas/lan-room-layout";
 import { ChatChannelList } from "../components/ChatChannelList";
 import { ChatNowLine } from "../components/ChatNowLine";
@@ -44,7 +40,7 @@ import { chatNowView } from "../chat-now";
 import { mergeNodeContainerInventory } from "../components/agent-canvas/map-node-layout";
 import { MapAddNodePanel } from "../components/MapAddNodePanel";
 import { MapManageSuggestPanel } from "../components/MapManageSuggestPanel";
-import { ServerConsoleBubble } from "../components/ServerConsoleBubble";
+import { ServerConsoleDock } from "../components/ServerConsoleDock";
 import { ServerModsPanel } from "../components/ServerModsPanel";
 import { MAKE_A_MOD_DRAFT } from "../make-a-mod";
 import { ServerUsageMeters } from "../components/UsageMeters";
@@ -204,7 +200,6 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const [renameError, setRenameError] = useState<string | null>(null);
   const [dockTab, setDockTab] = useState<DockTab>("chat");
   const [consoleOpen, setConsoleOpen] = useState(true);
-  const [selectedAnchor, setSelectedAnchor] = useState<SelectedAnchor | null>(null);
   const chatLogRef = useRef<HTMLDivElement>(null);
 
   const servers = useQuery({ queryKey: ["servers"], queryFn: api.servers, refetchInterval: 4000 });
@@ -253,7 +248,6 @@ export function CanvasPage({ user }: { user: PublicUser }) {
       if (activeKey === serverChannelKey(selectedId)) setActiveKey(COMPOSE_CHANNEL_KEY);
       setSelectedId(undefined);
       setConsoleOpen(false);
-      setSelectedAnchor(null);
     }
   }, [selectedId, servers.data?.servers]);
 
@@ -280,7 +274,6 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     setRenameError(null);
     setDockTab("chat");
     setConsoleOpen(false);
-    setSelectedAnchor(null);
     try {
       localStorage.removeItem("playon.lastServerId");
     } catch {
@@ -293,7 +286,6 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     setSelectedId(undefined);
     setActiveKey(COMPOSE_CHANNEL_KEY);
     setConsoleOpen(false);
-    setSelectedAnchor(null);
     setScanNodeId(null);
     setAddNodeOpen(false);
     setOpsError(null);
@@ -952,6 +944,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const pageClass = [
     "canvas-page",
     dockOpen ? "map-dock-open" : "",
+    consoleOpen && selectedId && selected ? "map-console-open" : "",
     scanNodeId || addNodeOpen ? "map-overlay-open" : "",
   ]
     .filter(Boolean)
@@ -1000,17 +993,16 @@ export function CanvasPage({ user }: { user: PublicUser }) {
           setScanNodeId(id);
         }}
         onBackgroundClick={clearMapSelection}
-        onSelectedAnchorChange={setSelectedAnchor}
         showAddButton={!addNodeOpen && !scanNodeId}
       />
 
 
       {consoleOpen && selectedId && selected ? (
-        <ServerConsoleBubble
+        <ServerConsoleDock
           serverId={selectedId}
           serverName={selected.name}
-          anchor={selectedAnchor}
           detail={detail.data}
+          onClose={() => setConsoleOpen(false)}
         />
       ) : null}
 
