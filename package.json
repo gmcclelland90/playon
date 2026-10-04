@@ -1,7 +1,7 @@
 {
   "name": "playon",
   "private": true,
-  "version": "0.2.14",
+  "version": "0.2.15",
   "description": "PlayOn \u2014 AI-driven game server control plane for LAN parties",
   "packageManager": "pnpm@9.15.4",
   "engines": {

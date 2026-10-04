@@ -4,6 +4,21 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+## [0.2.15] — 2026-10-04
+
+### Changed
+
+- **Dashboard rework** — status pulse, an attention strip for servers that need a look, and scan-friendly server rows with per-game badges, a live pill, and a warm wash on busy hosts (`#1027`).
+- **Map is now a top-down LAN room** — replaces the 3D Pixi map. Hosts are tables cabled to a LAN switch, each game is a station in its game colour with live players seated around it. Plain DOM, so the room scrolls and is keyboard reachable; on phones the page stacks hosts, room, and chat instead of hiding the map under a sheet (`#1028` / `#1029`).
+
+### Notes
+
+- **Do not tag or publish yet** — this PR only bumps version + CHANGELOG. Glenn publishes: squash-merge, then tag `v0.2.15` so `release-home` runs.
+- Web UI only on top of 0.2.14 (`f705c49..533de12`); no API, runtime, or node-agent behaviour change. Node agent version is bumped to stay aligned.
+- **P0 #1016 deferred** — the clone-start isolation bug is unchanged from 0.2.14; its fix (PR `#1024`) is not on main and does not ride this cut unless merged first. Do not start clones via the Home API until it lands.
+- Open P1s (`#1004`, `#1006`, `#1009`, `#1010`, `#988`) are deferred; not touched by this cut.
+- Open PRs `#1025` (fal game-ready assets) and `#1026` (vendored Impeccable skill) are not included.
+
 ## [0.2.14] — 2026-10-01
 
 ### Added
