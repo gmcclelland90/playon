@@ -294,5 +294,33 @@ describe("SkillMetadataSchema contract", () => {
     });
     expect(explicit.steamBeta).toBe("custom-evrima");
   });
+
+  it("runs Factorio containers as root so the image can chown the bind mount (#1034)", () => {
+    const catalog = SkillMetadataSchema.parse({
+      name: "games.factorio",
+      version: "0.1.1",
+      dockerImage: "factoriotools/factorio:stable",
+      containerSupport: "full",
+    });
+    expect(catalog.dockerUser).toBeUndefined();
+    expect(applyKnownSkillMetadataFixes(catalog).dockerUser).toBe("0");
+    expect(
+      parseSkillMetadata({
+        name: "fixtures.lab-factorio-ports",
+        version: "0.1.0",
+        dockerImage: "factoriotools/factorio:stable",
+        containerSupport: "full",
+      }).dockerUser,
+    ).toBe("0");
+    expect(
+      parseSkillMetadata({
+        name: "games.factorio",
+        version: "0.1.2",
+        dockerImage: "factoriotools/factorio:stable",
+        containerSupport: "full",
+        dockerUser: "845",
+      }).dockerUser,
+    ).toBe("845");
+  });
 });
 

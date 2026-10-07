@@ -4,6 +4,10 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+### Fixed
+
+- **Lab UDP start deaths (`udp_process_not_running`)** — Factorio containers now start as root so `factoriotools/factorio` can chown the `0700` game bind (uid 845 otherwise exits before UDP 34197 / RCON 27015 bind). Native launches pass `PLAYON_GAME_PORT` / `PLAYON_HOME` that catalog `start.sh` overlays already read (Teeworlds). Matrix `port_open` treats TCP `queryPortName` (Factorio RCON) as a real probe instead of a UDP-only process wait, and attaches console/docker tails when the process dies (`#1033`, `#1034`).
+
 ## [0.2.15] — 2026-10-04
 
 ### Changed

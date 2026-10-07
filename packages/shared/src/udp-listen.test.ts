@@ -7,6 +7,7 @@ import {
 } from "./skill.js";
 import {
   requiredUdpListenEvidence,
+  tcpPortOpenTargets,
   udpListenTargets,
   udpPortListedInOutput,
   windowsUdpPortOpenVerdict,
@@ -154,6 +155,39 @@ describe("udpListenTargets", () => {
     ]);
     expect(listenTargets.map((p) => `${p.name}:${p.default}`)).toEqual([
       `query:${ENSHROUDED_QUERY_PORT}`,
+    ]);
+  });
+});
+
+describe("tcpPortOpenTargets", () => {
+  it("includes Factorio queryPortName rcon TCP even though it is not named game/query (#1034)", () => {
+    const catalog = SkillMetadataSchema.parse({
+      name: "games.factorio",
+      version: "0.1.1",
+      queryDialect: "factorio",
+      queryPortName: "rcon",
+      ports: [
+        { name: "game", protocol: "udp", default: 34197 },
+        { name: "rcon", protocol: "tcp", default: 27015 },
+      ],
+    });
+    expect(tcpPortOpenTargets(catalog).map((p) => `${p.name}:${p.default}`)).toEqual([
+      "rcon:27015",
+    ]);
+  });
+
+  it("keeps ordinary TCP game ports and does not duplicate queryPortName", () => {
+    const catalog = SkillMetadataSchema.parse({
+      name: "games.minecraft-paper",
+      version: "0.1.0",
+      queryPortName: "game",
+      ports: [
+        { name: "game", protocol: "tcp", default: 25565 },
+        { name: "rcon", protocol: "tcp", default: 25575 },
+      ],
+    });
+    expect(tcpPortOpenTargets(catalog).map((p) => `${p.name}:${p.default}`)).toEqual([
+      "game:25565",
     ]);
   });
 });

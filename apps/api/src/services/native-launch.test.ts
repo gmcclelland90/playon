@@ -16,6 +16,7 @@ import {
   FOUNDRY_SKILL_NAME,
   FOUNDRY_STEAM_CLIENT_APP_ID,
   isFoundrySkill,
+  nativePlayonLaunchEnv,
   resolveNativeArgs,
   resolveNativeLaunch,
   writeBannerlordWindowsOverlayFiles,
@@ -581,5 +582,22 @@ describe("native-launch", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("passes PLAYON_GAME_PORT and PLAYON_HOME for catalog start.sh overlays (#1033)", () => {
+    expect(
+      nativePlayonLaunchEnv({
+        serverId: "srv1",
+        gamePort: 8303,
+        homeDir: "/tmp/playon/servers/srv1/home",
+      }),
+    ).toEqual({
+      PLAYON_SERVER_ID: "srv1",
+      PLAYON_GAME_PORT: "8303",
+      PLAYON_HOME: "/tmp/playon/servers/srv1/home",
+    });
+    expect(nativePlayonLaunchEnv({ serverId: "srv1", gamePort: 0 })).toEqual({
+      PLAYON_SERVER_ID: "srv1",
+    });
   });
 });

@@ -12,6 +12,8 @@ export interface ContainerSpec {
   tty?: boolean;
   /** Windows container isolation. Omit to use the daemon default. */
   isolation?: "process" | "hyperv";
+  /** Docker create `User` (uid/name). Omit to keep the image USER. */
+  user?: string;
 }
 
 export interface ContainerInfo {
