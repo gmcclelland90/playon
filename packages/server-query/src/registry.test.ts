@@ -66,6 +66,11 @@ describe("ConnectorRegistry", () => {
     expect(c?.id).toBe("minecraft_status");
   });
 
+  it("resolves a2s", () => {
+    const c = registry.resolve({ queryDialect: "a2s" });
+    expect(c?.id).toBe("a2s");
+  });
+
   it("requires skill dir for skill_module", () => {
     expect(() => registry.resolve({ queryDialect: "skill_module" })).toThrow(
       /skill_module_requires_skill_dir/,
