@@ -71,6 +71,16 @@ export const ENSHROUDED_LEGACY_GAME_PORT = 15636;
 export const THE_ISLE_SKILL = "games.the-isle";
 export const THE_ISLE_STEAM_BETA = "evrima";
 
+/**
+ * Catalog `games.cs2` 0.1.1 leaves `CS2_IP` unset. joedwards32/cs2 then omits
+ * `-ip`, so Source 2 auto-picks a container address and A2S often never
+ * answers on the published UDP 27015 (`query_offline: Failed all 3 attempts`).
+ * `0.0.0.0` is the image's documented "all interfaces" bind.
+ */
+export const CS2_SKILL = "games.cs2";
+export const CS2_BIND_ALL_INTERFACES = "0.0.0.0";
+export const CS2_HIBERNATE_OFF = "0";
+
 export const SkillThemeIdSchema = z.enum(["default", "grass", "ember", "steel", "paper"]);
 export type SkillThemeId = z.infer<typeof SkillThemeIdSchema>;
 
@@ -242,6 +252,13 @@ function applyTheIsleSteamBetaFix(meta: SkillMetadata): SkillMetadata {
   return { ...meta, steamBeta: THE_ISLE_STEAM_BETA };
 }
 
+function applyCs2ListenFix(meta: SkillMetadata): SkillMetadata {
+  const env = { ...meta.dockerEnv };
+  if (!env.CS2_IP?.trim()) env.CS2_IP = CS2_BIND_ALL_INTERFACES;
+  if (!env.CS2_SERVER_HIBERNATE?.trim()) env.CS2_SERVER_HIBERNATE = CS2_HIBERNATE_OFF;
+  return { ...meta, dockerEnv: env };
+}
+
 /**
  * Remap known stale catalog fields before install / join / matrix.
  * Does not rewrite on-disk YAML — catalog bump can drop the overlay later.
@@ -250,6 +267,7 @@ export function applyKnownSkillMetadataFixes(meta: SkillMetadata): SkillMetadata
   let next = meta;
   if (next.name === "games.enshrouded") next = applyEnshroudedPortFix(next);
   if (next.name === THE_ISLE_SKILL) next = applyTheIsleSteamBetaFix(next);
+  if (next.name === CS2_SKILL) next = applyCs2ListenFix(next);
   next = applyFactorioDockerUserFix(next);
   return next;
 }

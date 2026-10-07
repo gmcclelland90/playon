@@ -7,6 +7,7 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 ### Fixed
 
 - **Lab UDP start deaths (`udp_process_not_running`)** — Factorio containers now start as root so `factoriotools/factorio` can chown the `0700` game bind (uid 845 otherwise exits before UDP 34197 / RCON 27015 bind). Native launches pass `PLAYON_GAME_PORT` / `PLAYON_HOME` that catalog `start.sh` overlays already read (Teeworlds). Matrix `port_open` treats TCP `queryPortName` (Factorio RCON) as a real probe instead of a UDP-only process wait, and attaches console/docker tails when the process dies (`#1033`, `#1034`).
+- **CS2 lab query_offline** — Catalog `games.cs2` 0.1.1 leaves `CS2_IP` unset, so `joedwards32/cs2` omits `-ip` and Source 2 auto-binds a container address. Matrix then sees TCP 27015 open (RCON / docker-proxy) while A2S on published UDP 27015 returns GameDig `Failed all 3 attempts`. Home now injects `CS2_IP=0.0.0.0` (and `CS2_SERVER_HIBERNATE=0` when unset) and the `a2s` dialect falls back to a same-socket native A2S challenge exchange after GameDig misses. Not a 27015 leftover regression (`#941` / `#955`). Durable catalog copy still belongs in playon-games (`#1035`).
 
 ## [0.2.15] — 2026-10-04
 
