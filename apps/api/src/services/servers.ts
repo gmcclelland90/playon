@@ -83,6 +83,7 @@ import {
   FOUNDRY_STEAM_CLIENT_APP_ID,
   isFoundrySkill,
   nativeGamePort,
+  nativePlayonLaunchEnv,
   nativeRconPort,
   resolveNativeArgs,
   resolveNativeLaunch,
@@ -107,6 +108,7 @@ import {
   instanceGamePortFromIniTexts,
   isStormworksSkill,
   parseStormworksServerConfigPort,
+  resolveDockerUser,
   STORMWORKS_CONFIG_REL_PATHS,
   identityFromSkillMarker,
   isLocalNodeId,
@@ -691,6 +693,7 @@ export class ServerService {
     dockerDataMount?: string;
     dockerTty?: boolean;
     dockerIsolation?: "process" | "hyperv";
+    dockerUser?: string;
     steamAppId?: number;
     adminDialect?: string;
   } {
@@ -705,6 +708,7 @@ export class ServerService {
       dockerDataMount: raw.dockerDataMount,
       dockerTty: raw.dockerTty,
       dockerIsolation: raw.dockerIsolation,
+      dockerUser: raw.dockerUser,
       steamAppId: raw.steamAppId,
       adminDialect: raw.adminDialect,
     };
@@ -720,6 +724,7 @@ export class ServerService {
     dataMount: string;
     tty?: boolean;
     isolation?: "process" | "hyperv";
+    user?: string;
     ports: SkillMetadata["ports"];
   } | null {
     const live = this.resolveSkill(skillName)?.metadata;
@@ -727,6 +732,11 @@ export class ServerService {
     if (!image) return null;
     const tty = live?.dockerTty ?? cached.dockerTty;
     const isolation = live?.dockerIsolation ?? cached.dockerIsolation;
+    const user = resolveDockerUser({
+      name: skillName,
+      dockerImage: image,
+      dockerUser: live?.dockerUser ?? cached.dockerUser,
+    });
     return {
       image,
       env: { ...(live?.dockerEnv ?? cached.dockerEnv ?? {}) },
@@ -736,6 +746,7 @@ export class ServerService {
       dataMount: live?.dockerDataMount || cached.dockerDataMount || "/data",
       ...(tty != null ? { tty } : {}),
       ...(isolation ? { isolation } : {}),
+      ...(user ? { user } : {}),
       ports: live?.ports ?? [],
     };
   }
@@ -829,6 +840,7 @@ export class ServerService {
           ],
       ...(docker.tty != null ? { tty: docker.tty } : {}),
       ...(docker.isolation ? { isolation: docker.isolation } : {}),
+      ...(docker.user ? { user: docker.user } : {}),
     };
   }
 
@@ -938,10 +950,15 @@ export class ServerService {
       );
     }
     this.ensureRconConfig(server, skillName);
+    const playonEnv = nativePlayonLaunchEnv({
+      serverId: server.id,
+      gamePort: await this.advertisedGamePort(server),
+      homeDir: path.join(server.dataPath, "home"),
+    });
     const env: Record<string, string> =
       skillName === BANNERLORD_SKILL
-        ? bannerlordProcessEnv({ PLAYON_SERVER_ID: server.id, ...launch.env })
-        : { PLAYON_SERVER_ID: server.id, ...launch.env };
+        ? bannerlordProcessEnv({ ...playonEnv, ...launch.env })
+        : { ...playonEnv, ...launch.env };
     const marker = readSkillMarker(server.dataPath);
     if (marker?.managedFrom) {
       env.PLAYON_MANAGED_FROM = marker.managedFrom;
@@ -1041,7 +1058,10 @@ export class ServerService {
     // Read managedFrom from skill marker (may be node-authoritative)
     const marker = readSkillMarker(server.dataPath);
     const rawEnv: Record<string, string> = {
-      PLAYON_SERVER_ID: server.id,
+      ...nativePlayonLaunchEnv({
+        serverId: server.id,
+        gamePort: await this.advertisedGamePort(server),
+      }),
       ...(native?.env ?? {}),
     };
     const baseEnv: Record<string, string> = isFoundrySkill(skillName)

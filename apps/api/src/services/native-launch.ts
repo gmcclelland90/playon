@@ -580,6 +580,22 @@ export function resolveNativeLaunch(opts: {
   return null;
 }
 
+/** Env catalog start.sh overlays read (Teeworlds PLAYON_GAME_PORT / jail HOME). */
+export function nativePlayonLaunchEnv(input: {
+  serverId: string;
+  gamePort?: number | null;
+  homeDir?: string | null;
+}): Record<string, string> {
+  const env: Record<string, string> = { PLAYON_SERVER_ID: input.serverId };
+  const port = input.gamePort;
+  if (port != null && Number.isInteger(port) && port >= 1 && port <= 65535) {
+    env.PLAYON_GAME_PORT = String(port);
+  }
+  const home = input.homeDir?.trim();
+  if (home) env.PLAYON_HOME = home;
+  return env;
+}
+
 export function nativeGamePort(metadata?: SkillMetadata | null): number | null {
   const game = metadata?.ports.find((p) => p.name === "game" && p.default);
   return game?.default ?? null;

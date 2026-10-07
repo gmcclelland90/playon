@@ -66,6 +66,38 @@ export type SkillUdpListenMeta = {
  * Steam-networking game ports (Avorion) and Keen CU2+ Enshrouded often never
  * show a separate game socket in ss/netstat.
  */
+/**
+ * TCP ports the matrix `port_open` gate must connect. Includes game/query
+ * plus `queryPortName` when that port is TCP (Factorio RCON is named `rcon`,
+ * not game/query — without this the skill is treated as UDP-only and dies as
+ * `udp_process_not_running` before 27015 is probed, #1034).
+ */
+export function tcpPortOpenTargets(meta: SkillUdpListenMeta): Array<{
+  name: string;
+  protocol: string;
+  default: number;
+}> {
+  const tcp = (meta.ports ?? [])
+    .filter(
+      (p) =>
+        (p.protocol ?? "tcp") === "tcp" &&
+        typeof p.default === "number" &&
+        /^(game|query)([-_]|$)/i.test(p.name),
+    )
+    .map((p) => ({ name: p.name, protocol: "tcp", default: p.default! }));
+  const queryName = typeof meta.queryPortName === "string" ? meta.queryPortName.trim() : "";
+  if (!queryName) return tcp;
+  const named = (meta.ports ?? []).find(
+    (p) =>
+      p.name === queryName &&
+      (p.protocol ?? "tcp") === "tcp" &&
+      typeof p.default === "number",
+  );
+  if (!named) return tcp;
+  if (tcp.some((p) => p.name === named.name && p.default === named.default)) return tcp;
+  return [...tcp, { name: named.name, protocol: "tcp", default: named.default! }];
+}
+
 export function udpListenTargets(meta: SkillUdpListenMeta): {
   udpGame: Array<{ name: string; protocol: string; default: number }>;
   listenTargets: Array<{ name: string; protocol: string; default: number }>;

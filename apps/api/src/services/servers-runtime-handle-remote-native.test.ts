@@ -86,7 +86,7 @@ describe("remote native lifecycle through ServerRuntimeHandle", () => {
       command: "/bin/bash",
       args: ["start.sh"],
       cwd,
-      env: { PLAYON_SERVER_ID: id },
+      env: { PLAYON_SERVER_ID: id, PLAYON_GAME_PORT: "25565" },
       serverId: id,
       // keepStdin omitted when false — older agents reject unrecognized keys.
       // Jail-relative, so the node writes the console under its own data root.
@@ -112,7 +112,7 @@ describe("remote native lifecycle through ServerRuntimeHandle", () => {
       command: "/bin/bash",
       args: ["start.sh"],
       cwd,
-      env: { PLAYON_SERVER_ID: id, PLAYON_MANAGED_FROM: "/opt/pzserver" },
+      env: { PLAYON_SERVER_ID: id, PLAYON_GAME_PORT: "25565", PLAYON_MANAGED_FROM: "/opt/pzserver" },
       serverId: id,
       logRel: `servers/${id}/logs/console.log`,
     });

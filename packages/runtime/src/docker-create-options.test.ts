@@ -74,6 +74,12 @@ describe("buildContainerCreateOptions", () => {
     expect(opts.HostConfig?.Binds).toEqual(["/srv/playon/a/game:/data"]);
     expect(opts.HostConfig?.Isolation).toBeUndefined();
     expect(opts.ExposedPorts).toEqual({ "25565/tcp": {} });
+    expect(opts.User).toBeUndefined();
+  });
+
+  it("sets Docker User when the skill asks for it (Factorio root chown, #1034)", () => {
+    const opts = buildContainerCreateOptions({ ...linuxSpec, user: "0" }, { osType: "linux" });
+    expect(opts.User).toBe("0");
   });
 
   it("applies Windows isolation, TTY, and bind destinations", () => {

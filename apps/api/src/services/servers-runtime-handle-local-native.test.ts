@@ -86,6 +86,8 @@ describe("local native lifecycle through ServerRuntimeHandle", () => {
     const spec = host.specs[0]!;
     expect(spec.args?.join(" ")).toContain(startScript);
     expect(spec.env?.PLAYON_SERVER_ID).toBe(id);
+    expect(spec.env?.PLAYON_GAME_PORT).toBe("25565");
+    expect(spec.env?.PLAYON_HOME).toBe(path.join(dataPath, "home"));
     expect(spec.logFile).toBe(path.join(dataPath, "logs", "console.log"));
     // A native server never touches the container path.
     expect(fake.calls).toEqual([]);
