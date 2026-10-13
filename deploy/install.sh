@@ -10,6 +10,8 @@ ENV_FILE="${PLAYON_ENV_FILE:-/etc/playon/playon.env}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Prefer running from extracted Home tarball (parent of deploy/)
 BUNDLE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+# shellcheck source=lib/playon-host-hygiene.sh
+source "${SCRIPT_DIR}/lib/playon-host-hygiene.sh"
 
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "Run as root (sudo bash deploy/install.sh)"
@@ -133,11 +135,13 @@ Type=simple
 User=${PLAYON_USER}
 Group=${PLAYON_USER}
 EnvironmentFile=${ENV_FILE}
+Environment=XDG_RUNTIME_DIR=/run/user/%U
 WorkingDirectory=${PLAYON_ROOT}
 ExecStart=${NODE_BIN} apps/api/dist/index.js
 Restart=always
 RestartSec=5
 # Keep OTA/apply helpers alive when the main process exits for self-update.
+# Fallback so leftover native PIDs are not SIGKILLed if they still share this cgroup (#1038).
 KillMode=process
 LimitNOFILE=65535
 # Prefer :80 for http://playon.local (falls back to PLAYON_PORT without this).
@@ -163,11 +167,12 @@ EnvironmentFile=${ENV_FILE}
 Environment=PLAYON_API_URL=http://127.0.0.1:8787
 Environment=PLAYON_NODE_ID=local
 Environment=PLAYON_NODE_NAME=%H
+Environment=XDG_RUNTIME_DIR=/run/user/%U
 WorkingDirectory=${PLAYON_ROOT}
 ExecStart=${NODE_BIN} apps/node-agent/dist/index.js
 Restart=always
 RestartSec=5
-# Only the agent MAINPID — never SIGTERM the supervised game tree on OTA/restart (#886).
+# Only the agent MAINPID — never SIGTERM the supervised game tree on OTA/restart (#886 / #1038).
 KillMode=process
 SendSIGHUP=no
 
@@ -179,6 +184,9 @@ EOF
 if getent group docker >/dev/null 2>&1; then
   usermod -aG docker "${PLAYON_USER}" || true
 fi
+
+PLAYON_NEEDRESTART_SRC="${BUNDLE_ROOT}/infra/control-plane/linux/needrestart-playon.conf"
+playon_apply_host_hygiene "${PLAYON_USER}"
 
 systemctl daemon-reload
 # Start Docker before node-agent when available so the first heartbeat sees the socket

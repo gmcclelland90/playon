@@ -68,17 +68,25 @@ Wants=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=/etc/playon/node.env
+Environment=XDG_RUNTIME_DIR=/run/user/%U
 WorkingDirectory=${PLAYON_REPO}
 ExecStart=$(command -v pnpm) --filter @playon/node-agent start
 Restart=always
 RestartSec=5
-# Only the agent MAINPID — never SIGTERM the supervised game tree on OTA/restart (#886).
+# Only the agent MAINPID — never SIGTERM the supervised game tree on OTA/restart (#886 / #1038).
 KillMode=process
 SendSIGHUP=no
 
 [Install]
 WantedBy=multi-user.target
 EOF
+
+mkdir -p /etc/needrestart/conf.d
+cat >/etc/needrestart/conf.d/playon.conf <<'EOF'
+# PlayOn — do not auto-restart node-agent after library upgrades (#1038).
+$nrconf{override_rc}{qr(^playon)} = 0;
+EOF
+loginctl enable-linger playon 2>/dev/null || true
 
 systemctl daemon-reload
 systemctl enable --now playon-node-agent.service

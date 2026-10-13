@@ -49,6 +49,18 @@ export const RenameServerRequestSchema = z.object({
 
 export type RenameServerRequest = z.infer<typeof RenameServerRequestSchema>;
 
+/** PATCH `/api/servers/:id` — display name and/or auto-start opt-out (#1038). */
+export const PatchServerRequestSchema = z
+  .object({
+    name: z.string().trim().min(1).max(SERVER_DISPLAY_NAME_MAX).optional(),
+    autoStart: z.boolean().optional(),
+  })
+  .refine((value) => value.name !== undefined || value.autoStart !== undefined, {
+    message: "name_or_autoStart_required",
+  });
+
+export type PatchServerRequest = z.infer<typeof PatchServerRequestSchema>;
+
 /** PUT `/api/servers/:id/fs/content` — path + full text body. */
 export const WriteServerFsContentRequestSchema = z.object({
   path: z.string().min(1),

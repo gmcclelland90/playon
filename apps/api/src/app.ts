@@ -48,7 +48,7 @@ import {
   MfaHostFileResetSchema,
   PromoteServerSkillRequestSchema,
   RelocateServerRequestSchema,
-  RenameServerRequestSchema,
+  PatchServerRequestSchema,
   RestoreOffNodeBackupRequestSchema,
   WriteServerFsContentRequestSchema,
   RoleSchema,
@@ -1814,8 +1814,8 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
 
   app.patch("/api/servers/:id", async (c) => {
     requireCan(c, "servers.manage");
-    const body = await jsonBody(c, RenameServerRequestSchema);
-    const server = await serverService.rename(c.req.param("id"), body.name);
+    const body = await jsonBody(c, PatchServerRequestSchema);
+    const server = await serverService.patch(c.req.param("id"), body);
     if (!server) throw HttpError.notFound("not_found", { code: "server_not_found" });
     return c.json({ server });
   });

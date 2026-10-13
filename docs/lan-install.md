@@ -38,10 +38,15 @@ PLAYON_NODE_TOKEN=$(openssl rand -hex 24)
 ```bash
 sudo cp infra/control-plane/linux/playon.service /etc/systemd/system/playon.service
 sudo cp infra/control-plane/linux/playon-node.service /etc/systemd/system/playon-node.service
+sudo mkdir -p /etc/needrestart/conf.d
+sudo cp infra/control-plane/linux/needrestart-playon.conf /etc/needrestart/conf.d/playon.conf
+sudo loginctl enable-linger playon
 sudo systemctl daemon-reload
 sudo systemctl enable --now playon playon-node
 sudo systemctl status playon playon-node
 ```
+
+Existing checkout hosts that still have `KillMode=mixed` on `playon.service` **must recopy the units** (or re-run `deploy/install.sh`). A `systemctl restart playon` on a mixed unit SIGKILLs native game processes in that cgroup (#1038). Current units use `KillMode=process`; native games are also spawned into a `playon-server-*.scope` when user systemd is available, and Home restores `desiredState=running` on boot (sacred NZL/Hub/Frontier names are never auto-started).
 
 Or run without systemd (foreground — API + local agent):
 
@@ -80,7 +85,8 @@ docker ps   # game containers may need a Start from the Map if they exited
 - **Data:** `PLAYON_DATA_ROOT` (default under `apps/api/data`) — DB, server dirs, snapshots.
 - **Forgot owner password:** Sign in → **Forgot password?** If host-file recovery is on, enter the username (`host` if you kept the default) → read `password-reset.txt` in `PLAYON_DATA_ROOT` → paste the code and set a new password. If you enrolled an authenticator at setup (or Settings → Accounts), you can reset with the 6-digit app code or a backup code instead. Host-file recovery can be turned off once TOTP is on. Anyone on the LAN can start a reset; finishing it still needs the file, the authenticator, or a backup code.
 - **Restore a world:** Map/chat → snapshot restore (confirm-gated), or restore from `PLAYON_BACKUP_ROOT` if configured.
-- **Logs:** `journalctl -u playon -u playon-node -e` (look for JSON `playon_start` / `[node-agent] heartbeat ok`).
+- **Logs:** `journalctl -u playon -u playon-node -e` (look for JSON `playon_start` / `playon_desired_state_restore` / `[node-agent] heartbeat ok`).
+- **Control-plane restart:** `systemctl restart playon` should leave native game PIDs running (then re-adopt them). Opt a server out of boot restore with PATCH `autoStart: false`, a `.playon/never-auto-start` marker, or `PLAYON_NEVER_AUTO_START`. needrestart is configured not to bounce `playon*` units after library upgrades.
 
 ## Developer path (optional)
 

@@ -2,13 +2,17 @@ import { spawn, execFileSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { moveProcessOutOfAgentCgroup } from "./cgroup.js";
 import { resolveInJail } from "./path-jail.js";
+import { adoptPidIntoPlayonScope } from "./systemd-scope.js";
 import type { ProcessInfo, ProcessSpec, ProcessSupervisor } from "./types.js";
 import {
   killWindowsOrphansByRoots,
   killWindowsPidTree,
   listWindowsPidsMatchingRoots,
 } from "./windows-process-orphans.js";
+
+export { moveProcessOutOfAgentCgroup, readCgroupRelativePath } from "./cgroup.js";
 
 interface TrackedProcess {
   info: ProcessInfo;
@@ -19,6 +23,7 @@ interface TrackedProcess {
   stdinWriteFd?: number;
   stdinHolder?: ChildProcess;
   stdinDir?: string;
+  stdinFifo?: string;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -106,64 +111,51 @@ export function readProcessGroupId(pid: number): number | null {
   }
 }
 
-/**
- * cgroup v2 path from `/proc/<pid>/cgroup` (`0::/system.slice/…`).
- * `detached` is a new session/pgrp — it is not a cgroup escape.
- */
-export function readCgroupRelativePath(pid: number): string | null {
-  if (process.platform === "win32") return null;
+/** Stable FIFO so a new Home/agent process can reopen console after restart. */
+export function defaultStdinFifoPath(cwd: string): string {
+  return path.join(serverTreeRoot(cwd), ".playon", "console.in");
+}
+
+function stdinHolderPidPath(cwd: string): string {
+  return path.join(serverTreeRoot(cwd), ".playon", "stdin-holder.pid");
+}
+
+function detachFromControlPlaneCgroup(pid: number | undefined, name: string): void {
+  if (!pid) return;
+  const scoped = adoptPidIntoPlayonScope(pid, name);
+  if (!scoped.ok) moveProcessOutOfAgentCgroup(pid);
+}
+
+function persistHolderPid(cwd: string, pid: number | undefined): void {
+  const file = stdinHolderPidPath(cwd);
   try {
-    const text = fs.readFileSync(`/proc/${pid}/cgroup`, "utf8");
-    for (const line of text.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const parts = trimmed.split(":");
-      if (parts.length < 3) continue;
-      const rel = parts.slice(2).join(":") || "/";
-      return rel.startsWith("/") ? rel : `/${rel}`;
+    if (!pid) {
+      fs.rmSync(file, { force: true });
+      return;
     }
-    return null;
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${pid}\n`);
   } catch {
-    return null;
+    /* best-effort */
   }
 }
 
-function cgroupProcsFile(relPath: string): string {
-  const rel = relPath === "/" ? "" : relPath;
-  return `/sys/fs/cgroup${rel}/cgroup.procs`;
-}
-
-/**
- * Best-effort move out of the agent unit cgroup so `KillMode=control-group`
- * (units OTA cannot rewrite) does not SIGTERM the game / FIFO holder.
- * Often EACCES without privileges — NZL-shaped `KillMode=process` is the
- * path that must still work when this returns false.
- */
-export function moveProcessOutOfAgentCgroup(pid: number): boolean {
-  if (process.platform === "win32" || !pid) return false;
-  const self = readCgroupRelativePath(process.pid);
-  const dests: string[] = [];
-  if (process.ppid > 1) {
-    const parentCg = readCgroupRelativePath(process.ppid);
-    if (parentCg && parentCg !== self) dests.push(parentCg);
-  }
-  if (self && self !== "/") {
-    dests.push(self.replace(/\/[^/]+$/, "") || "/");
-  }
-  dests.push("/");
-  const seen = new Set<string>();
-  for (const dest of dests) {
-    if (!dest || seen.has(dest) || dest === self) continue;
-    seen.add(dest);
-    try {
-      fs.writeFileSync(cgroupProcsFile(dest), `${pid}\n`);
-      const now = readCgroupRelativePath(pid);
-      if (now && now !== self) return true;
-    } catch {
-      /* EACCES / ENOENT / EBUSY */
+function killPersistedHolder(cwd: string): void {
+  const file = stdinHolderPidPath(cwd);
+  try {
+    if (!fs.existsSync(file)) return;
+    const pid = Number(fs.readFileSync(file, "utf8").trim());
+    if (Number.isInteger(pid) && pid > 0) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        /* already gone */
+      }
     }
+    fs.rmSync(file, { force: true });
+  } catch {
+    /* ignore */
   }
-  return false;
 }
 
 /**
@@ -180,13 +172,21 @@ export function supervisedChildDetached(keepStdin = false): boolean {
 /**
  * Hold a write end on a FIFO so `keepStdin` games do not see EOF when the
  * agent process exits (systemd restart / crash). The agent also writes here.
+ * A stable path (under the server tree) lets a new Home process reopen console.
  */
-function openHeldStdin(): { readFd: number; writeFd: number; holder: ChildProcess; dir: string } | null {
+function openHeldStdin(
+  fifoPath?: string,
+  holderName = "stdin",
+): { readFd: number; writeFd: number; holder: ChildProcess; dir?: string; fifo: string } | null {
   if (process.platform === "win32") return null;
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "playon-stdin-"));
-  const fifo = path.join(dir, "in");
+  const stable = Boolean(fifoPath);
+  const fifo = fifoPath ?? path.join(fs.mkdtempSync(path.join(os.tmpdir(), "playon-stdin-")), "in");
+  const dir = path.dirname(fifo);
   try {
-    execFileSync("mkfifo", [fifo], { stdio: "ignore" });
+    fs.mkdirSync(dir, { recursive: true });
+    if (!fs.existsSync(fifo)) {
+      execFileSync("mkfifo", [fifo], { stdio: "ignore" });
+    }
     const writeFd = fs.openSync(fifo, "r+");
     const readFd = fs.openSync(fifo, "r");
     const holder = spawn("sleep", ["infinity"], {
@@ -194,10 +194,10 @@ function openHeldStdin(): { readFd: number; writeFd: number; holder: ChildProces
       stdio: [writeFd, "ignore", "ignore"],
     });
     holder.unref();
-    if (holder.pid) moveProcessOutOfAgentCgroup(holder.pid);
-    return { readFd, writeFd, holder, dir };
+    if (holder.pid) detachFromControlPlaneCgroup(holder.pid, `${holderName}-stdin`);
+    return { readFd, writeFd, holder, dir: stable ? undefined : dir, fifo };
   } catch {
-    fs.rmSync(dir, { recursive: true, force: true });
+    if (!stable) fs.rmSync(dir, { recursive: true, force: true });
     return null;
   }
 }
@@ -221,7 +221,8 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     // Linux: new session/pgrp. Windows keepStdin stays attached (FIFO is Linux-only).
     const detached = supervisedChildDetached(Boolean(spec.keepStdin));
     // GoldSrc/HLDS segfault with detached + piped stdin — use a FIFO holder instead of a pipe.
-    const heldStdin = spec.keepStdin ? openHeldStdin() : null;
+    const stdinFifo = spec.keepStdin ? defaultStdinFifoPath(cwd) : undefined;
+    const heldStdin = spec.keepStdin ? openHeldStdin(stdinFifo, spec.name) : null;
     const stdinMode: "pipe" | "ignore" | number = heldStdin
       ? heldStdin.readFd
       : spec.keepStdin
@@ -279,7 +280,8 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     if (process.platform !== "win32") {
       child.unref();
     }
-    if (child.pid) moveProcessOutOfAgentCgroup(child.pid);
+    if (child.pid) detachFromControlPlaneCgroup(child.pid, spec.name);
+    if (heldStdin?.holder?.pid) persistHolderPid(cwd, heldStdin.holder.pid);
     if (heldStdin) {
       try {
         fs.closeSync(heldStdin.readFd);
@@ -321,6 +323,7 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
       stdinWriteFd: heldStdin?.writeFd,
       stdinHolder: heldStdin?.holder,
       stdinDir: heldStdin?.dir,
+      stdinFifo: heldStdin?.fifo,
     });
     return { ...info };
   }
@@ -360,6 +363,7 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     if (shouldReapServerTreeOrphans(name, cwd)) {
       await this.killOrphansByCwd(cwd);
     }
+    killPersistedHolder(cwd);
   }
 
   async status(id: string): Promise<ProcessInfo> {
@@ -405,20 +409,34 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     if (shouldReapServerTreeOrphans(name, resolved)) {
       await this.killOrphansByCwd(resolved, excludePids);
     }
+    killPersistedHolder(resolved);
   }
 
   /**
-   * Write a console line to the process behind an identity. Only a spawn this
-   * supervisor still holds the stdin pipe for can be addressed — an OS orphan
-   * `find` re-resolved after a restart has no console left to write to.
+   * Write a console line to the process behind an identity. A supervisor this
+   * process still holds can use the pipe/FIFO fd. After a control-plane
+   * restart the stable FIFO under the server tree is reopened (#1038).
    */
   async writeStdin(name: string, cwd: string, data: string): Promise<void> {
     const resolved = this.jailRoot ? resolveInJail(this.jailRoot, cwd) : cwd;
+    const line = data.endsWith("\n") ? data : `${data}\n`;
     const tracked = this.findTracked(name, resolved);
     if (!tracked) {
+      // Surviving FIFO after a control-plane restart — reopen the write end.
+      if (process.platform !== "win32") {
+        const fifo = defaultStdinFifoPath(resolved);
+        if (fs.existsSync(fifo)) {
+          const fd = fs.openSync(fifo, "r+");
+          try {
+            fs.writeSync(fd, line);
+            return;
+          } finally {
+            fs.closeSync(fd);
+          }
+        }
+      }
       throw new Error("stdin_unavailable: no supervised process for this identity");
     }
-    const line = data.endsWith("\n") ? data : `${data}\n`;
     if (tracked.stdinWriteFd != null) {
       fs.writeSync(tracked.stdinWriteFd, line);
       return;

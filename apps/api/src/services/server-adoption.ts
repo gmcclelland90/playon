@@ -14,6 +14,7 @@ import {
   jailIdentityExtras,
   LAB_FIXTURE_MARKER_REL,
   NODE_AUTHORITATIVE_MARKER,
+  parseDesiredState,
 } from "@playon/shared";
 import type { AppConfig } from "../config.js";
 import { eq } from "drizzle-orm";
@@ -39,6 +40,8 @@ function toServerRecord(row: typeof servers.$inferSelect): ServerRecord {
     status: row.status,
     dataPath: row.dataPath,
     createdAt: row.createdAt,
+    desiredState: parseDesiredState(row.desiredState),
+    autoStart: row.autoStart !== false,
   };
 }
 

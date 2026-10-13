@@ -3,6 +3,7 @@ import {
   ImportLocalServerRequestSchema,
   ImportSftpServerRequestSchema,
   RelocateServerRequestSchema,
+  PatchServerRequestSchema,
   RenameServerRequestSchema,
   SERVER_DISPLAY_NAME_MAX,
   WriteServerFsContentRequestSchema,
@@ -59,6 +60,14 @@ describe("mutating server route request contracts", () => {
     expect(
       RenameServerRequestSchema.parse({ name: "x".repeat(SERVER_DISPLAY_NAME_MAX) }).name,
     ).toHaveLength(SERVER_DISPLAY_NAME_MAX);
+  });
+
+  it("accepts a name-only or autoStart-only server patch", () => {
+    expect(PatchServerRequestSchema.parse({ name: "  LAN Zomboid  " })).toEqual({
+      name: "LAN Zomboid",
+    });
+    expect(PatchServerRequestSchema.parse({ autoStart: false })).toEqual({ autoStart: false });
+    expect(PatchServerRequestSchema.safeParse({}).success).toBe(false);
   });
 
   it("accepts a server fs write with empty content", () => {
