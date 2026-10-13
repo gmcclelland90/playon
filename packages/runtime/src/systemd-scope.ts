@@ -62,6 +62,7 @@ export function playonServerScopeUnit(name: string): string {
 export function isSystemdHost(env: NodeJS.ProcessEnv = process.env): boolean {
   if (process.platform === "win32") return false;
   if (env.PLAYON_SYSTEMD_SCOPE === "0") return false;
+  if (env.PLAYON_SYSTEMD_SCOPE === "1") return true;
   try {
     return fs.existsSync("/run/systemd/system");
   } catch {

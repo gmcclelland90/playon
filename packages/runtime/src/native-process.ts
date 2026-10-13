@@ -413,12 +413,13 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
   }
 
   /**
-   * Write a console line to the process behind an identity. Only a spawn this
-   * supervisor still holds the stdin pipe for can be addressed — an OS orphan
-   * `find` re-resolved after a restart has no console left to write to.
+   * Write a console line to the process behind an identity. A supervisor this
+   * process still holds can use the pipe/FIFO fd. After a control-plane
+   * restart the stable FIFO under the server tree is reopened (#1038).
    */
   async writeStdin(name: string, cwd: string, data: string): Promise<void> {
     const resolved = this.jailRoot ? resolveInJail(this.jailRoot, cwd) : cwd;
+    const line = data.endsWith("\n") ? data : `${data}\n`;
     const tracked = this.findTracked(name, resolved);
     if (!tracked) {
       // Surviving FIFO after a control-plane restart — reopen the write end.
@@ -436,7 +437,6 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
       }
       throw new Error("stdin_unavailable: no supervised process for this identity");
     }
-    const line = data.endsWith("\n") ? data : `${data}\n`;
     if (tracked.stdinWriteFd != null) {
       fs.writeSync(tracked.stdinWriteFd, line);
       return;

@@ -40,6 +40,7 @@ describe("native-survive-restart packaging (#1038)", () => {
   it("documents the playon-server scope unit name", () => {
     const unit = read("infra/control-plane/linux/playon-server@.service");
     expect(unit).toMatch(/playon-server-/);
-    expect(unit).not.toMatch(/PartOf=playon\.service/);
+    expect(unit).toMatch(/Never PartOf=playon\.service/);
+    expect(unit).not.toMatch(/^PartOf=playon\.service$/m);
   });
 });

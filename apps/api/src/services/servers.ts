@@ -143,8 +143,8 @@ export interface ServerRecord {
   status: string;
   dataPath: string;
   createdAt: Date;
-  desiredState: DesiredState;
-  autoStart: boolean;
+  desiredState?: DesiredState;
+  autoStart?: boolean;
 }
 
 export type ConsoleInputState = "ready" | "unsupported" | "unavailable";
@@ -1449,7 +1449,7 @@ export class ServerService {
       const status = await this.runtimeStatus(server);
       const processAlive = status?.state === "running";
       const decision = decideDesiredStateRestore({
-        desiredState: server.desiredState,
+        desiredState: parseDesiredState(server.desiredState),
         processAlive,
         autoStart: server.autoStart,
         protectedFromAutoStart: this.protectedFromAutoStart(server),

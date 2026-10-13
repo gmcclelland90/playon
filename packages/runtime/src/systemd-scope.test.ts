@@ -40,6 +40,7 @@ describe("userSystemdEnv", () => {
 describe("adoptPidIntoPlayonScope", () => {
   it("prefers a user transient scope when systemd-run succeeds", () => {
     if (process.platform === "win32") return;
+    process.env.PLAYON_SYSTEMD_SCOPE = "1";
     const calls: string[][] = [];
     setSystemdScopeRunnerForTests(({ argv }) => {
       calls.push(argv);
