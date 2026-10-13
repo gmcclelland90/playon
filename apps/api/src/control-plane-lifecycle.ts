@@ -87,6 +87,11 @@ export interface ControlPlaneHost {
   drainGraceMs: number;
   /** Called once stop settles, including when a signal triggered it. */
   onStopped(report: StopReport): void;
+  /**
+   * After listen + schedulers. Default: re-adopt surviving game PIDs and
+   * restore desiredState=running (sacred / opted-out servers skipped).
+   */
+  afterStart(app: PlayOnApp): void;
 }
 
 const DEFAULT_DRAIN_GRACE_MS = 5_000;
@@ -255,6 +260,28 @@ export function defaultControlPlaneHost(): ControlPlaneHost {
     log: consoleLog,
     drainGraceMs: Number(process.env.PLAYON_SHUTDOWN_GRACE_MS ?? DEFAULT_DRAIN_GRACE_MS),
     onStopped: () => {},
+    afterStart: (app) => {
+      const restore = app.controlPlane?.servers?.restoreAfterControlPlaneRestart;
+      if (typeof restore !== "function") return;
+      void restore
+        .call(app.controlPlane.servers)
+        .then((report) => {
+          consoleLog({
+            msg: "playon_desired_state_restore",
+            servers: Array.isArray(report) ? report.length : 0,
+            report,
+          });
+        })
+        .catch((err: unknown) => {
+          consoleLog(
+            {
+              msg: "playon_desired_state_restore_failed",
+              error: err instanceof Error ? err.message : String(err),
+            },
+            "warn",
+          );
+        });
+    },
   };
 }
 
@@ -318,6 +345,11 @@ export async function startControlPlane(
   const server = await host.listen(app, config);
   const schedulers = host.createSchedulers(app);
   for (const entry of schedulers) entry.scheduler.start();
+  try {
+    host.afterStart(app);
+  } catch {
+    // restore must not prevent the plane from staying up
+  }
 
   let stopping: Promise<StopReport> | null = null;
   let detachSignals = (): void => {};

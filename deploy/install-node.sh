@@ -15,6 +15,11 @@ PLAYON_DATA="${PLAYON_DATA_ROOT:-/var/lib/playon-node}"
 PLAYON_USER="${PLAYON_USER:-playon}"
 RUNTIME="${PLAYON_RUNTIME:-native}"
 MANIFEST_URL="${PLAYON_UPDATE_MANIFEST_URL:-https://playon.games/home/latest.json}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${SCRIPT_DIR}/lib/playon-host-hygiene.sh" ]]; then
+  # shellcheck source=lib/playon-host-hygiene.sh
+  source "${SCRIPT_DIR}/lib/playon-host-hygiene.sh"
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -183,17 +188,32 @@ Type=simple
 User=${PLAYON_USER}
 Group=${PLAYON_USER}
 EnvironmentFile=/etc/playon/node.env
+Environment=XDG_RUNTIME_DIR=/run/user/%U
 WorkingDirectory=${PLAYON_ROOT}
 ExecStart=${EXEC_START}
 Restart=always
 RestartSec=5
-# Only the agent MAINPID — never SIGTERM the supervised game tree on OTA/restart (#886).
+# Only the agent MAINPID — never SIGTERM the supervised game tree on OTA/restart (#886 / #1038).
 KillMode=process
 SendSIGHUP=no
 
 [Install]
 WantedBy=multi-user.target
 EOF
+
+if declare -F playon_apply_host_hygiene >/dev/null 2>&1; then
+  if [[ -f "${SCRIPT_DIR}/../infra/control-plane/linux/needrestart-playon.conf" ]]; then
+    PLAYON_NEEDRESTART_SRC="${SCRIPT_DIR}/../infra/control-plane/linux/needrestart-playon.conf"
+  fi
+  playon_apply_host_hygiene "${PLAYON_USER}"
+else
+  mkdir -p /etc/needrestart/conf.d
+  cat >/etc/needrestart/conf.d/playon.conf <<'EOF'
+# PlayOn — do not auto-restart node-agent after library upgrades (#1038).
+$nrconf{override_rc}{qr(^playon)} = 0;
+EOF
+  loginctl enable-linger "${PLAYON_USER}" 2>/dev/null || true
+fi
 
 systemctl daemon-reload
 systemctl enable --now playon-node-agent.service

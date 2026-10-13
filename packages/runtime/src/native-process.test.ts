@@ -449,10 +449,42 @@ describe("NativeProcessSupervisor", () => {
     temps.push(jail);
     const supervisor = new NativeProcessSupervisor(jail);
 
-    // A restarted host can re-resolve an orphan, but it never inherits its pipes.
+    // No surviving FIFO and no tracked pipe — console is gone.
     await expect(supervisor.writeStdin("server-x", ".", "say hi")).rejects.toThrow(
       /stdin_unavailable/,
     );
+  });
+
+  it("re-adopts a surviving native after a supervisor restart: status, console, stop (#1038)", async () => {
+    if (process.platform === "win32") return;
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-readopt-"));
+    temps.push(jail);
+    const gameDir = path.join(jail, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+
+    const first = new NativeProcessSupervisor(jail);
+    const started = await first.start({
+      name: "server-x",
+      command: "sh",
+      args: ["-c", "while read line; do echo \"ran:$line\"; done"],
+      cwd: "game",
+      logFile: "logs/console.log",
+      keepStdin: true,
+    });
+    expect(started.pid).toBeTypeOf("number");
+    trackPid(started.pid);
+
+    // Drop the in-memory map the way an API process exit does — do not stop.
+    const second = new NativeProcessSupervisor(jail);
+    const found = await second.find("server-x", "game");
+    expect(found).toMatchObject({ status: "running", pid: started.pid });
+
+    await second.writeStdin("server-x", "game", "say after-restart");
+    await waitForFileContains(path.join(jail, "logs", "console.log"), "ran:say after-restart");
+
+    await second.reclaim("server-x", "game");
+    await waitPidGone(started.pid!);
+    expect(await second.find("server-x", "game")).toBeNull();
   });
 
   it("places a native child in its own process group so an agent SIGTERM misses it (#886)", async () => {

@@ -1,0 +1,24 @@
+# Optional template for a dedicated per-server unit. Runtime prefers a
+# transient user scope (`systemd-run --user --scope --unit=playon-server-<id>.scope`)
+# so Home does not need Privileges or sudo to start games (#1038).
+#
+# Install is not required for the default path. Kept so hosts can `systemctl
+# cat playon-server@.service` and so packaging tests pin the naming.
+[Unit]
+Description=PlayOn native game server %i
+Documentation=https://github.com/gmcclelland90/playon/issues/1038
+After=network-online.target
+# Never PartOf=playon.service — a control-plane restart must not stop games.
+
+[Service]
+Type=simple
+User=playon
+Group=playon
+EnvironmentFile=-/etc/playon/playon.env
+KillMode=mixed
+TimeoutStopSec=90
+SuccessExitStatus=0 143
+# ExecStart is supplied by systemd-run --scope at runtime.
+
+[Install]
+WantedBy=multi-user.target

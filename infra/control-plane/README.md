@@ -23,10 +23,15 @@ sudo chown root:playon /etc/playon/playon.env
 # Adjust WorkingDirectory / User in the units if your paths differ
 sudo cp infra/control-plane/linux/playon.service /etc/systemd/system/playon.service
 sudo cp infra/control-plane/linux/playon-node.service /etc/systemd/system/playon-node.service
+sudo mkdir -p /etc/needrestart/conf.d
+sudo cp infra/control-plane/linux/needrestart-playon.conf /etc/needrestart/conf.d/playon.conf
+sudo loginctl enable-linger playon
 sudo systemctl daemon-reload
 sudo systemctl enable --now playon playon-node
 sudo systemctl status playon playon-node
 ```
+
+`KillMode=process` plus a user-systemd `playon-server-*.scope` keep native games alive across a Home restart. Older `KillMode=mixed` units must be recopied. needrestart is overridden so `apt`/unattended-upgrades do not bounce `playon*` on server nodes (#1038).
 
 Open `http://playon.local` (or `http://<PLAYON_ADVERTISE_HOST>:8787` if mDNS/:80 failed). Owner bootstrap on first run. Optional: **Settings → Panel URL** for `https://<handle>.playon.games`.
 

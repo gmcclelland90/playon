@@ -111,6 +111,12 @@ import {
   resolveDockerUser,
   STORMWORKS_CONFIG_REL_PATHS,
   identityFromSkillMarker,
+  decideDesiredStateRestore,
+  isProtectedFromAutoStart,
+  NEVER_AUTO_START_MARKER_REL,
+  parseDesiredState,
+  parseNeverAutoStartList,
+  type DesiredState,
   isLocalNodeId,
   isLoopbackJoinHost,
   LAB_FIXTURE_MARKER_REL,
@@ -137,6 +143,8 @@ export interface ServerRecord {
   status: string;
   dataPath: string;
   createdAt: Date;
+  desiredState: DesiredState;
+  autoStart: boolean;
 }
 
 export type ConsoleInputState = "ready" | "unsupported" | "unavailable";
@@ -168,6 +176,12 @@ function isNotFoundFsError(err: unknown): boolean {
   return /not_found/i.test(msg);
 }
 
+export type DesiredStateRestoreRow = {
+  serverId: string;
+  action: "adopt" | "start" | "skip";
+  reason: string;
+};
+
 function toRecord(row: typeof servers.$inferSelect): ServerRecord {
   return {
     id: row.id,
@@ -178,6 +192,8 @@ function toRecord(row: typeof servers.$inferSelect): ServerRecord {
     status: row.status,
     dataPath: row.dataPath,
     createdAt: row.createdAt,
+    desiredState: parseDesiredState(row.desiredState),
+    autoStart: row.autoStart !== false,
   };
 }
 
@@ -1386,6 +1402,81 @@ export class ServerService {
     return (await this.getRaw(id))!;
   }
 
+  async patch(
+    id: string,
+    patch: { name?: string; autoStart?: boolean },
+  ): Promise<ServerRecord | null> {
+    const existing = await this.getRaw(id);
+    if (!existing) return null;
+    const next: { name?: string; autoStart?: boolean } = {};
+    if (patch.name !== undefined) next.name = patch.name;
+    if (patch.autoStart !== undefined) next.autoStart = patch.autoStart;
+    if (Object.keys(next).length) {
+      await this.db.update(servers).set(next).where(eq(servers.id, id));
+    }
+    return (await this.getRaw(id))!;
+  }
+
+  private neverAutoStartList(): string[] {
+    return parseNeverAutoStartList(process.env.PLAYON_NEVER_AUTO_START);
+  }
+
+  private hasNeverAutoStartMarker(server: ServerRecord): boolean {
+    return fs.existsSync(path.join(server.dataPath, ...NEVER_AUTO_START_MARKER_REL.split("/")));
+  }
+
+  private protectedFromAutoStart(server: ServerRecord): boolean {
+    return isProtectedFromAutoStart({
+      id: server.id,
+      name: server.name,
+      game: server.game,
+      autoStart: server.autoStart,
+      neverAutoStartList: this.neverAutoStartList(),
+      neverAutoStartMarker: this.hasNeverAutoStartMarker(server),
+    });
+  }
+
+  /**
+   * After Home comes back: re-adopt surviving PIDs, then start servers whose
+   * explicit desired state is running (opt-out / sacred hosts skipped).
+   */
+  async restoreAfterControlPlaneRestart(): Promise<DesiredStateRestoreRow[]> {
+    if (process.env.PLAYON_DISABLE_DESIRED_STATE_RESTORE === "1") return [];
+    const rows = await this.db.select().from(servers);
+    const report: DesiredStateRestoreRow[] = [];
+    for (const row of rows) {
+      const server = toRecord(row);
+      const status = await this.runtimeStatus(server);
+      const processAlive = status?.state === "running";
+      const decision = decideDesiredStateRestore({
+        desiredState: server.desiredState,
+        processAlive,
+        autoStart: server.autoStart,
+        protectedFromAutoStart: this.protectedFromAutoStart(server),
+      });
+      report.push({ serverId: server.id, action: decision.action, reason: decision.reason });
+      try {
+        if (decision.action === "adopt") {
+          await this.db.update(servers).set({ status: "running" }).where(eq(servers.id, server.id));
+          this.emitStatus(server.id, "running");
+          const handle = await this.openRuntime(server).catch(() => null);
+          if (handle) await this.beginRuntimeLogFollow(server.id, handle);
+          continue;
+        }
+        if (decision.action === "start") {
+          await this.start(server.id);
+        }
+      } catch {
+        report[report.length - 1] = {
+          serverId: server.id,
+          action: decision.action,
+          reason: `${decision.reason}:failed`,
+        };
+      }
+    }
+    return report;
+  }
+
   /** Runtime status from the handle, or null when the runtime could not answer at all. */
   private async runtimeStatus(server: ServerRecord): Promise<ServerRuntimeStatus | null> {
     try {
@@ -1798,7 +1889,10 @@ export class ServerService {
 
     const skillMeta = this.readSkillMeta(server.dataPath);
     const skillName = skillMeta.skillName || this.readSkillName(server.dataPath);
-    await this.db.update(servers).set({ status: "starting" }).where(eq(servers.id, id));
+    await this.db
+      .update(servers)
+      .set({ status: "starting", desiredState: "running" })
+      .where(eq(servers.id, id));
     this.emitStatus(id, "starting");
 
     const remote = this.isRemoteNode(server);
@@ -1859,7 +1953,10 @@ export class ServerService {
     const server = await this.getRaw(id);
     if (!server) throw new Error(`unknown_server: ${id}`);
 
-    await this.db.update(servers).set({ status: "stopping" }).where(eq(servers.id, id));
+    await this.db
+      .update(servers)
+      .set({ status: "stopping", desiredState: "stopped" })
+      .where(eq(servers.id, id));
     this.emitStatus(id, "stopping");
     this.stopLogFollow(id);
     await this.gateway?.releaseServer(id).catch(() => undefined);

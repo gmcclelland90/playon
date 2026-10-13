@@ -14,12 +14,14 @@ EnvironmentFile=/etc/playon/playon.env
 Environment=PLAYON_API_URL=http://127.0.0.1:8787
 Environment=PLAYON_NODE_ID=local
 Environment=PLAYON_NODE_NAME=%H
+# User systemd (linger) so native games can live in playon-server-*.scope (#1038).
+Environment=XDG_RUNTIME_DIR=/run/user/%U
 WorkingDirectory=/home/playon/src/playon
 # Built agent from the monorepo checkout (pnpm build).
 ExecStart=/usr/bin/node apps/node-agent/dist/index.js
 Restart=always
 RestartSec=5
-# Only the agent MAINPID — never the supervised game tree (#886).
+# Only the agent MAINPID — never the supervised game tree (#886 / #1038).
 KillMode=process
 SendSIGHUP=no
 

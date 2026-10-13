@@ -65,6 +65,8 @@ curl -fsSL https://playon.games/install | PLAYON_SERVICE=1 bash
 
 Or from an extracted tree: `sudo -E bash deploy/install.sh` / `.\deploy\windows\install.ps1`. Uses bundled Node when present; skips `pnpm install` when `node_modules` is vendored.
 
+Linux service install also: writes `/etc/needrestart/conf.d/playon.conf` so unattended-upgrades do not restart `playon` / `playon-node` / `playon-node-agent` (that previously SIGKILLed native games on `KillMode=mixed` units — #1038), and `loginctl enable-linger` so Home can place each native in a `playon-server-*.scope` outside the API cgroup. Re-run install (or recopy `infra/control-plane/linux/playon*.service`) on existing hosts that still show `KillMode=mixed`.
+
 Use `PLAYON_RUNTIME=native` for SteamCMD-only hosts. Linux **service** install (`deploy/install.sh`) and **install-node** call `deploy/lib/ensure-docker.sh` to provision Docker Engine when missing (opt out with `PLAYON_INSTALL_DOCKER=0`). If the socket is present and you did not force native, runtime defaults to `docker` for container skills. Already-online Linux nodes without Docker: **Settings → Nodes → Install Docker** (SSH or one-liner). SteamCMD auto-provisions when a Steam skill needs it (`PLAYON_STEAMCMD_AUTO`).
 
 ## Add a LAN node

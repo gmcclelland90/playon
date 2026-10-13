@@ -60,7 +60,9 @@ CREATE TABLE IF NOT EXISTS servers (
   status TEXT NOT NULL DEFAULT 'stopped',
   data_path TEXT NOT NULL,
   created_at INTEGER NOT NULL,
-  instance_started_at INTEGER
+  instance_started_at INTEGER,
+  desired_state TEXT NOT NULL DEFAULT 'stopped',
+  auto_start INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS conversations (

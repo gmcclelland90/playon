@@ -51,6 +51,10 @@ export type ServerRow = {
   ready?: boolean;
   runtimeMode: string;
   dataPath: string;
+  /** Explicit user start/stop intent. */
+  desiredState?: "running" | "stopped";
+  /** Opt-out of boot auto-start when desiredState is running. */
+  autoStart?: boolean;
   /** Engine inventory crate — not a PlayOn server; never Start/create. */
   unmanaged?: boolean;
   cpuPercent?: number | null;

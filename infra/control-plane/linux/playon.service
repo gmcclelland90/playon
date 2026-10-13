@@ -8,12 +8,16 @@ Type=simple
 User=playon
 Group=playon
 EnvironmentFile=/etc/playon/playon.env
+# User systemd (linger) so native games can live in playon-server-*.scope (#1038).
+Environment=XDG_RUNTIME_DIR=/run/user/%U
 WorkingDirectory=/home/playon/src/playon
 # Prefer pnpm so workspace package resolution matches the monorepo layout.
 ExecStart=/usr/bin/pnpm start
 Restart=always
 RestartSec=5
 # Keep OTA/apply helpers alive when the main process exits for self-update.
+# Also the fallback so leftover native PIDs are not SIGKILLed if they still
+# share this cgroup (older installs used KillMode=mixed — #1038).
 KillMode=process
 # Give Paper / Docker-backed starts room to breathe under memory pressure.
 LimitNOFILE=65535
