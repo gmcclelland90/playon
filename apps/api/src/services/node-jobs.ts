@@ -339,7 +339,10 @@ export class NodeJobService {
    * `done` here — the process that reports is still on the old stamp (Windows
    * helper applies after exit). Failures still land immediately.
    */
-  reportAgentResult(jobId: string, body: { ok: true; result: unknown } | { ok: false; error: string }): NodeJob {
+  reportAgentResult(
+    jobId: string,
+    body: { ok: true; result?: unknown } | { ok: false; error: string },
+  ): NodeJob {
     const job = this.jobs.get(jobId);
     if (!job) throw new NodeJobError("unknown_job", { detail: jobId });
     if (body.ok === false) return this.fail(jobId, body.error);

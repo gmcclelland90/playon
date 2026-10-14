@@ -715,10 +715,10 @@ describe("apply-self-update.ps1", () => {
     expect(src).toMatch(/CREATE_BREAKAWAY_FROM_JOB/);
     expect(src).toMatch(/function Test-CommandLineIsTargetAgent/);
     expect(src).toMatch(/playon-linux/);
-    expect(src).not.toMatch(/Stop-Process\s+[^\n]*wsl/i);
+    expect(src).not.toMatch(/^\s*Stop-Process[^\n]*wsl/im);
     expect(src).not.toMatch(/\*playon-node\*/);
-    expect(src).not.toMatch(/Get-Process\s+[^\n]*playon/i);
-    const stopId = src.match(/Stop-Process[^\n]+/g) ?? [];
+    expect(src).not.toMatch(/^\s*Get-Process[^\n]*playon/im);
+    const stopId = src.match(/^\s*Stop-Process[^\n]+/gm) ?? [];
     expect(stopId.length).toBeGreaterThan(0);
     expect(stopId.every((line) => /-Id \$/.test(line))).toBe(true);
     const launch = src.match(/if \(-not \$Detached\) \{[\s\S]*?exit 0\r?\n\}/);
