@@ -382,33 +382,90 @@ a.brand-mark:hover {
   --map-inset-right: calc(min(25rem, 100vw - 2rem) + 1.75rem);
 }
 
-.server-console-bubble {
+/* Server terminal: a strip along the bottom of the map. The room shrinks to sit above it. */
+.canvas-page.map-console-open {
+  --map-inset-bottom: calc(var(--console-dock-h, 15rem) + 1.5rem);
+}
+
+.canvas-page.map-console-open .agent-canvas-map-hint {
+  display: none;
+}
+
+.server-console-dock {
   position: absolute;
   z-index: 3;
-  transform: translate(-50%, calc(-100% - 12px));
-  pointer-events: none;
+  left: var(--map-inset-left);
+  right: var(--map-inset-right);
+  bottom: 0.75rem;
+  height: var(--console-dock-h, 15rem);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: oklch(0.14 0.015 350);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 -6px 24px oklch(0.08 0.02 350 / 0.45);
 }
 
-.server-console-bubble-panel {
-  position: relative;
-  pointer-events: auto;
-  display: grid;
-  gap: 0.4rem;
-  padding: 0.55rem 0.65rem 1.05rem;
-  background: oklch(0.16 0.02 350 / 0.96);
-  border: 1px solid oklch(0.45 0.04 350);
-  border-radius: 10px;
-  box-shadow: 0 10px 28px oklch(0.08 0.02 350 / 0.55);
+.server-console-dock-grip {
+  position: absolute;
+  top: -5px;
+  left: 0;
+  right: 0;
+  height: 10px;
+  cursor: ns-resize;
+  touch-action: none;
+  z-index: 1;
 }
 
-.server-console-bubble-head {
+/* A short bar in the middle of the top edge says "drag me". */
+.server-console-dock-grip::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  width: 2.5rem;
+  height: 4px;
+  margin-left: -1.25rem;
+  border-radius: 999px;
+  background: oklch(0.45 0.03 350);
+}
+
+.server-console-dock-grip:hover::after,
+.server-console-dock-grip:focus-visible::after {
+  background: oklch(0.78 0.06 190);
+}
+
+.server-console-dock-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.4rem 0.35rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+
+.server-console-dock.is-collapsed .server-console-dock-head {
+  border-bottom: 0;
+  height: 100%;
+}
+
+.server-console-dock-toggle {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 0.5rem;
+  gap: 0.6rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.server-console-bubble-title {
+.server-console-dock-title {
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -416,148 +473,105 @@ a.brand-mark:hover {
   color: oklch(0.78 0.06 190);
 }
 
-.server-console-bubble-name {
-  font-size: 0.75rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.server-console-dock-name {
+  font-size: 0.85rem;
+  font-weight: 600;
   white-space: nowrap;
 }
 
-.server-console-bubble-log {
-  min-height: 7.5rem;
-  overflow: auto;
-  padding: 0.45rem 0.5rem;
-  border-radius: 6px;
-  background: oklch(0.1 0.015 350);
-  border: 1px solid oklch(0.28 0.02 350);
+.server-console-dock-peek {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: "IBM Plex Mono", "Cascadia Code", "Consolas", monospace;
-  font-size: 0.78rem;
-  line-height: 1.4;
+  font-size: 0.75rem;
+  color: oklch(0.7 0.02 120);
+}
+
+.server-console-dock-hint {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+}
+
+.server-console-dock-icon {
+  flex: none;
+  width: 1.9rem;
+  height: 1.9rem;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: oklch(0.75 0.02 350);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.server-console-dock-icon:hover,
+.server-console-dock-icon:focus-visible {
+  background: oklch(0.22 0.02 350);
+  color: oklch(0.95 0.01 350);
+}
+
+.server-console-dock-log {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.5rem 0.75rem;
+  background: oklch(0.1 0.015 350);
+  font-family: "IBM Plex Mono", "Cascadia Code", "Consolas", monospace;
+  font-size: 0.8rem;
+  line-height: 1.45;
   color: oklch(0.86 0.02 120);
 }
 
-/* Invisible edge/corner hit targets + visible SE grip */
-.server-console-resize {
-  position: absolute;
-  z-index: 2;
-  touch-action: none;
+.server-console-dock-log:last-child {
+  border-radius: 0 0 var(--radius) var(--radius);
 }
 
-.server-console-resize-n,
-.server-console-resize-s {
-  left: 10px;
-  right: 10px;
-  height: 6px;
-  cursor: ns-resize;
+.server-console-dock-empty {
+  margin: 0;
+  font-size: 0.75rem;
 }
 
-.server-console-resize-n {
-  top: -3px;
+.server-console-dock-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.35rem 0.5rem;
+  padding: 0.45rem 0.5rem;
+  border-top: 1px solid var(--line);
 }
 
-.server-console-resize-s {
-  bottom: -3px;
+.server-console-dock-form input {
+  min-width: 0;
+  font-family: "IBM Plex Mono", "Cascadia Code", "Consolas", monospace;
+  font-size: 0.8rem;
 }
 
-.server-console-resize-e,
-.server-console-resize-w {
-  top: 10px;
-  bottom: 10px;
-  width: 6px;
-  cursor: ew-resize;
+.server-console-dock-form .btn {
+  font-size: 0.8rem;
+  padding: 0.35rem 0.75rem;
 }
 
-.server-console-resize-e {
-  right: -3px;
-}
-
-.server-console-resize-w {
-  left: -3px;
-}
-
-.server-console-resize-ne,
-.server-console-resize-nw,
-.server-console-resize-se,
-.server-console-resize-sw {
-  width: 14px;
-  height: 14px;
-}
-
-.server-console-resize-ne {
-  top: -4px;
-  right: -4px;
-  cursor: nesw-resize;
-}
-
-.server-console-resize-nw {
-  top: -4px;
-  left: -4px;
-  cursor: nwse-resize;
-}
-
-.server-console-resize-se {
-  bottom: -4px;
-  right: -4px;
-  cursor: nwse-resize;
-}
-
-.server-console-resize-sw {
-  bottom: -4px;
-  left: -4px;
-  cursor: nesw-resize;
-}
-
-.server-console-resize-grip {
-  position: absolute;
-  right: 5px;
-  bottom: 5px;
-  width: 14px;
-  height: 14px;
-  z-index: 3;
-  cursor: nwse-resize;
-  touch-action: none;
-  /* Diagonal grip marks — reads as a resize affordance in the corner */
-  background:
-    linear-gradient(
-      135deg,
-      transparent 35%,
-      oklch(0.72 0.04 350) 36%,
-      oklch(0.72 0.04 350) 40%,
-      transparent 41%
-    ),
-    linear-gradient(
-      135deg,
-      transparent 50%,
-      oklch(0.72 0.04 350) 51%,
-      oklch(0.72 0.04 350) 55%,
-      transparent 56%
-    ),
-    linear-gradient(
-      135deg,
-      transparent 65%,
-      oklch(0.78 0.05 190) 66%,
-      oklch(0.78 0.05 190) 70%,
-      transparent 71%
-    );
-  opacity: 0.9;
-}
-
-.server-console-resize-grip:hover {
-  opacity: 1;
+.server-console-dock-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.75rem;
 }
 
 body.server-console-resizing {
-  cursor: grabbing;
+  cursor: ns-resize;
   user-select: none;
 }
 
 body.server-console-resizing iframe {
   pointer-events: none;
-}
-
-.server-console-bubble-empty {
-  margin: 0;
-  font-size: 0.72rem;
 }
 
 .server-console-line {
@@ -575,39 +589,6 @@ body.server-console-resizing iframe {
 
 .server-console-line-err {
   color: oklch(0.72 0.14 25);
-}
-
-.server-console-bubble-form {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0.35rem;
-}
-
-.server-console-bubble-form input {
-  min-width: 0;
-  font-family: "IBM Plex Mono", "Cascadia Code", "Consolas", monospace;
-  font-size: 0.75rem;
-}
-
-.server-console-bubble-form .btn {
-  font-size: 0.75rem;
-  padding: 0.35rem 0.65rem;
-}
-
-.server-console-bubble-hint {
-  margin: 0;
-  font-size: 0.7rem;
-}
-
-.server-console-bubble-tail {
-  width: 14px;
-  height: 14px;
-  margin: -1px auto 0;
-  background: oklch(0.16 0.02 350 / 0.96);
-  border-right: 1px solid oklch(0.45 0.04 350);
-  border-bottom: 1px solid oklch(0.45 0.04 350);
-  transform: rotate(45deg);
-  pointer-events: none;
 }
 
 .agent-canvas-host {
@@ -5100,5 +5081,26 @@ a.btn {
 
   .canvas-composer-extras .canvas-busy-hint {
     display: none;
+  }
+}
+
+/* Phones: the terminal sits in the page column under the room, before the chat. */
+@media (max-width: 720px) {
+  .server-console-dock {
+    position: relative;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    height: auto;
+  }
+
+  .server-console-dock-grip,
+  .server-console-dock-hint {
+    display: none;
+  }
+
+  .server-console-dock-log {
+    height: 16rem;
+    flex: none;
   }
 }
