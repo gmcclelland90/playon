@@ -56,3 +56,4 @@ SDLC / intake: [docs/sdlc.md](docs/sdlc.md) · triage: [docs/issue-triage.md](do
 - TypeScript strict; ESM (`NodeNext`)
 - Package name prefix: `@playon/*`
 - Additive schema changes with version fields where applicable
+- UI / visual work: use the vendored Impeccable design skill (`/impeccable`, `.claude/skills/impeccable`, `.cursor/skills/impeccable`; upstream pbakaus/impeccable, Apache-2.0). It reads `PRODUCT.md` and `DESIGN.md` at the repo root
