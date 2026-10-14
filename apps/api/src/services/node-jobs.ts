@@ -48,6 +48,24 @@ export function shouldAbandonRunningJobOnReclaim(kind: NodeJobKind): boolean {
 /** Heartbeat with an older stamp than this means the Windows swap did not land. */
 export const SELF_UPDATE_STALE_MS = 15 * 60 * 1000;
 
+/** Progress line while Home waits for the new agent stamp (#1040). */
+export const SELF_UPDATE_APPLY_STARTED_PROGRESS =
+  "apply started; waiting for new version check-in";
+
+export const SELF_UPDATE_STALE_OFFLINE_ERROR =
+  "abandoned: new version did not check in";
+
+export const SELF_UPDATE_STALE_OLD_ERROR = "abandoned: update did not land after restart";
+
+export function isSelfUpdateStaleError(error: string | undefined): boolean {
+  return Boolean(error && /did not land after restart|did not check in/.test(error));
+}
+
+/** True when a heartbeat/agent stamp is at least the job's target (swap landed). */
+export function selfUpdateTargetReached(target: string, agentVersion: string): boolean {
+  return Boolean(target && !isNewerVersion(target, agentVersion || "0.0.0"));
+}
+
 export function nodeSelfUpdateJobsPath(dataRoot: string): string {
   return path.join(dataRoot, "node-self-update-jobs.json");
 }
@@ -251,6 +269,9 @@ export class NodeJobService {
    * After a self-update restart, the new agent heartbeats before it can POST
    * job result. Mark the in-flight update done when the stamp matches; fail it
    * if the old stamp is still reporting after `staleMs`.
+   *
+   * A dying Windows agent often POSTs `ok: true` *before* apply (#1040). That
+   * report is parked as progress — only this heartbeat path may mark `done`.
    */
   reconcileSelfUpdateOnHeartbeat(
     nodeId: string,
@@ -258,24 +279,74 @@ export class NodeJobService {
     nowMs: number = Date.now(),
     staleMs: number = SELF_UPDATE_STALE_MS,
   ): NodeJob | null {
-    const job = this.findActive(nodeId, "node_self_update");
-    if (!job) return null;
-    const target = typeof job.args.version === "string" ? job.args.version : "";
-    if (target && !isNewerVersion(target, agentVersion || "0.0.0")) {
-      return this.complete(job.id, {
+    const targetOf = (job: NodeJob): string =>
+      typeof job.args.version === "string" ? job.args.version : "";
+    const completeFromHeartbeat = (job: NodeJob): NodeJob =>
+      this.complete(job.id, {
         version: agentVersion,
         installRoot: "heartbeat",
         preserved: [],
         restartRequired: false,
       });
+
+    const active = this.findActive(nodeId, "node_self_update");
+    if (active && selfUpdateTargetReached(targetOf(active), agentVersion)) {
+      return completeFromHeartbeat(active);
     }
-    if (job.status !== "running") return null;
-    const created = Date.parse(job.createdAt);
-    if (!Number.isFinite(created) || nowMs - created < staleMs) return null;
-    if (target && isNewerVersion(target, agentVersion || "0.0.0")) {
-      return this.fail(job.id, "abandoned: update did not land after restart");
+    if (!active) {
+      // Recover a stale-fail if the new stamp finally checked in after the timer.
+      const latest = this.findLatest(nodeId, "node_self_update");
+      if (
+        latest &&
+        latest.status === "failed" &&
+        isSelfUpdateStaleError(latest.error) &&
+        selfUpdateTargetReached(targetOf(latest), agentVersion)
+      ) {
+        return completeFromHeartbeat(latest);
+      }
+      return null;
+    }
+    if (active.status !== "running") return null;
+    if (this.isSelfUpdatePastStale(active, nowMs, staleMs) && isNewerVersion(targetOf(active), agentVersion || "0.0.0")) {
+      return this.fail(active.id, SELF_UPDATE_STALE_OLD_ERROR);
     }
     return null;
+  }
+
+  /**
+   * Fail a running/queued self-update that has been silent past `staleMs` with
+   * no new-version check-in. Used when the node stays offline (no heartbeat).
+   * Never marks `done`.
+   */
+  failStaleSelfUpdateIfNeeded(
+    nodeId: string,
+    nowMs: number = Date.now(),
+    staleMs: number = SELF_UPDATE_STALE_MS,
+  ): NodeJob | null {
+    const job = this.findActive(nodeId, "node_self_update");
+    if (!job) return null;
+    if (!this.isSelfUpdatePastStale(job, nowMs, staleMs)) return null;
+    return this.fail(job.id, SELF_UPDATE_STALE_OFFLINE_ERROR);
+  }
+
+  private isSelfUpdatePastStale(job: NodeJob, nowMs: number, staleMs: number): boolean {
+    const stamped = Date.parse(job.updatedAt || job.createdAt);
+    return Number.isFinite(stamped) && nowMs - stamped >= staleMs;
+  }
+
+  /**
+   * Agent POST /result for a claimed job. `node_self_update` success is never
+   * `done` here — the process that reports is still on the old stamp (Windows
+   * helper applies after exit). Failures still land immediately.
+   */
+  reportAgentResult(jobId: string, body: { ok: true; result: unknown } | { ok: false; error: string }): NodeJob {
+    const job = this.jobs.get(jobId);
+    if (!job) throw new NodeJobError("unknown_job", { detail: jobId });
+    if (body.ok === false) return this.fail(jobId, body.error);
+    if (job.kind === "node_self_update") {
+      return this.setProgress(jobId, SELF_UPDATE_APPLY_STARTED_PROGRESS);
+    }
+    return this.complete(jobId, body.result);
   }
 
   complete(jobId: string, result: unknown): NodeJob {

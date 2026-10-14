@@ -397,6 +397,8 @@ function performWindowsSelfUpdate(opts: {
     opts.installRoot,
     "-AgentPid",
     String(process.pid),
+    "-ExpectedVersion",
+    opts.version,
     ...preserveArgs,
   ];
 

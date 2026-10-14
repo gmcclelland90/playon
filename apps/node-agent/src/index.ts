@@ -61,9 +61,27 @@ async function tickJobs() {
           await reportJobProgress(apiBase, nodeId, job.id, message, nodeToken);
         },
       });
-      await reportJobResult(apiBase, nodeId, job.id, { ok: true, result }, nodeToken);
-      claimWatchdog.markJobFinished();
-      console.log(`[node-agent] job done id=${job.id}`);
+      const restartRequired =
+        job.kind === "node_self_update" &&
+        result &&
+        typeof result === "object" &&
+        (result as { restartRequired?: boolean }).restartRequired === true;
+      if (restartRequired) {
+        // Home marks done only after the new stamp heartbeats (#1040).
+        await reportJobProgress(
+          apiBase,
+          nodeId,
+          job.id,
+          "apply started; waiting for new version check-in",
+          nodeToken,
+        );
+        claimWatchdog.markJobFinished();
+        console.log(`[node-agent] self-update apply started id=${job.id}; not reporting done`);
+      } else {
+        await reportJobResult(apiBase, nodeId, job.id, { ok: true, result }, nodeToken);
+        claimWatchdog.markJobFinished();
+        console.log(`[node-agent] job done id=${job.id}`);
+      }
       if (job.kind === "node_self_update") {
         // Re-advertise jobKinds/version before the control plane sends anything else.
         await tickHeartbeat();

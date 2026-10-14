@@ -251,6 +251,16 @@ describe("performNodeSelfUpdate", () => {
     expect(src).toMatch(/import \{ execFileSync, spawn, type ChildProcess \} from "node:child_process"/);
   });
 
+  it("Windows helper receives ExpectedVersion so apply cannot lie about the stamp (#1040)", () => {
+    const src = fs.readFileSync(fileURLToPath(new URL("./self-update.ts", import.meta.url)), "utf8");
+    expect(src).toMatch(/"-ExpectedVersion"/);
+    expect(src).toMatch(/opts\.version/);
+    const index = fs.readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8");
+    expect(index).toMatch(/not reporting done/);
+    expect(index).toMatch(/apply started; waiting for new version check-in/);
+    expect(index).toMatch(/restartRequired === true/);
+  });
+
   it("swapInstallTree does not delete sibling processes under data tree (#837 regression)", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-sibling-"));
     try {
@@ -687,6 +697,36 @@ describe("Windows OTA start-node.cmd Home wiring", () => {
 });
 
 describe("apply-self-update.ps1", () => {
+  it("scopes kill/restart to the target PID and keeps the WSL sibling hold (#1040)", () => {
+    const helper = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "..",
+      "..",
+      "deploy",
+      "windows",
+      "apply-self-update.ps1",
+    );
+    const src = fs.readFileSync(helper, "utf8");
+    expect(src).toMatch(/ExpectedVersion/);
+    expect(src).toMatch(/Start-WslSiblingHold/);
+    expect(src).toMatch(/Start-WslSiblingAgent/);
+    expect(src).toMatch(/Stop-TargetAgentPid/);
+    expect(src).toMatch(/CREATE_BREAKAWAY_FROM_JOB/);
+    expect(src).toMatch(/function Test-CommandLineIsTargetAgent/);
+    expect(src).toMatch(/playon-linux/);
+    expect(src).not.toMatch(/Stop-Process\s+[^\n]*wsl/i);
+    expect(src).not.toMatch(/\*playon-node\*/);
+    expect(src).not.toMatch(/Get-Process\s+[^\n]*playon/i);
+    const stopId = src.match(/Stop-Process[^\n]+/g) ?? [];
+    expect(stopId.length).toBeGreaterThan(0);
+    expect(stopId.every((line) => /-Id \$/.test(line))).toBe(true);
+    const launch = src.match(/if \(-not \$Detached\) \{[\s\S]*?exit 0\r?\n\}/);
+    expect(launch?.[0]).toMatch(
+      /Start-WslSiblingHold[\s\S]*Start-BreakawayHelper[\s\S]*Disable-NodeAgentTask/,
+    );
+  });
+
   it("detaches from the agent Job object and disables RestartCount before swapping", () => {
     const helper = path.join(
       path.dirname(fileURLToPath(import.meta.url)),
@@ -746,6 +786,10 @@ describe("elevate-node-agent.ps1", () => {
     expect(src).toMatch(/--require/);
     expect(src).toMatch(/load-env\.cjs/);
     expect(src).not.toMatch(/New-ScheduledTaskAction -Execute \$start/);
+    expect(src).toMatch(/InstallRoot/);
+    expect(src).toMatch(/apps\[\\\\\/\]node-agent/);
+    expect(src).not.toMatch(/\*playon-node\*/);
+    expect(src).not.toMatch(/Stop-Process[^\n]*wsl/i);
   });
 });
 
