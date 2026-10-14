@@ -119,7 +119,8 @@ Write-Log "Launching apply-self-update.ps1 (breakaway) source=$extracted"
 $preserve = @("data", "env", "node.env", "node.env.cmd", "node.env.json")
 $helperArgs = @(
   "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $helper,
-  "-SourceDir", $extracted, "-TargetDir", $installRoot, "-AgentPid", "$agentPid"
+  "-SourceDir", $extracted, "-TargetDir", $installRoot, "-AgentPid", "$agentPid",
+  "-ExpectedVersion", $Version
 )
 foreach ($name in $preserve) { $helperArgs += @("-Preserve", $name) }
 Start-Process -FilePath "powershell.exe" -ArgumentList $helperArgs -WindowStyle Hidden | Out-Null

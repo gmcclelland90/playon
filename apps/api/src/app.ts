@@ -3027,10 +3027,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         z.object({ ok: z.literal(false), error: z.string().min(1) }),
       ]),
     );
-    const updated =
-      body.ok === true
-        ? nodeJobService.complete(jobId, body.result)
-        : nodeJobService.fail(jobId, body.error);
+    const updated = nodeJobService.reportAgentResult(jobId, body);
     return c.json({
       id: updated.id,
       status: updated.status,
@@ -3069,6 +3066,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     requireCan(c, "servers.manage");
     const nodeId = c.req.param("nodeId");
     const jobId = c.req.param("jobId");
+    nodeJobService.failStaleSelfUpdateIfNeeded(nodeId);
     const job = nodeJobService.get(jobId);
     if (!job || job.nodeId !== nodeId) {
       throw HttpError.notFound("job_not_found", { code: "job_not_found" });

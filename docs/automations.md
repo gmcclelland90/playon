@@ -36,7 +36,7 @@ Live ledger: Cursor Automations → `playon-polish-canary`. Red run → file a p
 |--------|------------------|-----------------|
 | Soak morning | Weekdays 08:54 | Disposable `lab-*` / fixture servers survived the night. Never NZL. |
 | Managed-install | Weekdays 10:54 | Fixture overlay that needs `PLAYON_MANAGED_FROM`. Never friend worlds. |
-| Home OTA + node agents | Weekdays 11:54 | Lab hosts only (`playon-dev` Local, `playon-win-1`). **Skip friend-hosting nodes** unless Glenn approves a window. |
+| Home OTA + node agents | Weekdays 11:54 | Lab hosts only (`playon-dev` Local, `playon-win-1`). **Skip friend-hosting nodes** unless Glenn approves a window. After a Windows bump: job must stay `running` until `playon-win-1` heartbeats the **new** version (never `done` while offline/old); sibling `playon-win-1-wsl` must stay online. Do not use friend/NZL hosts as this canary (#1040). |
 | Site / catalog (playon.games) | Mon/Thu 12:54 | Public site + OTA manifest + catalog index. |
 | WSL Phase 2 smoke | Mon/Thu 14:54 | Join-host / publish on `playon-win-1` ([wsl-phase2-smoke-checklist.md](wsl-phase2-smoke-checklist.md)). Full client join from another LAN device stays the checklist. |
 | Join-path (`resolveJoinAddress`, not `127.0.0.1`) | With polish / lab | `pnpm build && pnpm lab:join-path-canary` ([#843](https://github.com/gmcclelland90/playon/issues/843)). Ready-gate probes the advertised host from Home; remote loopback diagnosis is `net_tcp_connect` on that node (never Home soak). Optional `--live-docker` on the lab host. WSL sibling + Windows PE live TCP stay lab-only (see [lab-matrix.md](lab-matrix.md)). Do **not** change matrix `port_open`. |

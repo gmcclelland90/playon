@@ -3,6 +3,7 @@ param(
   [Parameter(Mandatory = $true)][string]$TargetDir,
   [Parameter(Mandatory = $true)][int]$AgentPid,
   [string[]]$Preserve = @("data", "env", "node.env", "node.env.cmd", "node.env.json"),
+  [string]$ExpectedVersion = "",
   [switch]$Detached
 )
 
@@ -115,10 +116,41 @@ function Get-RelaunchArgList {
     "-AgentPid", "$AgentPid",
     "-Detached"
   )
+  if ($ExpectedVersion) {
+    $relaunch += @("-ExpectedVersion", $ExpectedVersion)
+  }
   foreach ($name in $Preserve) {
     $relaunch += @("-Preserve", $name)
   }
   return $relaunch
+}
+
+function Get-WslDistroName {
+  if ($env:PLAYON_WSL_DISTRO) { return $env:PLAYON_WSL_DISTRO.Trim() }
+  return "playon-linux"
+}
+
+function Get-TreeVersion {
+  param([string]$Dir)
+  foreach ($rel in @("apps\node-agent\package.json", "package.json")) {
+    $pkg = Join-Path $Dir $rel
+    if (-not (Test-Path $pkg)) { continue }
+    try {
+      $json = Get-Content -LiteralPath $pkg -Raw -ErrorAction Stop | ConvertFrom-Json
+      if ($json.version) { return (([string]$json.version).Trim() -replace '^[vV]', '') }
+    } catch {
+    }
+  }
+  return ""
+}
+
+function Test-CommandLineIsTargetAgent {
+  param([string]$CommandLine, [string]$InstallRoot)
+  if (-not $CommandLine) { return $false }
+  $root = $InstallRoot.TrimEnd("\")
+  $inRoot = $CommandLine.IndexOf($root, [StringComparison]::OrdinalIgnoreCase) -ge 0
+  if (-not $inRoot) { return $false }
+  return $CommandLine -match 'apps[\\/]node-agent[\\/]dist[\\/]index\.js'
 }
 
 # Start-Process stays in the PlayOnNodeAgent Job; Task Scheduler then kills
@@ -155,11 +187,14 @@ function Start-BreakawayHelper {
   } else {
     Write-Log "WARNING: $TaskName missing; CREATE_BREAKAWAY_FROM_JOB fallback."
   }
-  Start-BreakawayProcess -ArgString $argString
+  Start-BreakawayProcess -CommandLine "powershell.exe $argString" -LogLabel "apply-helper"
 }
 
 function Start-BreakawayProcess {
-  param([string]$ArgString)
+  param(
+    [string]$CommandLine,
+    [string]$LogLabel = "helper"
+  )
   if (-not ("PlayOnBreakaway" -as [type])) {
     Add-Type -TypeDefinition @"
 using System;
@@ -193,29 +228,69 @@ public class PlayOnBreakaway {
   $si = New-Object PlayOnBreakaway+STARTUPINFO
   $si.cb = [Runtime.InteropServices.Marshal]::SizeOf([type][PlayOnBreakaway+STARTUPINFO])
   $pi = New-Object PlayOnBreakaway+PROCESS_INFORMATION
-  $cmd = "powershell.exe $ArgString"
   $flags = [PlayOnBreakaway]::CREATE_BREAKAWAY_FROM_JOB -bor [PlayOnBreakaway]::CREATE_NEW_PROCESS_GROUP -bor [PlayOnBreakaway]::CREATE_NO_WINDOW
   $ok = [PlayOnBreakaway]::CreateProcess(
-    $null, $cmd, [IntPtr]::Zero, [IntPtr]::Zero, $false, $flags,
+    $null, $CommandLine, [IntPtr]::Zero, [IntPtr]::Zero, $false, $flags,
     [IntPtr]::Zero, $null, [ref]$si, [ref]$pi
   )
   if (-not $ok) {
     $err = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
     throw "CreateProcess breakaway failed (Win32 $err)"
   }
-  Write-Log "Started breakaway helper pid=$($pi.dwProcessId)."
+  Write-Log "Started breakaway $LogLabel pid=$($pi.dwProcessId)."
+}
+
+# Keep playon-linux awake while PlayOnNodeAgent's Job object tears down.
+# Killing wsl.exe (or the hold child) idles the distro and takes the WSL sibling
+# offline — do not Stop-Process wsl.exe (#1040 / #837).
+function Start-WslSiblingHold {
+  $distro = Get-WslDistroName
+  $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
+  if (-not $wsl) {
+    Write-Log "WSL not present; skip sibling hold"
+    return
+  }
+  try {
+    $cmd = "wsl.exe -d $distro -u root -- bash -lc `"exec sleep infinity`""
+    Start-BreakawayProcess -CommandLine $cmd -LogLabel "wsl-hold"
+  } catch {
+    Write-Log "WARNING: WSL sibling hold failed: $_"
+  }
+}
+
+function Start-WslSiblingAgent {
+  $distro = Get-WslDistroName
+  $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
+  if (-not $wsl) { return }
+  try {
+    & wsl.exe -d $distro -u root -- systemctl start playon-node-agent.service | Out-Null
+    Write-Log "Poked WSL sibling agent distro=$distro"
+  } catch {
+    Write-Log "WARNING: WSL sibling poke failed: $_"
+  }
+}
+
+function Stop-TargetAgentPid {
+  param([int]$PidToStop)
+  if ($PidToStop -le 0) { return }
+  Write-Log "Force stopping target node-agent PID=$PidToStop only (no wsl.exe, no sibling agents)"
+  Stop-Process -Id $PidToStop -Force -ErrorAction SilentlyContinue
 }
 
 # 0.2.3+ agents spawn this script as a child of PlayOnNodeAgent. Task Scheduler
 # RestartCount would start the *old* binary before the swap, and a Job object
-# would kill this helper when the agent PID exits. Relaunch outside that Job.
+# would kill this helper (and the WSL hold) when the agent PID exits. Relaunch
+# the apply helper and a WSL hold outside that Job *before* disabling the task
+# (#1040).
 if (-not $Detached) {
-  Disable-NodeAgentTask
+  Start-WslSiblingHold
   Start-BreakawayHelper
+  Disable-NodeAgentTask
   exit 0
 }
 
 Disable-NodeAgentTask
+Start-WslSiblingHold
 
 Write-Log "Waiting for node-agent process PID=$AgentPid to exit..."
 $maxWaitSec = 60
@@ -233,8 +308,8 @@ while ($waited -lt $maxWaitSec) {
 
 try {
   $null = Get-Process -Id $AgentPid -ErrorAction Stop
-  Write-Log "Process still running after ${maxWaitSec}s, force stopping..."
-  Stop-Process -Id $AgentPid -Force -ErrorAction SilentlyContinue
+  Write-Log "Process still running after ${maxWaitSec}s, force stopping target PID only..."
+  Stop-TargetAgentPid -PidToStop $AgentPid
   Start-Sleep -Seconds 2
 } catch {
 }
@@ -242,6 +317,15 @@ try {
 if (-not (Test-Path $SourceDir)) {
   Restore-NodeAgentTask -Reason "ERROR: Source directory not found: $SourceDir — leaving previous agent"
   exit 1
+}
+
+if ($ExpectedVersion) {
+  $want = $ExpectedVersion.Trim() -replace '^[vV]', ''
+  $srcVer = Get-TreeVersion -Dir $SourceDir
+  if ($srcVer -and $srcVer -ne $want) {
+    Restore-NodeAgentTask -Reason "ERROR: package version $srcVer != expected $want — not swapping"
+    exit 1
+  }
 }
 
 Write-Log "Swapping install tree: $SourceDir → $TargetDir"
@@ -283,6 +367,20 @@ foreach ($item in Get-ChildItem -Path $SourceDir) {
     }
     throw
   }
+}
+
+if ($ExpectedVersion) {
+  $want = $ExpectedVersion.Trim() -replace '^[vV]', ''
+  $got = Get-TreeVersion -Dir $TargetDir
+  if (-not $got) {
+    Restore-NodeAgentTask -Reason "ERROR: swapped tree has no package version (expected $want)"
+    exit 1
+  }
+  if ($got -ne $want) {
+    Restore-NodeAgentTask -Reason "ERROR: swapped version $got != expected $want — leaving previous agent"
+    exit 1
+  }
+  Write-Log "Swapped tree version $got matches expected"
 }
 
 Write-PortableStartNodeCmd -Dir $TargetDir
@@ -378,6 +476,24 @@ try {
   Unregister-ApplyUpdateTask
   exit 1
 }
+
+$seen = $false
+for ($i = 0; $i -lt 20 -and -not $seen; $i++) {
+  Start-Sleep -Milliseconds 500
+  $procs = Get-CimInstance Win32_Process -Filter "Name='node.exe'" -ErrorAction SilentlyContinue
+  foreach ($p in $procs) {
+    if (Test-CommandLineIsTargetAgent -CommandLine $p.CommandLine -InstallRoot $TargetDir) {
+      Write-Log "New node-agent PID=$($p.ProcessId) under $TargetDir"
+      $seen = $true
+      break
+    }
+  }
+}
+if (-not $seen) {
+  Write-Log "WARNING: new node-agent process not seen yet under $TargetDir"
+}
+
+Start-WslSiblingAgent
 
 Unregister-ApplyUpdateTask
 Write-Log "Self-update completed successfully."

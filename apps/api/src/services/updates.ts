@@ -406,6 +406,12 @@ export class UpdateService {
         const updateAvailable = Boolean(
           latestVersion && isNewerVersion(latestVersion, agentVersion),
         );
+        if (n.agentVersion) {
+          nodeJobService.reconcileSelfUpdateOnHeartbeat(n.id, n.agentVersion, now);
+        }
+        if (deriveNodePresence(n.lastSeenAt, now) === "offline") {
+          nodeJobService.failStaleSelfUpdateIfNeeded(n.id, now);
+        }
         const active = nodeJobService.findActive(n.id, "node_self_update");
         const latestJob = active ?? nodeJobService.findLatest(n.id, "node_self_update");
         return {
