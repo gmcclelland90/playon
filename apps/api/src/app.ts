@@ -58,6 +58,7 @@ import {
   deriveNodePresence,
   parseUsageHistory,
   messageFromError,
+  isUdpJoinUnverified,
   playerPanelStatusFromJoinReady,
   placementBadge,
   placementFromNodeKind,
@@ -1776,7 +1777,13 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
         const cached = joinReadyService.cached(s.id);
         const usage = serverUsageFromInventory(s.id, s.nodeId, s.runtimeMode);
         const usageHistory = s.nodeId ? (historyByNode.get(s.nodeId)?.servers[s.id] ?? []) : [];
-        return { ...s, ready: cached?.ready, ...usage, usageHistory };
+        return {
+          ...s,
+          ready: cached?.ready,
+          udpJoinUnverified: cached ? isUdpJoinUnverified(cached) : undefined,
+          ...usage,
+          usageHistory,
+        };
       }),
       advertiseHost: config.advertiseHost,
       runtimeMode: config.runtimeMode,
@@ -1788,10 +1795,16 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     const detail = await serverService.detail(c.req.param("id"));
     if (!detail) throw HttpError.notFound("not_found", { code: "server_not_found" });
     const joinReady = await joinReadyService.probe(c.req.param("id"));
+    const udpJoinUnverified = isUdpJoinUnverified(joinReady);
     return c.json({
       ...detail,
-      server: { ...detail.server, ready: joinReady.ready },
-      runtime: { ...detail.runtime, ready: joinReady.ready, joinPath: joinReady.joinPath },
+      server: { ...detail.server, ready: joinReady.ready, udpJoinUnverified },
+      runtime: {
+        ...detail.runtime,
+        ready: joinReady.ready,
+        udpJoinUnverified,
+        joinPath: joinReady.joinPath,
+      },
     });
   });
 
@@ -2117,12 +2130,19 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     const panelStatus = playerPanelStatusFromJoinReady(joinReady, "running");
     await playerPanel.publishForStatus(server.id, panelStatus, live);
     const detail = await serverService.detail(server.id);
+    const udpJoinUnverified = isUdpJoinUnverified(joinReady);
     return {
-      server: { ...server, ready: joinReady.ready },
+      server: { ...server, ready: joinReady.ready, udpJoinUnverified },
       runtime: detail
-        ? { ...detail.runtime, ready: joinReady.ready, joinPath: joinReady.joinPath }
+        ? {
+            ...detail.runtime,
+            ready: joinReady.ready,
+            udpJoinUnverified,
+            joinPath: joinReady.joinPath,
+          }
         : undefined,
       ready: joinReady.ready,
+      udpJoinUnverified,
       joinPath: joinReady.joinPath,
     };
   };

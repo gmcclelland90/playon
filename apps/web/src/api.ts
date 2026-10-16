@@ -49,6 +49,8 @@ export type ServerRow = {
   status: string;
   /** Advertised join-path proof. Missing/false means do not claim the server is up. */
   ready?: boolean;
+  /** UDP ports bound on the host, but Home cannot test the join itself. */
+  udpJoinUnverified?: boolean;
   runtimeMode: string;
   dataPath: string;
   /** Explicit user start/stop intent. */
@@ -132,6 +134,7 @@ export type ServerDetail = {
     imageHint?: string;
     join?: { address: string; port: number };
     ready?: boolean;
+    udpJoinUnverified?: boolean;
     joinPath?: {
       ok: boolean;
       reason: string;

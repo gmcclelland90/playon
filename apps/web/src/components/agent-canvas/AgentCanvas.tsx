@@ -125,7 +125,7 @@ function hostNeedsRemoval(node: MapNodeInput): boolean {
 }
 
 function stationTone(server: ServerRow): "live" | "idle" | "failed" | "busy" {
-  const shown = displayServerStatus(server.status, server.ready);
+  const shown = displayServerStatus(server.status, server.ready, server.udpJoinUnverified);
   if (shown === "error" || shown === "failed") return "failed";
   if (shown === "running") return "live";
   if (shown === "starting" || shown === "stopping" || shown === "degraded")
@@ -768,6 +768,7 @@ export function AgentCanvas({
                     const shownState = displayServerStatus(
                       server.status,
                       server.ready,
+                      server.udpJoinUnverified,
                     );
                     return (
                       <li
