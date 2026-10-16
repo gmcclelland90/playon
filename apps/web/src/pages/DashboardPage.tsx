@@ -111,7 +111,7 @@ export function DashboardPage({ user }: { user: PublicUser }) {
   });
 
   const serverList = servers.data?.servers ?? [];
-  const running = serverList.filter((s) => displayServerStatus(s.status, s.ready) === "running").length;
+  const running = serverList.filter((s) => displayServerStatus(s.status, s.ready, s.udpJoinUnverified) === "running").length;
   const stopped = serverList.filter((s) => s.status === "stopped").length;
   const errored = serverList.filter((s) => s.status === "error").length;
   const serverName = (id: string) => serverList.find((s) => s.id === id)?.name ?? id.slice(0, 8);
@@ -181,7 +181,7 @@ export function DashboardPage({ user }: { user: PublicUser }) {
   // surface what that banner doesn't: broken servers and hosts that went dark.
   const attention: AttentionItem[] = [
     ...serverList.flatMap((s): AttentionItem[] => {
-      const st = displayServerStatus(s.status, s.ready);
+      const st = displayServerStatus(s.status, s.ready, s.udpJoinUnverified);
       if (st === "error" || st === "failed") {
         return [{ key: `s-${s.id}`, tone: "danger", text: `${shortDisplayName(s.name, 28)} failed`, serverId: s.id }];
       }
@@ -387,7 +387,7 @@ export function DashboardPage({ user }: { user: PublicUser }) {
               ) : serverList.length ? (
                 <ul className="dash-rows">
                   {serverList.map((s) => {
-                    const st = displayServerStatus(s.status, s.ready);
+                    const st = displayServerStatus(s.status, s.ready, s.udpJoinUnverified);
                     const live = s.status === "running" || s.status === "starting";
                     const host = nodeName(s.nodeId);
                     return (

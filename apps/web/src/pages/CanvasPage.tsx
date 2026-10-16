@@ -48,7 +48,13 @@ import { ServerConsoleBubble } from "../components/ServerConsoleBubble";
 import { ServerModsPanel } from "../components/ServerModsPanel";
 import { MAKE_A_MOD_DRAFT } from "../make-a-mod";
 import { ServerUsageMeters } from "../components/UsageMeters";
-import { displayServerStatus, runtimeErrorHint, statusHint, statusLabel } from "../status";
+import {
+  displayServerStatus,
+  runtimeErrorHint,
+  statusHint,
+  statusLabel,
+  UDP_JOIN_UNVERIFIED_HINT,
+} from "../status";
 import { gameBadgeText, gameHue } from "../game-badge";
 import { playonSocket } from "../ws";
 
@@ -876,7 +882,15 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const selected = servers.data?.servers.find((s) => s.id === selectedId);
   const processStatus = detail.data?.server.status ?? selected?.status ?? "unknown";
   const ready = detail.data?.runtime.ready ?? detail.data?.server.ready ?? selected?.ready;
-  const status = displayServerStatus(processStatus, ready);
+  const udpJoinUnverified =
+    detail.data?.runtime.udpJoinUnverified ??
+    detail.data?.server.udpJoinUnverified ??
+    selected?.udpJoinUnverified;
+  const status = displayServerStatus(processStatus, ready, udpJoinUnverified);
+  const opsHint =
+    status === "running" && ready !== true && udpJoinUnverified
+      ? UDP_JOIN_UNVERIFIED_HINT
+      : (statusHint(status) ?? runtimeErrorHint(status));
   const join = detail.data?.runtime.join;
   const pendingKeys = Object.entries(channels)
     .filter(([, channel]) => channel.pending)
@@ -1103,7 +1117,12 @@ export function CanvasPage({ user }: { user: PublicUser }) {
             {selected && selectedId ? (
               <>
                 <div className="canvas-status-row">
-                  <span className={`server-status-pill status-${status}`}>{statusLabel(status)}</span>
+                  <span
+                    className={`server-status-pill status-${status}`}
+                    title={opsHint ?? undefined}
+                  >
+                    {statusLabel(status)}
+                  </span>
                   {selected.game ? <span className="muted">{selected.game}</span> : null}
                   {activityOnSelected ? (
                     <span className="muted canvas-busy-hint">
@@ -1193,11 +1212,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
               aria-labelledby="dock-tab-ops"
               hidden={dockTab !== "ops"}
             >
-              {statusHint(status) || runtimeErrorHint(status) ? (
-                <p className="muted canvas-dock-hint">
-                  {statusHint(status) ?? runtimeErrorHint(status)}
-                </p>
-              ) : null}
+              {opsHint ? <p className="muted canvas-dock-hint">{opsHint}</p> : null}
               <div className="btn-row">
                 <button
                   type="button"

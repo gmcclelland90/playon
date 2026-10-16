@@ -252,10 +252,11 @@ export function isHeroCrate(server: {
   unmanaged?: boolean;
   status: string;
   ready?: boolean;
+  udpJoinUnverified?: boolean;
 }): boolean {
   return (
     boardCrateKind(server) === "player" &&
-    displayServerStatus(server.status, server.ready) === "running"
+    displayServerStatus(server.status, server.ready, server.udpJoinUnverified) === "running"
   );
 }
 
@@ -278,12 +279,13 @@ export function boardCrateStatusText(server: {
   unmanaged?: boolean;
   status: string;
   ready?: boolean;
+  udpJoinUnverified?: boolean;
 }): string {
   const kind = boardCrateKind(server);
   if (kind === "inventory") {
     return server.status === "running" ? "On host" : "Host leftover";
   }
-  const shown = displayServerStatus(server.status, server.ready);
+  const shown = displayServerStatus(server.status, server.ready, server.udpJoinUnverified);
   if (kind === "lab") {
     if (shown === "running") return "Lab · Running";
     if (shown === "degraded") return "Lab canary";
