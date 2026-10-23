@@ -4,14 +4,26 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+## [0.2.16] — 2026-10-22
+
+### Changed
+
+- **Map terminal docks along the bottom of the room** — the floating terminal bubble ran off the top of the screen when a game sat high in the room and covered the hosts list. It is now a full-width strip under the LAN room: drag the top edge to resize, collapse to one line that peeks the latest log, or close it. Input only shows when the server can take commands; otherwise the header says why. On phones it sits between the room and the chat (`#1032`).
+
 ### Fixed
 
 - **UDP servers no longer read “Not joinable” to the host** — A UDP game (Project Zomboid, Factorio, …) that is running with its advertised ports bound, but has no query answer, now shows **Running** on the Map and Dashboard with a note that PlayOn can’t test UDP joins from Home. Home can’t prove a UDP join by itself (no handshake; silence looks the same as open), so “untested” is no longer shown as a failure. API, `servers_*` tools and `servers_health_check` carry `udpJoinUnverified`; the health `join-path` check passes as untested; `ready` stays `false` so the join-path canary is unchanged.
 - **Windows node OTA lying-`done` + sibling offline** — Home no longer marks `node_self_update` `done` from the dying agent's result POST (that process is still on the old stamp; the Windows helper swaps after exit). The job completes only when the new version heartbeats, or fails clearly if the node stays offline/old past the stale window. Apply kill-scope is the target node-agent PID only; a breakaway WSL hold keeps `playon-win-1-wsl` up so updating one Windows node does not idle the sibling (`#1040`). Lab canary: disposable `playon-win-1` / `playon-win-1-wsl` only — never friend/NZL hosts.
-
 - **Home restart no longer kills native servers** — Native games are moved into a `playon-server-*.scope` (user systemd) when linger is available, so `playon.service` / `playon-node.service` stop no longer SIGKILLs them. Surviving PIDs are re-adopted on API boot (status, logs, console FIFO, stop). Explicit start/stop persist `desiredState`; Home auto-starts desired-running servers that are down, unless the server opted out (`autoStart=false`, `.playon/never-auto-start`, `PLAYON_NEVER_AUTO_START`) or matches the sacred NZL/Hub/Frontier name list. Install ships a needrestart override and recopies `KillMode=process` units (`#1038`).
 - **Lab UDP start deaths (`udp_process_not_running`)** — Factorio containers now start as root so `factoriotools/factorio` can chown the `0700` game bind (uid 845 otherwise exits before UDP 34197 / RCON 27015 bind). Native launches pass `PLAYON_GAME_PORT` / `PLAYON_HOME` that catalog `start.sh` overlays already read (Teeworlds). Matrix `port_open` treats TCP `queryPortName` (Factorio RCON) as a real probe instead of a UDP-only process wait, and attaches console/docker tails when the process dies (`#1033`, `#1034`).
 - **CS2 lab query_offline** — Catalog `games.cs2` 0.1.1 leaves `CS2_IP` unset, so `joedwards32/cs2` omits `-ip` and Source 2 auto-binds a container address. Matrix then sees TCP 27015 open (RCON / docker-proxy) while A2S on published UDP 27015 returns GameDig `Failed all 3 attempts`. Home now injects `CS2_IP=0.0.0.0` (and `CS2_SERVER_HIBERNATE=0` when unset) and the `a2s` dialect falls back to a same-socket native A2S challenge exchange after GameDig misses. Not a 27015 leftover regression (`#941` / `#955`). Durable catalog copy still belongs in playon-games (`#1035`).
+
+### Notes
+
+- Rides `#1036`, `#1037`, `#1039`, `#1041` (Windows OTA fix, `#1040`), `#1042` and `#1032` on top of 0.2.15 (`af1f9c7..7de7d72`).
+- **P0 #1016 deferred** — clone-start isolation bug unchanged; its fix (PR `#1024`) is not on main. Do not start clones via the Home API until it lands.
+- Open P1s (`#1004`, `#1006`, `#1009`, `#1010`, `#988`) are deferred; not touched by this cut.
+- PR `#1026` (vendored Impeccable skill) closed unmerged; `#1025` (fal game-ready assets) not included.
 
 ## [0.2.15] — 2026-10-04
 
