@@ -41,6 +41,13 @@ vi.mock("@playon/runtime", async (importOriginal) => {
   };
 });
 
+/** Linux reads start.sh; Windows resolveScriptLaunch only accepts start.bat / run.bat. */
+function writeNativeStartScripts(gameDir: string): void {
+  fs.mkdirSync(gameDir, { recursive: true });
+  fs.writeFileSync(path.join(gameDir, "start.sh"), "#!/bin/bash\nsleep 30\n");
+  fs.writeFileSync(path.join(gameDir, "start.bat"), "@echo off\n");
+}
+
 beforeEach(() => {
   resetRuntimeHandleFakes();
 });
@@ -156,8 +163,7 @@ describe("desired state across a control-plane restart (#1038)", () => {
     });
     writePzIni(nzl.dataPath, "NewZombieLand3", 16261);
     const nzlGame = path.join(nzl.dataPath, "game");
-    fs.mkdirSync(nzlGame, { recursive: true });
-    fs.writeFileSync(path.join(nzlGame, "start.sh"), "#!/bin/bash\nsleep 30\n");
+    writeNativeStartScripts(nzlGame);
     fs.writeFileSync(
       path.join(nzlGame, ".playon-start.env"),
       buildManagedStartEnv({
@@ -172,8 +178,7 @@ describe("desired state across a control-plane restart (#1038)", () => {
     });
     writePzIni(clone.dataPath, "NewZombieLand3", 16361);
     const cloneGame = path.join(clone.dataPath, "game");
-    fs.mkdirSync(cloneGame, { recursive: true });
-    fs.writeFileSync(path.join(cloneGame, "start.sh"), "#!/bin/bash\nsleep 30\n");
+    writeNativeStartScripts(cloneGame);
     fs.writeFileSync(
       path.join(cloneGame, ".playon-start.env"),
       buildManagedStartEnv({
