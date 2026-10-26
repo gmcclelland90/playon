@@ -93,7 +93,7 @@ Loop protocol: [agent-dev-loop.md](agent-dev-loop.md)
 
 ## Production-like start (recommended for LAN UI)
 
-Prefer systemd (`playon` + node agent on the node host) — see [lan-install.md](lan-install.md) and `infra/control-plane/`. Recopy units + `/etc/needrestart/conf.d/playon.conf` after this tree so a `needrestart` / `systemctl restart playon` does not SIGKILL native games (#1038). Do not use Hub / NZL / Frontier as the restart smoke target.
+Prefer systemd (`playon` + node agent on the node host) — see [lan-install.md](lan-install.md) and `infra/control-plane/`. Recopy units, `playon.slice`, and `/etc/needrestart/conf.d/playon.conf`, then `daemon-reload`, after this tree so a `needrestart` / `systemctl restart playon` does not SIGKILL native games (#1038 / #1045). Confirm `KillMode=process` before restarting. Do not use live Hub / NZL / Frontier as the restart smoke target. Home will relaunch them when their desired state is running; a clone that reuses NZL's launch name or port is refused (#1016).
 
 ```bash
 cd /home/playon/src/playon

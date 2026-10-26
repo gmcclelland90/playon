@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { NEVER_AUTO_START_MARKER_REL } from "@playon/shared";
 import { servers as serversTable } from "../db/schema.js";
+import { buildManagedStartEnv } from "./manage-suggest.js";
 import {
   cleanupRuntimeHandleTemps,
   fake,
@@ -11,6 +12,9 @@ import {
   nativeServer,
   pzNativeServer,
   resetRuntimeHandleFakes,
+  tempEnv,
+  writePzIni,
+  writePzSkill,
 } from "./servers-runtime-handle-fakes.js";
 
 vi.mock("./node-runtime.js", async (importOriginal) => {
@@ -103,9 +107,9 @@ describe("desired state across a control-plane restart (#1038)", () => {
     expect((await servers.get(id))!.status).toBe("running");
   });
 
-  it("does not auto-start a sacred Hub even when desiredState is running", async () => {
+  it("relaunches a desired-running Hub (#1045)", async () => {
     const { db, servers, id } = await pzNativeServer({ defaultPort: 16271 });
-    servers.portsBoundOverride = async () => false;
+    servers.portsBoundOverride = async () => true;
     await db
       .update(serversTable)
       .set({ desiredState: "running", autoStart: true })
@@ -114,11 +118,105 @@ describe("desired state across a control-plane restart (#1038)", () => {
     const report = await servers.restoreAfterControlPlaneRestart();
     expect(report).toContainEqual({
       serverId: id,
-      action: "skip",
-      reason: "protected_from_auto_start",
+      action: "start",
+      reason: "desired_running",
     });
-    expect(host.specs).toHaveLength(0);
+    expect(host.specs).toHaveLength(1);
     expect((await servers.get(id))!.name).toBe("Hub");
+    expect((await servers.get(id))!.status).toBe("running");
+  });
+
+  it("relaunches a lab soak whose name used to be treated as sacred (#1045)", async () => {
+    const { db, servers, id } = await nativeServer();
+    servers.portsBoundOverride = async () => true;
+    await db
+      .update(serversTable)
+      .set({ name: "lab-soak-teeworlds", game: "Frontier", desiredState: "running" })
+      .where(eq(serversTable.id, id));
+    await servers.start(id);
+    host.exited();
+    host.calls.length = 0;
+    host.specs.length = 0;
+
+    const report = await servers.restoreAfterControlPlaneRestart();
+    expect(report).toContainEqual({
+      serverId: id,
+      action: "start",
+      reason: "desired_running",
+    });
+    expect(host.specs).toHaveLength(1);
+  });
+
+  it("does not relaunch a Frontier clone that reuses NZL's launch name (#1016)", async () => {
+    const { db, config, servers } = tempEnv();
+    writePzSkill(path.join(config.dataRoot, "skills"));
+    const nzl = await servers.createFromSkill({
+      skillName: "games.project-zomboid",
+      serverName: "NewZombieLand3",
+    });
+    writePzIni(nzl.dataPath, "NewZombieLand3", 16261);
+    const nzlGame = path.join(nzl.dataPath, "game");
+    fs.mkdirSync(nzlGame, { recursive: true });
+    fs.writeFileSync(path.join(nzlGame, "start.sh"), "#!/bin/bash\nsleep 30\n");
+    fs.writeFileSync(
+      path.join(nzlGame, ".playon-start.env"),
+      buildManagedStartEnv({
+        playonHome: path.join(nzl.dataPath, "home"),
+        serverName: "NewZombieLand3",
+      }),
+    );
+
+    const clone = await servers.createFromSkill({
+      skillName: "games.project-zomboid",
+      serverName: "NZL-Clone-Frontier-RD",
+    });
+    writePzIni(clone.dataPath, "NewZombieLand3", 16361);
+    const cloneGame = path.join(clone.dataPath, "game");
+    fs.mkdirSync(cloneGame, { recursive: true });
+    fs.writeFileSync(path.join(cloneGame, "start.sh"), "#!/bin/bash\nsleep 30\n");
+    fs.writeFileSync(
+      path.join(cloneGame, ".playon-start.env"),
+      buildManagedStartEnv({
+        playonHome: path.join(clone.dataPath, "home"),
+        serverName: "NewZombieLand3",
+      }),
+    );
+
+    await db
+      .update(serversTable)
+      .set({ runtimeMode: "native", desiredState: "running", autoStart: true })
+      .where(eq(serversTable.id, nzl.id));
+    await db
+      .update(serversTable)
+      .set({ runtimeMode: "native", desiredState: "running", autoStart: true })
+      .where(eq(serversTable.id, clone.id));
+    servers.portsBoundOverride = async () => true;
+    fake.reset();
+    host.reset();
+    // The shared native fake reports one process for every find(). A clone
+    // must not inherit NZL's liveness or restore would adopt it.
+    const originalFind = host.supervisor.find.bind(host.supervisor);
+    host.supervisor.find = async (name: string, cwd: string) => {
+      if (name.includes(clone.id)) return null;
+      return originalFind(name, cwd);
+    };
+
+    let report;
+    try {
+      report = await servers.restoreAfterControlPlaneRestart();
+    } finally {
+      host.supervisor.find = originalFind;
+    }
+    expect(report).toContainEqual({
+      serverId: nzl.id,
+      action: "start",
+      reason: "desired_running",
+    });
+    const cloneRow = report.find((row) => row.serverId === clone.id);
+    expect(cloneRow?.action).toBe("skip");
+    expect(cloneRow?.reason).toMatch(/start_identity_collision/);
+    expect(host.specs).toHaveLength(1);
+    expect(host.specs.some((spec) => spec.name?.includes(clone.id))).toBe(false);
   });
 
   it("honours per-server autoStart opt-out and a never-auto-start marker", async () => {

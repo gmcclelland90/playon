@@ -21,9 +21,10 @@ WorkingDirectory=/home/playon/src/playon
 ExecStart=/usr/bin/node apps/node-agent/dist/index.js
 Restart=always
 RestartSec=5
-# Only the agent MAINPID — never the supervised game tree (#886 / #1038).
+# Only the agent MAINPID — never the supervised game tree (#886 / #1038 / #1045).
 KillMode=process
 SendSIGHUP=no
+ExecStopPost=-/usr/bin/logger -t playon -- playon_unit_stop %n
 
 [Install]
 WantedBy=multi-user.target

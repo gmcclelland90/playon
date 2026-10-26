@@ -129,6 +129,14 @@ import {
   type SkillMetadata,
 } from "@playon/shared";
 import { listLocalIniRelPaths } from "./instance-game-port-files.js";
+import {
+  iniRelForLaunchName,
+  parseManagedStartEnv,
+  startIsolationViolation,
+  worldIniNamesFromRels,
+  type StartLaunchIdentity,
+  type StartPeer,
+} from "./start-identity.js";
 import { dispatchNodeJob, nodeServerRelPath } from "./node-runtime.js";
 import { nodeJobService } from "./node-jobs.js";
 import { checkNodeLoopbackTcp } from "./node-loopback-tcp.js";
@@ -1277,6 +1285,15 @@ export class ServerService {
     }
     const rels = await this.instanceIniRelPaths(server);
     if (!rels.length) return null;
+    // A managed launch name picks its own <world>.ini. A different world's
+    // DefaultPort is not what the process binds (#1016).
+    const { launchName } = await this.launchIdentity(server);
+    if (launchName && worldIniNamesFromRels(rels).length) {
+      const own = iniRelForLaunchName(rels, launchName);
+      if (!own) return null;
+      const text = await this.readServerText(server, own);
+      return text ? instanceGamePortFromIniTexts([text]) : null;
+    }
     const texts: string[] = [];
     for (const rel of rels) {
       const text = await this.readServerText(server, rel);
@@ -1437,24 +1454,43 @@ export class ServerService {
   }
 
   /**
-   * After Home comes back: re-adopt surviving PIDs, then start servers whose
-   * explicit desired state is running (opt-out / sacred hosts skipped).
+   * After Home comes back: re-adopt surviving PIDs, then relaunch every server
+   * whose explicit desired state is running (opt-outs skipped). A Frontier
+   * clone that would take NZL's launch name or ports is not started (#1016).
    */
   async restoreAfterControlPlaneRestart(): Promise<DesiredStateRestoreRow[]> {
     if (process.env.PLAYON_DISABLE_DESIRED_STATE_RESTORE === "1") return [];
     const rows = await this.db.select().from(servers);
+    const ordered = rows
+      .map(toRecord)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
     const report: DesiredStateRestoreRow[] = [];
-    for (const row of rows) {
-      const server = toRecord(row);
+    for (const server of ordered) {
       const status = await this.runtimeStatus(server);
       const processAlive = status?.state === "running";
-      const decision = decideDesiredStateRestore({
+      let decision = decideDesiredStateRestore({
         desiredState: parseDesiredState(server.desiredState),
         processAlive,
         autoStart: server.autoStart,
         protectedFromAutoStart: this.protectedFromAutoStart(server),
       });
+      if (decision.action === "start") {
+        const violation = await this.startIsolationReason(server);
+        if (violation) decision = { action: "skip", reason: violation };
+      }
       report.push({ serverId: server.id, action: decision.action, reason: decision.reason });
+      const logged = decision.action === "adopt" ? "adopt" : decision.action === "start" ? "relaunch" : "not_adopt";
+      console.log(
+        JSON.stringify({
+          msg: "playon_native_restore",
+          serverId: server.id,
+          name: server.name,
+          runtimeMode: server.runtimeMode,
+          decision: logged,
+          reason: decision.reason,
+          desiredState: parseDesiredState(server.desiredState),
+        }),
+      );
       try {
         if (decision.action === "adopt") {
           await this.db.update(servers).set({ status: "running" }).where(eq(servers.id, server.id));
@@ -1466,12 +1502,22 @@ export class ServerService {
         if (decision.action === "start") {
           await this.start(server.id);
         }
-      } catch {
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
         report[report.length - 1] = {
           serverId: server.id,
           action: decision.action,
-          reason: `${decision.reason}:failed`,
+          reason: `${decision.reason}:failed:${message}`,
         };
+        console.log(
+          JSON.stringify({
+            msg: "playon_native_restore",
+            serverId: server.id,
+            name: server.name,
+            decision: "not_adopt",
+            reason: report[report.length - 1]!.reason,
+          }),
+        );
       }
     }
     return report;
@@ -1883,9 +1929,51 @@ export class ServerService {
     await this.ensureWslParentPublish(server, skillName);
   }
 
+  /** Launch identity from the managed `game/.playon-start.env`, if any. */
+  private async launchIdentity(server: ServerRecord): Promise<StartLaunchIdentity> {
+    const text = await this.readServerText(server, "game/.playon-start.env");
+    return text ? parseManagedStartEnv(text) : {};
+  }
+
+  /** Null when this start would not reuse another server's world, home, or port. */
+  async startIsolationReason(server: ServerRecord): Promise<string | null> {
+    const sameNode = (other: ServerRecord) =>
+      isLocalNodeId(server.nodeId) ? isLocalNodeId(other.nodeId) : other.nodeId === server.nodeId;
+    const rows = await this.db.select().from(servers);
+    const peers: StartPeer[] = [];
+    for (const other of rows.map(toRecord)) {
+      if (other.id === server.id || !sameNode(other)) continue;
+      peers.push({
+        id: other.id,
+        name: other.name,
+        status: other.status,
+        launchName: (await this.launchIdentity(other)).launchName,
+        gamePort: await this.advertisedGamePort(other).catch(() => null),
+      });
+    }
+    return startIsolationViolation({
+      id: server.id,
+      name: server.name,
+      identity: await this.launchIdentity(server),
+      worldIniNames: worldIniNamesFromRels(await this.instanceIniRelPaths(server)),
+      gamePort: await this.advertisedGamePort(server).catch(() => null),
+      peers,
+    });
+  }
+
+  /**
+   * Refuse a start that would reuse another server's world name, userdata
+   * home, or game port on the same node (#1016).
+   */
+  async assertStartIsolated(server: ServerRecord): Promise<void> {
+    const violation = await this.startIsolationReason(server);
+    if (violation) throw new Error(violation);
+  }
+
   async start(id: string): Promise<ServerRecord> {
     const server = await this.getRaw(id);
     if (!server) throw new Error(`unknown_server: ${id}`);
+    await this.assertStartIsolated(server);
 
     const skillMeta = this.readSkillMeta(server.dataPath);
     const skillName = skillMeta.skillName || this.readSkillName(server.dataPath);

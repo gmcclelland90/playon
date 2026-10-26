@@ -111,6 +111,37 @@ describe("WatcherService", () => {
     expect(runs[0]?.status).toBe("ok");
   });
 
+  it("refuses a watcher run after the watcher row is gone (#1045)", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-watchers-"));
+    dirs.push(root);
+    const dbPath = path.join(root, "playon.db");
+    applyBootstrap(dbPath);
+    const { db } = createDb(dbPath);
+    const { servers } = await import("../db/schema.js");
+    await db.insert(servers).values({
+      id: "srv-fk",
+      name: "Lab",
+      game: "lab",
+      nodeId: null,
+      runtimeMode: "docker",
+      status: "running",
+      dataPath: path.join(root, "servers", "srv-fk"),
+      createdAt: new Date(),
+    });
+    const svc = new WatcherService(db);
+    const w = await svc.create({
+      serverId: "srv-fk",
+      name: "Health",
+      enabled: true,
+      trigger: { kind: "schedule", intervalMs: 10_000 },
+      action: { kind: "tools", steps: [{ tool: "servers_health_check", args: {} }] },
+    });
+    expect(await svc.delete(w.id)).toBe(true);
+    await expect(
+      svc.createRun({ watcherId: w.id, serverId: "srv-fk", status: "running" }),
+    ).rejects.toThrow(/watcher_run_parent_missing/);
+  });
+
   it("rejects invalid log pattern", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-watchers-"));
     dirs.push(root);

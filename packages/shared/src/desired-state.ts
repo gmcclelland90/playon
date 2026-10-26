@@ -1,14 +1,15 @@
 /**
- * Per-server desired run state across a control-plane restart (#1038).
+ * Per-server desired run state across a control-plane restart (#1038 / #1045).
  *
  * `desiredState` is only written by an explicit user start/stop (or equivalent
  * API/tool). Crash / reconcile / health must not flip it to stopped.
  *
- * Auto-start on Home boot is opt-out and must never blindly restart sacred
- * live hosts (NZL / Hub / Frontier / …) while #1016-class start bugs are open.
+ * Home boot relaunches every server whose desired state is running, including
+ * soak / lab / NZL / Hub. Opt-out is per server (`autoStart`, the
+ * never-auto-start marker, or `PLAYON_NEVER_AUTO_START`). A Frontier clone that
+ * would reuse NZL's launch name or ports is refused separately at start time
+ * (#1016), not by skipping every sacred name here.
  */
-
-import { isProtectedLiveServerName } from "./lab-jail-gc.js";
 
 export type DesiredState = "running" | "stopped";
 
@@ -43,8 +44,9 @@ export function isListedNeverAutoStart(
 }
 
 /**
- * Sacred / opted-out servers may be re-adopted if still alive, but must not
- * be started by Home on its own.
+ * Opted-out servers may be re-adopted if still alive, but must not be started
+ * by Home on its own. Name matches (NZL / Hub / Frontier / soak) are not an
+ * opt-out — those relaunch when desired state is running (#1045).
  */
 export function isProtectedFromAutoStart(input: {
   id: string;
@@ -56,9 +58,6 @@ export function isProtectedFromAutoStart(input: {
 }): boolean {
   if (input.autoStart === false) return true;
   if (input.neverAutoStartMarker === true) return true;
-  if (isProtectedLiveServerName(input.name) || isProtectedLiveServerName(input.game)) {
-    return true;
-  }
   return isListedNeverAutoStart(
     { id: input.id, name: input.name },
     input.neverAutoStartList ?? [],

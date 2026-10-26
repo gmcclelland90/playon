@@ -141,8 +141,9 @@ ExecStart=${NODE_BIN} apps/api/dist/index.js
 Restart=always
 RestartSec=5
 # Keep OTA/apply helpers alive when the main process exits for self-update.
-# Fallback so leftover native PIDs are not SIGKILLed if they still share this cgroup (#1038).
+# Fallback so leftover native PIDs are not SIGKILLed if they still share this cgroup (#1038 / #1045).
 KillMode=process
+ExecStopPost=-/usr/bin/logger -t playon -- playon_unit_stop %n
 LimitNOFILE=65535
 # Prefer :80 for http://playon.local (falls back to PLAYON_PORT without this).
 AmbientCapabilities=CAP_NET_BIND_SERVICE
@@ -172,8 +173,9 @@ WorkingDirectory=${PLAYON_ROOT}
 ExecStart=${NODE_BIN} apps/node-agent/dist/index.js
 Restart=always
 RestartSec=5
-# Only the agent MAINPID — never SIGTERM the supervised game tree on OTA/restart (#886 / #1038).
+# Only the agent MAINPID — never SIGTERM the supervised game tree on OTA/restart (#886 / #1038 / #1045).
 KillMode=process
+ExecStopPost=-/usr/bin/logger -t playon -- playon_unit_stop %n
 SendSIGHUP=no
 
 [Install]
@@ -186,6 +188,8 @@ if getent group docker >/dev/null 2>&1; then
 fi
 
 PLAYON_NEEDRESTART_SRC="${BUNDLE_ROOT}/infra/control-plane/linux/needrestart-playon.conf"
+PLAYON_SLICE_SRC="${BUNDLE_ROOT}/infra/control-plane/linux/playon.slice"
+PLAYON_SERVER_UNIT_SRC="${BUNDLE_ROOT}/infra/control-plane/linux/playon-server@.service"
 playon_apply_host_hygiene "${PLAYON_USER}"
 
 systemctl daemon-reload

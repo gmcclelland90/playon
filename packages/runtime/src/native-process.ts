@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { moveProcessOutOfAgentCgroup } from "./cgroup.js";
 import { resolveInJail } from "./path-jail.js";
-import { adoptPidIntoPlayonScope } from "./systemd-scope.js";
+import {
+  adoptPidIntoPlayonScope,
+  launchNativeViaUserService,
+  stopUserService,
+} from "./systemd-scope.js";
 import type { ProcessInfo, ProcessSpec, ProcessSupervisor } from "./types.js";
 import {
   killWindowsOrphansByRoots,
@@ -16,7 +20,10 @@ export { moveProcessOutOfAgentCgroup, readCgroupRelativePath } from "./cgroup.js
 
 interface TrackedProcess {
   info: ProcessInfo;
-  child: ChildProcess;
+  /** Absent when a user systemd service owns the game (#1045). */
+  child?: ChildProcess;
+  /** Transient `playon-server-*.service` unit, when launched that way. */
+  unit?: string;
   cwdJail: string;
   logFd?: number;
   /** Extra write end so agent exit does not EOF a keepStdin console. */
@@ -120,6 +127,190 @@ function stdinHolderPidPath(cwd: string): string {
   return path.join(serverTreeRoot(cwd), ".playon", "stdin-holder.pid");
 }
 
+export function nativePidPath(cwd: string): string {
+  return path.join(serverTreeRoot(cwd), ".playon", "native.pid");
+}
+
+export function nativePortPath(cwd: string): string {
+  return path.join(serverTreeRoot(cwd), ".playon", "native.port");
+}
+
+export function nativeUnitPath(cwd: string): string {
+  return path.join(serverTreeRoot(cwd), ".playon", "native.unit");
+}
+
+/** `/proc/<pid>/stat` starttime (field 22), so a recycled pid is not re-adopted. */
+export function readProcStartTicks(pid: number): string | null {
+  if (process.platform === "win32" || !pid) return null;
+  try {
+    const stat = fs.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const close = stat.lastIndexOf(")");
+    if (close < 0) return null;
+    const ticks = stat.slice(close + 2).split(" ")[19];
+    return ticks && /^\d+$/.test(ticks) ? ticks : null;
+  } catch {
+    return null;
+  }
+}
+
+export type NativePidRecord = { pid: number; startTicks?: string };
+
+export function readNativePidRecord(cwd: string): NativePidRecord | null {
+  try {
+    const text = fs.readFileSync(nativePidPath(cwd), "utf8").trim();
+    if (!text) return null;
+    const [pidRaw, ticks] = text.split(/\s+/);
+    const pid = Number(pidRaw);
+    if (!Number.isInteger(pid) || pid <= 0) return null;
+    return { pid, ...(ticks && /^\d+$/.test(ticks) ? { startTicks: ticks } : {}) };
+  } catch {
+    return null;
+  }
+}
+
+export function writeNativePidRecord(cwd: string, pid: number): void {
+  const file = nativePidPath(cwd);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const ticks = readProcStartTicks(pid);
+  fs.writeFileSync(file, ticks ? `${pid} ${ticks}\n` : `${pid}\n`);
+}
+
+function clearNativePid(cwd: string): void {
+  try {
+    fs.rmSync(nativePidPath(cwd), { force: true });
+  } catch {
+    /* best-effort */
+  }
+}
+
+function rememberNativeUnit(cwd: string, unit: string | undefined): void {
+  const file = nativeUnitPath(cwd);
+  try {
+    if (!unit) {
+      fs.rmSync(file, { force: true });
+      return;
+    }
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${unit}\n`);
+  } catch {
+    /* best-effort */
+  }
+}
+
+function readNativeUnit(cwd: string): string | undefined {
+  try {
+    const unit = fs.readFileSync(nativeUnitPath(cwd), "utf8").trim();
+    return unit || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeNativePort(cwd: string, env?: Record<string, string>): void {
+  const raw = env?.PLAYON_GAME_PORT?.trim();
+  const port = raw ? Number(raw) : NaN;
+  const file = nativePortPath(cwd);
+  try {
+    if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+      fs.rmSync(file, { force: true });
+      return;
+    }
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, `${port}\n`);
+  } catch {
+    /* best-effort */
+  }
+}
+
+function readNativePort(cwd: string): number | null {
+  try {
+    const port = Number(fs.readFileSync(nativePortPath(cwd), "utf8").trim());
+    return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
+  } catch {
+    return null;
+  }
+}
+
+function pidRecordIsAlive(record: NativePidRecord): boolean {
+  try {
+    process.kill(record.pid, 0);
+  } catch {
+    return false;
+  }
+  if (!record.startTicks) return true;
+  const now = readProcStartTicks(record.pid);
+  return now == null || now === record.startTicks;
+}
+
+/** True when this pid's cwd or command line is inside the server tree. */
+export function processBelongsToServerTree(pid: number, tree: string): boolean {
+  if (process.platform === "win32" || !pid || !tree || tree === "/" || tree === "\\") return false;
+  try {
+    const cwd = fs.readlinkSync(`/proc/${pid}/cwd`);
+    if (cwd === tree || cwd.startsWith(`${tree}/`)) return true;
+  } catch {
+    /* unreadable */
+  }
+  try {
+    const cmd = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").replace(/\0/g, " ");
+    if (cmd.includes(tree)) return true;
+  } catch {
+    /* unreadable */
+  }
+  return false;
+}
+
+/** `ss -p` lines: `users:(("java",pid=123,fd=10))`. */
+export function pidsFromSsOutput(text: string): number[] {
+  const pids = new Set<number>();
+  for (const match of text.matchAll(/pid=(\d+)/g)) {
+    const pid = Number(match[1]);
+    if (Number.isInteger(pid) && pid > 0) pids.add(pid);
+  }
+  return [...pids];
+}
+
+export function pickListeningPid(
+  pids: readonly number[],
+  tree: string,
+  belongs: (pid: number, tree: string) => boolean = processBelongsToServerTree,
+): number | null {
+  for (const pid of pids) {
+    if (belongs(pid, tree)) return pid;
+  }
+  return null;
+}
+
+function pidsListeningOnPort(port: number): number[] {
+  if (process.platform === "win32") return [];
+  try {
+    const out = execFileSync("ss", ["-H", "-l", "-p", "-t", "-u", "-n", `sport = :${port}`], {
+      encoding: "utf8",
+      timeout: 2_000,
+    });
+    return pidsFromSsOutput(out);
+  } catch {
+    return [];
+  }
+}
+
+function logNativeChildExit(args: {
+  name?: string;
+  pid?: number;
+  exitCode: number | null;
+  signal: NodeJS.Signals | string | null;
+}): void {
+  console.log(
+    JSON.stringify({
+      msg: "playon_native_child_exit",
+      name: args.name ?? null,
+      pid: args.pid ?? null,
+      exitCode: args.exitCode,
+      signal: args.signal,
+    }),
+  );
+}
+
 function detachFromControlPlaneCgroup(pid: number | undefined, name: string): void {
   if (!pid) return;
   const scoped = adoptPidIntoPlayonScope(pid, name);
@@ -217,6 +408,9 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     // Never stack duplicates: stop prior tracked + OS orphans for this server cwd.
     await this.reclaim(spec.name, cwd);
 
+    const userLaunched = await this.startInUserService(spec, cwd);
+    if (userLaunched) return userLaunched;
+
     let logFd: number | undefined;
     // Linux: new session/pgrp. Windows keepStdin stays attached (FIFO is Linux-only).
     const detached = supervisedChildDetached(Boolean(spec.keepStdin));
@@ -280,7 +474,11 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     if (process.platform !== "win32") {
       child.unref();
     }
-    if (child.pid) detachFromControlPlaneCgroup(child.pid, spec.name);
+    if (child.pid) {
+      detachFromControlPlaneCgroup(child.pid, spec.name);
+      writeNativePidRecord(cwd, child.pid);
+    }
+    writeNativePort(cwd, spec.env);
     if (heldStdin?.holder?.pid) persistHolderPid(cwd, heldStdin.holder.pid);
     if (heldStdin) {
       try {
@@ -304,12 +502,19 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
       status: "running",
     };
 
-    child.on("exit", () => {
+    child.on("exit", (code, signal) => {
       const tracked = this.procs.get(id);
+      logNativeChildExit({
+        name: tracked?.info.name ?? spec.name,
+        pid: tracked?.info.pid ?? child.pid,
+        exitCode: code,
+        signal,
+      });
       if (tracked) {
         tracked.info.status = "stopped";
         tracked.info.pid = undefined;
         this.closeLogFd(tracked);
+        clearNativePid(tracked.cwdJail);
       }
     });
     // Keep a listener so late spawn failures never become unhandled.
@@ -328,6 +533,73 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     return { ...info };
   }
 
+  /**
+   * Born in a user systemd service so `playon.service` KillMode=mixed cannot
+   * SIGKILL it. Null falls through to the detached spawn (#1045).
+   */
+  private async startInUserService(
+    spec: ProcessSpec,
+    cwd: string,
+  ): Promise<ProcessInfo | null> {
+    const logFile = spec.logFile
+      ? path.isAbsolute(spec.logFile)
+        ? spec.logFile
+        : this.jailRoot
+          ? resolveInJail(this.jailRoot, spec.logFile)
+          : path.resolve(cwd, spec.logFile)
+      : undefined;
+    if (logFile) fs.mkdirSync(path.dirname(logFile), { recursive: true });
+    const stdinFifo = spec.keepStdin ? defaultStdinFifoPath(cwd) : undefined;
+    if (stdinFifo) {
+      fs.mkdirSync(path.dirname(stdinFifo), { recursive: true });
+      if (!fs.existsSync(stdinFifo)) {
+        try {
+          execFileSync("mkfifo", [stdinFifo], { stdio: "ignore" });
+        } catch {
+          return null;
+        }
+      }
+    }
+    const launched = await launchNativeViaUserService({
+      name: spec.name,
+      command: spec.command,
+      args: spec.args ?? [],
+      cwd,
+      env: { ...process.env, ...(spec.env ?? {}) },
+      logFile,
+      stdinFifo,
+      pidFile: nativePidPath(cwd),
+    });
+    if (!launched) return null;
+
+    writeNativePidRecord(cwd, launched.pid);
+    writeNativePort(cwd, spec.env);
+    rememberNativeUnit(cwd, launched.unit);
+    let stdinWriteFd: number | undefined;
+    if (stdinFifo) {
+      try {
+        stdinWriteFd = fs.openSync(stdinFifo, "r+");
+      } catch {
+        stdinWriteFd = undefined;
+      }
+    }
+    const id = `native-${spec.name}-${++this.seq}`;
+    const info: ProcessInfo = {
+      id,
+      name: spec.name,
+      pid: launched.pid,
+      status: "running",
+    };
+    this.procs.set(id, {
+      info,
+      unit: launched.unit,
+      cwdJail: cwd,
+      stdinWriteFd,
+      stdinFifo,
+    });
+    return { ...info };
+  }
+
   /** FIFO holder pid when this identity was started with Linux keepStdin. */
   stdinHolderPid(name: string, cwd: string): number | undefined {
     const resolved = this.jailRoot ? resolveInJail(this.jailRoot, cwd) : cwd;
@@ -341,7 +613,7 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
   hasPipeStdinChildren(): boolean {
     for (const tracked of this.procs.values()) {
       if (tracked.info.status !== "running") continue;
-      if (tracked.stdinHolder) continue;
+      if (tracked.stdinHolder || !tracked.child) continue;
       const stdin = tracked.child.stdin;
       if (stdin && !stdin.destroyed) return true;
     }
@@ -357,6 +629,8 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     tracked.info.status = "stopped";
     tracked.info.pid = undefined;
     this.closeLogFd(tracked);
+    clearNativePid(cwd);
+    rememberNativeUnit(cwd, undefined);
     // Children may re-parent outside the process group after detach.
     // Only the server identity may tree-reap — a diagnostic stop with
     // cwd under the game jail must not SIGTERM the JVM (#909).
@@ -378,6 +652,17 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     const resolved = this.jailRoot ? resolveInJail(this.jailRoot, cwd) : cwd;
     const tracked = this.findTracked(name, resolved);
     if (tracked) return { ...tracked.info };
+    const recorded = readNativePidRecord(resolved);
+    if (recorded && pidRecordIsAlive(recorded)) {
+      return { id: `native-orphan-${recorded.pid}`, name, pid: recorded.pid, status: "running" };
+    }
+    const port = readNativePort(resolved);
+    if (port) {
+      const owner = pickListeningPid(pidsListeningOnPort(port), serverTreeRoot(resolved));
+      if (owner && owner !== process.pid) {
+        return { id: `native-orphan-${owner}`, name, pid: owner, status: "running" };
+      }
+    }
     if (process.platform === "win32") {
       const roots = windowsMatchRoots(resolved);
       const pid = listWindowsPidsMatchingRoots(roots)[0];
@@ -397,7 +682,8 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     for (const tracked of this.procs.values()) {
       if (tracked.info.status !== "running") continue;
       if (tracked.info.name !== name) {
-        if (tracked.child.pid) excludePids.add(tracked.child.pid);
+        if (tracked.child?.pid) excludePids.add(tracked.child.pid);
+        if (tracked.info.pid) excludePids.add(tracked.info.pid);
         if (tracked.stdinHolder?.pid) excludePids.add(tracked.stdinHolder.pid);
         continue;
       }
@@ -409,6 +695,7 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     if (shouldReapServerTreeOrphans(name, resolved)) {
       await this.killOrphansByCwd(resolved, excludePids);
     }
+    this.killRecordedNative(resolved);
     killPersistedHolder(resolved);
   }
 
@@ -441,7 +728,7 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
       fs.writeSync(tracked.stdinWriteFd, line);
       return;
     }
-    const stdin = tracked.child.stdin;
+    const stdin = tracked.child?.stdin;
     if (!stdin || stdin.destroyed) {
       throw new Error("stdin_unavailable: process console is closed");
     }
@@ -515,12 +802,27 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
     }
   }
 
+  private killRecordedNative(cwd: string): void {
+    const unit = readNativeUnit(cwd);
+    if (unit) stopUserService(unit);
+    rememberNativeUnit(cwd, undefined);
+    const recorded = readNativePidRecord(cwd);
+    clearNativePid(cwd);
+    if (!recorded) return;
+    try {
+      process.kill(recorded.pid, "SIGTERM");
+    } catch {
+      /* already gone */
+    }
+  }
+
   private signalTracked(tracked: TrackedProcess): void {
-    const pid = tracked.child.pid;
+    if (tracked.unit) stopUserService(tracked.unit);
+    const pid = tracked.child?.pid ?? tracked.info.pid;
     if (pid && process.platform === "win32") {
       killWindowsPidTree(pid);
       try {
-        tracked.child.kill();
+        tracked.child?.kill();
       } catch {
         // already gone
       }
@@ -531,14 +833,14 @@ export class NativeProcessSupervisor implements ProcessSupervisor {
         process.kill(-pid, "SIGTERM");
       } catch {
         try {
-          tracked.child.kill("SIGTERM");
+          tracked.child?.kill("SIGTERM");
         } catch {
           // already gone
         }
       }
     } else {
       try {
-        tracked.child.kill();
+        tracked.child?.kill();
       } catch {
         // already gone
       }
