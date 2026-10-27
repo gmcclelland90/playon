@@ -4,10 +4,19 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+## [0.2.17] — 2026-10-27
+
 ### Fixed
 
 - **Native games survive a Home restart, and desired-running servers come back** — `playon.service` stop/restart (needrestart, unattended-upgrades, or an API crash) SIGKILLed native children because they lived in `system.slice/playon.service`. New launches fork `systemd-run --user --unit=playon-server-<name>.service` (optional `playon.slice`; the game unit's own `KillMode=control-group`). A user scope cannot move PIDs that are already in the system cgroup, so that path stays the fallback plus cgroup move. Startup re-adopts a survivor by pidfile (pid + start ticks), by a listening port whose process cwd/cmdline is inside that server tree, or by the existing cwd scan, and logs `playon_native_restore` as `adopt`, `relaunch`, or `not_adopt`. Every `desiredState=running` server is relaunched, including soak, lab, NZL, and Hub. Opt-out stays `autoStart=false`, `.playon/never-auto-start`, or `PLAYON_NEVER_AUTO_START`. A start that would reuse another server's launch name, userdata home, or a port held by a running peer is refused, so a Frontier clone cannot take NZL's name or ports (#1016). Native child death logs pid and signal (`playon_native_child_exit`). Shipped units, the user slice, installers, and needrestart override are updated — existing hosts must recopy and `daemon-reload` before the next `systemctl restart playon` (`#1045`).
 - **Unhandled SQLite foreign-key inserts no longer take Home down** — watcher run and snapshot inserts check their parent rows and turn `FOREIGN KEY constraint failed` into a logged error instead of a raw `SqliteError`. `unhandledRejection` / `uncaughtException` log `playon_process_error` with the SQLite code and a redacted statement. A foreign-key failure does not exit the process (`#1045`).
+
+### Notes
+
+- Rides `#1046` (native games survive a Home restart, desired-running servers restored, start-identity guard; `#1045`) on top of 0.2.16 (`d6afda4..3c9a4a2`).
+- **Existing hosts must install the new units and `daemon-reload` before the next `systemctl restart playon`** (see `#1046`); until then the old `KillMode=mixed` unit still SIGKILLs native children on restart.
+- **P0 #1016** — the start-identity / launch-name / port-collision guard ships in `#1046`; the issue stays open until verified in the lab.
+- Open P1s (`#1044`, `#1004`, `#1006`, `#1009`, `#1010`, `#988`) are deferred; not touched by this cut.
 
 ## [0.2.16] — 2026-10-22
 
