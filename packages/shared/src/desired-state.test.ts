@@ -33,10 +33,18 @@ describe("isProtectedFromAutoStart", () => {
     expect(isProtectedFromAutoStart({ id: "lab-1", name: "Paper" })).toBe(false);
   });
 
-  it("keeps sacred live names out of blind auto-start (#1016 / #1038)", () => {
-    expect(isProtectedFromAutoStart({ id: "RxWubiUeCNNzXqnZ4E_9p", name: "Hub" })).toBe(true);
-    expect(isProtectedFromAutoStart({ id: "nzl", name: "NewZombieLand3" })).toBe(true);
-    expect(isProtectedFromAutoStart({ id: "x", name: "Disposable", game: "Frontier" })).toBe(true);
+  it("does not treat NZL, Hub, Frontier, or soak names as an auto-start opt-out (#1045)", () => {
+    expect(isProtectedFromAutoStart({ id: "RxWubiUeCNNzXqnZ4E_9p", name: "Hub" })).toBe(false);
+    expect(isProtectedFromAutoStart({ id: "nzl", name: "NewZombieLand3" })).toBe(false);
+    expect(isProtectedFromAutoStart({ id: "x", name: "lab-soak-teeworlds" })).toBe(false);
+    expect(isProtectedFromAutoStart({ id: "x", name: "Disposable", game: "Frontier" })).toBe(false);
+    expect(
+      isProtectedFromAutoStart({
+        id: "hub",
+        name: "Hub",
+        neverAutoStartList: ["Hub"],
+      }),
+    ).toBe(true);
   });
 
   it("matches an explicit never-auto-start allow-skip list by id or name", () => {

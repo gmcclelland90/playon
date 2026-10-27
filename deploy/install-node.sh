@@ -193,8 +193,9 @@ WorkingDirectory=${PLAYON_ROOT}
 ExecStart=${EXEC_START}
 Restart=always
 RestartSec=5
-# Only the agent MAINPID — never SIGTERM the supervised game tree on OTA/restart (#886 / #1038).
+# Only the agent MAINPID — never SIGTERM the supervised game tree on OTA/restart (#886 / #1038 / #1045).
 KillMode=process
+ExecStopPost=-/usr/bin/logger -t playon -- playon_unit_stop %n
 SendSIGHUP=no
 
 [Install]
@@ -204,6 +205,12 @@ EOF
 if declare -F playon_apply_host_hygiene >/dev/null 2>&1; then
   if [[ -f "${SCRIPT_DIR}/../infra/control-plane/linux/needrestart-playon.conf" ]]; then
     PLAYON_NEEDRESTART_SRC="${SCRIPT_DIR}/../infra/control-plane/linux/needrestart-playon.conf"
+  fi
+  if [[ -f "${SCRIPT_DIR}/../infra/control-plane/linux/playon.slice" ]]; then
+    PLAYON_SLICE_SRC="${SCRIPT_DIR}/../infra/control-plane/linux/playon.slice"
+  fi
+  if [[ -f "${SCRIPT_DIR}/../infra/control-plane/linux/playon-server@.service" ]]; then
+    PLAYON_SERVER_UNIT_SRC="${SCRIPT_DIR}/../infra/control-plane/linux/playon-server@.service"
   fi
   playon_apply_host_hygiene "${PLAYON_USER}"
 else

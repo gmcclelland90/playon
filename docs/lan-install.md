@@ -38,7 +38,12 @@ PLAYON_NODE_TOKEN=$(openssl rand -hex 24)
 ```bash
 sudo cp infra/control-plane/linux/playon.service /etc/systemd/system/playon.service
 sudo cp infra/control-plane/linux/playon-node.service /etc/systemd/system/playon-node.service
-sudo mkdir -p /etc/needrestart/conf.d
+sudo cp infra/control-plane/linux/playon-server@.service /etc/systemd/system/playon-server@.service
+sudo mkdir -p /etc/systemd/user /etc/needrestart/conf.d
+sudo cp infra/control-plane/linux/playon.slice /etc/systemd/user/playon.slice
+sudo install -d -o playon -g playon /home/playon/.config/systemd/user
+sudo cp infra/control-plane/linux/playon.slice /home/playon/.config/systemd/user/playon.slice
+sudo chown playon:playon /home/playon/.config/systemd/user/playon.slice
 sudo cp infra/control-plane/linux/needrestart-playon.conf /etc/needrestart/conf.d/playon.conf
 sudo loginctl enable-linger playon
 sudo systemctl daemon-reload
@@ -46,7 +51,9 @@ sudo systemctl enable --now playon playon-node
 sudo systemctl status playon playon-node
 ```
 
-Existing checkout hosts that still have `KillMode=mixed` on `playon.service` **must recopy the units** (or re-run `deploy/install.sh`). A `systemctl restart playon` on a mixed unit SIGKILLs native game processes in that cgroup (#1038). Current units use `KillMode=process`; native games are also spawned into a `playon-server-*.scope` when user systemd is available, and Home restores `desiredState=running` on boot (sacred NZL/Hub/Frontier names are never auto-started).
+Existing checkout hosts that still have `KillMode=mixed` on `playon.service` **must recopy the units and `daemon-reload` before any restart** (or re-run `deploy/install.sh`, which does not restart a unit that is already active until `enable --now` on a fresh install). `daemon-reload` does not stop `playon`. A `systemctl restart playon` while the *loaded* unit is still `KillMode=mixed` SIGKILLs native game processes in that cgroup (#1038 / #1045). Confirm `systemctl show playon.service -p KillMode` prints `KillMode=process` before restarting.
+
+Current units use `KillMode=process`. New native games are forked by `systemd-run --user` into `playon-server-<name>.service` (user manager, optional `playon.slice`), so they are not children of `playon.service`. Home re-adopts a survivor by pidfile (pid + `/proc` start ticks), listening port when that pid's cwd or command line is inside the server tree, or the previous cwd/cmdline scan. On boot it relaunches every server whose `desiredState` is `running`, including soak, lab, NZL, and Hub. Opt out per server with PATCH `autoStart: false`, a `.playon/never-auto-start` marker, or `PLAYON_NEVER_AUTO_START`. A start that would reuse another server's launch name, userdata home, or a port already held by a running peer is refused (#1016) — that is what stops a Frontier clone from binding NZL's name and ports. Orphan jail GC still refuses to delete NZL / Hub / Frontier-shaped names.
 
 Or run without systemd (foreground — API + local agent):
 
@@ -85,8 +92,8 @@ docker ps   # game containers may need a Start from the Map if they exited
 - **Data:** `PLAYON_DATA_ROOT` (default under `apps/api/data`) — DB, server dirs, snapshots.
 - **Forgot owner password:** Sign in → **Forgot password?** If host-file recovery is on, enter the username (`host` if you kept the default) → read `password-reset.txt` in `PLAYON_DATA_ROOT` → paste the code and set a new password. If you enrolled an authenticator at setup (or Settings → Accounts), you can reset with the 6-digit app code or a backup code instead. Host-file recovery can be turned off once TOTP is on. Anyone on the LAN can start a reset; finishing it still needs the file, the authenticator, or a backup code.
 - **Restore a world:** Map/chat → snapshot restore (confirm-gated), or restore from `PLAYON_BACKUP_ROOT` if configured.
-- **Logs:** `journalctl -u playon -u playon-node -e` (look for JSON `playon_start` / `playon_desired_state_restore` / `[node-agent] heartbeat ok`).
-- **Control-plane restart:** `systemctl restart playon` should leave native game PIDs running (then re-adopt them). Opt a server out of boot restore with PATCH `autoStart: false`, a `.playon/never-auto-start` marker, or `PLAYON_NEVER_AUTO_START`. needrestart is configured not to bounce `playon*` units after library upgrades.
+- **Logs:** `journalctl -u playon -u playon-node -e` and `journalctl -t playon -e` (JSON `playon_start` / `playon_native_restore` with `decision` `adopt`, `relaunch`, or `not_adopt` / `playon_native_child_exit` / `playon_process_error` / `[node-agent] heartbeat ok`).
+- **Control-plane restart:** only after `KillMode=process` is the loaded unit. `systemctl restart playon` should leave native game PIDs running (then re-adopt them) and relaunch any desired-running server that is actually down, including soak and live-named servers that opted in. A clone that collides on launch name or port is logged `not_adopt` and left stopped. Opt a server out with PATCH `autoStart: false`, a `.playon/never-auto-start` marker, or `PLAYON_NEVER_AUTO_START`. needrestart is configured not to bounce `playon*` units after library upgrades.
 
 ## Developer path (optional)
 

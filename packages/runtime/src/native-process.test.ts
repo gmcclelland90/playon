@@ -7,6 +7,9 @@ import {
   NativeProcessSupervisor,
   serverTreeRoot,
   cmdlineOrphanRoots,
+  pickListeningPid,
+  pidsFromSsOutput,
+  readNativePidRecord,
   readProcessGroupId,
   readCgroupRelativePath,
   shouldReapServerTreeOrphans,
@@ -453,6 +456,91 @@ describe("NativeProcessSupervisor", () => {
     await expect(supervisor.writeStdin("server-x", ".", "say hi")).rejects.toThrow(
       /stdin_unavailable/,
     );
+  });
+
+  it("parses ss listeners and keeps a pid that is not in this server tree", () => {
+    const pids = pidsFromSsOutput('users:(("java",pid=4242,fd=10),("other",pid=7,fd=3))');
+    expect(pids).toEqual([4242, 7]);
+    expect(
+      pickListeningPid(pids, "/data/servers/nzl", (pid) => pid === 4242),
+    ).toBe(4242);
+    expect(pickListeningPid([7], "/data/servers/nzl", () => false)).toBeNull();
+  });
+
+  it("re-adopts a pidfile after the game chdirs out of the server tree (#1045)", async () => {
+    if (process.platform === "win32") return;
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-pidfile-"));
+    temps.push(jail);
+    const gameDir = path.join(jail, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+
+    const first = new NativeProcessSupervisor(jail);
+    const started = await first.start({
+      name: "server-chdir",
+      command: "sh",
+      args: ["-c", "cd /tmp; exec sleep 30"],
+      cwd: "game",
+    });
+    expect(started.pid).toBeTypeOf("number");
+    trackPid(started.pid);
+    const recorded = readNativePidRecord(gameDir);
+    expect(recorded?.pid).toBe(started.pid);
+    expect(recorded?.startTicks).toMatch(/^\d+$/);
+
+    const cwdDeadline = Date.now() + 3_000;
+    let cwd = "";
+    while (Date.now() < cwdDeadline) {
+      try {
+        cwd = fs.readlinkSync(`/proc/${started.pid}/cwd`);
+      } catch {
+        cwd = "";
+      }
+      if (cwd === "/tmp") break;
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    expect(cwd).toBe("/tmp");
+
+    const second = new NativeProcessSupervisor(jail);
+    const found = await second.find("server-chdir", "game");
+    expect(found).toMatchObject({ status: "running", pid: started.pid });
+
+    await second.reclaim("server-chdir", "game");
+    await waitPidGone(started.pid);
+    expect(await second.find("server-chdir", "game")).toBeNull();
+  });
+
+  it("logs pid and signal when a native child exits (#1045)", async () => {
+    if (process.platform === "win32") return;
+    const jail = fs.mkdtempSync(path.join(os.tmpdir(), "playon-proc-exitlog-"));
+    temps.push(jail);
+    const logs: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      logs.push(args.map((part) => String(part)).join(" "));
+    };
+    try {
+      const supervisor = new NativeProcessSupervisor(jail);
+      const info = await supervisor.start({
+        name: "server-exit",
+        command: "sleep",
+        args: ["30"],
+        cwd: ".",
+      });
+      trackPid(info.pid);
+      await supervisor.stop(info.id);
+      const deadline = Date.now() + 3_000;
+      while (Date.now() < deadline && !logs.some((line) => line.includes("playon_native_child_exit"))) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      const line = logs.find((entry) => entry.includes("playon_native_child_exit"));
+      expect(line).toBeTruthy();
+      const parsed = JSON.parse(line!) as { pid: number; signal: string | null; name: string };
+      expect(parsed.pid).toBe(info.pid);
+      expect(parsed.name).toBe("server-exit");
+      expect(parsed.signal === "SIGTERM" || parsed.signal === "SIGKILL").toBe(true);
+    } finally {
+      console.log = orig;
+    }
   });
 
   it("re-adopts a surviving native after a supervisor restart: status, console, stop (#1038)", async () => {

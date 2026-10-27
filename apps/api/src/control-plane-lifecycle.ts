@@ -89,7 +89,7 @@ export interface ControlPlaneHost {
   onStopped(report: StopReport): void;
   /**
    * After listen + schedulers. Default: re-adopt surviving game PIDs and
-   * restore desiredState=running (sacred / opted-out servers skipped).
+   * relaunch desiredState=running (opt-outs skipped; #1016 collisions refused).
    */
   afterStart(app: PlayOnApp): void;
 }

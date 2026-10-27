@@ -1,24 +1,31 @@
-# Optional template for a dedicated per-server unit. Runtime prefers a
-# transient user scope (`systemd-run --user --scope --unit=playon-server-<id>.scope`)
-# so Home does not need Privileges or sudo to start games (#1038).
+# Reference unit for one native game. Runtime does not enable this template.
+# Home forks each game with:
+#   systemd-run --user --collect --no-block --unit=playon-server-<name>.service
+# so the process lives in the user manager, outside system.slice/playon.service
+# (#1038 / #1045). A user scope (`PIDs=`) cannot reliably migrate a PID that
+# already sits in the system unit's cgroup.
 #
-# Install is not required for the default path. Kept so hosts can `systemctl
-# cat playon-server@.service` and so packaging tests pin the naming.
+# Install is optional. Kept so hosts can `systemctl cat playon-server@.service`
+# and so packaging tests pin the naming.
+#
+# Never PartOf=playon.service — a control-plane restart must not stop games.
+# KillMode=control-group applies only to THIS game unit, so an explicit stop
+# still reaps the game tree.
 [Unit]
 Description=PlayOn native game server %i
-Documentation=https://github.com/gmcclelland90/playon/issues/1038
+Documentation=https://github.com/gmcclelland90/playon/issues/1045
 After=network-online.target
-# Never PartOf=playon.service — a control-plane restart must not stop games.
 
 [Service]
 Type=simple
 User=playon
 Group=playon
 EnvironmentFile=-/etc/playon/playon.env
-KillMode=mixed
+KillMode=control-group
 TimeoutStopSec=90
 SuccessExitStatus=0 143
-# ExecStart is supplied by systemd-run --scope at runtime.
+ExecStopPost=-/usr/bin/logger -t playon -- playon_native_unit_stop %n
+# ExecStart is supplied by systemd-run --user at runtime.
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

@@ -73,8 +73,9 @@ WorkingDirectory=${PLAYON_REPO}
 ExecStart=$(command -v pnpm) --filter @playon/node-agent start
 Restart=always
 RestartSec=5
-# Only the agent MAINPID — never SIGTERM the supervised game tree on OTA/restart (#886 / #1038).
+# Only the agent MAINPID — never SIGTERM the supervised game tree on OTA/restart (#886 / #1038 / #1045).
 KillMode=process
+ExecStopPost=-/usr/bin/logger -t playon -- playon_unit_stop %n
 SendSIGHUP=no
 
 [Install]
