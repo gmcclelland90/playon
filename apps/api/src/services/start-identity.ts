@@ -5,8 +5,10 @@
  * (`PLAYON_SERVER_NAME` → `-servername`, `PLAYON_HOME` → userdata/cachedir).
  * Those values were captured from whatever install was managed — so a clone
  * of NZL could inherit `NewZombieLand3`, generate a fresh default world, and
- * bind the live server's 16261. Every start, including desired-state restore
- * (#1045), must prove it only touches its own world, home, and game port.
+ * bind the live server's 16261. `pz-start-identity` rewrites that file from
+ * the target server's own world ini before this guard runs. The guard stays:
+ * a start that would still share a world, home, or game port is refused,
+ * including desired-state restore (#1045).
  */
 import path from "node:path";
 

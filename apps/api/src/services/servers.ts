@@ -106,6 +106,7 @@ import {
   decideStartInstance,
   deriveNodePresence,
   instanceGamePortFromIniTexts,
+  parseInstanceIniPorts,
   isStormworksSkill,
   parseStormworksServerConfigPort,
   resolveDockerUser,
@@ -137,6 +138,19 @@ import {
   type StartLaunchIdentity,
   type StartPeer,
 } from "./start-identity.js";
+import {
+  choosePzHome,
+  neutralizePzStartScript,
+  PZ_SKILL_NAME,
+  pzCacheDir,
+  pzProcessEnv,
+  pzStartScriptProblem,
+  renderPzStartEnv,
+  resolvePzStartIdentity,
+  type PzLaunchIdentity,
+  type PzNativeLaunch,
+  type PzWorldIni,
+} from "./pz-start-identity.js";
 import { dispatchNodeJob, nodeServerRelPath } from "./node-runtime.js";
 import { nodeJobService } from "./node-jobs.js";
 import { checkNodeLoopbackTcp } from "./node-loopback-tcp.js";
@@ -218,6 +232,16 @@ function probeLocalTcpPort(port: number, timeoutMs = 1500): Promise<boolean> {
     socket.once("timeout", () => done(false));
     socket.once("error", () => done(false));
   });
+}
+
+function pzNativeLaunch(pz: PzLaunchIdentity | null): PzNativeLaunch | null {
+  if (!pz) return null;
+  return {
+    serverName: pz.serverName,
+    gamePort: pz.gamePort,
+    directPort: pz.directPort,
+    ...(pz.playonHome ? { cacheDir: pzCacheDir(pz.playonHome) } : {}),
+  };
 }
 
 export class ServerService {
@@ -959,11 +983,15 @@ export class ServerService {
     if (isStormworksSkill(skillName)) {
       ensureStormworksGameJail(gameDir);
     }
+    const prepared = await this.ensurePzLaunchIdentity(server);
+    if (prepared.kind === "error") throw new Error(prepared.error);
+    const pz = prepared.kind === "ok" ? prepared.identity : null;
     const launch = resolveNativeLaunch({
       skillName,
       game: server.game,
       gameDir,
       metadata: skillEntry?.metadata,
+      pzLaunch: pzNativeLaunch(pz),
     });
     if (!launch) {
       const hint = skillEntry?.metadata.steamAppId
@@ -974,11 +1002,7 @@ export class ServerService {
       );
     }
     this.ensureRconConfig(server, skillName);
-    const playonEnv = nativePlayonLaunchEnv({
-      serverId: server.id,
-      gamePort: await this.advertisedGamePort(server),
-      homeDir: path.join(server.dataPath, "home"),
-    });
+    const playonEnv = await this.playonLaunchEnv(server, "local", pz);
     const env: Record<string, string> =
       skillName === BANNERLORD_SKILL
         ? bannerlordProcessEnv({ ...playonEnv, ...launch.env })
@@ -1073,19 +1097,20 @@ export class ServerService {
     // Credentials may be node-authoritative, so discover/patch them there first.
     await this.resolveRconConfig(server, skillName).catch(() => undefined);
 
+    const prepared = await this.ensurePzLaunchIdentity(server);
+    if (prepared.kind === "error") throw new Error(prepared.error);
+    const pz = prepared.kind === "ok" ? prepared.identity : null;
     const keepStdin = metadata?.adminDialect === "stdin";
     const nativeArgs = resolveNativeArgs({
       args: [...(native?.args ?? [])],
       skillName,
+      pzLaunch: pzNativeLaunch(pz),
     });
-    
+
     // Read managedFrom from skill marker (may be node-authoritative)
     const marker = readSkillMarker(server.dataPath);
     const rawEnv: Record<string, string> = {
-      ...nativePlayonLaunchEnv({
-        serverId: server.id,
-        gamePort: await this.advertisedGamePort(server),
-      }),
+      ...(await this.playonLaunchEnv(server, "remote", pz)),
       ...(native?.env ?? {}),
     };
     const baseEnv: Record<string, string> = isFoundrySkill(skillName)
@@ -1935,8 +1960,7 @@ export class ServerService {
     return text ? parseManagedStartEnv(text) : {};
   }
 
-  /** Null when this start would not reuse another server's world, home, or port. */
-  async startIsolationReason(server: ServerRecord): Promise<string | null> {
+  private async loadStartPeers(server: ServerRecord): Promise<StartPeer[]> {
     const sameNode = (other: ServerRecord) =>
       isLocalNodeId(server.nodeId) ? isLocalNodeId(other.nodeId) : other.nodeId === server.nodeId;
     const rows = await this.db.select().from(servers);
@@ -1951,12 +1975,133 @@ export class ServerService {
         gamePort: await this.advertisedGamePort(other).catch(() => null),
       });
     }
+    return peers;
+  }
+
+  /**
+   * Env catalog start scripts read. Project Zomboid uses only the ports from
+   * its own ini — never the skill default 16261.
+   */
+  private async playonLaunchEnv(
+    server: ServerRecord,
+    locality: RuntimeLocality,
+    pz: PzLaunchIdentity | null,
+  ): Promise<Record<string, string>> {
+    const homeDir = pz
+      ? pz.playonHome
+      : locality === "local"
+        ? path.join(server.dataPath, "home")
+        : undefined;
+    const gamePort = pz ? pz.gamePort : await this.advertisedGamePort(server);
+    return {
+      ...nativePlayonLaunchEnv({ serverId: server.id, gamePort, homeDir }),
+      ...(pz ? pzProcessEnv(pz) : {}),
+    };
+  }
+
+  private async loadPzWorlds(server: ServerRecord): Promise<PzWorldIni[]> {
+    const rels = await this.instanceIniRelPaths(server);
+    const worlds: PzWorldIni[] = [];
+    for (const name of worldIniNamesFromRels(rels)) {
+      const rel = iniRelForLaunchName(rels, name);
+      if (!rel) continue;
+      const text = await this.readServerText(server, rel);
+      if (!text) continue;
+      const ports = parseInstanceIniPorts(text);
+      worlds.push({ name, defaultPort: ports.defaultPort, udpPort: ports.udpPort });
+    }
+    return worlds;
+  }
+
+  /** Strip catalog servertest / 16261 fallbacks from start.sh and start.bat. */
+  private async neutralizePzScripts(server: ServerRecord): Promise<string | null> {
+    for (const rel of ["game/start.sh", "game/start.bat"]) {
+      const text = await this.readServerText(server, rel);
+      if (!text) continue;
+      const patched = neutralizePzStartScript(text);
+      if (patched !== text) {
+        const wrote = await this.writeServerText(server, rel, patched);
+        if (!wrote) {
+          return `start_config_hardcoded: could not rewrite ${rel} for server ${server.id}`;
+        }
+      }
+      const problem = pzStartScriptProblem(patched);
+      if (problem) return `${problem} (${rel})`;
+    }
+    return null;
+  }
+
+  /**
+   * Commit this PZ server's own launch identity, or a clear error.
+   * Not a PZ server → skip. The #1046 guard still runs on the result.
+   */
+  private async ensurePzLaunchIdentity(
+    server: ServerRecord,
+  ): Promise<
+    | { kind: "skip" }
+    | { kind: "error"; error: string }
+    | { kind: "ok"; identity: PzLaunchIdentity }
+  > {
+    if (this.readSkillName(server.dataPath) !== PZ_SKILL_NAME) return { kind: "skip" };
+    const scriptError = await this.neutralizePzScripts(server);
+    if (scriptError) return { kind: "error", error: scriptError };
+    const inherited = await this.launchIdentity(server);
+    const home = choosePzHome({
+      serverId: server.id,
+      remote: this.isRemoteNode(server),
+      localHome: path.join(server.dataPath, "home"),
+      inheritedHome: inherited.playonHome,
+    });
+    if (home.error) return { kind: "error", error: home.error };
+    const peers = await this.loadStartPeers(server);
+    const resolved = resolvePzStartIdentity({
+      id: server.id,
+      name: server.name,
+      worlds: await this.loadPzWorlds(server),
+      peers,
+    });
+    if (!resolved.ok) return { kind: "error", error: resolved.error };
+    const identity: PzLaunchIdentity = {
+      ...resolved.identity,
+      ...(home.home ? { playonHome: home.home } : {}),
+    };
+    const existing = (await this.readServerText(server, "game/.playon-start.env")) ?? "";
+    const wrote = await this.writeServerText(
+      server,
+      "game/.playon-start.env",
+      renderPzStartEnv(existing, identity),
+    );
+    if (!wrote) {
+      return {
+        kind: "error",
+        error: `start_config_missing: could not record launch identity for server ${server.id}`,
+      };
+    }
+    return { kind: "ok", identity };
+  }
+
+  /** Null when this start would not reuse another server's world, home, or port. */
+  async startIsolationReason(server: ServerRecord): Promise<string | null> {
+    const prepared = await this.ensurePzLaunchIdentity(server);
+    if (prepared.kind === "error") return prepared.error;
+    const peers = await this.loadStartPeers(server);
+    const identity: StartLaunchIdentity =
+      prepared.kind === "ok"
+        ? {
+            launchName: prepared.identity.serverName,
+            ...(prepared.identity.playonHome ? { playonHome: prepared.identity.playonHome } : {}),
+          }
+        : await this.launchIdentity(server);
+    const gamePort =
+      prepared.kind === "ok"
+        ? prepared.identity.gamePort
+        : await this.advertisedGamePort(server).catch(() => null);
     return startIsolationViolation({
       id: server.id,
       name: server.name,
-      identity: await this.launchIdentity(server),
+      identity,
       worldIniNames: worldIniNamesFromRels(await this.instanceIniRelPaths(server)),
-      gamePort: await this.advertisedGamePort(server).catch(() => null),
+      gamePort,
       peers,
     });
   }

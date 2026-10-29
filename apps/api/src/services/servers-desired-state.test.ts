@@ -219,7 +219,7 @@ describe("desired state across a control-plane restart (#1038)", () => {
     });
     const cloneRow = report.find((row) => row.serverId === clone.id);
     expect(cloneRow?.action).toBe("skip");
-    expect(cloneRow?.reason).toMatch(/start_identity_collision/);
+    expect(cloneRow?.reason).toMatch(/start_config_missing/);
     expect(host.specs).toHaveLength(1);
     expect(host.specs.some((spec) => spec.name?.includes(clone.id))).toBe(false);
   });
