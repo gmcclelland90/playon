@@ -28,6 +28,10 @@ Per-server `skill.json` under the server data path. Single read/write/validate c
 
 Agent-pushed, player-facing surface: join info, status, guides, votes. Owned by the `PlayerPanel` service on the Control Plane (publish for status / from agent, list for players, theme). Only live while the server is starting/running for public visibility of join blocks.
 
+## Mineflayer bot
+
+A Java-edition protocol client that can join a PlayOn Minecraft server the same way a player does. Not a PlayOn agent or skill. Reference implementation: [gmcclelland90/grokbot-mineflayer](https://github.com/gmcclelland90/grokbot-mineflayer). Other Grok bots should fork that repo. See [docs/mineflayer.md](docs/mineflayer.md).
+
 ## Tool Surface
 
 Canonical catalog of agent tools. A **Tool Entry** colocates the LLM definition, surface metadata (skill, confirmAction, activityVerb, XP), workspace policy, and handler; domain modules under `apps/api/src/services/tools/` are composed by `createPlayOnToolRegistry`, which returns `{ registry, surface }`. Chat, MCP, and watchers share that factory and read projections (agent-skill XP, confirm copy, activity verbs) from the returned surface. The factory is the only source of the catalog: there is no overlay table and no process-wide surface, so a tool that no domain module composes does not exist.
