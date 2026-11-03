@@ -7,6 +7,7 @@ import {
   isGeminiOpenAiCompatBackend,
   isLlmAbortError,
   isSequentialToolCallingBackend,
+  isTransientLlmHttpFailure,
   isTransientLlmHttpStatus,
   isTransientLlmNetworkError,
   llmRetryDelayMs,
@@ -599,6 +600,18 @@ describe("transient LLM HTTP / network classification", () => {
     expect(isTransientLlmHttpStatus(500)).toBe(false);
   });
 
+  it("retries only the Venice inference-worker 500, not other 500 bodies", () => {
+    expect(
+      isTransientLlmHttpFailure(500, '{"error":"Inference processing failed"}'),
+    ).toBe(true);
+    expect(isTransientLlmHttpFailure(502, "Bad Gateway")).toBe(true);
+    expect(
+      isTransientLlmHttpFailure(500, "model only supports a single tool-call at once"),
+    ).toBe(false);
+    expect(isTransientLlmHttpFailure(500, "")).toBe(false);
+    expect(isTransientLlmHttpFailure(400, "Inference processing failed")).toBe(false);
+  });
+
   it("treats fetch-failed / reset as transient and abort as terminal", () => {
     expect(isTransientLlmNetworkError(new TypeError("fetch failed"))).toBe(true);
     const reset = new Error("socket hang up") as Error & { code?: string };
@@ -718,6 +731,54 @@ describe("OpenAI-compatible transient retries", () => {
     expect(calls).toBe(2);
     expect(sleeps).toEqual([1000]);
     warn.mockRestore();
+  });
+
+  it("retries Venice inference-processing 500 then succeeds", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1;
+      if (calls === 1) {
+        return new Response('{"error":"Inference processing failed"}', { status: 500 });
+      }
+      return new Response(okBody, {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const client = new OpenAICompatibleLlmClient(
+      "https://api.venice.ai/api/v1",
+      "key",
+      "grok-4-5",
+      "openai_compatible",
+      { fetchImpl, sleepImpl: async () => undefined },
+    );
+    const result = await client.complete([{ role: "user", content: "hello" }]);
+    expect(result.content).toBe("recovered");
+    expect(calls).toBe(2);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes("LLM transient HTTP 500"))).toBe(
+      true,
+    );
+    warn.mockRestore();
+  });
+
+  it("does not retry a deterministic provider 500", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = async () => {
+      calls += 1;
+      return new Response("model only supports a single tool-call at once", { status: 500 });
+    };
+    const client = new OpenAICompatibleLlmClient(
+      "https://api.venice.ai/api/v1",
+      "key",
+      "grok-4-5",
+      "openai_compatible",
+      { fetchImpl, sleepImpl: async () => undefined },
+    );
+    await expect(client.complete([{ role: "user", content: "hello" }])).rejects.toThrow(
+      /LLM request failed \(500\): model only supports a single tool-call at once/,
+    );
+    expect(calls).toBe(1);
   });
 
   it("does not retry a 400 model error", async () => {
