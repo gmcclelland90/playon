@@ -199,4 +199,87 @@ describe("PZ start identity (#1016)", () => {
     await expect(servers.start(frontier.id)).rejects.toThrow(/start_port_collision/);
     expect(host.specs).toHaveLength(1);
   });
+
+  it("starts NZL when start.sh falls back to its own name, ports, and data dir (#1050)", async () => {
+    const { config, servers } = tempEnv();
+    writePzSkill(path.join(config.dataRoot!, "skills"));
+    servers.portsBoundOverride = async () => true;
+    const nzl = await servers.createFromSkill({
+      skillName: "games.project-zomboid",
+      serverName: "NewZombieLand3",
+    });
+    writePzIni(nzl.dataPath, "NewZombieLand3", 16261);
+    const gameDir = path.join(nzl.dataPath, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+    const own = [
+      "#!/usr/bin/env bash",
+      "servername=${PLAYON_SERVER_NAME:-NewZombieLand3}",
+      "port=${PLAYON_GAME_PORT:-16261}",
+      "udpport=${PLAYON_DIRECT_PORT:-16262}",
+      `cachedir="\${PLAYON_HOME:-/var/lib/playon/servers/${nzl.id}/home}/Zomboid"`,
+      'exec "$BIN" -cachedir "$cachedir" -servername "$servername" -port "$port" -udpport "$udpport"',
+      "",
+    ].join("\n");
+    fs.writeFileSync(path.join(gameDir, "start.sh"), own);
+    fs.writeFileSync(
+      path.join(gameDir, "start.bat"),
+      [
+        "@echo off",
+        "set \"PLAYON_SERVER_NAME=NewZombieLand3\"",
+        `set "PLAYON_HOME=C:\\PlayOn\\servers\\${nzl.id}\\home"`,
+        '"%BIN%" -servername "%PLAYON_SERVER_NAME%" -port 16261 -udpport 16262',
+        "",
+      ].join("\r\n"),
+    );
+
+    await servers.start(nzl.id);
+
+    expect(host.specs).toHaveLength(1);
+    expect(host.specs[0]?.env?.PLAYON_SERVER_NAME).toBe("NewZombieLand3");
+    expect(host.specs[0]?.env?.PLAYON_GAME_PORT).toBe("16261");
+    expect(host.specs[0]?.env?.PLAYON_HOME).toBe(path.join(nzl.dataPath, "home"));
+  });
+
+  it("refuses a clone whose start config still carries NZL's name, port, and data dir", async () => {
+    const { config, servers } = tempEnv();
+    writePzSkill(path.join(config.dataRoot!, "skills"));
+    servers.portsBoundOverride = async () => true;
+    const nzl = await servers.createFromSkill({
+      skillName: "games.project-zomboid",
+      serverName: "NewZombieLand3",
+    });
+    writePzIni(nzl.dataPath, "NewZombieLand3", 16261);
+    const clone = await servers.createFromSkill({
+      skillName: "games.project-zomboid",
+      serverName: "NZL-Clone-Frontier-RD",
+    });
+    writePzIni(clone.dataPath, "NZLCloneFrontierRD", 16361);
+    const gameDir = path.join(clone.dataPath, "game");
+    fs.mkdirSync(gameDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(gameDir, "start.sh"),
+      [
+        "#!/usr/bin/env bash",
+        "servername=${PLAYON_SERVER_NAME:-NewZombieLand3}",
+        "port=${PLAYON_GAME_PORT:-16261}",
+        `cachedir=/var/lib/playon/servers/${nzl.id}/home/Zomboid`,
+        'exec "$BIN" -servername "$servername" -port "$port"',
+        "",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      path.join(gameDir, "start.bat"),
+      [
+        "@echo off",
+        `set "PLAYON_HOME=C:\\PlayOn\\servers\\${nzl.id}\\home"`,
+        '"%BIN%" -servername NewZombieLand3 -port 16261',
+        "",
+      ].join("\r\n"),
+    );
+
+    await expect(servers.start(clone.id)).rejects.toThrow(
+      /start_config_hardcoded: start script names NewZombieLand3/,
+    );
+    expect(host.specs).toHaveLength(0);
+  });
 });

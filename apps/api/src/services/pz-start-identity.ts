@@ -7,7 +7,8 @@
  * Every start derives the server name, userdata home, and game/direct ports
  * from this server's own `Server/<world>.ini` and its own jail. A missing
  * value fails the start. Skill defaults (`servertest`, 16261, 16262) are not
- * a fallback.
+ * a fallback. A fallback that names this server's own world, ports, or jail
+ * is allowed (#1050); the same literals on a clone are still refused.
  *
  * The #1046 isolation guard still runs on the identity this module commits.
  *
@@ -15,6 +16,10 @@
  * this NZL clone path: Bannerlord `/port 7210`, Foundry `server_port` 3724,
  * Stormworks UDP 25564, and Docker publish of skill `ports.default`.
  */
+import {
+  startConfigHardcodedProblem,
+  type StartConfigPeer,
+} from "./start-config-hardcoded.js";
 import { pathBelongsToServer } from "./start-identity.js";
 
 export const PZ_SKILL_NAME = "games.project-zomboid";
@@ -252,16 +257,6 @@ export function withPzNativeArgs(args: readonly string[], launch: PzNativeLaunch
   return next;
 }
 
-function codeLines(text: string): string {
-  return text
-    .split(/\r?\n/)
-    .filter((line) => {
-      const trimmed = line.trim();
-      return trimmed && !trimmed.startsWith("#") && !/^rem\b/i.test(trimmed) && !trimmed.startsWith("::");
-    })
-    .join("\n");
-}
-
 /**
  * Turn catalog fallbacks into a hard failure. The overlay in playon-games
  * still ships `:-servertest` / `:-16261`; Home rewrites the copy in the jail
@@ -316,29 +311,32 @@ export function neutralizePzStartScript(text: string): string {
   return next;
 }
 
-/** Non-comment lines that would still launch someone else's name or the NZL ports. */
-export function pzStartScriptProblem(text: string): string | null {
-  const code = codeLines(text);
-  if (code.includes("NewZombieLand3")) {
-    return "start_config_hardcoded: start script names NewZombieLand3";
-  }
-  if (/PLAYON_SERVER_NAME:-servertest/.test(code) || /PLAYON_SERVER_NAME=servertest/.test(code)) {
-    return "start_config_hardcoded: start script defaults the server name";
-  }
-  if (/PLAYON_GAME_PORT:-16261/.test(code) || /PLAYON_GAME_PORT=16261/.test(code)) {
-    return "start_config_hardcoded: start script defaults the game port";
-  }
-  if (/PLAYON_DIRECT_PORT:-16262/.test(code) || /PLAYON_DIRECT_PORT=16262/.test(code)) {
-    return "start_config_hardcoded: start script defaults the direct port";
-  }
-  if (/(?:^|[\s"'])-servername(?:[\s="']+)(?:servertest|NewZombieLand3)\b/.test(code)) {
-    return "start_config_hardcoded: start script hardcodes -servername";
-  }
-  if (/(?:^|[\s"'])-port(?:[\s="']+)16261\b/.test(code)) {
-    return "start_config_hardcoded: start script hardcodes -port 16261";
-  }
-  if (/(?:^|[\s"'])-udpport(?:[\s="']+)16262\b/.test(code)) {
-    return "start_config_hardcoded: start script hardcodes -udpport 16262";
-  }
-  return null;
+/**
+ * Catalog defaults and another server's identity in a PZ start script.
+ * This server's own name, ports, and jail are allowed (#1050). With no
+ * `own` argument, catalog defaults (`servertest`, 16261, 16262) are still
+ * refused — they are not anyone's identity yet.
+ */
+export function pzStartScriptProblem(
+  text: string,
+  own?: {
+    serverId?: string;
+    serverName?: string;
+    gamePort?: number;
+    directPort?: number;
+    peers?: readonly StartConfigPeer[];
+  },
+): string | null {
+  const ports = [own?.gamePort, own?.directPort].filter(
+    (port): port is number => typeof port === "number" && port > 0,
+  );
+  return startConfigHardcodedProblem({
+    text,
+    self: {
+      id: own?.serverId ?? "",
+      names: own?.serverName ? [own.serverName] : [],
+      ports,
+    },
+    peers: own?.peers ?? [],
+  });
 }
