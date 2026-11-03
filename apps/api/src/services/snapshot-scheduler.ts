@@ -1,3 +1,4 @@
+import { formatProcessFailure } from "../process-errors.js";
 import type { SnapshotRetentionPolicy, SnapshotService } from "./snapshots.js";
 import { DEFAULT_SNAPSHOT_RETENTION } from "./snapshots.js";
 
@@ -36,6 +37,9 @@ export class SnapshotScheduler {
     this.running = true;
     try {
       return await this.snapshots.runScheduledPass(this.policy);
+    } catch (err) {
+      console.error(formatProcessFailure("snapshot_tick", err));
+      return null;
     } finally {
       this.running = false;
     }

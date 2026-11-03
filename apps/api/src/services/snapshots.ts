@@ -5,7 +5,8 @@ import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { isLocalNodeId, NODE_AUTHORITATIVE_MARKER } from "@playon/shared";
 import type { AppConfig } from "../config.js";
-import type { Db } from "../db/client.js";
+import { recentSqliteStatement, type Db } from "../db/client.js";
+import { formatSqliteFailure, isSqliteForeignKeyError } from "../db/sqlite-error.js";
 import { snapshots } from "../db/schema.js";
 import { pullServerDirFromNode, pushServerDirToNode } from "./node-sync.js";
 import type { ServerRecord } from "./servers.js";
@@ -123,13 +124,28 @@ export class SnapshotService {
     fs.writeFileSync(path.join(snapshotPath, "SNAPSHOT"), JSON.stringify(manifest, null, 2));
 
     const now = new Date();
-    await this.db.insert(snapshots).values({
-      id: snapshotId,
-      serverId,
-      label,
-      path: snapshotPath,
-      createdAt: now,
-    });
+    try {
+      await this.db.insert(snapshots).values({
+        id: snapshotId,
+        serverId,
+        label,
+        path: snapshotPath,
+        createdAt: now,
+      });
+    } catch (err) {
+      if (isSqliteForeignKeyError(err)) {
+        console.error(
+          JSON.stringify({
+            ...formatSqliteFailure(err, recentSqliteStatement()),
+            msg: "playon_snapshot_fk",
+            serverId,
+            snapshotId,
+          }),
+        );
+        throw new Error(`snapshot_foreign_key: server=${serverId}`);
+      }
+      throw err;
+    }
 
     return (await this.get(snapshotId))!;
   }

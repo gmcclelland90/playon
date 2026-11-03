@@ -6,7 +6,57 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ### Changed
 
-- **Game-ready fal assets (epic #988)** — `mods_assets_generate` now takes a `kind`: `image`, `sprite` (background removed), `icon` (transparent, resized to the game's icon size, e.g. PZ 32px / Minecraft 16px), `texture` (square, resized to the game's texture size) or `sound` (short clip). Calls go through fal's queue API with a 5-minute cap and cancel on timeout, so slower models don't hang the request. Models are allowlisted per kind (no free-form model ids on the host's key). Results include a `placementHint` for where the game loads the file. Resizing is pure JS (no native image deps). The key is only ever sent to `queue.fal.run`.
+- **Game-ready fal assets (epic #988)** — `mods_assets_generate` now takes a `kind`: `image`, `sprite` (background removed), `icon` (transparent, resized to the game's icon size, e.g. PZ 32px / Minecraft 16px), `texture` (square, resized to the game's texture size) or `sound` (short clip). Calls go through fal's queue API with a 5-minute cap and cancel on timeout, so slower models don't hang the request. Models are allowlisted per kind (no free-form model ids on the host's key). Results include a `placementHint` for where the game loads the file. Resizing is pure JS (no native image deps). The key is only ever sent to `queue.fal.run`. Files land under `mods-src/<modId>/assets/` only; deploy stays a separate confirm-gated snapshot.
+
+## [0.2.17] — 2026-10-27
+
+### Fixed
+
+- **Native games survive a Home restart, and desired-running servers come back** — `playon.service` stop/restart (needrestart, unattended-upgrades, or an API crash) SIGKILLed native children because they lived in `system.slice/playon.service`. New launches fork `systemd-run --user --unit=playon-server-<name>.service` (optional `playon.slice`; the game unit's own `KillMode=control-group`). A user scope cannot move PIDs that are already in the system cgroup, so that path stays the fallback plus cgroup move. Startup re-adopts a survivor by pidfile (pid + start ticks), by a listening port whose process cwd/cmdline is inside that server tree, or by the existing cwd scan, and logs `playon_native_restore` as `adopt`, `relaunch`, or `not_adopt`. Every `desiredState=running` server is relaunched, including soak, lab, NZL, and Hub. Opt-out stays `autoStart=false`, `.playon/never-auto-start`, or `PLAYON_NEVER_AUTO_START`. A start that would reuse another server's launch name, userdata home, or a port held by a running peer is refused, so a Frontier clone cannot take NZL's name or ports (#1016). Native child death logs pid and signal (`playon_native_child_exit`). Shipped units, the user slice, installers, and needrestart override are updated — existing hosts must recopy and `daemon-reload` before the next `systemctl restart playon` (`#1045`).
+- **Unhandled SQLite foreign-key inserts no longer take Home down** — watcher run and snapshot inserts check their parent rows and turn `FOREIGN KEY constraint failed` into a logged error instead of a raw `SqliteError`. `unhandledRejection` / `uncaughtException` log `playon_process_error` with the SQLite code and a redacted statement. A foreign-key failure does not exit the process (`#1045`).
+
+### Notes
+
+- Rides `#1046` (native games survive a Home restart, desired-running servers restored, start-identity guard; `#1045`) on top of 0.2.16 (`d6afda4..3c9a4a2`).
+- **Existing hosts must install the new units and `daemon-reload` before the next `systemctl restart playon`** (see `#1046`); until then the old `KillMode=mixed` unit still SIGKILLs native children on restart.
+- **P0 #1016** — the start-identity / launch-name / port-collision guard ships in `#1046`; the issue stays open until verified in the lab.
+- Open P1s (`#1044`, `#1004`, `#1006`, `#1009`, `#1010`, `#988`) are deferred; not touched by this cut.
+
+## [0.2.16] — 2026-10-22
+
+### Changed
+
+- **Map terminal docks along the bottom of the room** — the floating terminal bubble ran off the top of the screen when a game sat high in the room and covered the hosts list. It is now a full-width strip under the LAN room: drag the top edge to resize, collapse to one line that peeks the latest log, or close it. Input only shows when the server can take commands; otherwise the header says why. On phones it sits between the room and the chat (`#1032`).
+
+### Fixed
+
+- **UDP servers no longer read “Not joinable” to the host** — A UDP game (Project Zomboid, Factorio, …) that is running with its advertised ports bound, but has no query answer, now shows **Running** on the Map and Dashboard with a note that PlayOn can’t test UDP joins from Home. Home can’t prove a UDP join by itself (no handshake; silence looks the same as open), so “untested” is no longer shown as a failure. API, `servers_*` tools and `servers_health_check` carry `udpJoinUnverified`; the health `join-path` check passes as untested; `ready` stays `false` so the join-path canary is unchanged.
+- **Windows node OTA lying-`done` + sibling offline** — Home no longer marks `node_self_update` `done` from the dying agent's result POST (that process is still on the old stamp; the Windows helper swaps after exit). The job completes only when the new version heartbeats, or fails clearly if the node stays offline/old past the stale window. Apply kill-scope is the target node-agent PID only; a breakaway WSL hold keeps `playon-win-1-wsl` up so updating one Windows node does not idle the sibling (`#1040`). Lab canary: disposable `playon-win-1` / `playon-win-1-wsl` only — never friend/NZL hosts.
+- **Home restart no longer kills native servers** — Native games are moved into a `playon-server-*.scope` (user systemd) when linger is available, so `playon.service` / `playon-node.service` stop no longer SIGKILLs them. Surviving PIDs are re-adopted on API boot (status, logs, console FIFO, stop). Explicit start/stop persist `desiredState`; Home auto-starts desired-running servers that are down, unless the server opted out (`autoStart=false`, `.playon/never-auto-start`, `PLAYON_NEVER_AUTO_START`) or matches the sacred NZL/Hub/Frontier name list. Install ships a needrestart override and recopies `KillMode=process` units (`#1038`).
+- **Lab UDP start deaths (`udp_process_not_running`)** — Factorio containers now start as root so `factoriotools/factorio` can chown the `0700` game bind (uid 845 otherwise exits before UDP 34197 / RCON 27015 bind). Native launches pass `PLAYON_GAME_PORT` / `PLAYON_HOME` that catalog `start.sh` overlays already read (Teeworlds). Matrix `port_open` treats TCP `queryPortName` (Factorio RCON) as a real probe instead of a UDP-only process wait, and attaches console/docker tails when the process dies (`#1033`, `#1034`).
+- **CS2 lab query_offline** — Catalog `games.cs2` 0.1.1 leaves `CS2_IP` unset, so `joedwards32/cs2` omits `-ip` and Source 2 auto-binds a container address. Matrix then sees TCP 27015 open (RCON / docker-proxy) while A2S on published UDP 27015 returns GameDig `Failed all 3 attempts`. Home now injects `CS2_IP=0.0.0.0` (and `CS2_SERVER_HIBERNATE=0` when unset) and the `a2s` dialect falls back to a same-socket native A2S challenge exchange after GameDig misses. Not a 27015 leftover regression (`#941` / `#955`). Durable catalog copy still belongs in playon-games (`#1035`).
+
+### Notes
+
+- Rides `#1036`, `#1037`, `#1039`, `#1041` (Windows OTA fix, `#1040`), `#1042` and `#1032` on top of 0.2.15 (`af1f9c7..7de7d72`).
+- **P0 #1016 deferred** — clone-start isolation bug unchanged; its fix (PR `#1024`) is not on main. Do not start clones via the Home API until it lands.
+- Open P1s (`#1004`, `#1006`, `#1009`, `#1010`, `#988`) are deferred; not touched by this cut.
+- PR `#1026` (vendored Impeccable skill) closed unmerged; `#1025` (fal game-ready assets) not included.
+
+## [0.2.15] — 2026-10-04
+
+### Changed
+
+- **Dashboard rework** — status pulse, an attention strip for servers that need a look, and scan-friendly server rows with per-game badges, a live pill, and a warm wash on busy hosts (`#1027`).
+- **Map is now a top-down LAN room** — replaces the 3D Pixi map. Hosts are tables cabled to a LAN switch, each game is a station in its game colour with live players seated around it. Plain DOM, so the room scrolls and is keyboard reachable; on phones the page stacks hosts, room, and chat instead of hiding the map under a sheet (`#1028` / `#1029`).
+
+### Notes
+
+- **Do not tag or publish yet** — this PR only bumps version + CHANGELOG. Glenn publishes: squash-merge, then tag `v0.2.15` so `release-home` runs.
+- Web UI only on top of 0.2.14 (`f705c49..533de12`); no API, runtime, or node-agent behaviour change. Node agent version is bumped to stay aligned.
+- **P0 #1016 deferred** — the clone-start isolation bug is unchanged from 0.2.14; its fix (PR `#1024`) is not on main and does not ride this cut unless merged first. Do not start clones via the Home API until it lands.
+- Open P1s (`#1004`, `#1006`, `#1009`, `#1010`, `#988`) are deferred; not touched by this cut.
+- Open PRs `#1025` (fal game-ready assets) and `#1026` (vendored Impeccable skill) are not included.
 
 ## [0.2.14] — 2026-10-01
 

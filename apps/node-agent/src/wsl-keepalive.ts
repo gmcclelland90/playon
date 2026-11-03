@@ -72,16 +72,20 @@ export async function pokeWslSiblingAgent(
 }
 
 function spawnHoldSession(distroName: string): ChildProcess {
-  // Long-lived Windows↔WSL session so the distro is not considered idle.
-  return spawn(
+  // Detached so an OTA agent exit / Job teardown does not reap the hold and
+  // idle the WSL sibling (#1040). apply-self-update.ps1 also starts a
+  // CREATE_BREAKAWAY_FROM_JOB hold before it waits for the target PID.
+  const child = spawn(
     "wsl.exe",
     ["-d", distroName, "-u", "root", "--", "bash", "-lc", "exec sleep infinity"],
     {
       windowsHide: true,
       stdio: "ignore",
-      detached: false,
+      detached: true,
     },
   );
+  child.unref();
+  return child;
 }
 
 export function startWslKeepalive(opts: {
@@ -137,9 +141,7 @@ export function startWslKeepalive(opts: {
   }, Math.max(5_000, intervalMs));
   return () => {
     clearInterval(id);
-    if (hold && !hold.killed) {
-      hold.kill();
-      hold = null;
-    }
+    // Leave the hold up so a parent OTA / process.exit does not idle WSL.
+    hold = null;
   };
 }

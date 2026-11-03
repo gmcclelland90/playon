@@ -1,8 +1,19 @@
-/** Process-up is not joinable unless the advertised join path was proven. */
-export function displayServerStatus(status: string, ready?: boolean | null): string {
-  if (status === "running" && ready !== true) return "degraded";
+/**
+ * Process-up is not joinable unless the advertised join path was proven.
+ * Exception: a UDP server with its ports bound that Home simply cannot test
+ * (`udpJoinUnverified`) shows Running, with `UDP_JOIN_UNVERIFIED_HINT`.
+ */
+export function displayServerStatus(
+  status: string,
+  ready?: boolean | null,
+  udpJoinUnverified?: boolean | null,
+): string {
+  if (status === "running" && ready !== true && udpJoinUnverified !== true) return "degraded";
   return status;
 }
+
+export const UDP_JOIN_UNVERIFIED_HINT =
+  "Game ports are open on the host. PlayOn can’t test UDP joins from here, so have a player try joining to confirm.";
 
 /** Human labels + short guidance for server/runtime status strings. */
 export function statusLabel(status: string): string {

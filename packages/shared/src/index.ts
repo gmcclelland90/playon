@@ -28,6 +28,7 @@ export * from "./instance-game-port.js";
 export * from "./stormworks.js";
 export * from "./wsl-lan-publish.js";
 export * from "./lab-jail-gc.js";
+export * from "./desired-state.js";
 export * from "./playon-mod.js";
 export * from "./experience.js";
 export * from "./experience-catalog.js";

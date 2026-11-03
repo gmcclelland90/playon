@@ -8,7 +8,14 @@ import {
   WINDOWS_OTA_ESM_BOOTSTRAP_PROCESS_NAME,
   WINDOWS_OTA_ESM_BOOTSTRAP_REL,
 } from "@playon/shared";
-import { isDurableOtaBootstrapJob, NodeJobService, shouldAbandonRunningJobOnReclaim } from "./node-jobs.js";
+import {
+  isDurableOtaBootstrapJob,
+  NodeJobService,
+  SELF_UPDATE_APPLY_STARTED_PROGRESS,
+  SELF_UPDATE_STALE_OFFLINE_ERROR,
+  SELF_UPDATE_STALE_OLD_ERROR,
+  shouldAbandonRunningJobOnReclaim,
+} from "./node-jobs.js";
 
 const SELF_UPDATE_ARGS = {
   downloadUrl: "https://example.com/playon-node-0.1.11-linux-x64.tar.gz",
@@ -272,7 +279,99 @@ describe("NodeJobService", () => {
     const later = Date.parse(job.createdAt) + 16 * 60 * 1000;
     const failed = svc.reconcileSelfUpdateOnHeartbeat("win-1", "0.2.3", later, 15 * 60 * 1000);
     expect(failed?.status).toBe("failed");
-    expect(failed?.error).toMatch(/did not land after restart/);
+    expect(failed?.error).toBe(SELF_UPDATE_STALE_OLD_ERROR);
+  });
+
+  it("does not mark a self-update done from the dying agent's result POST (#1040)", () => {
+    const svc = new NodeJobService();
+    const job = svc.enqueue("playon-win-1", "node_self_update", {
+      ...SELF_UPDATE_ARGS,
+      version: "0.2.15",
+    });
+    svc.claimNext("playon-win-1");
+    const parked = svc.reportAgentResult(job.id, {
+      ok: true,
+      result: {
+        version: "0.2.15",
+        installRoot: "C:\\playon-node",
+        preserved: ["data"],
+        restartRequired: true,
+      },
+    });
+    expect(parked.status).toBe("running");
+    expect(parked.progress).toBe(SELF_UPDATE_APPLY_STARTED_PROGRESS);
+    expect(svc.get(job.id)?.status).toBe("running");
+    expect(svc.reconcileSelfUpdateOnHeartbeat("playon-win-1", "0.2.13")).toBeNull();
+    expect(svc.get(job.id)?.status).toBe("running");
+    const done = svc.reconcileSelfUpdateOnHeartbeat("playon-win-1", "0.2.15");
+    expect(done?.status).toBe("done");
+    expect(done?.result).toMatchObject({ version: "0.2.15", installRoot: "heartbeat" });
+  });
+
+  it("still fails a self-update when the agent reports an apply error", () => {
+    const svc = new NodeJobService();
+    const job = svc.enqueue("win-1", "node_self_update", SELF_UPDATE_ARGS);
+    svc.claimNext("win-1");
+    const failed = svc.reportAgentResult(job.id, { ok: false, error: "update_sha256_mismatch" });
+    expect(failed.status).toBe("failed");
+    expect(failed.error).toBe("update_sha256_mismatch");
+  });
+
+  it("fails a stale self-update while the node stays offline (#1040)", () => {
+    const svc = new NodeJobService();
+    const job = svc.enqueue("playon-win-1", "node_self_update", {
+      ...SELF_UPDATE_ARGS,
+      version: "0.2.15",
+    });
+    svc.claimNext("playon-win-1");
+    svc.reportAgentResult(job.id, {
+      ok: true,
+      result: { version: "0.2.15", installRoot: "C:\\playon-node", preserved: [], restartRequired: true },
+    });
+    const afterReport = svc.get(job.id)!;
+    const later = Date.parse(afterReport.updatedAt) + 16 * 60 * 1000;
+    expect(svc.failStaleSelfUpdateIfNeeded("playon-win-1", later, 15 * 60 * 1000)?.status).toBe(
+      "failed",
+    );
+    expect(svc.get(job.id)?.error).toBe(SELF_UPDATE_STALE_OFFLINE_ERROR);
+    expect(svc.get(job.id)?.status).toBe("failed");
+  });
+
+  it("does not fail a self-update that is still inside the stale window while offline", () => {
+    const svc = new NodeJobService();
+    const job = svc.enqueue("playon-win-1", "node_self_update", {
+      ...SELF_UPDATE_ARGS,
+      version: "0.2.15",
+    });
+    svc.claimNext("playon-win-1");
+    const now = Date.parse(job.createdAt) + 5 * 60 * 1000;
+    expect(svc.failStaleSelfUpdateIfNeeded("playon-win-1", now, 15 * 60 * 1000)).toBeNull();
+    expect(svc.get(job.id)?.status).toBe("running");
+  });
+
+  it("recovers a stale-failed self-update if the new version later checks in", () => {
+    const svc = new NodeJobService();
+    const job = svc.enqueue("playon-win-1", "node_self_update", {
+      ...SELF_UPDATE_ARGS,
+      version: "0.2.15",
+    });
+    svc.claimNext("playon-win-1");
+    const later = Date.parse(job.createdAt) + 16 * 60 * 1000;
+    expect(svc.failStaleSelfUpdateIfNeeded("playon-win-1", later, 15 * 60 * 1000)?.status).toBe(
+      "failed",
+    );
+    const recovered = svc.reconcileSelfUpdateOnHeartbeat("playon-win-1", "0.2.15", later);
+    expect(recovered?.status).toBe("done");
+    expect(svc.get(job.id)?.status).toBe("done");
+  });
+
+  it("completes a ping result POST immediately (not version-gated)", () => {
+    const svc = new NodeJobService();
+    const job = svc.enqueue("node-a", "ping");
+    svc.claimNext("node-a");
+    const done = svc.reportAgentResult(job.id, { ok: true, result: { pong: true } });
+    expect(done.status).toBe("done");
+    expect(done.result).toEqual({ pong: true });
   });
 
   it("findLatest returns failed jobs so the UI can surface them", () => {

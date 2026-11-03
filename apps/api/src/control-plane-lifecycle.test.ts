@@ -114,6 +114,22 @@ describe("startControlPlane", () => {
     expect(running.config.port).toBe(0);
   });
 
+  it("invokes afterStart once the plane is listening", async () => {
+    const { host, events } = harness();
+    host.afterStart = () => {
+      events.push("afterStart");
+    };
+    await startControlPlane(host);
+    expect(events).toEqual([
+      "app:build",
+      "http:listen",
+      "snapshot:start",
+      "live-query:start",
+      "watcher:start",
+      "afterStart",
+    ]);
+  });
+
   it("logs the start banner and warns when a production build has no web dist", async () => {
     const { logs, host } = harness({
       config: testConfig({ isProduction: true, webDist: "/nope/dist" }),

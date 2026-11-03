@@ -1,5 +1,9 @@
 import { queryDialectToolEnum } from "@playon/server-query";
-import { playerPanelStatusFromJoinReady, type QueryDialect } from "@playon/shared";
+import {
+  isUdpJoinUnverified,
+  playerPanelStatusFromJoinReady,
+  type QueryDialect,
+} from "@playon/shared";
 import { isPlayerPanelLiveStatus, safeQueryLive } from "../server-panel.js";
 import { loadSkillMetadata } from "../skills.js";
 import { seedWatchersForNewServer } from "../watchers.js";
@@ -110,6 +114,7 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
           serverId: server.id,
           status: server.status,
           ready: joinReady.ready,
+          udpJoinUnverified: isUdpJoinUnverified(joinReady),
           joinPath: joinReady.joinPath,
           joinReady,
           runtime: detail?.runtime,
@@ -175,6 +180,7 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
           serverId: server.id,
           status: server.status,
           ready: joinReady.ready,
+          udpJoinUnverified: isUdpJoinUnverified(joinReady),
           joinPath: joinReady.joinPath,
           joinReady,
           runtime: detail?.runtime,
@@ -230,6 +236,7 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
             game: s.game,
             status: s.status,
             ready: cached?.ready,
+            udpJoinUnverified: cached ? isUdpJoinUnverified(cached) : undefined,
           };
         });
       },
@@ -257,6 +264,7 @@ export const serversToolModule: ToolModule = ({ plane, workspace, skillRoots }) 
           game: server.game,
           status: server.status,
           ready: cached?.ready,
+          udpJoinUnverified: cached ? isUdpJoinUnverified(cached) : undefined,
           runtimeMode: server.runtimeMode,
         };
       },

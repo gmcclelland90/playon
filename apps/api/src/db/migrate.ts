@@ -115,6 +115,22 @@ function ensureServerInstanceStartedAt(raw: Database.Database) {
   }
 }
 
+/** Desired run-state + per-server auto-start opt-out (#1038). */
+function ensureServerDesiredState(raw: Database.Database) {
+  const cols = raw.prepare(`PRAGMA table_info(servers)`).all() as Array<{ name: string }>;
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has("desired_state")) {
+    raw.exec(`ALTER TABLE servers ADD COLUMN desired_state TEXT NOT NULL DEFAULT 'stopped'`);
+    // A persisted start that was never cleared is the best existing signal of
+    // "the host wanted this running" — do not treat a stale status=running row
+    // as intent (that is how the Hub sat stopped for 16h after #1038).
+    raw.exec(`UPDATE servers SET desired_state = 'running' WHERE instance_started_at IS NOT NULL`);
+  }
+  if (!names.has("auto_start")) {
+    raw.exec(`ALTER TABLE servers ADD COLUMN auto_start INTEGER NOT NULL DEFAULT 1`);
+  }
+}
+
 function ensureUserMfaColumns(raw: Database.Database) {
   const cols = raw.prepare(`PRAGMA table_info(users)`).all() as Array<{ name: string }>;
   const names = new Set(cols.map((c) => c.name));
@@ -196,6 +212,7 @@ export function applyBootstrap(dbPath: string) {
   ensureAccessTokensTable(raw);
   ensureWatchersTables(raw);
   ensureServerInstanceStartedAt(raw);
+  ensureServerDesiredState(raw);
   ensureUserMfaColumns(raw);
   ensureMfaPendingTable(raw);
   raw.close();

@@ -1,6 +1,7 @@
 export * from "./types.js";
 export * from "./path-jail.js";
 export * from "./native-process.js";
+export * from "./systemd-scope.js";
 export * from "./file-log-tail.js";
 export * from "./docker-log-demux.js";
 export * from "./docker-engine.js";

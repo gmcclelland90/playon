@@ -2,6 +2,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { SkillMetadata, SkillNative } from "@playon/shared";
+import {
+  PZ_SKILL_NAME,
+  withPzNativeArgs,
+  type PzNativeLaunch,
+} from "./pz-start-identity.js";
 
 export interface NativeLaunch {
   command: string;
@@ -256,6 +261,7 @@ function resolveBinaryLaunch(
   gameDir: string,
   native: SkillNative,
   skillName?: string | null,
+  pzLaunch?: PzNativeLaunch | null,
 ): NativeLaunch | null {
   const isWin = process.platform === "win32";
   const rel = (isWin && native.binaryWindows ? native.binaryWindows : native.binary)?.replace(
@@ -281,6 +287,7 @@ function resolveBinaryLaunch(
     args: native.args,
     gameDir,
     skillName,
+    pzLaunch,
   });
 
   const base = path.basename(rel);
@@ -420,6 +427,8 @@ export function resolveNativeArgs(opts: {
   gameDir?: string;
   skillName?: string | null;
   env?: NodeJS.ProcessEnv;
+  /** This server's own PZ identity. Absent strips baked-in servertest / 16261. */
+  pzLaunch?: PzNativeLaunch | null;
 }): string[] {
   const env = opts.env ?? process.env;
   let args = opts.args.map((a) =>
@@ -447,6 +456,9 @@ export function resolveNativeArgs(opts: {
   }
   if (isFoundrySkill(opts.skillName)) {
     args = ensureFoundryHeadlessArgs(args);
+  }
+  if (opts.skillName === PZ_SKILL_NAME) {
+    args = withPzNativeArgs(args, opts.pzLaunch ?? null);
   }
   return args;
 }
@@ -544,6 +556,8 @@ export function resolveNativeLaunch(opts: {
   gameDir: string;
   /** Skill metadata when available — preferred over name heuristics. */
   metadata?: SkillMetadata | null;
+  /** Replaces catalog native.args identity flags for a direct PZ binary launch. */
+  pzLaunch?: PzNativeLaunch | null;
 }): NativeLaunch | null {
   const { gameDir, metadata, skillName } = opts;
   if (!fs.existsSync(gameDir)) return null;
@@ -570,7 +584,7 @@ export function resolveNativeLaunch(opts: {
     if (script) return script;
   }
   if (native) {
-    const bin = resolveBinaryLaunch(gameDir, native, skillName ?? metadata?.name);
+    const bin = resolveBinaryLaunch(gameDir, native, skillName ?? metadata?.name, opts.pzLaunch);
     if (bin) return bin;
   }
   if (!preferScript) {
@@ -578,6 +592,22 @@ export function resolveNativeLaunch(opts: {
     if (script) return script;
   }
   return null;
+}
+
+/** Env catalog start.sh overlays read (Teeworlds PLAYON_GAME_PORT / jail HOME). */
+export function nativePlayonLaunchEnv(input: {
+  serverId: string;
+  gamePort?: number | null;
+  homeDir?: string | null;
+}): Record<string, string> {
+  const env: Record<string, string> = { PLAYON_SERVER_ID: input.serverId };
+  const port = input.gamePort;
+  if (port != null && Number.isInteger(port) && port >= 1 && port <= 65535) {
+    env.PLAYON_GAME_PORT = String(port);
+  }
+  const home = input.homeDir?.trim();
+  if (home) env.PLAYON_HOME = home;
+  return env;
 }
 
 export function nativeGamePort(metadata?: SkillMetadata | null): number | null {

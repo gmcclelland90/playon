@@ -1,5 +1,6 @@
 import {
   isLoopbackJoinHost,
+  isUdpJoinUnverified,
   type HealthCheck,
   type JoinReadyReport,
   type SkillMetadata,
@@ -26,6 +27,8 @@ export type ServerHealthReport = {
   status: string;
   ok: boolean;
   ready: boolean;
+  /** UDP ports bound on the host; Home cannot test the join itself. */
+  udpJoinUnverified: boolean;
   joinPath?: JoinReadyReport["joinPath"];
   checks: HealthCheckResult[];
   escalations: string[];
@@ -194,12 +197,18 @@ export class HealthService {
     let joinReport: JoinReadyReport | undefined;
     if (this.joinReady) {
       joinReport = await this.joinReady.probe(serverId);
+      const advertised = `${joinReport.joinPath.joinHost}:${joinReport.joinPath.port}`;
+      // UDP with bound host ports: Home cannot test the join itself. That is
+      // "untested", not a failure — keep ready=false for the canary only.
+      const untested = isUdpJoinUnverified(joinReport);
       results.push({
         id: "join-path",
-        ok: joinReport.ready,
+        ok: joinReport.ready || untested,
         detail: joinReport.ready
-          ? `advertised ${joinReport.joinPath.joinHost}:${joinReport.joinPath.port} reachable (${joinReport.reason})`
-          : `advertised ${joinReport.joinPath.joinHost}:${joinReport.joinPath.port} not reachable (${joinReport.reason})`,
+          ? `advertised ${advertised} reachable (${joinReport.reason})`
+          : untested
+            ? `advertised UDP ${advertised} bound on the host; UDP join not testable from Home (${joinReport.reason})`
+            : `advertised ${advertised} not reachable (${joinReport.reason})`,
         onFail: "none",
       });
     }
@@ -211,6 +220,7 @@ export class HealthService {
       status: refreshed.status,
       ok,
       ready: joinReport?.ready ?? false,
+      udpJoinUnverified: joinReport ? isUdpJoinUnverified(joinReport) : false,
       joinPath: joinReport?.joinPath,
       checks: results,
       escalations,

@@ -1,4 +1,7 @@
+import { installProcessErrorHandlers } from "./process-errors.js";
 import { startControlPlane } from "./control-plane-lifecycle.js";
+
+installProcessErrorHandlers();
 
 void startControlPlane({
   onStopped: (report) => {

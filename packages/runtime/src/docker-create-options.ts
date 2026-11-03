@@ -78,6 +78,7 @@ export function buildContainerCreateOptions(
   return {
     name: spec.name,
     Image: spec.image,
+    ...(spec.user?.trim() ? { User: spec.user.trim() } : {}),
     Env: Object.entries(spec.env ?? {}).map(([k, v]) => `${k}=${v}`),
     ...(cmd?.length ? { Cmd: cmd } : {}),
     // Keep stdin open so adminDialect=stdin can attach and write console commands.

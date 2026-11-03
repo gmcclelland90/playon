@@ -352,33 +352,120 @@ a.brand-mark:hover {
   min-height: 420px;
 }
 
-.server-console-bubble {
+/* Banners above the topbar vary in height, so the map takes whatever is left
+   instead of guessing; a fixed calc() clipped the composer under a banner. */
+.app-shell:has(.canvas-page) {
+  height: 100dvh;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-shell:has(.canvas-page) > .main-canvas {
+  flex: 1 1 0;
+}
+
+.app-shell:has(.canvas-page) .canvas-page {
+  height: 100%;
+}
+
+/* Panels over the map publish their footprint so the LAN room fits in what's left. */
+
+.canvas-page {
+  --map-inset-left: 18.25rem;
+  --map-inset-right: 1rem;
+  --map-inset-top: 4.5rem;
+  --map-inset-bottom: 3.25rem;
+}
+
+.canvas-page.map-dock-open {
+  --map-inset-right: calc(min(25rem, 100vw - 2rem) + 1.75rem);
+}
+
+/* Server terminal: a strip along the bottom of the map. The room shrinks to sit above it. */
+.canvas-page.map-console-open {
+  --map-inset-bottom: calc(var(--console-dock-h, 15rem) + 1.5rem);
+}
+
+.canvas-page.map-console-open .agent-canvas-map-hint {
+  display: none;
+}
+
+.server-console-dock {
   position: absolute;
   z-index: 3;
-  transform: translate(-50%, calc(-100% - 12px));
-  pointer-events: none;
+  left: var(--map-inset-left);
+  right: var(--map-inset-right);
+  bottom: 0.75rem;
+  height: var(--console-dock-h, 15rem);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: oklch(0.14 0.015 350);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: 0 -6px 24px oklch(0.08 0.02 350 / 0.45);
 }
 
-.server-console-bubble-panel {
-  position: relative;
-  pointer-events: auto;
-  display: grid;
-  gap: 0.4rem;
-  padding: 0.55rem 0.65rem 1.05rem;
-  background: oklch(0.16 0.02 350 / 0.96);
-  border: 1px solid oklch(0.45 0.04 350);
-  border-radius: 10px;
-  box-shadow: 0 10px 28px oklch(0.08 0.02 350 / 0.55);
+.server-console-dock-grip {
+  position: absolute;
+  top: -5px;
+  left: 0;
+  right: 0;
+  height: 10px;
+  cursor: ns-resize;
+  touch-action: none;
+  z-index: 1;
 }
 
-.server-console-bubble-head {
+/* A short bar in the middle of the top edge says "drag me". */
+.server-console-dock-grip::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: 50%;
+  width: 2.5rem;
+  height: 4px;
+  margin-left: -1.25rem;
+  border-radius: 999px;
+  background: oklch(0.45 0.03 350);
+}
+
+.server-console-dock-grip:hover::after,
+.server-console-dock-grip:focus-visible::after {
+  background: oklch(0.78 0.06 190);
+}
+
+.server-console-dock-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.35rem 0.4rem 0.35rem 0.75rem;
+  border-bottom: 1px solid var(--line);
+  min-width: 0;
+}
+
+.server-console-dock.is-collapsed .server-console-dock-head {
+  border-bottom: 0;
+  height: 100%;
+}
+
+.server-console-dock-toggle {
+  flex: 1 1 auto;
+  min-width: 0;
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 0.5rem;
+  gap: 0.6rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.server-console-bubble-title {
+.server-console-dock-title {
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.06em;
@@ -386,148 +473,105 @@ a.brand-mark:hover {
   color: oklch(0.78 0.06 190);
 }
 
-.server-console-bubble-name {
-  font-size: 0.75rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.server-console-dock-name {
+  font-size: 0.85rem;
+  font-weight: 600;
   white-space: nowrap;
 }
 
-.server-console-bubble-log {
-  min-height: 7.5rem;
-  overflow: auto;
-  padding: 0.45rem 0.5rem;
-  border-radius: 6px;
-  background: oklch(0.1 0.015 350);
-  border: 1px solid oklch(0.28 0.02 350);
+.server-console-dock-peek {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: "IBM Plex Mono", "Cascadia Code", "Consolas", monospace;
-  font-size: 0.78rem;
-  line-height: 1.4;
+  font-size: 0.75rem;
+  color: oklch(0.7 0.02 120);
+}
+
+.server-console-dock-hint {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.75rem;
+}
+
+.server-console-dock-icon {
+  flex: none;
+  width: 1.9rem;
+  height: 1.9rem;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  color: oklch(0.75 0.02 350);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.server-console-dock-icon:hover,
+.server-console-dock-icon:focus-visible {
+  background: oklch(0.22 0.02 350);
+  color: oklch(0.95 0.01 350);
+}
+
+.server-console-dock-log {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.5rem 0.75rem;
+  background: oklch(0.1 0.015 350);
+  font-family: "IBM Plex Mono", "Cascadia Code", "Consolas", monospace;
+  font-size: 0.8rem;
+  line-height: 1.45;
   color: oklch(0.86 0.02 120);
 }
 
-/* Invisible edge/corner hit targets + visible SE grip */
-.server-console-resize {
-  position: absolute;
-  z-index: 2;
-  touch-action: none;
+.server-console-dock-log:last-child {
+  border-radius: 0 0 var(--radius) var(--radius);
 }
 
-.server-console-resize-n,
-.server-console-resize-s {
-  left: 10px;
-  right: 10px;
-  height: 6px;
-  cursor: ns-resize;
+.server-console-dock-empty {
+  margin: 0;
+  font-size: 0.75rem;
 }
 
-.server-console-resize-n {
-  top: -3px;
+.server-console-dock-form {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.35rem 0.5rem;
+  padding: 0.45rem 0.5rem;
+  border-top: 1px solid var(--line);
 }
 
-.server-console-resize-s {
-  bottom: -3px;
+.server-console-dock-form input {
+  min-width: 0;
+  font-family: "IBM Plex Mono", "Cascadia Code", "Consolas", monospace;
+  font-size: 0.8rem;
 }
 
-.server-console-resize-e,
-.server-console-resize-w {
-  top: 10px;
-  bottom: 10px;
-  width: 6px;
-  cursor: ew-resize;
+.server-console-dock-form .btn {
+  font-size: 0.8rem;
+  padding: 0.35rem 0.75rem;
 }
 
-.server-console-resize-e {
-  right: -3px;
-}
-
-.server-console-resize-w {
-  left: -3px;
-}
-
-.server-console-resize-ne,
-.server-console-resize-nw,
-.server-console-resize-se,
-.server-console-resize-sw {
-  width: 14px;
-  height: 14px;
-}
-
-.server-console-resize-ne {
-  top: -4px;
-  right: -4px;
-  cursor: nesw-resize;
-}
-
-.server-console-resize-nw {
-  top: -4px;
-  left: -4px;
-  cursor: nwse-resize;
-}
-
-.server-console-resize-se {
-  bottom: -4px;
-  right: -4px;
-  cursor: nwse-resize;
-}
-
-.server-console-resize-sw {
-  bottom: -4px;
-  left: -4px;
-  cursor: nesw-resize;
-}
-
-.server-console-resize-grip {
-  position: absolute;
-  right: 5px;
-  bottom: 5px;
-  width: 14px;
-  height: 14px;
-  z-index: 3;
-  cursor: nwse-resize;
-  touch-action: none;
-  /* Diagonal grip marks — reads as a resize affordance in the corner */
-  background:
-    linear-gradient(
-      135deg,
-      transparent 35%,
-      oklch(0.72 0.04 350) 36%,
-      oklch(0.72 0.04 350) 40%,
-      transparent 41%
-    ),
-    linear-gradient(
-      135deg,
-      transparent 50%,
-      oklch(0.72 0.04 350) 51%,
-      oklch(0.72 0.04 350) 55%,
-      transparent 56%
-    ),
-    linear-gradient(
-      135deg,
-      transparent 65%,
-      oklch(0.78 0.05 190) 66%,
-      oklch(0.78 0.05 190) 70%,
-      transparent 71%
-    );
-  opacity: 0.9;
-}
-
-.server-console-resize-grip:hover {
-  opacity: 1;
+.server-console-dock-error {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 0.75rem;
 }
 
 body.server-console-resizing {
-  cursor: grabbing;
+  cursor: ns-resize;
   user-select: none;
 }
 
 body.server-console-resizing iframe {
   pointer-events: none;
-}
-
-.server-console-bubble-empty {
-  margin: 0;
-  font-size: 0.72rem;
 }
 
 .server-console-line {
@@ -547,54 +591,405 @@ body.server-console-resizing iframe {
   color: oklch(0.72 0.14 25);
 }
 
-.server-console-bubble-form {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0.35rem;
-}
-
-.server-console-bubble-form input {
-  min-width: 0;
-  font-family: "IBM Plex Mono", "Cascadia Code", "Consolas", monospace;
-  font-size: 0.75rem;
-}
-
-.server-console-bubble-form .btn {
-  font-size: 0.75rem;
-  padding: 0.35rem 0.65rem;
-}
-
-.server-console-bubble-hint {
-  margin: 0;
-  font-size: 0.7rem;
-}
-
-.server-console-bubble-tail {
-  width: 14px;
-  height: 14px;
-  margin: -1px auto 0;
-  background: oklch(0.16 0.02 350 / 0.96);
-  border-right: 1px solid oklch(0.45 0.04 350);
-  border-bottom: 1px solid oklch(0.45 0.04 350);
-  transform: rotate(45deg);
-  pointer-events: none;
-}
-
 .agent-canvas-host {
   position: absolute;
   inset: 0;
   background: oklch(0.12 0.02 350);
 }
 
-.agent-canvas-stage {
+/* ---- Map: top-down LAN room. Hosts are tables cabled to a switch; games are stations. ---- */
+.lan-room {
   position: absolute;
-  inset: 0;
+  inset: var(--map-inset-top) var(--map-inset-right) var(--map-inset-bottom) var(--map-inset-left);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border-radius: var(--radius);
+  /* The room's floor: one warm pool of light in the middle, dark at the walls. */
+  background:
+    radial-gradient(70% 60% at 50% 45%, oklch(0.18 0.02 353), transparent),
+    oklch(0.12 0.012 353);
+  border: 1px solid var(--line);
 }
 
-.agent-canvas-stage canvas {
-  display: block;
+.lan-room-inner {
+  position: relative;
+  min-height: 100%;
+  display: grid;
+}
+
+.lan-room-inner.has-hub-below {
+  padding-bottom: 5rem;
+}
+
+.lan-tables {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-content: center;
+  align-items: flex-start;
+  gap: 4.5rem 2rem;
+  padding: 1.25rem 0.5rem;
+}
+
+.lan-cables {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.lan-cable {
+  stroke: oklch(0.78 0.12 185 / 0.5);
+  stroke-width: 3;
+  stroke-dasharray: 6 6;
+  stroke-linecap: round;
+}
+
+.lan-cable.is-offline,
+.lan-cable.is-pending_setup {
+  stroke: oklch(0.68 0.18 25 / 0.4);
+}
+
+.lan-cable.is-stale {
+  stroke: oklch(0.78 0.12 85 / 0.45);
+}
+
+/* Keep the size in step with SWITCH_SIZE in AgentCanvas.tsx. */
+.lan-switch {
+  position: absolute;
+  z-index: 2;
+  width: 56px;
+  height: 56px;
+  translate: -50% -50%;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: oklch(0.2 0.03 185);
+  border: 2px solid var(--accent);
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  pointer-events: none;
+}
+
+.lan-switch.has-agent {
+  animation: lan-ping 1.6s var(--ease) infinite;
+}
+
+.lan-compose-line {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: 0.75rem;
+  translate: -50% 0;
+  margin: 0;
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  background: oklch(0.2 0.03 185);
+  color: var(--accent);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.lan-table {
+  display: grid;
+  gap: 0.6rem;
+  max-width: 26rem;
+  padding: 0.7rem 0.75rem 0.85rem;
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  border: 1px solid oklch(0.96 0.01 353 / 0.14);
+  box-shadow: 0 10px 28px oklch(0.05 0.02 350 / 0.45);
+}
+
+.lan-table.is-selected {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 3px oklch(0.78 0.12 185 / 0.2),
+    0 10px 28px oklch(0.05 0.02 350 / 0.45);
+}
+
+.lan-table.is-offline,
+.lan-table.is-pending_setup {
+  background: oklch(0.17 0.012 353);
+  border-style: dashed;
+  box-shadow: none;
+}
+
+.lan-table-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+  padding: 0.15rem 0.25rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lan-table-head:hover .lan-table-name,
+.lan-table.is-selected .lan-table-name {
+  color: var(--accent);
+}
+
+.lan-table-name {
+  font-size: 1.125rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.is-offline .lan-table-name,
+.is-pending_setup .lan-table-name {
+  color: var(--muted);
+}
+
+.lan-table-meta {
+  margin-left: auto;
+  display: flex;
+  gap: 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.lan-table-meta.is-asleep {
+  color: var(--danger);
+}
+
+.lan-meter b {
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--placeholder);
+}
+
+.lan-meter.tone-warn {
+  color: var(--warn);
+  font-weight: 700;
+}
+
+.lan-meter.tone-danger {
+  color: var(--danger);
+  font-weight: 700;
+}
+
+.lan-table-note {
+  margin: 0;
+  padding: 0 0.25rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.lan-stations,
+.lan-gear {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.lan-stations {
+  gap: 0.9rem;
+}
+
+.lan-station {
+  --game-h: 353;
+  min-width: 5.25rem;
+  max-width: 8rem;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 0.2rem;
+  padding: 0 0 0.35rem;
+  border: 0;
+  border-radius: var(--radius);
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+
+.lan-station-disc {
+  position: relative;
+  width: 3.6rem;
+  height: 3.6rem;
+  margin: 0.95rem 0 0.8rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 1.1rem;
+  font-weight: 900;
+  letter-spacing: -0.01em;
+  background: oklch(0.36 0.03 var(--game-h));
+  color: oklch(0.76 0.03 var(--game-h));
+  transition: transform 160ms var(--ease);
+}
+
+.lan-station:hover .lan-station-disc {
+  transform: scale(1.06);
+}
+
+.lan-station.is-live .lan-station-disc {
+  background: oklch(0.58 0.15 var(--game-h));
+  color: oklch(0.98 0.02 var(--game-h));
+  box-shadow: 0 0 0 5px oklch(0.58 0.15 var(--game-h) / 0.22);
+}
+
+.lan-station.is-busy .lan-station-disc {
+  background: oklch(0.46 0.1 var(--game-h));
+  color: oklch(0.95 0.03 var(--game-h));
+  box-shadow: 0 0 0 5px oklch(0.78 0.12 85 / 0.22);
+}
+
+.lan-station.is-failed .lan-station-disc {
+  background: oklch(0.38 0.11 25);
+  color: oklch(0.9 0.05 25);
+  box-shadow: 0 0 0 5px oklch(0.68 0.18 25 / 0.25);
+}
+
+.lan-station.is-selected .lan-station-disc {
+  outline: 3px solid var(--accent);
+  outline-offset: 6px;
+}
+
+.lan-station.is-add .lan-station-disc {
+  background: none;
+  border: 2px dashed oklch(0.96 0.01 353 / 0.25);
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.lan-station.is-add:hover .lan-station-disc {
+  border-color: var(--primary);
+  color: var(--ink);
+}
+
+.lan-seat {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1.1rem;
+  height: 1.1rem;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 2px solid var(--surface-2);
+  background: oklch(0.85 0.09 185);
+  color: oklch(0.18 0.03 185);
+  font-size: 0.58rem;
+  font-weight: 800;
+  line-height: 1;
+  transform: translate(-50%, -50%) rotate(var(--seat-a)) translateY(-2.35rem) rotate(calc(var(--seat-a) * -1));
+}
+
+.lan-seat.is-more {
+  width: auto;
+  min-width: 1.1rem;
+  padding: 0 0.2rem;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+/* The agent working on this game: a pulsing pip on the station. */
+.lan-station-agent {
+  position: absolute;
+  top: -0.15rem;
+  right: -0.15rem;
+  width: 0.9rem;
+  height: 0.9rem;
+  border-radius: 50%;
+  border: 2px solid var(--surface-2);
+  background: var(--warn);
+  animation: lan-ping 1.4s var(--ease) infinite;
+}
+
+@keyframes lan-ping {
+  0% {
+    box-shadow: 0 0 0 0 oklch(0.78 0.12 85 / 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 10px oklch(0.78 0.12 85 / 0);
+  }
+}
+
+.lan-station-name {
+  font-size: 0.875rem;
+  font-weight: 700;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.lan-station.is-add .lan-station-name {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.lan-station-status {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.lan-station.is-live .lan-station-status {
+  color: var(--accent);
+}
+
+.lan-station.is-failed .lan-station-status {
+  color: var(--danger);
+}
+
+.lan-station-status.is-busy {
+  color: var(--warn);
+}
+
+.lan-gear {
+  gap: 0.35rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--line);
+}
+
+.lan-gear-item {
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.lan-gear-item:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.lan-gear-item.is-selected {
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+.lan-gear-item.is-stack {
+  border-style: dashed;
+}
+
+.lan-table-head:focus-visible,
+.lan-station:focus-visible,
+.lan-gear-item:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .agent-canvas-empty {
@@ -828,8 +1223,8 @@ body.server-console-resizing iframe {
   position: absolute;
   left: 1rem;
   top: 1rem;
-  bottom: 1rem;
-  width: min(15rem, calc(100vw - 2rem));
+  max-height: calc(100% - 2rem);
+  width: min(16.5rem, calc(100vw - 2rem));
   z-index: 2;
   display: flex;
   flex-direction: column;
@@ -912,7 +1307,29 @@ body.server-console-resizing iframe {
   gap: 0.05rem 0.4rem;
 }
 
+/* Game servers lead with the same badge as the Dashboard; the agent dot stays for helpers. */
+.agent-canvas-list-item:has(.map-game-badge) .agent-canvas-list-agent {
+  display: none;
+}
+
+.map-game-badge {
+  grid-row: 1 / span 2;
+  align-self: start;
+  margin-top: 0.1rem;
+}
+
+.agent-canvas-list-item:has(.map-game-badge) {
+  grid-template-columns: auto 1fr;
+  column-gap: 0.65rem;
+}
+
+.agent-canvas-list-item:has(.map-game-badge) .dash-state {
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
 .agent-canvas-list-item:has(.agent-canvas-list-agent) .muted,
+.agent-canvas-list-item:has(.agent-canvas-list-agent) .dash-state,
 .agent-canvas-list-item:has(.agent-canvas-list-agent) .usage-meters,
 .agent-canvas-list-item:has(.agent-canvas-list-agent) .usage-strip {
   grid-column: 2;
@@ -1437,6 +1854,256 @@ body.server-console-resizing iframe {
   color: var(--ink);
   background: var(--surface-2);
   border-color: oklch(0.78 0.12 185 / 0.35);
+}
+
+/* ---- Always-on side panel (Map) ----
+   The chat never closes: with nothing picked it is the add-server chat.
+   Header, info and tabs stay compact so the conversation gets the height. */
+.canvas-chat-dock {
+  width: min(25rem, calc(100vw - 2rem));
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto auto minmax(0, 1fr) auto;
+  align-content: stretch;
+  gap: var(--space-3);
+  animation: none;
+  box-shadow: 0 18px 50px oklch(0.05 0.02 350 / 0.5);
+}
+
+.canvas-chat-dock > * {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.canvas-dock-head {
+  display: contents;
+}
+
+.canvas-dock-head > * {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.canvas-dock-titlebar {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.canvas-dock-title {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.canvas-dock-title h3,
+.canvas-dock-title .server-name-control {
+  min-width: 0;
+  font-size: 1.25rem;
+}
+
+.canvas-dock-title h3,
+.canvas-dock-title .server-name-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.canvas-dock-titlebar > .btn-row {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+}
+
+.canvas-chat-dock .chat-channels {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  margin-top: 0;
+  padding-bottom: 2px;
+}
+
+.canvas-chat-dock .chat-channel-chip {
+  flex: 0 0 auto;
+}
+
+.canvas-chat-dock .canvas-status-row {
+  grid-column: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.canvas-chat-dock .canvas-dock-head > .usage-meters {
+  grid-column: 2;
+  max-width: none;
+  align-self: center;
+}
+
+.canvas-chat-dock .canvas-join-card {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.4rem 0.35rem 0.85rem;
+  border-radius: 999px;
+}
+
+.canvas-chat-dock .canvas-join-card .dash-section-head {
+  display: contents;
+}
+
+.canvas-chat-dock .canvas-join-card .chip {
+  order: -2;
+  margin: 0;
+}
+
+.canvas-chat-dock .canvas-join-endpoint {
+  order: -1;
+  flex: 1 1 auto;
+  font-size: 0.95rem;
+}
+
+.canvas-chat-dock .canvas-dock-tabs {
+  margin-top: 0;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.canvas-chat-dock .canvas-dock-tabs button {
+  padding: 0.3rem 0.75rem;
+  font-size: 0.82rem;
+}
+
+.canvas-chat-dock .canvas-chat-log,
+.canvas-chat-dock .canvas-maintain {
+  grid-row: 6;
+  min-height: 0;
+  max-height: none;
+}
+
+.canvas-chat-dock .canvas-chat-log {
+  align-content: end;
+}
+
+.canvas-chat-dock .canvas-chat-composer {
+  grid-row: 7;
+}
+
+/* With nothing picked there are no tabs: a hairline still separates the log. */
+.canvas-chat-dock:not(:has(.canvas-dock-tabs)) .canvas-chat-log {
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--line);
+}
+
+.canvas-chat-log .msg {
+  max-width: 88%;
+  padding: 0.6rem 0.85rem;
+  border: 0;
+  border-radius: 14px;
+}
+
+.canvas-chat-log .msg .meta {
+  display: block;
+  margin-bottom: 0.15rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.canvas-chat-log .msg.user {
+  justify-self: end;
+  background: oklch(0.54 0.18 353 / 0.22);
+  border-bottom-right-radius: 4px;
+}
+
+.canvas-chat-log .msg.user .meta {
+  display: none;
+}
+
+.canvas-chat-log .msg.assistant {
+  justify-self: start;
+  background: var(--surface-2);
+  border-bottom-left-radius: 4px;
+}
+
+.canvas-chat-log .msg.assistant .meta {
+  color: var(--accent);
+}
+
+.canvas-chat-composer {
+  display: grid;
+  gap: 0.35rem;
+  padding-top: 0;
+  border-top: 0;
+}
+
+.canvas-composer-pill {
+  position: relative;
+}
+
+.canvas-composer-pill .field {
+  margin: 0;
+}
+
+/* Translucent on purpose: an opaque control over the WebGL map can leave paint artifacts. */
+.canvas-chat-composer .canvas-composer-pill textarea {
+  min-height: 3.1rem;
+  height: 3.1rem;
+  padding: 0.8rem 6.25rem 0.8rem 1.1rem;
+  border-radius: 999px;
+  background: oklch(0.1 0.01 353 / 0.94);
+  border: 1px solid oklch(0.78 0.12 185 / 0.35);
+  box-shadow: 0 0 0 4px oklch(0.78 0.12 185 / 0.06);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.canvas-composer-pill .btn {
+  position: absolute;
+  top: 0.35rem;
+  right: 0.35rem;
+  min-height: 2.4rem;
+  padding: 0.4rem 1rem;
+}
+
+.canvas-composer-pill .btn-primary {
+  box-shadow: 0 4px 16px oklch(0.62 0.16 353 / 0.32);
+}
+
+.canvas-composer-extras {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding-inline: 0.9rem;
+  font-size: 0.82rem;
+}
+
+.canvas-composer-extras .canvas-busy-hint {
+  margin-left: auto;
+}
+
+/* The panel never closes, so the map controls sit left of it. */
+.canvas-page.map-dock-open .agent-canvas-add-row {
+  right: calc(min(25rem, 100vw - 2rem) + 2rem);
+}
+
+.canvas-page.map-dock-open .agent-canvas-map-hint {
+  left: calc(18.5rem + (100% - 18.5rem - min(25rem, 100vw - 2rem) - 2rem) / 2);
+}
+
+.canvas-page.map-dock-open .agent-canvas-map-hint .hint-full {
+  display: none;
+}
+
+.canvas-page.map-dock-open .agent-canvas-map-hint .hint-short {
+  display: inline;
+}
+
+.canvas-composer-extras .linkish {
+  white-space: nowrap;
 }
 
 @media (max-width: 720px) {
@@ -2273,29 +2940,6 @@ a.btn {
   font-size: 0.9rem;
 }
 
-.dash-summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.35rem 0.65rem;
-  padding: 0.85rem 0;
-  border-top: 1px solid var(--line);
-  border-bottom: 1px solid var(--line);
-  margin: 0;
-  color: var(--muted);
-  font-size: 0.95rem;
-}
-
-.dash-summary strong {
-  color: var(--ink);
-  font-weight: 700;
-}
-
-.dash-summary a {
-  margin-left: auto;
-  font-weight: 700;
-}
-
 .dashboard-page {
   max-width: var(--page-max);
   margin: 0 auto;
@@ -2435,31 +3079,6 @@ a.btn {
   text-align: right;
 }
 
-.dash-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-}
-
-.dash-primary {
-  grid-column: 1 / -1;
-}
-
-.dash-secondary {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-}
-
-.dash-quiet {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 1rem;
-  opacity: 0.92;
-}
-
 .dash-node-caps {
   margin-top: 0.15rem;
 }
@@ -2473,25 +3092,514 @@ a.btn {
   display: none;
 }
 
-.dashboard-page .list.compact-list .btn-row {
-  flex-wrap: wrap;
-}
-
-@media (max-width: 520px) {
-  .dashboard-page .list.compact-list .btn-row .dash-secondary-action {
-    display: none;
-  }
-}
-
 .dash-ops-notice {
   margin: 0;
 }
 
-@media (max-width: 820px) {
-  .dash-grid,
-  .dash-secondary,
-  .dash-quiet {
-    grid-template-columns: 1fr;
+/* Dashboard: one pulse line, a "needs you" strip, then servers + hosts as
+   scan rows (identity | load | actions) beside a quieter backups/activity rail. */
+.dash-stack {
+  gap: var(--space-4);
+}
+
+.dash-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3) var(--space-4);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.dash-pulse {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) 1.1rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.dash-pulse strong {
+  color: var(--ink);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-pulse-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--muted);
+}
+
+.dash-pulse-live.is-live {
+  color: var(--accent);
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  background: oklch(0.78 0.12 185 / 0.12);
+}
+
+.dash-pulse-live.is-live strong {
+  color: var(--accent);
+  font-size: 1.125rem;
+}
+
+.dash-pulse-bad,
+.dash-pulse-bad strong {
+  color: var(--danger);
+}
+
+/* Status dot: the one live signal. Running hosts/servers breathe; the rest sit still. */
+.dash-dot {
+  position: relative;
+  flex: 0 0 auto;
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.dash-pulse-live.is-live .dash-dot::after,
+.dash-dot.state-running::after,
+.dash-dot.state-online::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: currentColor;
+  animation: dash-live 2.4s var(--ease) infinite;
+}
+
+@keyframes dash-live {
+  0% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  70%,
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+:is(.dash-dot, .dash-state).state-running,
+:is(.dash-dot, .dash-state).state-online {
+  color: var(--accent);
+}
+
+:is(.dash-dot, .dash-state).state-starting,
+:is(.dash-dot, .dash-state).state-stopping,
+:is(.dash-dot, .dash-state).state-degraded,
+:is(.dash-dot, .dash-state).state-stale {
+  color: var(--warn);
+}
+
+:is(.dash-dot, .dash-state).state-error,
+:is(.dash-dot, .dash-state).state-failed,
+:is(.dash-dot, .dash-state).state-offline {
+  color: var(--danger);
+}
+
+:is(.dash-dot, .dash-state).state-stopped,
+:is(.dash-dot, .dash-state).state-unknown {
+  color: var(--placeholder);
+}
+
+.dash-dot.state-stopped,
+.dash-dot.state-unknown {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px currentColor;
+}
+
+.dash-attention {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.dash-attention li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0.4rem 0.85rem;
+  border-radius: 999px;
+  border: 1px solid oklch(0.78 0.12 85 / 0.35);
+  background: oklch(0.78 0.12 85 / 0.1);
+  color: var(--warn);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+
+.dash-attention li > span:not(.dash-dot) {
+  color: var(--ink);
+}
+
+.dash-attention li.tone-danger {
+  border-color: oklch(0.68 0.18 25 / 0.4);
+  background: oklch(0.68 0.18 25 / 0.12);
+  color: var(--danger);
+}
+
+.dash-layout {
+  display: grid;
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.dash-main,
+.dash-rail {
+  display: grid;
+  gap: var(--space-4);
+  align-content: start;
+  min-width: 0;
+}
+
+@media (min-width: 1100px) {
+  .dash-layout {
+    grid-template-columns: minmax(0, 1fr) minmax(17rem, 21rem);
+  }
+}
+
+.dash-section {
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
+}
+
+.dash-count {
+  margin-left: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--placeholder);
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+}
+
+.dash-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "id actions"
+    "load actions";
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-3) 0;
+  border-top: 1px solid var(--line);
+  transition: opacity 180ms var(--ease);
+}
+
+.dash-row:first-child {
+  border-top: 0;
+  padding-top: var(--space-1);
+}
+
+.dash-row.host-row {
+  grid-template-columns: minmax(13rem, 1fr) minmax(14rem, 1fr);
+  grid-template-areas: "id load";
+}
+
+.dash-row-id {
+  grid-area: id;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  min-width: 0;
+}
+
+/* Arcade hits: each server wears its game as a colored badge; the status dot rides its corner. */
+.dash-game-badge {
+  --game-h: 353;
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--radius-md);
+  background: oklch(0.42 0.12 var(--game-h));
+  box-shadow: inset 0 0 0 1px oklch(0.7 0.14 var(--game-h) / 0.5);
+  color: oklch(0.96 0.04 var(--game-h));
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+.dash-game-badge > .dash-dot {
+  position: absolute;
+  right: -0.2rem;
+  bottom: -0.2rem;
+  width: 0.7rem;
+  height: 0.7rem;
+  box-shadow: 0 0 0 2px var(--surface);
+}
+
+.dash-game-badge > .dash-dot.state-stopped,
+.dash-game-badge > .dash-dot.state-unknown {
+  background: var(--surface);
+  box-shadow: 0 0 0 2px var(--surface), inset 0 0 0 1.5px currentColor;
+}
+
+.dash-row.is-idle .dash-game-badge,
+.dash-game-badge.is-idle {
+  background: oklch(0.26 0.03 var(--game-h));
+  box-shadow: inset 0 0 0 1px oklch(0.5 0.05 var(--game-h) / 0.4);
+  color: oklch(0.72 0.04 var(--game-h));
+}
+
+.dash-row:has(.dash-game-badge) .dash-row-id {
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.dash-row:not(.host-row):has(.dash-game-badge) .dash-row-load:not(:empty) {
+  padding-left: 3.1rem;
+}
+
+.dash-row .btn-primary {
+  box-shadow: 0 4px 16px oklch(0.62 0.16 353 / 0.32);
+}
+
+.host-row.is-hot {
+  margin-inline: calc(var(--space-2) * -1);
+  padding-inline: var(--space-2);
+  border-radius: var(--radius-md);
+  background: oklch(0.78 0.12 85 / 0.06);
+}
+
+.host-row.is-hot.tone-danger {
+  background: oklch(0.68 0.18 25 / 0.07);
+}
+
+.host-row.is-hot + .dash-row {
+  border-top-color: transparent;
+}
+
+.dash-row-id > .dash-dot {
+  margin-top: 0.42rem;
+}
+
+.dash-row-text {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.dash-row-text > strong,
+.dash-row-text .server-name-label {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.dash-row.is-idle .dash-row-text > strong,
+.dash-row.is-idle .dash-row-text .server-name-label {
+  color: var(--muted);
+}
+
+.dash-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.1rem 0;
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.dash-row-meta > span {
+  white-space: nowrap;
+}
+
+.dash-row-meta > span + span::before {
+  content: "·";
+  margin: 0 0.45rem;
+  color: var(--placeholder);
+}
+
+.dash-state {
+  font-weight: 700;
+}
+
+.dash-row-hint {
+  font-size: 0.82rem;
+}
+
+.dash-tag {
+  margin-left: 0.5rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  vertical-align: 0.1em;
+}
+
+/* Rename stays reachable but only shows when the row is in hand. */
+.dash-row .server-name-control .linkish {
+  flex: 0 0 auto;
+  max-width: 0;
+  padding-inline: 0;
+  overflow: hidden;
+  font-size: 0.82rem;
+  opacity: 0;
+  transition: opacity 160ms var(--ease);
+}
+
+.dash-row:hover .server-name-control .linkish,
+.dash-row:focus-within .server-name-control .linkish {
+  max-width: 6rem;
+  opacity: 1;
+}
+
+@media (pointer: coarse) {
+  .dash-row .server-name-control .linkish {
+    max-width: 6rem;
+    opacity: 1;
+  }
+}
+
+.dash-row-load {
+  grid-area: load;
+  min-width: 0;
+}
+
+.dash-row:not(.host-row) .dash-row-load:not(:empty) {
+  max-width: 26rem;
+  padding-left: 1.25rem;
+}
+
+.dash-row-load .usage-meters,
+.dash-row-load .usage-meters.compact {
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+  max-width: none;
+  margin: 0;
+}
+
+/* Hosts keep the DESIGN.md cluster: three stacked rows with room for a hot value. */
+.host-row .dash-row-load .usage-meters,
+.host-row .dash-row-load .usage-meters.compact {
+  grid-auto-flow: row;
+  gap: 0.2rem;
+  max-width: 24rem;
+}
+
+/* Detector: 0.62rem meter labels render under the 11px floor; use the instrument step here. */
+.dash-row-load .usage-meter-label {
+  font-size: 0.75rem;
+}
+
+.dash-row-load .usage-meter-row {
+  grid-template-columns: 2.1rem minmax(2.5rem, 1fr) auto;
+  gap: var(--space-1);
+}
+
+.dash-row-actions {
+  grid-area: actions;
+  justify-content: flex-end;
+}
+
+.dash-node-caps summary.linkish,
+.dash-rail .activity-feed .linkish,
+.dash-attention .linkish {
+  padding: 0;
+}
+
+.dash-node-caps summary.linkish {
+  font-size: 0.82rem;
+  width: fit-content;
+}
+
+.dash-rail .activity-feed li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.1rem var(--space-3);
+  align-items: baseline;
+  padding: var(--space-2) 0;
+}
+
+.dash-rail .activity-tool {
+  grid-column: 1;
+  color: var(--ink);
+}
+
+.dash-rail .activity-server {
+  grid-column: 1;
+  font-size: 0.82rem;
+}
+
+.dash-rail .activity-status {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+
+.dash-rail .activity-time {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: end;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-rail .activity-feed .linkish {
+  grid-column: 1;
+  width: fit-content;
+  font-size: 0.82rem;
+}
+
+.dash-rail .panel {
+  background: oklch(0.16 0.012 353 / 0.6);
+}
+
+@media (max-width: 860px) {
+  .dash-row,
+  .dash-row.host-row {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "id"
+      "load"
+      "actions";
+  }
+
+  .dash-row-load:not(:empty),
+  .dash-row-actions,
+  .dash-row:not(.host-row):has(.dash-game-badge) .dash-row-load:not(:empty) {
+    padding-left: 1.25rem;
+  }
+
+  .dash-row:not(.host-row):has(.dash-game-badge) .dash-row-load:not(:empty),
+  .dash-row:not(.host-row):has(.dash-game-badge) .dash-row-actions {
+    padding-left: 3.1rem;
+  }
+
+  .dash-row-actions {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 520px) {
+  .dash-row-actions .dash-secondary-action {
+    display: none;
+  }
+
+  .dash-row-load .usage-meters,
+  .dash-row-load .usage-meters.compact {
+    grid-auto-flow: row;
   }
 }
 
@@ -3465,8 +4573,9 @@ a.btn {
 }
 
 .usage-strip-seg {
+  position: relative;
   flex: 1 1 0;
-  height: 1.35rem;
+  height: 1.6rem;
   border-radius: 5px;
   background:
     linear-gradient(to top, oklch(0.78 0.12 185 / 0.07), transparent 42%),
@@ -3476,6 +4585,19 @@ a.btn {
 
 .usage-strip-seg .usage-spark {
   height: 100%;
+}
+
+.usage-strip-key {
+  position: absolute;
+  top: 0.2rem;
+  left: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  color: oklch(0.86 0.02 353 / 0.85);
+  text-shadow: 0 0 3px oklch(0.14 0.01 353), 0 0 1px oklch(0.14 0.01 353);
+  pointer-events: none;
 }
 
 .usage-strip-note {
@@ -3834,5 +4956,151 @@ a.btn {
   *::after {
     animation: none !important;
     transition: none !important;
+  }
+}
+
+/* Phones: the map page scrolls as one column (hosts strip, add buttons, LAN room, then the
+   chat panel) so the room is never buried under a sheet. Comes last so it wins. */
+@media (max-width: 720px) {
+  .app-shell:has(.canvas-page) {
+    height: auto;
+    min-height: 100dvh;
+  }
+
+  .app-shell:has(.canvas-page) > .main-canvas {
+    overflow: visible;
+  }
+
+  .app-shell:has(.canvas-page) .canvas-page {
+    height: auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-3);
+  }
+
+  .agent-canvas-host {
+    position: relative;
+    inset: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    background: none;
+  }
+
+  .agent-canvas-rail,
+  .canvas-page.map-dock-open .agent-canvas-rail,
+  .canvas-page.map-overlay-open .agent-canvas-rail {
+    position: static;
+    width: auto;
+    max-height: none;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.45rem;
+    overflow-x: auto;
+    order: -2;
+  }
+
+  .agent-canvas-rail .agent-canvas-rail-label {
+    display: none;
+  }
+
+  .agent-canvas-rail .agent-canvas-list {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    gap: 0.25rem;
+    overflow: visible;
+  }
+
+  .agent-canvas-rail .agent-canvas-list-item {
+    width: auto;
+    min-width: max-content;
+    padding: 0.35rem 0.55rem;
+  }
+
+  .agent-canvas-rail .agent-canvas-list-item .node-status,
+  .agent-canvas-rail .agent-canvas-list-item .dash-state,
+  .agent-canvas-rail .agent-canvas-list-item .muted,
+  .agent-canvas-rail .agent-canvas-list-item .usage-strip {
+    display: none;
+  }
+
+  .agent-canvas-add-row,
+  .canvas-page.map-dock-open .agent-canvas-add-row {
+    position: static;
+    order: -1;
+    justify-content: flex-end;
+  }
+
+  .lan-room {
+    position: relative;
+    inset: auto;
+    height: min(62vh, 30rem);
+  }
+
+  .lan-tables {
+    gap: 3.5rem 1rem;
+  }
+
+  .agent-canvas-map-hint,
+  .canvas-page.map-dock-open .agent-canvas-map-hint,
+  .canvas-page.map-overlay-open .agent-canvas-map-hint {
+    display: none;
+  }
+
+  .canvas-chat-dock {
+    position: relative;
+    inset: auto;
+    width: auto;
+    height: min(80vh, 40rem);
+    max-height: none;
+    border-radius: var(--radius);
+    border: 1px solid var(--line);
+    gap: var(--space-2);
+    grid-template-rows: auto auto auto auto auto minmax(0, 1fr) auto;
+  }
+
+  .canvas-chat-dock .canvas-status-row {
+    grid-column: 1 / -1;
+  }
+
+  .canvas-chat-dock .canvas-dock-head > .usage-meters {
+    display: none;
+  }
+
+  .canvas-chat-dock .canvas-dock-tabs {
+    padding-top: var(--space-2);
+  }
+
+  .canvas-chat-log .msg {
+    max-width: 92%;
+  }
+
+  .canvas-composer-extras .canvas-busy-hint {
+    display: none;
+  }
+}
+
+/* Phones: the terminal sits in the page column under the room, before the chat. */
+@media (max-width: 720px) {
+  .server-console-dock {
+    position: relative;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    height: auto;
+  }
+
+  .server-console-dock-grip,
+  .server-console-dock-hint {
+    display: none;
+  }
+
+  .server-console-dock-log {
+    height: 16rem;
+    flex: none;
   }
 }

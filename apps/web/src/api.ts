@@ -49,8 +49,14 @@ export type ServerRow = {
   status: string;
   /** Advertised join-path proof. Missing/false means do not claim the server is up. */
   ready?: boolean;
+  /** UDP ports bound on the host, but Home cannot test the join itself. */
+  udpJoinUnverified?: boolean;
   runtimeMode: string;
   dataPath: string;
+  /** Explicit user start/stop intent. */
+  desiredState?: "running" | "stopped";
+  /** Opt-out of boot auto-start when desiredState is running. */
+  autoStart?: boolean;
   /** Engine inventory crate — not a PlayOn server; never Start/create. */
   unmanaged?: boolean;
   cpuPercent?: number | null;
@@ -128,6 +134,7 @@ export type ServerDetail = {
     imageHint?: string;
     join?: { address: string; port: number };
     ready?: boolean;
+    udpJoinUnverified?: boolean;
     joinPath?: {
       ok: boolean;
       reason: string;

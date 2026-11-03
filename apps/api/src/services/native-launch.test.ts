@@ -16,6 +16,7 @@ import {
   FOUNDRY_SKILL_NAME,
   FOUNDRY_STEAM_CLIENT_APP_ID,
   isFoundrySkill,
+  nativePlayonLaunchEnv,
   resolveNativeArgs,
   resolveNativeLaunch,
   writeBannerlordWindowsOverlayFiles,
@@ -306,6 +307,36 @@ describe("native-launch", () => {
     }
   });
 
+  it("replaces baked-in PZ servertest / 16261 with this server's identity (#1016)", () => {
+    expect(
+      resolveNativeArgs({
+        skillName: "games.project-zomboid",
+        args: ["-port", "16261", "-udpport", "16262", "-servername", "servertest"],
+        pzLaunch: {
+          serverName: "Frontier",
+          gamePort: 16265,
+          directPort: 16266,
+          cacheDir: "/data/servers/frontier/home/Zomboid",
+        },
+      }),
+    ).toEqual([
+      "-cachedir",
+      "/data/servers/frontier/home/Zomboid",
+      "-servername",
+      "Frontier",
+      "-port",
+      "16265",
+      "-udpport",
+      "16266",
+    ]);
+    expect(
+      resolveNativeArgs({
+        skillName: "games.project-zomboid",
+        args: ["-servername", "NewZombieLand3", "-port", "16261"],
+      }),
+    ).toEqual([]);
+  });
+
   it("injects Stormworks +server_dir so the PE does not use %APPDATA%", () => {
     expect(
       resolveNativeArgs({
@@ -581,5 +612,22 @@ describe("native-launch", () => {
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  it("passes PLAYON_GAME_PORT and PLAYON_HOME for catalog start.sh overlays (#1033)", () => {
+    expect(
+      nativePlayonLaunchEnv({
+        serverId: "srv1",
+        gamePort: 8303,
+        homeDir: "/tmp/playon/servers/srv1/home",
+      }),
+    ).toEqual({
+      PLAYON_SERVER_ID: "srv1",
+      PLAYON_GAME_PORT: "8303",
+      PLAYON_HOME: "/tmp/playon/servers/srv1/home",
+    });
+    expect(nativePlayonLaunchEnv({ serverId: "srv1", gamePort: 0 })).toEqual({
+      PLAYON_SERVER_ID: "srv1",
+    });
   });
 });

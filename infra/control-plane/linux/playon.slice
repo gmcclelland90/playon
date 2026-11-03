@@ -1,0 +1,11 @@
+# User slice for native games launched by systemd-run --user (#1045).
+# Install to /etc/systemd/user/playon.slice and to the playon user's
+# ~/.config/systemd/user/playon.slice. Home only passes --slice=playon.slice
+# when one of those files exists, so a launch still works before this is copied.
+#
+# Never PartOf=playon.service — stopping Home must not stop this slice.
+[Unit]
+Description=PlayOn native game servers
+Documentation=https://github.com/gmcclelland90/playon/issues/1045
+
+[Slice]

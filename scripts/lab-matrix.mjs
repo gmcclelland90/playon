@@ -33,7 +33,7 @@ import { execConsoleCommand } from "../apps/api/dist/services/server-console.js"
 import { createRuntimeAdapters } from "../packages/runtime/dist/factory.js";
 import { listHostContainers } from "../packages/runtime/dist/docker-inventory.js";
 import { defaultHostPortLookup, waitForHostPortsFree } from "../packages/runtime/dist/host-port-bind.js";
-import { isStormworksSkill, LOCAL_NODE_ID, playonContainerName, requiredUdpListenEvidence, udpListenTargets, windowsUdpPortOpenVerdict } from "../packages/shared/dist/index.js";
+import { isStormworksSkill, LOCAL_NODE_ID, playonContainerName, requiredUdpListenEvidence, tcpPortOpenTargets, udpListenTargets, windowsUdpPortOpenVerdict } from "../packages/shared/dist/index.js";
 import {
   stormworksContinueAfterSteamcmd,
   stormworksOverlayWrites,
@@ -364,7 +364,7 @@ function gamePorts(meta) {
 }
 
 function tcpPorts(meta) {
-  return gamePorts(meta).filter((p) => (p.protocol ?? "tcp") === "tcp");
+  return tcpPortOpenTargets(meta);
 }
 
 function udpOnlyGame(meta) {
@@ -526,6 +526,32 @@ async function ensureStormworksOverlayViaHome(home, serverId) {
 function skillOverlayHasStartBat(skillPath) {
   const bat = path.join(skillPath, "files", "start.bat");
   return fs.existsSync(bat) && fs.statSync(bat).isFile();
+}
+
+/** Best-effort console / docker tails so udp_process_not_running is diagnosable. */
+function attachFailureDiagnostics(notes, { dataPath, serverId }) {
+  if (!notes.consoleTail && dataPath) {
+    try {
+      const logPath = path.join(dataPath, "logs", "console.log");
+      if (fs.existsSync(logPath)) {
+        notes.consoleTail = fs.readFileSync(logPath, "utf8").slice(-800);
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  if (notes.dockerTail || !serverId) return;
+  try {
+    const out = execSync(`docker logs --tail 80 playon-${serverId}`, {
+      encoding: "utf8",
+      timeout: 8_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (out.trim()) notes.dockerTail = out.trim().slice(-800);
+  } catch (err) {
+    const extra = `${err?.stderr ?? ""}${err?.stdout ?? ""}`.trim();
+    if (extra) notes.dockerTail = extra.slice(-800);
+  }
 }
 
 /** Copy skill `files/` into a local matrix game/ jail (skip existing). */
@@ -1123,6 +1149,7 @@ async function runLifecycle(cp, skill, { runTools, windows }) {
   const phases = phaseMap();
   const startedAt = Date.now();
   let serverId = null;
+  let dataPath = null;
   const notes = {};
 
   if (HOST_SUPPLIED_SKILLS.has(meta.name)) {
@@ -1208,6 +1235,7 @@ async function runLifecycle(cp, skill, { runTools, windows }) {
       nodeId: LOCAL_NODE_ID,
     });
     serverId = created.id;
+    dataPath = created.dataPath;
     if (created.nodeId && created.nodeId !== LOCAL_NODE_ID) {
       throw new Error(`remote_placement_forbidden: nodeId=${created.nodeId}`);
     }
@@ -1319,16 +1347,7 @@ async function runLifecycle(cp, skill, { runTools, windows }) {
           tail: msg,
         };
       }
-      // Attach console log tail for native start failures
-      try {
-        const logPath = path.join(created.dataPath, "logs", "console.log");
-        if (fs.existsSync(logPath)) {
-          const logTail = fs.readFileSync(logPath, "utf8").slice(-800);
-          notes.consoleTail = logTail;
-        }
-      } catch {
-        /* ignore */
-      }
+      attachFailureDiagnostics(notes, { dataPath: created.dataPath, serverId });
       throw err;
     }
 
@@ -1375,7 +1394,10 @@ async function runLifecycle(cp, skill, { runTools, windows }) {
         if (running) break;
         await sleep(3000);
       }
-      if (!running) throw new Error("udp_process_not_running");
+      if (!running) {
+        attachFailureDiagnostics(notes, { dataPath, serverId });
+        throw new Error("udp_process_not_running");
+      }
       const { udpGame, listenTargets } = udpListenTargets(meta);
       const udpProbes = [];
       for (const p of udpGame) {
@@ -1498,6 +1520,7 @@ async function runLifecycle(cp, skill, { runTools, windows }) {
     };
   } catch (err) {
     const tail = err instanceof Error ? err.message : String(err);
+    attachFailureDiagnostics(notes, { dataPath, serverId });
     if (serverId) {
       await safeCleanup(servers, serverId);
       phases.cleanup = phases.cleanup ?? "ok";

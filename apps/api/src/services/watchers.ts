@@ -27,6 +27,8 @@ import {
 } from "@playon/shared";
 import type { z } from "zod";
 import type { Db } from "../db/client.js";
+import { recentSqliteStatement } from "../db/client.js";
+import { formatSqliteFailure, isSqliteForeignKeyError } from "../db/sqlite-error.js";
 import { servers, watcherRuns, watchers } from "../db/schema.js";
 import { readSkillMarker } from "./skill-marker.js";
 
@@ -233,19 +235,47 @@ export class WatcherService {
     status: RunStatus;
     triggerPayload?: Record<string, unknown>;
   }): Promise<WatcherRun> {
+    const watcher = await this.getRow(args.watcherId);
+    const serverRows = await this.db
+      .select({ id: servers.id })
+      .from(servers)
+      .where(eq(servers.id, args.serverId))
+      .limit(1);
+    if (!watcher || !serverRows[0]) {
+      throw new Error(
+        `watcher_run_parent_missing: watcher=${args.watcherId} server=${args.serverId}`,
+      );
+    }
     const id = nanoid();
     const now = new Date();
-    await this.db.insert(watcherRuns).values({
-      id,
-      watcherId: args.watcherId,
-      serverId: args.serverId,
-      status: args.status,
-      triggerPayloadJson: JSON.stringify(args.triggerPayload ?? {}),
-      resultJson: null,
-      error: null,
-      startedAt: now,
-      finishedAt: null,
-    });
+    try {
+      await this.db.insert(watcherRuns).values({
+        id,
+        watcherId: args.watcherId,
+        serverId: args.serverId,
+        status: args.status,
+        triggerPayloadJson: JSON.stringify(args.triggerPayload ?? {}),
+        resultJson: null,
+        error: null,
+        startedAt: now,
+        finishedAt: null,
+      });
+    } catch (err) {
+      if (isSqliteForeignKeyError(err)) {
+        console.error(
+          JSON.stringify({
+            ...formatSqliteFailure(err, recentSqliteStatement()),
+            msg: "playon_watcher_run_fk",
+            watcherId: args.watcherId,
+            serverId: args.serverId,
+          }),
+        );
+        throw new Error(
+          `watcher_run_foreign_key: watcher=${args.watcherId} server=${args.serverId}`,
+        );
+      }
+      throw err;
+    }
     return (await this.getRun(id))!;
   }
 

@@ -112,6 +112,7 @@ describe("Home vintage Windows bootstrap jobs", () => {
     expect(script).toMatch(/update_download_size_mismatch/);
     expect(script).toMatch(/Cache-Control/);
     expect(script).toMatch(/ExpectedSize/);
+    expect(script).toMatch(/ExpectedVersion/);
     const shipped = fs.readFileSync(
       path.join(repoRoot, "deploy", "windows", "ota-esm-bootstrap.ps1"),
       "utf8",

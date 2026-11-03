@@ -26,6 +26,7 @@ export {
 } from "./connectors/project-zomboid.js";
 export { fromGamedig, validateLiveState, offlineState } from "./normalize.js";
 export { createGamedigConnector } from "./gamedig-adapter.js";
+export { a2sConnector, createA2sConnector, a2sQueryPorts } from "./connectors/a2s.js";
 export {
   createSkillModuleConnector,
   querySkillModule,

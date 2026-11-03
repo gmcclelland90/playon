@@ -5,6 +5,7 @@ import {
   evaluateJoinReady,
   isLoopbackJoinHost,
   isUdpJoinUnprovenReason,
+  isUdpJoinUnverified,
   JOIN_HOST_NOT_REACHABLE,
   JOIN_PATH_CANARY_SKILL,
   joinHostNotReachableResult,
@@ -392,5 +393,65 @@ describe("joinHostNotReachableResult", () => {
     expect(blocked.joinHost).toBe("172.16.0.94");
     expect(blocked.hint).toMatch(/advertised join address/);
     expect(blocked.hint).not.toMatch(/rcon_connect_timeout/);
+  });
+});
+
+describe("isUdpJoinUnverified", () => {
+  const joinPath = {
+    ok: false,
+    reason: "udp_not_tcp_probed",
+    joinHost: "172.16.0.109",
+    port: 16261,
+    loopbackState: "closed",
+    joinHostState: "closed",
+  } as const;
+
+  it("flags a running UDP server with bound ports as untested, not failed", () => {
+    const report = evaluateJoinReady({
+      processStatus: "running",
+      joinPath,
+      protocol: "udp",
+      hostPortsBound: true,
+    });
+    expect(report.ready).toBe(false);
+    expect(isUdpJoinUnverified(report)).toBe(true);
+    expect(displayServerStatus("running", report.ready, isUdpJoinUnverified(report))).toBe(
+      "running",
+    );
+  });
+
+  it("does not soften unbound ports, starting, proven, or TCP failures", () => {
+    const unbound = evaluateJoinReady({
+      processStatus: "running",
+      joinPath,
+      protocol: "udp",
+      hostPortsBound: false,
+    });
+    expect(isUdpJoinUnverified(unbound)).toBe(false);
+    expect(displayServerStatus("running", unbound.ready, isUdpJoinUnverified(unbound))).toBe(
+      "degraded",
+    );
+    const starting = evaluateJoinReady({
+      processStatus: "starting",
+      joinPath,
+      protocol: "udp",
+      hostPortsBound: true,
+    });
+    expect(isUdpJoinUnverified(starting)).toBe(false);
+    const proven = evaluateJoinReady({
+      processStatus: "running",
+      joinPath,
+      protocol: "udp",
+      hostPortsBound: true,
+      queryOnline: true,
+    });
+    expect(isUdpJoinUnverified(proven)).toBe(false);
+    const tcp = evaluateJoinReady({
+      processStatus: "running",
+      joinPath: { ...joinPath, reason: "loopback_open_join_host_closed" },
+      protocol: "tcp",
+      hostPortsBound: true,
+    });
+    expect(isUdpJoinUnverified(tcp)).toBe(false);
   });
 });

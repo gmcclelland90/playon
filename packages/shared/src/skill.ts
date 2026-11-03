@@ -71,6 +71,16 @@ export const ENSHROUDED_LEGACY_GAME_PORT = 15636;
 export const THE_ISLE_SKILL = "games.the-isle";
 export const THE_ISLE_STEAM_BETA = "evrima";
 
+/**
+ * Catalog `games.cs2` 0.1.1 leaves `CS2_IP` unset. joedwards32/cs2 then omits
+ * `-ip`, so Source 2 auto-picks a container address and A2S often never
+ * answers on the published UDP 27015 (`query_offline: Failed all 3 attempts`).
+ * `0.0.0.0` is the image's documented "all interfaces" bind.
+ */
+export const CS2_SKILL = "games.cs2";
+export const CS2_BIND_ALL_INTERFACES = "0.0.0.0";
+export const CS2_HIBERNATE_OFF = "0";
+
 export const SkillThemeIdSchema = z.enum(["default", "grass", "ember", "steel", "paper"]);
 export type SkillThemeId = z.infer<typeof SkillThemeIdSchema>;
 
@@ -162,6 +172,11 @@ export const SkillMetadataSchema = z.object({
   dockerTty: z.boolean().optional(),
   /** Windows container isolation. Omit to use the daemon default. */
   dockerIsolation: z.enum(["process", "hyperv"]).optional(),
+  /**
+   * Docker create `User` (uid/name). Catalog may omit this; known overlays
+   * (Factorio) set `"0"` so the image entrypoint can chown the bind mount.
+   */
+  dockerUser: z.string().min(1).optional(),
   /** SteamCMD dedicated-server app id (catalog Steam skills). */
   steamAppId: z.number().int().positive().optional(),
   /**
@@ -237,6 +252,13 @@ function applyTheIsleSteamBetaFix(meta: SkillMetadata): SkillMetadata {
   return { ...meta, steamBeta: THE_ISLE_STEAM_BETA };
 }
 
+function applyCs2ListenFix(meta: SkillMetadata): SkillMetadata {
+  const env = { ...meta.dockerEnv };
+  if (!env.CS2_IP?.trim()) env.CS2_IP = CS2_BIND_ALL_INTERFACES;
+  if (!env.CS2_SERVER_HIBERNATE?.trim()) env.CS2_SERVER_HIBERNATE = CS2_HIBERNATE_OFF;
+  return { ...meta, dockerEnv: env };
+}
+
 /**
  * Remap known stale catalog fields before install / join / matrix.
  * Does not rewrite on-disk YAML — catalog bump can drop the overlay later.
@@ -245,7 +267,41 @@ export function applyKnownSkillMetadataFixes(meta: SkillMetadata): SkillMetadata
   let next = meta;
   if (next.name === "games.enshrouded") next = applyEnshroudedPortFix(next);
   if (next.name === THE_ISLE_SKILL) next = applyTheIsleSteamBetaFix(next);
+  if (next.name === CS2_SKILL) next = applyCs2ListenFix(next);
+  next = applyFactorioDockerUserFix(next);
   return next;
+}
+
+/** factoriotools/factorio entrypoint only chowns /factorio when uid is 0. */
+export const FACTORIO_DOCKER_ROOT_USER = "0";
+
+export function isFactorioDockerImage(image: string | undefined | null): boolean {
+  return (image ?? "").startsWith("factoriotools/factorio");
+}
+
+/**
+ * Docker create User for a skill. Catalog `dockerUser` wins; Factorio images
+ * default to root so the official entrypoint can chown the host bind mount
+ * (lab: 0700 game/ → uid 845 cannot mkdir saves → container exits →
+ * `udp_process_not_running`, #1034).
+ */
+export function resolveDockerUser(meta: {
+  name?: string;
+  dockerImage?: string;
+  dockerUser?: string;
+}): string | undefined {
+  const declared = meta.dockerUser?.trim();
+  if (declared) return declared;
+  if (meta.name === "games.factorio" || isFactorioDockerImage(meta.dockerImage)) {
+    return FACTORIO_DOCKER_ROOT_USER;
+  }
+  return undefined;
+}
+
+function applyFactorioDockerUserFix(meta: SkillMetadata): SkillMetadata {
+  const user = resolveDockerUser(meta);
+  if (!user || meta.dockerUser === user) return meta;
+  return { ...meta, dockerUser: user };
 }
 
 /** Parse catalog YAML/JSON and apply known-title port / dialect overlays. */

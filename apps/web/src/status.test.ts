@@ -19,6 +19,12 @@ describe("status helpers", () => {
     expect(statusHint("degraded")).toMatch(/advertised join address/);
   });
 
+  it("shows Running for a UDP server whose join Home cannot test", () => {
+    expect(displayServerStatus("running", false, true)).toBe("running");
+    expect(displayServerStatus("running", false, false)).toBe("degraded");
+    expect(displayServerStatus("stopped", false, true)).toBe("stopped");
+  });
+
   it("labels docker_unavailable", () => {
     expect(statusLabel("docker_unavailable")).toBe("Docker missing");
     expect(statusHint("docker_unavailable")).toMatch(/Install Docker/);

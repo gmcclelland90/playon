@@ -79,6 +79,10 @@ export const servers = sqliteTable("servers", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   /** Persisted so a Home restart does not reset port-dead grace. */
   instanceStartedAt: integer("instance_started_at", { mode: "timestamp_ms" }),
+  /** Explicit user start/stop intent — used to restore after a control-plane restart. */
+  desiredState: text("desired_state").notNull().default("stopped"),
+  /** Opt-out of boot auto-start even when desiredState is running. */
+  autoStart: integer("auto_start", { mode: "boolean" }).notNull().default(true),
 });
 
 export const conversations = sqliteTable("conversations", {

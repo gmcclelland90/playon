@@ -1,5 +1,6 @@
 import type { QueryDialect } from "@playon/shared";
 import { createGamedigConnector } from "./gamedig-adapter.js";
+import { a2sConnector } from "./connectors/a2s.js";
 import { factorioConnector } from "./connectors/factorio.js";
 import { minecraftStatusConnector } from "./connectors/minecraft-status.js";
 import { projectZomboidConnector } from "./connectors/project-zomboid.js";
@@ -28,11 +29,7 @@ const descriptors: DialectDescriptor[] = [
     id: "a2s",
     // Generic Valve A2S — not Rust-specific (CS2, TF2, Source, etc.).
     portPreference: "query",
-    connector: createGamedigConnector({
-      id: "a2s",
-      gamedigType: "protocol-valve",
-      gameLabel: "Source",
-    }),
+    connector: a2sConnector,
   },
   {
     id: "valheim",

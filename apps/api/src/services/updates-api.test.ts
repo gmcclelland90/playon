@@ -385,4 +385,77 @@ describe("updates API", () => {
     expect(nodeJobService.claimNext("playon-win-1")?.kind).toBe("process_start");
     expect(nodeJobService.claimNext("playon-win-1")).toBeNull();
   });
+
+  it("HTTP result POST cannot mark Windows self-update done until the new stamp checks in (#1040)", async () => {
+    const homeVer = readAppVersion();
+    await db.insert(nodes).values({
+      id: "win-1040",
+      name: "playon-win-1",
+      os: "windows",
+      docker: false,
+      native: true,
+      lastSeenAt: new Date(),
+      kind: "lan",
+      agentVersion: "0.2.13",
+      tunnelStatus: "none",
+    });
+    const app = createApp(db, testConfig(root));
+    const job = nodeJobService.enqueue("win-1040", "node_self_update", {
+      downloadUrl: `https://github.com/gmcclelland90/playon/releases/download/v${homeVer}/playon-node-${homeVer}-windows-x64.tar.gz`,
+      sha256: "e".repeat(64),
+      version: homeVer,
+    });
+    expect(nodeJobService.claimNext("win-1040")?.id).toBe(job.id);
+
+    const premature = await app.request(`/api/nodes/win-1040/jobs/${job.id}/result`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ok: true,
+        result: {
+          version: homeVer,
+          installRoot: "C:\\playon-node",
+          preserved: ["data"],
+          restartRequired: true,
+        },
+      }),
+    });
+    expect(premature.status).toBe(200);
+    expect(await premature.json()).toMatchObject({ id: job.id, status: "running" });
+    expect(nodeJobService.get(job.id)?.status).toBe("running");
+
+    const oldHb = await app.request("/api/nodes/heartbeat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        nodeId: "win-1040",
+        name: "playon-win-1",
+        os: "windows",
+        docker: false,
+        native: true,
+        agentVersion: "0.2.13",
+      }),
+    });
+    expect(oldHb.status).toBe(200);
+    expect(nodeJobService.get(job.id)?.status).toBe("running");
+
+    const newHb = await app.request("/api/nodes/heartbeat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        nodeId: "win-1040",
+        name: "playon-win-1",
+        os: "windows",
+        docker: false,
+        native: true,
+        agentVersion: homeVer,
+      }),
+    });
+    expect(newHb.status).toBe(200);
+    expect(nodeJobService.get(job.id)?.status).toBe("done");
+    expect(nodeJobService.get(job.id)?.result).toMatchObject({
+      version: homeVer,
+      installRoot: "heartbeat",
+    });
+  });
 });

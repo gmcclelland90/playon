@@ -95,6 +95,7 @@ describe("local docker lifecycle through ServerRuntimeHandle", () => {
       { host: 34197, container: 34197, protocol: "udp" },
       { host: 27015, container: 27015, protocol: "tcp" },
     ]);
+    expect(fake.specs[0]?.user).toBe("0");
   });
 
   it("rewrites Docker bind-address-in-use as host_port_in_use with the holder (#941)", async () => {

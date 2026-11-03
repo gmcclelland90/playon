@@ -232,9 +232,34 @@ export function playerPanelStatusFromJoinReady(
   return "running";
 }
 
-/** Panel / UI status string — never “running” unless ready. */
-export function displayServerStatus(processStatus: string, ready?: boolean | null): string {
-  if (processStatus === "running" && ready !== true) return "degraded";
+/**
+ * UDP server that is process-up with its advertised ports bound on the host,
+ * but nothing (no query answer) proved a LAN client can join. Home cannot
+ * test a UDP join by itself, so hosts see Running + a "not tested" note
+ * instead of “Not joinable”. `ready` stays false for the canary.
+ */
+export function isUdpJoinUnverified(
+  report: Pick<JoinReadyReport, "ready" | "status" | "reason" | "protocol" | "hostPortsBound">,
+): boolean {
+  return (
+    !report.ready &&
+    report.protocol === "udp" &&
+    report.status === "running" &&
+    report.hostPortsBound === true &&
+    isUdpJoinUnprovenReason(report.reason)
+  );
+}
+
+/**
+ * Panel / UI status string — never “running” unless ready, except a UDP
+ * server whose join Home cannot test (`udpJoinUnverified`).
+ */
+export function displayServerStatus(
+  processStatus: string,
+  ready?: boolean | null,
+  udpJoinUnverified?: boolean | null,
+): string {
+  if (processStatus === "running" && ready !== true && udpJoinUnverified !== true) return "degraded";
   return processStatus;
 }
 

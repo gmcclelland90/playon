@@ -9,6 +9,7 @@ import {
   WORKSHOP_WATCHER_STATE_KEY,
   type WorkshopWatcherState,
 } from "./steam-workshop.js";
+import { formatProcessFailure } from "../process-errors.js";
 import { getSetting, setSetting } from "./settings.js";
 
 const GLOBAL_AGENT_CAP = 3;
@@ -37,7 +38,9 @@ export class WatcherEngine {
   start(): void {
     if (this.unsubscribe) return;
     this.unsubscribe = this.plane.eventHub.subscribe((event) => {
-      void this.onEvent(event);
+      void this.onEvent(event).catch((err) => {
+        console.error(formatProcessFailure("watcher_event", err));
+      });
     });
     console.log("watcher engine: event subscriptions active");
   }
@@ -308,7 +311,9 @@ export class WatcherEngine {
     const q = this.serverQueues.get(item.watcher.serverId) ?? [];
     q.push(item);
     this.serverQueues.set(item.watcher.serverId, q);
-    void this.drainServer(item.watcher.serverId);
+    void this.drainServer(item.watcher.serverId).catch((err) => {
+      console.error(formatProcessFailure("watcher_run", err));
+    });
   }
 
   private async drainServer(serverId: string): Promise<void> {
@@ -319,26 +324,37 @@ export class WatcherEngine {
         const q = this.serverQueues.get(serverId);
         if (!q?.length) break;
         const item = q.shift()!;
-        if (item.watcher.action.kind === "agent") {
-          while (this.agentInFlight >= GLOBAL_AGENT_CAP) {
-            await sleep(250);
-          }
-          this.agentInFlight++;
-          try {
-            await this.runOne(item);
-          } finally {
-            this.agentInFlight--;
-          }
-        } else {
-          await this.runOne(item);
+        try {
+          await this.runQueued(item);
+        } catch (err) {
+          console.error(formatProcessFailure("watcher_run", err));
         }
       }
     } finally {
       this.serverBusy.delete(serverId);
       if ((this.serverQueues.get(serverId) ?? []).length) {
-        void this.drainServer(serverId);
+        void this.drainServer(serverId).catch((err) => {
+          console.error(formatProcessFailure("watcher_run", err));
+        });
       }
     }
+  }
+
+  private async runQueued(item: QueueItem): Promise<void> {
+    const { watcher } = item;
+    if (watcher.action.kind === "agent") {
+      while (this.agentInFlight >= GLOBAL_AGENT_CAP) {
+        await sleep(250);
+      }
+      this.agentInFlight++;
+      try {
+        await this.runOne(item);
+      } finally {
+        this.agentInFlight--;
+      }
+      return;
+    }
+    await this.runOne(item);
   }
 
   private async runOne(item: QueueItem): Promise<void> {

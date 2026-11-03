@@ -3,6 +3,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type FormEvent,
   type KeyboardEvent,
 } from "react";
@@ -29,11 +30,8 @@ import {
   setAlwaysApproveTool,
   shouldAutoApprove,
 } from "../confirm-prefs";
-import {
-  AgentCanvas,
-  skillShortLabel,
-  type SelectedAnchor,
-} from "../components/agent-canvas/AgentCanvas";
+import { AgentCanvas, skillShortLabel } from "../components/agent-canvas/AgentCanvas";
+import { serverPlayersFromPanel } from "../components/agent-canvas/lan-room-layout";
 import { ChatChannelList } from "../components/ChatChannelList";
 import { ChatNowLine } from "../components/ChatNowLine";
 import { ChatMarkdown } from "../components/ChatMarkdown";
@@ -42,11 +40,18 @@ import { chatNowView } from "../chat-now";
 import { mergeNodeContainerInventory } from "../components/agent-canvas/map-node-layout";
 import { MapAddNodePanel } from "../components/MapAddNodePanel";
 import { MapManageSuggestPanel } from "../components/MapManageSuggestPanel";
-import { ServerConsoleBubble } from "../components/ServerConsoleBubble";
+import { ServerConsoleDock } from "../components/ServerConsoleDock";
 import { ServerModsPanel } from "../components/ServerModsPanel";
 import { MAKE_A_MOD_DRAFT } from "../make-a-mod";
 import { ServerUsageMeters } from "../components/UsageMeters";
-import { displayServerStatus, runtimeErrorHint, statusHint, statusLabel } from "../status";
+import {
+  displayServerStatus,
+  runtimeErrorHint,
+  statusHint,
+  statusLabel,
+  UDP_JOIN_UNVERIFIED_HINT,
+} from "../status";
+import { gameBadgeText, gameHue } from "../game-badge";
 import { playonSocket } from "../ws";
 
 function isAbortError(err: unknown): boolean {
@@ -175,7 +180,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     }
   });
   const [activeKey, setActiveKey] = useState<string>(() =>
-    selectedId ? serverChannelKey(selectedId) : "",
+    selectedId ? serverChannelKey(selectedId) : COMPOSE_CHANNEL_KEY,
   );
   const [channels, setChannels] = useState<Record<string, ChannelRecord>>({});
   const [message, setMessage] = useState("");
@@ -201,11 +206,19 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const [renameError, setRenameError] = useState<string | null>(null);
   const [dockTab, setDockTab] = useState<DockTab>("chat");
   const [consoleOpen, setConsoleOpen] = useState(true);
-  const [selectedAnchor, setSelectedAnchor] = useState<SelectedAnchor | null>(null);
   const chatLogRef = useRef<HTMLDivElement>(null);
 
   const servers = useQuery({ queryKey: ["servers"], queryFn: api.servers, refetchInterval: 4000 });
   const nodes = useQuery({ queryKey: ["nodes"], queryFn: api.nodes, refetchInterval: 8_000 });
+  // Live player lists ride on the panel's server_status blocks; they seat players on the map.
+  const panelPlayers = useQuery({
+    queryKey: ["map-players"],
+    queryFn: async () => {
+      const panel = await api.panel();
+      return panel.notModified ? {} : serverPlayersFromPanel(panel.blocks);
+    },
+    refetchInterval: 15_000,
+  });
   const [addNodeOpen, setAddNodeOpen] = useState(false);
   const [scanNodeId, setScanNodeId] = useState<string | null>(null);
   const removeNodeMut = useMutation({
@@ -238,10 +251,9 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   useEffect(() => {
     if (!selectedId || !servers.data?.servers.length) return;
     if (!servers.data.servers.some((s) => s.id === selectedId)) {
-      if (activeKey === serverChannelKey(selectedId)) setActiveKey("");
+      if (activeKey === serverChannelKey(selectedId)) setActiveKey(COMPOSE_CHANNEL_KEY);
       setSelectedId(undefined);
       setConsoleOpen(false);
-      setSelectedAnchor(null);
     }
   }, [selectedId, servers.data?.servers]);
 
@@ -268,7 +280,6 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     setRenameError(null);
     setDockTab("chat");
     setConsoleOpen(false);
-    setSelectedAnchor(null);
     try {
       localStorage.removeItem("playon.lastServerId");
     } catch {
@@ -279,9 +290,8 @@ export function CanvasPage({ user }: { user: PublicUser }) {
 
   function clearMapSelection() {
     setSelectedId(undefined);
-    setActiveKey("");
+    setActiveKey(COMPOSE_CHANNEL_KEY);
     setConsoleOpen(false);
-    setSelectedAnchor(null);
     setScanNodeId(null);
     setAddNodeOpen(false);
     setOpsError(null);
@@ -482,12 +492,14 @@ export function CanvasPage({ user }: { user: PublicUser }) {
     }
   }
 
-  async function ensureComposeConversation(): Promise<string | undefined> {
+  /** `create: false` only loads an existing add-server chat (used when the panel opens idle). */
+  async function ensureComposeConversation(create = true): Promise<string | undefined> {
     const existing = channelsRef.current[COMPOSE_CHANNEL_KEY];
     if (!composeNeedsFreshConversation(existing)) return existing?.conversationId;
     try {
       const listed = await api.unboundConversations();
       let id = listed.conversations[0]?.id;
+      if (!id && !create) return undefined;
       if (!id) {
         const created = await api.createConversation("Add server");
         id = created.conversation.id;
@@ -516,6 +528,12 @@ export function CanvasPage({ user }: { user: PublicUser }) {
       return undefined;
     }
   }
+
+  // The chat panel is always open; with nothing picked it shows the add-server chat.
+  useEffect(() => {
+    if (activeKey === COMPOSE_CHANNEL_KEY) void ensureComposeConversation(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeKey]);
 
   useEffect(() => {
     if (!selectedId) return;
@@ -578,7 +596,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
       });
       if (activeKey === serverChannelKey(id)) {
         setSelectedId(undefined);
-        setActiveKey("");
+        setActiveKey(COMPOSE_CHANNEL_KEY);
       }
       await qc.invalidateQueries({ queryKey: ["servers"] });
       try {
@@ -856,7 +874,15 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const selected = servers.data?.servers.find((s) => s.id === selectedId);
   const processStatus = detail.data?.server.status ?? selected?.status ?? "unknown";
   const ready = detail.data?.runtime.ready ?? detail.data?.server.ready ?? selected?.ready;
-  const status = displayServerStatus(processStatus, ready);
+  const udpJoinUnverified =
+    detail.data?.runtime.udpJoinUnverified ??
+    detail.data?.server.udpJoinUnverified ??
+    selected?.udpJoinUnverified;
+  const status = displayServerStatus(processStatus, ready, udpJoinUnverified);
+  const opsHint =
+    status === "running" && ready !== true && udpJoinUnverified
+      ? UDP_JOIN_UNVERIFIED_HINT
+      : (statusHint(status) ?? runtimeErrorHint(status));
   const join = detail.data?.runtime.join;
   const pendingKeys = Object.entries(channels)
     .filter(([, channel]) => channel.pending)
@@ -898,9 +924,6 @@ export function CanvasPage({ user }: { user: PublicUser }) {
       ? activityOnSelected.skill
       : undefined;
   const dockTitle = selected?.name ?? (composeActive ? "Add server" : "Chat");
-  const dockHint = unbound
-    ? `${user.displayName} · tell the agent what to install`
-    : `${user.displayName} · ask the agent to maintain this server`;
   const emptyHint = unbound
     ? "Try “I want a vanilla Minecraft server”."
     : "Ask about status, config, restarts, snapshots… or Make a mod that…";
@@ -935,6 +958,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
   const pageClass = [
     "canvas-page",
     dockOpen ? "map-dock-open" : "",
+    consoleOpen && selectedId && selected ? "map-console-open" : "",
     scanNodeId || addNodeOpen ? "map-overlay-open" : "",
   ]
     .filter(Boolean)
@@ -963,6 +987,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
         selectedId={selectedId}
         selectedHostId={scanNodeId}
         agents={serverAgents}
+        players={panelPlayers.data}
         skills={skills.map((s) => ({
           skill: s.skill,
           level: s.level,
@@ -982,33 +1007,16 @@ export function CanvasPage({ user }: { user: PublicUser }) {
           setScanNodeId(id);
         }}
         onBackgroundClick={clearMapSelection}
-        onSelectedAnchorChange={setSelectedAnchor}
-        showAddButton={!dockOpen && !addNodeOpen && !scanNodeId}
+        showAddButton={!addNodeOpen && !scanNodeId}
       />
 
-      {selected && selectedId && selectedAnchor ? (
-        <div
-          className="server-tile-rename"
-          style={{ left: selectedAnchor.x, top: selectedAnchor.y }}
-        >
-          <ServerNameControl
-            name={selected.name}
-            showName={false}
-            editing={renameOpen}
-            onEditingChange={setRenameOpen}
-            pending={rename.isPending}
-            error={renameError}
-            onSave={(name) => rename.mutateAsync({ id: selectedId, name })}
-          />
-        </div>
-      ) : null}
 
       {consoleOpen && selectedId && selected ? (
-        <ServerConsoleBubble
+        <ServerConsoleDock
           serverId={selectedId}
           serverName={selected.name}
-          anchor={selectedAnchor}
           detail={detail.data}
+          onClose={() => setConsoleOpen(false)}
         />
       ) : null}
 
@@ -1042,19 +1050,31 @@ export function CanvasPage({ user }: { user: PublicUser }) {
           aria-label={`Chat for ${dockTitle}`}
         >
           <div className="canvas-dock-head">
-            <div className="dash-section-head">
-              {selected && selectedId && !selectedAnchor ? (
-                <ServerNameControl
-                  name={selected.name}
-                  editing={renameOpen}
-                  onEditingChange={setRenameOpen}
-                  pending={rename.isPending}
-                  error={renameError}
-                  onSave={(name) => rename.mutateAsync({ id: selectedId, name })}
-                />
-              ) : (
-                <h3 title={selected?.name ?? dockTitle}>{dockTitle}</h3>
-              )}
+            <div className="dash-section-head canvas-dock-titlebar">
+              <div className="canvas-dock-title">
+                {selected && selectedId ? (
+                  <>
+                    <span
+                      className={`dash-game-badge${status === "running" ? "" : " is-idle"}`}
+                      style={{ "--game-h": gameHue(selected.game) } as CSSProperties}
+                      aria-hidden
+                    >
+                      {gameBadgeText(selected.game)}
+                      <span className={`dash-dot state-${status}`} />
+                    </span>
+                    <ServerNameControl
+                      name={selected.name}
+                      editing={renameOpen}
+                      onEditingChange={setRenameOpen}
+                      pending={rename.isPending}
+                      error={renameError}
+                      onSave={(name) => rename.mutateAsync({ id: selectedId, name })}
+                    />
+                  </>
+                ) : (
+                  <h3 title={dockTitle}>{dockTitle}</h3>
+                )}
+              </div>
               <div className="btn-row">
                 {selectedId ? (
                   <button
@@ -1066,21 +1086,8 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                     Terminal
                   </button>
                 ) : null}
-                {selectedId ? (
-                  <button type="button" className="linkish" onClick={openInstallChat}>
-                    + Add
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="linkish"
-                  onClick={() => clearMapSelection()}
-                >
-                  Close
-                </button>
               </div>
             </div>
-            <p className="canvas-dock-hint">{dockHint}</p>
             <ChatChannelList
               channels={channelItems.map((channel) => ({
                 ...channel,
@@ -1102,7 +1109,12 @@ export function CanvasPage({ user }: { user: PublicUser }) {
             {selected && selectedId ? (
               <>
                 <div className="canvas-status-row">
-                  <span className={`server-status-pill status-${status}`}>{statusLabel(status)}</span>
+                  <span
+                    className={`server-status-pill status-${status}`}
+                    title={opsHint ?? undefined}
+                  >
+                    {statusLabel(status)}
+                  </span>
                   {selected.game ? <span className="muted">{selected.game}</span> : null}
                   {activityOnSelected ? (
                     <span className="muted canvas-busy-hint">
@@ -1192,11 +1204,7 @@ export function CanvasPage({ user }: { user: PublicUser }) {
               aria-labelledby="dock-tab-ops"
               hidden={dockTab !== "ops"}
             >
-              {statusHint(status) || runtimeErrorHint(status) ? (
-                <p className="muted canvas-dock-hint">
-                  {statusHint(status) ?? runtimeErrorHint(status)}
-                </p>
-              ) : null}
+              {opsHint ? <p className="muted canvas-dock-hint">{opsHint}</p> : null}
               <div className="btn-row">
                 <button
                   type="button"
@@ -1279,14 +1287,6 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                 activeSkill={activeSkill}
               />
             </div>
-          ) : null}
-
-          {unbound ? (
-            <AgentSkillsPanel
-              skills={skills}
-              loading={agents.isLoading}
-              activeSkill={activeSkill}
-            />
           ) : null}
 
           {pendingConfirm ? (
@@ -1409,7 +1409,8 @@ export function CanvasPage({ user }: { user: PublicUser }) {
             <ChatNowLine view={nowView} />
           </div>
 
-          <form className="stack canvas-chat-composer" onSubmit={onSubmit}>
+          <form className="canvas-chat-composer" onSubmit={onSubmit}>
+            <div className="canvas-composer-pill">
             <label className="field">
               <span className="sr-only">Message</span>
               <textarea
@@ -1424,17 +1425,6 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                 aria-label="Message the agents"
               />
             </label>
-            <div className="btn-row">
-              {selectedId && !unbound ? (
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-compact"
-                  disabled={chatPending}
-                  onClick={startMakeMod}
-                >
-                  Make a mod that…
-                </button>
-              ) : null}
               {chatPending ? (
                 <button
                   type="button"
@@ -1453,10 +1443,20 @@ export function CanvasPage({ user }: { user: PublicUser }) {
                   Send
                 </button>
               )}
+            </div>
+            <div className="canvas-composer-extras">
+              {selectedId && !unbound ? (
+                <button
+                  type="button"
+                  className="linkish"
+                  disabled={chatPending}
+                  onClick={startMakeMod}
+                >
+                  Make a mod that…
+                </button>
+              ) : null}
               <span className="muted canvas-busy-hint">
-                {chatPending
-                  ? "Stop cancels this turn"
-                  : "Enter to send · Shift+Enter for line"}
+                {chatPending ? "Stop cancels this turn" : "Enter to send"}
               </span>
             </div>
             {chatSendError ? <p className="error">{chatSendError}</p> : null}

@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import type Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { evaluateJoinReady } from "@playon/shared";
 import { eq } from "drizzle-orm";
 import { createDb } from "../db/client.js";
 import { applyBootstrap } from "../db/migrate.js";
@@ -274,6 +275,40 @@ describe("HealthService", () => {
     expect(report.checks.some((c) => c.id === "join-path" && !c.ok)).toBe(true);
     expect(report.joinPath?.reason).toBe("loopback_open_join_host_closed");
     expect(restart).not.toHaveBeenCalled();
+  });
+
+  it("join-path: bound UDP ports Home cannot test are untested, not failed", async () => {
+    const { db, config } = tempConfig();
+    const servers = new ServerService(db, config);
+    const net = new NetToolsService(servers);
+    const report = evaluateJoinReady({
+      processStatus: "running",
+      joinPath: {
+        ok: false,
+        reason: "udp_not_tcp_probed",
+        joinHost: "172.16.0.109",
+        port: 16261,
+        loopbackState: "closed",
+        joinHostState: "closed",
+      },
+      protocol: "udp",
+      hostPortsBound: true,
+    });
+    const joinReady = { probe: async () => report } as unknown as JoinReadyService;
+    const health = new HealthService(servers, net, config, undefined, joinReady);
+    const created = await servers.createFromSkill({
+      skillName: LAB_DOCKER_SKILL,
+      serverName: "UDP Untested",
+    });
+    stubGet(servers, asRunning(created));
+    servers.portsBoundOverride = async () => true;
+
+    const result = await health.checkServer(created.id);
+    const joinCheck = result.checks.find((c) => c.id === "join-path");
+    expect(result.ready).toBe(false);
+    expect(result.udpJoinUnverified).toBe(true);
+    expect(joinCheck?.ok).toBe(true);
+    expect(joinCheck?.detail).toMatch(/not testable from Home/);
   });
 
   it("does not treat Home soak 127.0.0.1 as the remote server's loopback", async () => {

@@ -8,6 +8,9 @@ import {
   SkillMetadataSchema,
   THE_ISLE_SKILL,
   THE_ISLE_STEAM_BETA,
+  CS2_SKILL,
+  CS2_BIND_ALL_INTERFACES,
+  CS2_HIBERNATE_OFF,
 } from "./skill.js";
 
 describe("SkillMetadataSchema contract", () => {
@@ -293,6 +296,73 @@ describe("SkillMetadataSchema contract", () => {
       steamBeta: "custom-evrima",
     });
     expect(explicit.steamBeta).toBe("custom-evrima");
+  });
+
+  it("runs Factorio containers as root so the image can chown the bind mount (#1034)", () => {
+    const catalog = SkillMetadataSchema.parse({
+      name: "games.factorio",
+      version: "0.1.1",
+      dockerImage: "factoriotools/factorio:stable",
+      containerSupport: "full",
+    });
+    expect(catalog.dockerUser).toBeUndefined();
+    expect(applyKnownSkillMetadataFixes(catalog).dockerUser).toBe("0");
+    expect(
+      parseSkillMetadata({
+        name: "fixtures.lab-factorio-ports",
+        version: "0.1.0",
+        dockerImage: "factoriotools/factorio:stable",
+        containerSupport: "full",
+      }).dockerUser,
+    ).toBe("0");
+    expect(
+      parseSkillMetadata({
+        name: "games.factorio",
+        version: "0.1.2",
+        dockerImage: "factoriotools/factorio:stable",
+        containerSupport: "full",
+        dockerUser: "845",
+      }).dockerUser,
+    ).toBe("845");
+  });
+
+  it("binds catalog games.cs2 to 0.0.0.0 when CS2_IP is unset (#1035)", () => {
+    const catalog = SkillMetadataSchema.parse({
+      name: CS2_SKILL,
+      version: "0.1.1",
+      dockerImage: "joedwards32/cs2:latest",
+      dockerEnv: {
+        CS2_LAN: "1",
+        CS2_PORT: "27015",
+      },
+      queryDialect: "a2s",
+      queryPortName: "game",
+      ports: [
+        { name: "game", protocol: "udp", default: 27015 },
+        { name: "game-tcp", protocol: "tcp", default: 27015 },
+      ],
+    });
+    expect(catalog.dockerEnv.CS2_IP).toBeUndefined();
+    const fixed = applyKnownSkillMetadataFixes(catalog);
+    expect(fixed.dockerEnv.CS2_IP).toBe(CS2_BIND_ALL_INTERFACES);
+    expect(fixed.dockerEnv.CS2_SERVER_HIBERNATE).toBe(CS2_HIBERNATE_OFF);
+    expect(fixed.dockerEnv.CS2_LAN).toBe("1");
+    expect(applyKnownSkillMetadataFixes(fixed).dockerEnv.CS2_IP).toBe(CS2_BIND_ALL_INTERFACES);
+
+    const parsed = parseSkillMetadata({
+      name: CS2_SKILL,
+      version: "0.1.1",
+      dockerEnv: { CS2_LAN: "1" },
+    });
+    expect(parsed.dockerEnv.CS2_IP).toBe(CS2_BIND_ALL_INTERFACES);
+
+    const explicit = parseSkillMetadata({
+      name: CS2_SKILL,
+      version: "0.1.2",
+      dockerEnv: { CS2_IP: "192.168.1.10", CS2_SERVER_HIBERNATE: "1" },
+    });
+    expect(explicit.dockerEnv.CS2_IP).toBe("192.168.1.10");
+    expect(explicit.dockerEnv.CS2_SERVER_HIBERNATE).toBe("1");
   });
 });
 

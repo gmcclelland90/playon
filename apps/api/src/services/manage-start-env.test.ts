@@ -34,6 +34,8 @@ describe("managed start env/wrapper", () => {
     expect(sh).toContain("XDG_CONFIG_HOME");
     expect(sh).toContain('JAVA_TOOL_OPTIONS="-Duser.home=${PLAYON_HOME}');
     expect(sh).toContain("ProjectZomboid64");
+    expect(sh).toContain('SAVED_PLAYON_SERVER_NAME="${PLAYON_SERVER_NAME-}"');
+    expect(sh).toContain('PLAYON_SERVER_NAME="$SAVED_PLAYON_SERVER_NAME"');
     expect(sh).toContain('EXTRA+=(-cachedir="$(cd "${PLAYON_HOME}/Zomboid" && pwd)")');
     expect(sh).toContain('EXTRA+=(-adminpassword "$PLAYON_ADMIN_PASSWORD")');
     expect(sh).toContain('EXTRA+=("$FLAG" "$PLAYON_SERVER_NAME")');
