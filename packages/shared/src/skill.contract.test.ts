@@ -11,6 +11,8 @@ import {
   CS2_SKILL,
   CS2_BIND_ALL_INTERFACES,
   CS2_HIBERNATE_OFF,
+  MINECRAFT_BEDROCK_SKILL,
+  renderJoinHostEnv,
 } from "./skill.js";
 
 describe("SkillMetadataSchema contract", () => {
@@ -363,6 +365,79 @@ describe("SkillMetadataSchema contract", () => {
     });
     expect(explicit.dockerEnv.CS2_IP).toBe("192.168.1.10");
     expect(explicit.dockerEnv.CS2_SERVER_HIBERNATE).toBe("1");
+  });
+
+  it("points catalog games.minecraft-bedrock at NetherNet TCP 19132 (#1048)", () => {
+    const catalog = SkillMetadataSchema.parse({
+      name: MINECRAFT_BEDROCK_SKILL,
+      version: "0.1.0",
+      dockerImage: "itzg/minecraft-bedrock-server:latest",
+      dockerEnv: {
+        EULA: "TRUE",
+        ONLINE_MODE: "false",
+        SERVER_NAME: "PlayOn Bedrock",
+      },
+      queryDialect: "none",
+      ports: [{ name: "game", protocol: "udp", default: 19132 }],
+      join: {
+        clientSetupNotes: "Add Server → {{host}} (UDP port {{port}}, default 19132).",
+      },
+    });
+    expect(catalog.ports[0]).toMatchObject({ protocol: "udp", default: 19132 });
+    const fixed = applyKnownSkillMetadataFixes(catalog);
+    expect(fixed.ports).toEqual([
+      { name: "game", protocol: "tcp", default: 19132 },
+      { name: "game-udp", protocol: "udp", default: 19140 },
+    ]);
+    expect(fixed.dockerEnv.TRANSPORT).toBe("nethernet");
+    expect(fixed.dockerEnv.SERVER_PORT).toBe("19132");
+    expect(fixed.dockerEnv.ALLOW_LIST).toBe("false");
+    expect(fixed.dockerEnv.EULA).toBe("TRUE");
+    expect(fixed.dockerEnv.SERVER_UDP_PORTS).toBe("{{joinHost}}:19140:19140");
+    expect(fixed.join?.clientSetupNotes).not.toMatch(/UDP port/);
+    expect(applyKnownSkillMetadataFixes(fixed).ports).toEqual(fixed.ports);
+    expect(applyKnownSkillMetadataFixes(fixed).dockerEnv.SERVER_UDP_PORTS).toBe(
+      fixed.dockerEnv.SERVER_UDP_PORTS,
+    );
+  });
+
+  it("leaves an explicit Bedrock RakNet catalog and custom UDP ports alone", () => {
+    const raknet = parseSkillMetadata({
+      name: MINECRAFT_BEDROCK_SKILL,
+      version: "0.1.1",
+      dockerEnv: { EULA: "TRUE", TRANSPORT: "raknet" },
+      ports: [{ name: "game", protocol: "udp", default: 19132 }],
+    });
+    expect(raknet.ports).toEqual([{ name: "game", protocol: "udp", default: 19132 }]);
+    expect(raknet.dockerEnv.ALLOW_LIST).toBeUndefined();
+
+    const custom = parseSkillMetadata({
+      name: MINECRAFT_BEDROCK_SKILL,
+      version: "0.1.1",
+      dockerEnv: {
+        EULA: "TRUE",
+        SERVER_UDP_PORTS: "10.0.0.8:19200:19200",
+        ALLOW_LIST: "true",
+      },
+      ports: [
+        { name: "game", protocol: "tcp", default: 19132 },
+        { name: "game-udp", protocol: "udp", default: 19200 },
+      ],
+    });
+    expect(custom.dockerEnv.SERVER_UDP_PORTS).toBe("10.0.0.8:19200:19200");
+    expect(custom.dockerEnv.ALLOW_LIST).toBe("true");
+    expect(custom.ports.map((p) => p.default)).toEqual([19132, 19200]);
+  });
+
+  it("renders Bedrock server-udp-ports from a join-host literal", () => {
+    expect(renderJoinHostEnv("{{joinHost}}:19140:19140", "192.168.1.20")).toBe(
+      "192.168.1.20:19140:19140",
+    );
+    expect(renderJoinHostEnv("{{joinHost}}:19140:19140", "2001:db8::1")).toBe(
+      "[2001:db8::1]:19140:19140",
+    );
+    expect(renderJoinHostEnv("{{joinHost}}:19140:19140", "playon.local")).toBe("19140:19140");
+    expect(renderJoinHostEnv("already-set", "192.168.1.20")).toBe("already-set");
   });
 });
 

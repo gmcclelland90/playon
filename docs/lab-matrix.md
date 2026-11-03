@@ -48,6 +48,7 @@ A skill is `ok` only when `port_open` passes:
 
 - **TCP:** connect succeeds (Linux loopback / Windows `net_port_check` against `join_host`). Includes `queryPortName` when that port is TCP (Factorio RCON `rcon:27015`) so those skills are not treated as UDP-only. Ready-gate / in-app “up” is the advertised join host from Home; a localhost check must run on the server’s node (`net_tcp_connect`), not the API host.
 - **Linux UDP:** `ss -uln` shows the required bind (query port only when `queryPortName` is set — Steam-networking exception). `status=running` is not enough.
+- **Bedrock (NetherNet, BDS 1.26.50+):** the process listens on **TCP 19132**, not UDP 19132. Catalog `games.minecraft-bedrock` 0.1.0 still declares UDP 19132, so Home rewrites that port to TCP and publishes gameplay UDP 19140 before matrix `port_open`. Do not skip the port check for this skill — a dead container still fails the TCP connect.
 - **Windows UDP / no-TCP:** node-side listen (`net_port_check protocol=udp` → `net_udp_listen` job, Windows `netstat`) **or** query-online. Home `status=running` is not enough. Old agents that do not advertise `net_udp_listen` fall back to query; no dialect + no listen → `udp_listen_unproven`.
 
 Static green alone is not enough. Do not loosen Linux to match Windows. Regression: `windowsUdpPortOpenVerdict` unit tests in `@playon/shared` plus a real UDP bind via `probeUdpListen` / `net_udp_listen` (no friend servers).

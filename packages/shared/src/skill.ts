@@ -259,6 +259,74 @@ function applyCs2ListenFix(meta: SkillMetadata): SkillMetadata {
   return { ...meta, dockerEnv: env };
 }
 
+/** Catalog id. BDS 1.26.50+ listens on TCP, not the old RakNet UDP port. */
+export const MINECRAFT_BEDROCK_SKILL = "games.minecraft-bedrock";
+/** NetherNet signaling (HTTP). `ss`/TCP connect can see this. */
+export const BEDROCK_SIGNAL_PORT = 19132;
+/**
+ * Shared gameplay UDP port. BDS does not listen on UDP 19132 under NetherNet;
+ * `server-udp-ports` pins the port clients are told to use.
+ */
+export const BEDROCK_GAMEPLAY_UDP_PORT = 19140;
+/** Expanded at container create with the join host (`IP:public:local`). */
+export const BEDROCK_UDP_PORTS_TEMPLATE = "{{joinHost}}:19140:19140";
+
+/**
+ * Fill `{{joinHost}}` in container env. BDS rejects hostnames in
+ * `server-udp-ports`, so a non-literal host drops the address prefix and keeps
+ * the port mapping (`19140:19140`).
+ */
+export function renderJoinHostEnv(value: string, joinHost: string): string {
+  if (!value.includes("{{joinHost}}")) return value;
+  const host = joinHost.trim();
+  const ipv4 = /^(?:\d{1,3}\.){3}\d{1,3}$/.test(host);
+  const bareIpv6 = host.includes(":") && !host.startsWith("[") && !host.includes("{{");
+  if (!ipv4 && !bareIpv6 && !host.startsWith("[")) {
+    return value.replaceAll("{{joinHost}}:", "").replaceAll("{{joinHost}}", "");
+  }
+  const literal = bareIpv6 ? `[${host}]` : host;
+  return value.replaceAll("{{joinHost}}", literal);
+}
+
+function applyMinecraftBedrockListenFix(meta: SkillMetadata): SkillMetadata {
+  if (meta.name !== MINECRAFT_BEDROCK_SKILL) return meta;
+  if (meta.dockerEnv.TRANSPORT?.trim().toLowerCase() === "raknet") return meta;
+
+  const env = { ...meta.dockerEnv };
+  if (!env.TRANSPORT?.trim()) env.TRANSPORT = "nethernet";
+  if (!env.SERVER_PORT?.trim()) env.SERVER_PORT = String(BEDROCK_SIGNAL_PORT);
+  if (!env.ALLOW_LIST?.trim() && !env.WHITE_LIST?.trim()) env.ALLOW_LIST = "false";
+  const catalogUdpPorts = Boolean(meta.dockerEnv.SERVER_UDP_PORTS?.trim());
+  if (!catalogUdpPorts) env.SERVER_UDP_PORTS = BEDROCK_UDP_PORTS_TEMPLATE;
+
+  let ports = meta.ports.map((p) =>
+    p.name === "game" && p.protocol === "udp" && p.default === BEDROCK_SIGNAL_PORT
+      ? { ...p, protocol: "tcp" as const }
+      : p,
+  );
+  if (
+    !catalogUdpPorts &&
+    !ports.some((p) => p.protocol === "udp" && p.default === BEDROCK_GAMEPLAY_UDP_PORT)
+  ) {
+    ports = [
+      ...ports,
+      { name: "game-udp", protocol: "udp" as const, default: BEDROCK_GAMEPLAY_UDP_PORT },
+    ];
+  }
+
+  let join = meta.join;
+  if (join?.clientSetupNotes?.includes("UDP port")) {
+    join = {
+      ...join,
+      clientSetupNotes:
+        "Minecraft Bedrock → Play → Servers → Add Server → {{host}} port {{port}}. " +
+        "That port is NetherNet signaling (TCP). Gameplay UDP is a separate published port on the same host.",
+    };
+  }
+
+  return { ...meta, dockerEnv: env, ports, ...(join ? { join } : {}) };
+}
+
 /**
  * Remap known stale catalog fields before install / join / matrix.
  * Does not rewrite on-disk YAML — catalog bump can drop the overlay later.
@@ -268,6 +336,7 @@ export function applyKnownSkillMetadataFixes(meta: SkillMetadata): SkillMetadata
   if (next.name === "games.enshrouded") next = applyEnshroudedPortFix(next);
   if (next.name === THE_ISLE_SKILL) next = applyTheIsleSteamBetaFix(next);
   if (next.name === CS2_SKILL) next = applyCs2ListenFix(next);
+  if (next.name === MINECRAFT_BEDROCK_SKILL) next = applyMinecraftBedrockListenFix(next);
   next = applyFactorioDockerUserFix(next);
   return next;
 }

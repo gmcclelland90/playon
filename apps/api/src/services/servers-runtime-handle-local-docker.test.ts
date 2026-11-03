@@ -8,6 +8,7 @@ import {
   node,
   resetRuntimeHandleFakes,
   tempEnv,
+  writeBedrockShapedSkill,
   writeFactorioShapedSkill,
 } from "./servers-runtime-handle-fakes.js";
 
@@ -96,6 +97,23 @@ describe("local docker lifecycle through ServerRuntimeHandle", () => {
       { host: 27015, container: 27015, protocol: "tcp" },
     ]);
     expect(fake.specs[0]?.user).toBe("0");
+  });
+
+  it("publishes Bedrock NetherNet TCP 19132 and gameplay UDP 19140 (#1048)", async () => {
+    const { servers, config } = tempEnv();
+    writeBedrockShapedSkill(path.join(config.dataRoot!, "skills"));
+    const server = await servers.createFromSkill({ skillName: "games.minecraft-bedrock" });
+
+    await servers.start(server.id);
+
+    expect(fake.specs[0]?.ports).toEqual([
+      { host: 19132, container: 19132, protocol: "tcp" },
+      { host: 19140, container: 19140, protocol: "udp" },
+    ]);
+    expect(fake.specs[0]?.env?.TRANSPORT).toBe("nethernet");
+    expect(fake.specs[0]?.env?.EULA).toBe("TRUE");
+    expect(fake.specs[0]?.env?.ALLOW_LIST).toBe("false");
+    expect(fake.specs[0]?.env?.SERVER_UDP_PORTS).toBe("127.0.0.1:19140:19140");
   });
 
   it("rewrites Docker bind-address-in-use as host_port_in_use with the holder (#941)", async () => {

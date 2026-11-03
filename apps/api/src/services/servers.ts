@@ -109,6 +109,7 @@ import {
   parseInstanceIniPorts,
   isStormworksSkill,
   parseStormworksServerConfigPort,
+  renderJoinHostEnv,
   resolveDockerUser,
   STORMWORKS_CONFIG_REL_PATHS,
   identityFromSkillMarker,
@@ -851,6 +852,12 @@ export class ServerService {
         : this.ensureRconConfig(server, skillName);
     const rconPort = rcon?.port ?? this.rconPortForSkill(skillName, server.game);
     const env: Record<string, string> = { ...docker.env };
+    if (Object.values(env).some((value) => value.includes("{{joinHost}}"))) {
+      const joinHost = await this.resolveJoinAddress(server);
+      for (const [key, value] of Object.entries(env)) {
+        if (value.includes("{{joinHost}}")) env[key] = renderJoinHostEnv(value, joinHost);
+      }
+    }
     if (this.wantsMcRcon(skillName)) {
       env.ENABLE_RCON = env.ENABLE_RCON ?? "true";
       env.RCON_PORT = String(rconPort);
