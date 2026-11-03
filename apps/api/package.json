@@ -12,6 +12,7 @@
     "test:unit": "node ./scripts/run-unit.mjs",
     "test:int": "vitest run --config vitest.int.config.ts",
     "smoke:venice": "node scripts/run-venice-smoke.mjs",
+    "smoke:fal": "tsx src/fal-smoke.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/db/migrate.ts"
   },
