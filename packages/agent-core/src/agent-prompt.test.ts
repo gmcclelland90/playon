@@ -9,6 +9,7 @@ describe("AGENT_SYSTEM_PROMPT", () => {
     expect(AGENT_SYSTEM_PROMPT).toMatch(/loopback_open_join_host_closed/);
     expect(AGENT_SYSTEM_PROMPT).toMatch(/net_port_check on 127\.0\.0\.1/);
     expect(AGENT_SYSTEM_PROMPT).toMatch(/netsh portproxy/);
+    expect(AGENT_SYSTEM_PROMPT).toMatch(/udpJoinUnverified/);
     expect(AGENT_SYSTEM_PROMPT).toMatch(/Do not stop after the first tool/);
   });
 
@@ -20,5 +21,8 @@ describe("AGENT_SYSTEM_PROMPT", () => {
     expect(AGENT_SYSTEM_PROMPT).toMatch(/mods-src/);
     expect(AGENT_SYSTEM_PROMPT).toMatch(/ai-modding-loop\.md/);
     expect(AGENT_SYSTEM_PROMPT).toMatch(/mods_workshop_prepare/);
+    expect(AGENT_SYSTEM_PROMPT).toMatch(/mods_assets_generate \(confirm\)/);
+    expect(AGENT_SYSTEM_PROMPT).toMatch(/placementHint/);
+    expect(AGENT_SYSTEM_PROMPT).toMatch(/mods-src\/<modId>\/assets\//);
   });
 });

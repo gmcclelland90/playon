@@ -3,6 +3,9 @@
  * Settings → Mod assets (apps/api/data by default), or FAL_KEY if set.
  * Touches no game server: files go to a temp dir. Does not print the key.
  * Each run spends a few cents of the host's fal credit.
+ * With no key, exits 0 and prints fal_smoke=skipped when CI=true or
+ * FAL_SMOKE_SKIP_IF_NO_KEY=1; a local run with no key still exits 1.
+ * A locked account or exhausted balance still fails.
  *
  *   pnpm smoke:fal                 # icon (PZ size) + 2s sound
  *   pnpm smoke:fal icon texture    # pick kinds
@@ -83,6 +86,15 @@ async function main(): Promise<number> {
   }
   const apiKey = await loadKey();
   if (!apiKey) {
+    // CI (and an explicit opt-in) must not fail a checkout that has no host key.
+    // A local `pnpm smoke:fal` without a key still fails so the host notices.
+    const skip = process.env.CI === "true" || process.env.FAL_SMOKE_SKIP_IF_NO_KEY === "1";
+    if (skip) {
+      console.log(
+        "fal_smoke=skipped (no FAL_KEY and no Settings key; live fal smoke not run)",
+      );
+      return 0;
+    }
     console.error("No fal key: save one in Settings → Mod assets or set FAL_KEY.");
     return 1;
   }

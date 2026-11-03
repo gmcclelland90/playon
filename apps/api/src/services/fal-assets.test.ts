@@ -236,6 +236,26 @@ describe("fal-assets", () => {
     expect(out.bytes).toEqual(audio);
   });
 
+  it("refuses a non-https media URL and does not fetch it", async () => {
+    const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url);
+      if (init?.method === "POST") return queued("fal-ai/flux/schnell", "h1");
+      if (u.endsWith("/status")) return json({ status: "COMPLETED" });
+      if (u.endsWith("/requests/h1")) return json({ images: [{ url: "http://127.0.0.1/secret.png" }] });
+      throw new Error(`unexpected ${u}`);
+    });
+    await expect(
+      generateFalAsset({
+        apiKey: "k",
+        kind: "image",
+        prompt: "a crate",
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        sleep: noSleep,
+      }),
+    ).rejects.toMatchObject({ code: "fal_bad_response" });
+    expect(fetchImpl.mock.calls.map(([url]) => String(url))).not.toContain("http://127.0.0.1/secret.png");
+  });
+
   it("texture refuses a non-PNG result", async () => {
     const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
       const u = String(url);

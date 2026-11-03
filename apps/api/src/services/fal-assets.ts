@@ -260,12 +260,26 @@ export function pickFalMedia(result: Record<string, unknown>): FalMedia {
   throw new FalAssetsError("fal_missing_media_url", "fal_bad_response");
 }
 
+/** CDN file URLs must be https. The key is never attached to this fetch. */
+function assertHttpsMediaUrl(raw: string): string {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new FalAssetsError("fal_bad_media_url", "fal_bad_response");
+  }
+  if (url.protocol !== "https:") {
+    throw new FalAssetsError("fal_bad_media_url", "fal_bad_response");
+  }
+  return url.toString();
+}
+
 async function downloadMedia(
   media: FalMedia,
   fetchImpl: typeof fetch,
 ): Promise<{ bytes: Uint8Array; contentType: string }> {
-  // CDN download: no Authorization header.
-  const res = await fetchImpl(media.url);
+  // CDN download: no Authorization header. Refuse non-https (file:, http:, data:).
+  const res = await fetchImpl(assertHttpsMediaUrl(media.url));
   if (!res.ok) throw new FalAssetsError(`fal_download_${res.status}`, "fal_download_failed");
   const declared = Number(res.headers.get("content-length") ?? 0);
   if (declared > MAX_DOWNLOAD_BYTES) {

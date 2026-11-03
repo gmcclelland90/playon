@@ -2,7 +2,10 @@ name: fal-live
 
 # Live check of fal mod assets against real fal (#988). Uses the FAL_KEY
 # repo secret (Settings → Secrets and variables → Actions); skips cleanly
-# without it. Each run spends a few cents of fal credit. Touches no game server.
+# without it (notice + no install). The script also exits 0 with
+# fal_smoke=skipped when CI has no key. A locked account or exhausted
+# balance still fails the job. Each run spends a few cents of fal credit.
+# Touches no game server.
 
 on:
   workflow_dispatch:

@@ -54,7 +54,7 @@ function setup(opts: { workspace?: boolean } = {}) {
     tool.handler({ serverId: "s1", modId: "crate", prompt: "a crowbar", ...args }, { serverId: "s1" }) as Promise<
       Record<string, unknown>
     >;
-  return { run, files, written };
+  return { run, files, written, tool };
 }
 
 describe("mods_assets_generate", () => {
@@ -68,6 +68,13 @@ describe("mods_assets_generate", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("stays confirm-gated and only describes a jailed mods-src write", () => {
+    const { tool } = setup();
+    expect(tool.def.requiresConfirm).toBe(true);
+    expect(tool.def.description).toMatch(/mods-src\/<modId>\/assets\//);
+    expect(tool.def.description).not.toMatch(/mods_deploy|live mod/i);
   });
 
   it("returns fal_key_missing without calling fal when no key is saved", async () => {

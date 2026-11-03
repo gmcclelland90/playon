@@ -38,4 +38,4 @@ PlayOn-billed fal credits or spend caps. 3D models (no supported game loads fal'
 
 ### In CI
 
-`.github/workflows/fal-live.yml` runs the same smoke against real fal weekly, on PRs that touch the fal code, and on demand (Actions → fal-live → Run workflow, with a choice of kinds). It needs a `FAL_KEY` repo secret (Settings → Secrets and variables → Actions) and skips cleanly without one. Generated files are uploaded as the `fal-smoke-output` artifact so you can look at them.
+`.github/workflows/fal-live.yml` runs the same smoke against real fal weekly, on PRs that touch the fal code, and on demand (Actions → fal-live → Run workflow, with a choice of kinds). It needs a `FAL_KEY` repo secret (Settings → Secrets and variables → Actions). When that secret is absent the workflow skips before install and the script, if invoked under `CI=true` with no key, prints `fal_smoke=skipped` and exits 0. A quota or locked-account response still fails the job. Generated files are uploaded as the `fal-smoke-output` artifact so you can look at them. A local `pnpm smoke:fal` with no key still exits 1.
