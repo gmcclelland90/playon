@@ -112,6 +112,8 @@ Force skips intentionally: `PLAYON_MATRIX_WIN_NODE_ID=off` (still alerts on cade
 
 Not part of `pnpm loop:verify`. Use after the merge bar is green when validating catalog skills.
 
+Clone identity (a second server must not keep the live server's name, ports, or save) is a separate check: `pnpm lab:clone-isolation-static` on every PR, and `pnpm lab:clone-isolation` on lab runners. It does not install or join. See [clone-isolation.md](clone-isolation.md). Do not point it at the Home that serves NZL.
+
 ## Standing cadence + GitHub intake
 
 On playon-dev (24/7), the systemd timer in [infra/lab/README.md](../infra/lab/README.md) is the standing cadence (reinstall only after a host rebuild). Each tick: merge bar → `lab:matrix --continue-on-fail` → file Issues; ticks also leave history comments on [#52](https://github.com/gmcclelland90/playon/issues/52).

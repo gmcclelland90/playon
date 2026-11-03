@@ -73,6 +73,24 @@ jobs:
           node scripts/package-mvp.mjs
           test -f dist-package/playon-mvp.zip
 
+  # Every PR, including forks. Public catalog only — no secrets, no self-hosted runner.
+  # This is the check to mark required. The lab workflow is path-filtered and stays
+  # optional until playon-lab-linux / playon-lab-windows runners exist.
+  clone-isolation-static:
+    name: Clone isolation (static)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Scan catalog identity
+        run: node scripts/clone-isolation-static.mjs --catalog --cache tmp/clone-isolation-catalog
+      - name: Dry-run the live plan
+        run: node scripts/clone-isolation-live.mjs --dry-run --root tmp/clone-isolation-catalog
+
   image-smoke:
     runs-on: ubuntu-latest
     needs: verify
