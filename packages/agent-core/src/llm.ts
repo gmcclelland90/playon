@@ -364,7 +364,7 @@ export function extractToolCallsFromContent(content: string): LlmToolCall[] {
   return calls;
 }
 
-/** Extra attempts after the first try for transient 429/502/503/504 and network blips. */
+/** Extra attempts after the first try for transient HTTP/network blips. */
 export const DEFAULT_LLM_TRANSIENT_RETRIES = 3;
 /** Base backoff (ms); doubles each retry. Capped further when Retry-After is present. */
 export const DEFAULT_LLM_TRANSIENT_RETRY_BASE_MS = 400;
@@ -387,6 +387,19 @@ const TRANSIENT_LLM_NETWORK_CODES = new Set([
 
 export function isTransientLlmHttpStatus(status: number): boolean {
   return TRANSIENT_LLM_HTTP_STATUSES.has(status);
+}
+
+/**
+ * Venice returns HTTP 500 `{"error":"Inference processing failed"}` when its
+ * inference worker drops the request. That is an upstream blip, same class as
+ * 502/503. Other 500 bodies (tool-call limits, bad requests the provider
+ * surfaces as 500) are deterministic and must not be retried.
+ */
+const TRANSIENT_LLM_UPSTREAM_500 = /inference processing failed/i;
+
+export function isTransientLlmHttpFailure(status: number, body: string): boolean {
+  if (isTransientLlmHttpStatus(status)) return true;
+  return status === 500 && TRANSIENT_LLM_UPSTREAM_500.test(body);
 }
 
 export function isLlmAbortError(err: unknown): boolean {
@@ -594,7 +607,7 @@ export class OpenAICompatibleLlmClient implements LlmClient {
       }
 
       const text = await res.text();
-      if (!isTransientLlmHttpStatus(res.status) || attempt >= maxAttempts) {
+      if (!isTransientLlmHttpFailure(res.status, text) || attempt >= maxAttempts) {
         throw formatLlmHttpError(res.status, text, attempt);
       }
       const delay = llmRetryDelayMs(res, this.transientRetryBaseMs * 2 ** (attempt - 1));
