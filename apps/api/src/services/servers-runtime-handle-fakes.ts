@@ -274,6 +274,35 @@ export function writeFactorioShapedSkill(skillsRoot: string): void {
   fs.writeFileSync(path.join(skillDir, "guides", "INSTALL.md"), "# Factorio ports fixture\n");
 }
 
+export function writeBedrockShapedSkill(skillsRoot: string): void {
+  const skillDir = path.join(skillsRoot, "games", "minecraft-bedrock");
+  fs.mkdirSync(path.join(skillDir, "guides"), { recursive: true });
+  fs.writeFileSync(
+    path.join(skillDir, "metadata.yaml"),
+    [
+      "name: games.minecraft-bedrock",
+      "version: 0.1.0",
+      "game: Minecraft Bedrock",
+      "containerSupport: full",
+      "dockerImage: itzg/minecraft-bedrock-server:latest",
+      "dockerEnv:",
+      '  EULA: "TRUE"',
+      '  ONLINE_MODE: "false"',
+      "adminDialect: none",
+      "queryDialect: none",
+      "ports:",
+      "  - name: game",
+      "    protocol: udp",
+      "    default: 19132",
+      "healthChecks: []",
+      "dependencies: []",
+      "requiredTools: []",
+      "",
+    ].join("\n"),
+  );
+  fs.writeFileSync(path.join(skillDir, "guides", "INSTALL.md"), "# Bedrock\n");
+}
+
 export function writePzSkill(skillsRoot: string): void {
   const skillDir = path.join(skillsRoot, "games", "project-zomboid");
   fs.mkdirSync(path.join(skillDir, "guides"), { recursive: true });
