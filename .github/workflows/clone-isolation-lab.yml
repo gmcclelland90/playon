@@ -1,0 +1,195 @@
+name: clone-isolation-lab
+
+# Live stand-in for every game package this OS can host.
+#
+# pull_request_target keeps THIS file (from the default branch) as the workflow
+# that runs. A fork's copy never reaches the self-hosted runner. The gate then
+# checks out a PR head only when the PR is same-repo and the author is OWNER,
+# MEMBER, or COLLABORATOR. No secrets are passed in. Fork PRs skip the lab jobs.
+#
+# Do not mark these jobs required until runners with labels playon-lab-linux and
+# playon-lab-windows are online. A missing runner queues the job. The every-PR
+# check to require is "Clone isolation (static)" in ci.yml.
+#
+# These runners must not be the production host that serves live player servers
+# (playon-dev / NewZombieLand3 / Hub / Frontier). See docs/clone-isolation.md.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - "apps/api/src/services/servers.ts"
+      - "apps/api/src/services/servers-pz-start.test.ts"
+      - "apps/api/src/services/start-identity.ts"
+      - "apps/api/src/services/start-identity.test.ts"
+      - "apps/api/src/services/pz-start-identity.ts"
+      - "apps/api/src/services/pz-start-identity.test.ts"
+      - "apps/api/src/services/native-launch.ts"
+      - "apps/api/src/services/native-launch.test.ts"
+      - "apps/api/src/services/server-adoption.ts"
+      - "apps/api/src/services/server-adoption.test.ts"
+      - "apps/api/src/services/manage-suggest.ts"
+      - "apps/api/src/services/manage-suggest.test.ts"
+      - "apps/api/src/services/snapshots.ts"
+      - "apps/api/src/services/tools/servers.ts"
+      - "apps/api/src/services/tools/snapshots.ts"
+      - "packages/runtime/**"
+      - "scripts/clone-isolation-allowlist.json"
+      - "scripts/clone-isolation-lab-entry.mjs"
+      - "scripts/clone-isolation-live.mjs"
+      - "scripts/clone-isolation-static.mjs"
+      - "scripts/clone-isolation-standin.mjs"
+      - "scripts/clone-isolation.test.mjs"
+      - "scripts/clone-isolation/**"
+      - ".github/workflows/clone-isolation-lab.yml"
+      - "docs/clone-isolation.md"
+  schedule:
+    # After nightly-docker (06:00 UTC). Covers the full catalog for each OS.
+    - cron: "30 7 * * *"
+  workflow_dispatch:
+    inputs:
+      skill:
+        description: "Comma-separated games.* ids (empty = every package for this OS)"
+        type: string
+        default: ""
+      limit:
+        description: "Max packages (0 = all)"
+        type: string
+        default: "0"
+      port_base:
+        description: "Loopback port base (0 = the package's declared ports)"
+        type: string
+        default: "0"
+      home:
+        description: "Lab Home phase. on/auto need PLAYON_LAB_HOME_SESSION on the runner, not a GitHub secret."
+        type: choice
+        options: [off, auto, on]
+        default: off
+      home_start:
+        description: "POST /start. Can launch a real dedicated server. Leave false."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clone-isolation-lab-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request_target' }}
+
+jobs:
+  gate:
+    name: Clone isolation (trust gate)
+    runs-on: ubuntu-latest
+    outputs:
+      trusted: ${{ steps.decide.outputs.trusted }}
+      sha: ${{ steps.decide.outputs.sha }}
+    steps:
+      - id: decide
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+          FORK: ${{ github.event.pull_request.head.repo.fork }}
+          ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          trusted=false
+          sha="$BASE_SHA"
+          case "$EVENT_NAME" in
+            schedule|workflow_dispatch)
+              trusted=true
+              ;;
+            pull_request_target)
+              case "$ASSOCIATION" in
+                OWNER|MEMBER|COLLABORATOR) assoc_ok=true ;;
+                *) assoc_ok=false ;;
+              esac
+              if [[ "$FORK" == "false" && "$HEAD_REPO" == "$BASE_REPO" && "$assoc_ok" == "true" && "$HEAD_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+                trusted=true
+                sha="$HEAD_SHA"
+              fi
+              ;;
+          esac
+          if [[ ! "$sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "refusing non-sha checkout" >&2
+            exit 1
+          fi
+          echo "trusted=$trusted" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "event=$EVENT_NAME trusted=$trusted association=${ASSOCIATION:-n/a} fork=${FORK:-n/a}"
+
+  linux:
+    name: Clone isolation (linux)
+    needs: gate
+    if: needs.gate.outputs.trusted == 'true'
+    runs-on: [self-hosted, playon-lab-linux]
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Stand-in matrix
+        env:
+          GITHUB_TOKEN: ""
+          CLONE_HOST: linux
+          CLONE_SKILL: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.skill || '' }}
+          CLONE_LIMIT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.limit || '0' }}
+          CLONE_PORT_BASE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.port_base || '0' }}
+          CLONE_HOME: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.home || 'off' }}
+          CLONE_HOME_START: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.home_start || 'false' }}
+        run: node scripts/clone-isolation-lab-entry.mjs
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clone-isolation-linux
+          path: tmp/clone-isolation-linux.json
+          if-no-files-found: ignore
+
+  windows:
+    name: Clone isolation (windows)
+    needs: gate
+    if: needs.gate.outputs.trusted == 'true'
+    runs-on: [self-hosted, playon-lab-windows]
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Stand-in matrix
+        env:
+          GITHUB_TOKEN: ""
+          CLONE_HOST: windows
+          CLONE_SKILL: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.skill || '' }}
+          CLONE_LIMIT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.limit || '0' }}
+          CLONE_PORT_BASE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.port_base || '0' }}
+          CLONE_HOME: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.home || 'off' }}
+          CLONE_HOME_START: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.home_start || 'false' }}
+        run: node scripts/clone-isolation-lab-entry.mjs
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clone-isolation-windows
+          path: tmp/clone-isolation-windows.json
+          if-no-files-found: ignore

@@ -2,7 +2,7 @@
 
 Living contract for what must be green, when, and how coverage grows. Agents extend this after releases and `P0`/`P1` incidents.
 
-Companion docs: [agent-dev-loop.md](agent-dev-loop.md), [lab-matrix.md](lab-matrix.md), [sdlc.md](sdlc.md), [automations.md](automations.md).
+Companion docs: [agent-dev-loop.md](agent-dev-loop.md), [lab-matrix.md](lab-matrix.md), [clone-isolation.md](clone-isolation.md), [sdlc.md](sdlc.md), [automations.md](automations.md).
 
 ## Tiers
 
@@ -12,6 +12,7 @@ Companion docs: [agent-dev-loop.md](agent-dev-loop.md), [lab-matrix.md](lab-matr
 | Merge | `pnpm loop:verify` | Before merge when touching API / agent / runtime; always before release | Linux lab + [nightly-docker](../.github/workflows/nightly-docker.yml) |
 | Runtime | `pnpm loop:verify:runtime` | Docker lifecycle / Paper path changes | Lab + nightly |
 | Catalog | `pnpm lab:matrix` | Skill / catalog changes; standing lab cadence | Lab timer ([infra/lab](../infra/lab/README.md)) |
+| Clone isolation | `pnpm lab:clone-isolation-static` (every PR) and `pnpm lab:clone-isolation` (lab) | Server create / clone / start identity. Static scan plus dry-run are in CI. The stand-in runs on `playon-lab-linux` and `playon-lab-windows`, not on the host that serves live players. | Every PR for the static job; path-filtered PRs, `30 7 * * *`, and manual for the lab jobs ([clone-isolation.md](clone-isolation.md)) |
 | Join-path canary | `pnpm lab:join-path-canary` | Published `joinHost:gamePort` from `resolveJoinAddress` (not loopback). Ready-gate uses that advertised path from Home; WSL NAT publish is `net_port_publish` on the Windows parent LAN IP. | Unit in `pnpm verify`; live Docker / WSL / Win PE lab-only ([#843](https://github.com/gmcclelland90/playon/issues/843)) |
 | LLM canary | `pnpm lab:llm-canary` / `--home` | Two-step tool trace (Venice + Ollama when present). Home path restores Settings and tears down `lab-llm-canary*` ([llm-model-compat.md](llm-model-compat.md)) | Playon Ops `llm-model-compat` (Mon/Thu) |
 | Polish canaries | Playon Ops `playon-polish-canary` | Soak, managed-install, OTA+nodes, site/catalog, WSL Phase 2 — lab fixtures only | Standing Sydney schedule; first greens recorded 2026-09-09 ([#835](https://github.com/gmcclelland90/playon/issues/835), [automations.md](automations.md)) |
@@ -30,6 +31,7 @@ CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the **fast**
 | agent | agent-core | Live Venice two-step tool loop (Ollama optional) |
 | smoke:paper-docker | scripts + runtime | Paper create → start → port |
 | lab:matrix | skills + playon-games catalog | Per-skill E2E install/start/port |
+| lab:clone-isolation | scripts + public catalog | A clone must not keep the live server's name, ports, or save. Own start-script fallbacks are allowed ([#1050](https://github.com/gmcclelland90/playon/issues/1050)); foreign identity is not |
 | lab:join-path-canary | api + shared | Probe `resolveJoinAddress` / `nodes.join_host`, not `127.0.0.1` |
 | lab:llm-canary | agent-core + scripts | Two-step lab-* tool trace; `--home` restore/teardown; Ollama `reachable=false` does not fail Venice |
 | playon-polish-canary | Ops / lab fixtures | Soak, managed-install, OTA+nodes, site/catalog, WSL Phase 2 — never friend servers / NZL |
@@ -44,6 +46,7 @@ CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the **fast**
 | API / agent-core / runtime logic | Merge bar on lab |
 | Docker lifecycle / Paper path | Runtime bar |
 | Catalog `games.*` skill | Merge bar + `pnpm lab:matrix --skill <id>` |
+| Server create / clone / start identity | Fast bar, including the clone-isolation static job. Lab stand-in when runners are online ([clone-isolation.md](clone-isolation.md)) |
 | Admin / player UI flow | Fast bar; add or update e2e when touching auth/panel critical path |
 | Release `v*` | Merge bar green, CHANGELOG section, no open `P0`; open `P1` empty or explicitly deferred |
 
@@ -114,9 +117,11 @@ After each release, skim CHANGELOG **Fixed** entries and file `test-debt` for ga
 - Weekly e2e is scheduled (`e2e-weekly.yml`) and `pnpm test:e2e` always builds workspace packages first; not yet in every-PR CI ([#44](https://github.com/gmcclelland90/playon/issues/44))
 - Lab cadence timer is live on playon-dev (daily verify → matrix → `source:lab` Issues; history on [#52](https://github.com/gmcclelland90/playon/issues/52) / [infra/lab](../infra/lab/README.md)); reinstall only if the host is rebuilt
 - Polish canaries beyond the skill matrix are standing Playon Ops routines (`playon-polish-canary`); first greens recorded 2026-09-09 ([#835](https://github.com/gmcclelland90/playon/issues/835), [automations.md](automations.md)). Extra unit CI stays out of scope. Friend / NZL hosts are never the canary target.
+- Clone isolation of the live catalog is unit-covered (own start-script identity allowed, foreign identity refused, loopback stand-in, production-host guard) and the static catalog scan runs on every PR ([#1016](https://github.com/gmcclelland90/playon/issues/1016), [#1049](https://github.com/gmcclelland90/playon/issues/1049)). The self-hosted stand-in (`playon-lab-linux` / `playon-lab-windows`) is not a required check until those runners are registered, and it must not be the production Home. Path-filtered lab checks are absent on unrelated PRs ([clone-isolation.md](clone-isolation.md)).
 
 ## Human gates for testing
 
 - Venice spend beyond routine lab verify → `blocked-human`
 - Destructive cleanup of durable Home inventory → never; matrix uses temp roots only ([lab-matrix.md](lab-matrix.md))
+- Clone isolation against a Home that lists NZL / Hub / Frontier → the check refuses; do not register that host as `playon-lab-linux` or `playon-lab-windows` ([clone-isolation.md](clone-isolation.md))
 - Bump friend-hosting / NewZombieLand3 node agents → never from polish canaries; Glenn-approved window only ([automations.md](automations.md))

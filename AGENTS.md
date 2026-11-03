@@ -27,6 +27,8 @@ pnpm loop:verify # merge bar on Linux lab: + int + agent (real Venice + Docker)
 pnpm loop:verify:runtime # merge bar + Paper Docker smoke
 pnpm smoke:paper-docker # real Docker Paper path only
 pnpm lab:join-path-canary # published joinHost vs loopback (#843)
+pnpm lab:clone-isolation-static # every game package declares a rewritable identity
+pnpm lab:clone-isolation # lab stand-in: clone must not inherit the live server
 pnpm test:e2e # Playwright UI smoke (opt-in; not part of loop:verify)
 pnpm dev # api + web + local node-agent
 ```

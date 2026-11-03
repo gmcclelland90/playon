@@ -1,0 +1,451 @@
+{
+  "games.ark-ascended": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.ark-ascended still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn\" (-Name) with no per-server env; a clone inherits it hardcodes port 7777 (-port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.ark-evolved": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.ark-evolved still bakes its own catalog default into the launch files (inherited_port): hardcodes port 7777 (-Port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.arma-reforger": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.arma-reforger still bakes its own catalog default into the launch files (inherited_port): hardcodes port 2001 (bindPort) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.arma3": {
+    "findings": [
+      "inherited_name"
+    ],
+    "justification": "games.arma3 still bakes its own catalog default into the launch files (inherited_name): hardcodes server name \"PlayOn Arma 3\" (hostname) with no per-server env; a clone inherits it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.assetto-corsa": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.assetto-corsa still bakes its own catalog default into the launch files (inherited_port): hardcodes port 9600 (UDP_PORT) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.bannerlord": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.bannerlord still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn-Bannerlord\" (ServerName) with no per-server env; a clone inherits it hardcodes port 7210 (/port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.barotrauma": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.barotrauma still bakes its own catalog default into the launch files (inherited_port): hardcodes port 27015 (-port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.black-mesa-dm": {
+    "findings": [
+      "inherited_name"
+    ],
+    "justification": "games.black-mesa-dm still bakes its own catalog default into the launch files (inherited_name): hardcodes server name \"PlayOn Black Mesa DM\" (hostname) with no per-server env; a clone inherits it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.chivalry": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.chivalry still bakes its own catalog default into the launch files (inherited_port): hardcodes port 7777 (-Port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.clone-hero": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.clone-hero still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn Clone Hero\" (dockerEnv SERVER_NAME) with no per-server env; a clone inherits it hardcodes port 14242 (dockerEnv CONNECT_PORT) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.colony-survival": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.colony-survival still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn\" (ServerName) with no per-server env; a clone inherits it hardcodes port 27005 (ServerGamePort) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.conan-exiles": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.conan-exiles still bakes its own catalog default into the launch files (inherited_port): hardcodes port 7777 (-Port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.cs-1.6": {
+    "findings": [
+      "inherited_name"
+    ],
+    "justification": "games.cs-1.6 still bakes its own catalog default into the launch files (inherited_name): hardcodes server name \"PlayOn CS 1.6\" (hostname) with no per-server env; a clone inherits it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.cs-source": {
+    "findings": [
+      "inherited_name"
+    ],
+    "justification": "games.cs-source still bakes its own catalog default into the launch files (inherited_name): hardcodes server name \"PlayOn CS:S\" (hostname) with no per-server env; a clone inherits it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.cs2": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.cs2 still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn CS2\" (dockerEnv CS2_SERVERNAME) with no per-server env; a clone inherits it hardcodes port 27015 (dockerEnv CS2_PORT) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.css-cz": {
+    "findings": [
+      "inherited_name"
+    ],
+    "justification": "games.css-cz still bakes its own catalog default into the launch files (inherited_name): hardcodes server name \"PlayOn CS:CZ\" (hostname) with no per-server env; a clone inherits it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.dod-source": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.dod-source still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn DoD:S\" (hostname) with no per-server env; a clone inherits it hardcodes port 27015 (-port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.dont-starve-together": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.dont-starve-together still bakes its own catalog default into the launch files (inherited_port): hardcodes port 10999 (PORT) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.eco": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.eco still bakes its own catalog default into the launch files (inherited_port): hardcodes port 3000 (GameServerPort) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.factorio": {
+    "findings": [
+      "inherited_name"
+    ],
+    "justification": "games.factorio still bakes its own catalog default into the launch files (inherited_name): hardcodes server name \"playon\" (dockerEnv SAVE_NAME) with no per-server env; a clone inherits it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.fistful-of-frags": {
+    "findings": [
+      "inherited_name"
+    ],
+    "justification": "games.fistful-of-frags still bakes its own catalog default into the launch files (inherited_name): hardcodes server name \"PlayOn FoF\" (hostname) with no per-server env; a clone inherits it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.foundry": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.foundry still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn-Foundry-Lab\" (server_name) with no per-server env; a clone inherits it hardcodes port 3724 (server_port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.garrys-mod": {
+    "findings": [
+      "inherited_name"
+    ],
+    "justification": "games.garrys-mod still bakes its own catalog default into the launch files (inherited_name): hardcodes server name \"PlayOn Garry\" (hostname) with no per-server env; a clone inherits it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.ground-branch": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.ground-branch still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn\" (ServerName) with no per-server env; a clone inherits it hardcodes port 7777 (Port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.hl2dm": {
+    "findings": [
+      "inherited_name"
+    ],
+    "justification": "games.hl2dm still bakes its own catalog default into the launch files (inherited_name): hardcodes server name \"PlayOn HL2DM\" (hostname) with no per-server env; a clone inherits it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.hldm": {
+    "findings": [
+      "inherited_name"
+    ],
+    "justification": "games.hldm still bakes its own catalog default into the launch files (inherited_name): hardcodes server name \"PlayOn HLDM\" (hostname) with no per-server env; a clone inherits it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.humanitz": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.humanitz still bakes its own catalog default into the launch files (inherited_port): hardcodes port 7777 (-port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.icarus": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.icarus still bakes its own catalog default into the launch files (inherited_port): hardcodes port 17777 (Port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.insurgency": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.insurgency still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn Insurgency\" (hostname) with no per-server env; a clone inherits it hardcodes port 27015 (-port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.insurgency-sandstorm": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.insurgency-sandstorm still bakes its own catalog default into the launch files (inherited_port): hardcodes port 27102 (-Port) and 27131 (-QueryPort) with no per-server env; a clone that copies this file binds them. That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.killing-floor-2": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.killing-floor-2 still bakes its own catalog default into the launch files (inherited_port): hardcodes port 7777 (-Port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.left4dead": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.left4dead still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn L4D\" (hostname) with no per-server env; a clone inherits it hardcodes port 27015 (-port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.left4dead2": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.left4dead2 still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn L4D2\" (hostname) with no per-server env; a clone inherits it hardcodes port 27015 (-port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.longvinter": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.longvinter still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn\" (ServerName) with no per-server env; a clone inherits it hardcodes port 7777 (-Port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.minecraft-bedrock": {
+    "findings": [
+      "inherited_name"
+    ],
+    "justification": "games.minecraft-bedrock still bakes its own catalog default into the launch files (inherited_name): hardcodes server name \"PlayOn Bedrock\" (dockerEnv SERVER_NAME) with no per-server env; a clone inherits it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.necesse": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.necesse still bakes its own catalog default into the launch files (inherited_port): hardcodes port 14159 (-port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.night-of-the-dead": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.night-of-the-dead still bakes its own catalog default into the launch files (inherited_port): hardcodes port 7777 (-Port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.nmrih": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.nmrih still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn NMRiH\" (hostname) with no per-server env; a clone inherits it hardcodes port 27015 (-port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.nwn-ee": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.nwn-ee still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn NWN:EE\" (dockerEnv NWN_SERVERNAME) with no per-server env; a clone inherits it hardcodes port 5121 (dockerEnv NWN_PORT) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.openra": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.openra still bakes its own catalog default into the launch files (inherited_port): hardcodes port 1234 (dockerEnv ListenPort) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.palworld": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.palworld still bakes its own catalog default into the launch files (inherited_port): hardcodes port 8211 (Port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.pavlov-vr": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.pavlov-vr still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn-Pavlov\" (ServerName) with no per-server env; a clone inherits it hardcodes port 7777 (-PORT) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.pvkii": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.pvkii still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn PVKII\" (hostname) with no per-server env; a clone inherits it hardcodes port 27015 (-port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.quake-live": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.quake-live still bakes its own catalog default into the launch files (inherited_port): hardcodes port 27960 (net_port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.satisfactory": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.satisfactory still bakes its own catalog default into the launch files (inherited_port): hardcodes port 8888 (-ReliablePort) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.sbox": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.sbox still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn\" (+hostname) with no per-server env; a clone inherits it hardcodes port 27015 (+port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.smalland": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.smalland still bakes its own catalog default into the launch files (inherited_port): hardcodes port 7777 (-port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.sons-of-the-forest": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.sons-of-the-forest still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn\" (ServerName) with no per-server env; a clone inherits it hardcodes port 8766 (-dedicatedserver.GamePort) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.soulmask": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.soulmask still bakes its own catalog default into the launch files (inherited_port): hardcodes port 8777 (Port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.space-engineers": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.space-engineers still bakes its own catalog default into the launch files (inherited_port): hardcodes port 27016 (-port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.squad": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.squad still bakes its own catalog default into the launch files (inherited_port): hardcodes port 27165 (QueryPort) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.squad-44": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.squad-44 still bakes its own catalog default into the launch files (inherited_port): hardcodes port 27165 (QueryPort) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.stationeers": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.stationeers still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn-Stationeers\" (SERVER_NAME) with no per-server env; a clone inherits it hardcodes port 27500 (GAME_PORT) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.stormworks": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.stormworks still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn\" (name) with no per-server env; a clone inherits it hardcodes port 25564 (port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.supertuxkart": {
+    "findings": [
+      "inherited_name"
+    ],
+    "justification": "games.supertuxkart still bakes its own catalog default into the launch files (inherited_name): hardcodes server name \"PlayOn\" (--lan-server) with no per-server env; a clone inherits it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.teeworlds": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.teeworlds still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn Teeworlds\" (sv_name) with no per-server env; a clone inherits it hardcodes port 8303 (sv_port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.terraria": {
+    "findings": [
+      "inherited_path"
+    ],
+    "justification": "games.terraria still bakes its own catalog default into the launch files (inherited_path): hardcodes data path /root/.local/share/Terraria/Worlds/world.wld (-world); a clone inherits it instead of its own jail That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.terraria-tmod": {
+    "findings": [
+      "inherited_name"
+    ],
+    "justification": "games.terraria-tmod still bakes its own catalog default into the launch files (inherited_name): hardcodes server name \"PlayOn\" (dockerEnv TMOD_WORLDNAME) with no per-server env; a clone inherits it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.tf2": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.tf2 still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn TF2\" (hostname) with no per-server env; a clone inherits it hardcodes port 27015 (-port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.tfc": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.tfc still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn TFC\" (hostname) with no per-server env; a clone inherits it hardcodes port 27015 (-port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.the-forest": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.the-forest still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn-TheForest\" (serverName) with no per-server env; a clone inherits it hardcodes port 8766 (serverSteamPort) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.the-front": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.the-front still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn The Front\" (ServerName) with no per-server env; a clone inherits it hardcodes port 27015 (Port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.tower-unite": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.tower-unite still bakes its own catalog default into the launch files (inherited_port): hardcodes port 7777 (-Port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.trackmania": {
+    "findings": [
+      "inherited_name"
+    ],
+    "justification": "games.trackmania still bakes its own catalog default into the launch files (inherited_name): hardcodes server name \"PlayOn\" (dockerEnv TM_SERVER_NAME) with no per-server env; a clone inherits it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.v-rising": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.v-rising still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn\" (-serverName) with no per-server env; a clone inherits it hardcodes port 9876 (-gamePort) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.vein": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.vein still bakes its own catalog default into the launch files (inherited_port): hardcodes port 27015 (-QueryPort) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.vintage-story": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.vintage-story still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn Vintage Story\" (dockerEnv VS_CFG_SERVER_NAME) with no per-server env; a clone inherits it hardcodes port 42420 (dockerEnv VS_CFG_SERVER_PORT) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.wreckfest": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.wreckfest still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn Wreckfest\" (server_name) with no per-server env; a clone inherits it hardcodes port 27015 (steam_port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.wurm-unlimited": {
+    "findings": [
+      "inherited_port"
+    ],
+    "justification": "games.wurm-unlimited still bakes its own catalog default into the launch files (inherited_port): hardcodes port 3724 (externalport) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  },
+  "games.zombie-panic-source": {
+    "findings": [
+      "inherited_name",
+      "inherited_port"
+    ],
+    "justification": "games.zombie-panic-source still bakes its own catalog default into the launch files (inherited_name, inherited_port): hardcodes server name \"PlayOn Zombie Panic Source\" (hostname) with no per-server env; a clone inherits it hardcodes port 27015 (-port) with no per-server env; a clone that copies this file binds it That literal is this package's identity, not another server's name, port, or jail. Home does not yet rewrite it per server, so the static check waives it until the overlay reads a per-server env. The live clone-isolation check still refuses a clone that would reuse the live server's bind or save."
+  }
+}
