@@ -9,9 +9,13 @@
  *
  * The same literal is refused when it belongs to a different server, or when
  * it is still a Project Zomboid catalog default (`servertest`, 16261, 16262)
- * that is not this server's identity. Comments and plain mentions are ignored.
- * Variable references (`$PLAYON_SERVER_NAME`, `%PLAYON_GAME_PORT%`) are not
- * literals.
+ * that is not this server's identity. Comments, echo lines, and plain mentions
+ * are ignored. Variable references (`$PLAYON_SERVER_NAME`, `%PLAYON_GAME_PORT%`)
+ * are not literals.
+ *
+ * Flags are read from shell words, not a single regex. Quotes (single, double,
+ * or none), `ARGS+=(-servername "World")`, `-flag=value`, `/port N`, `/port:N`,
+ * and the same shapes in `start.bat` / `start.ps1` all count.
  */
 export type StartConfigSelf = {
   id: string;
@@ -54,6 +58,20 @@ const NAME_KEYS = new Set([
   "server-name",
 ]);
 
+/** CLI forms of a launch name. Short and long dashes, plus Rust `+server.identity`. */
+const NAME_FLAGS = new Set([
+  "-servername",
+  "--server-name",
+  "--servername",
+  "--level-name",
+  "--world",
+  "-world",
+  "-name",
+  "--name",
+  "--start-server",
+  "+server.identity",
+]);
+
 const GAME_PORT_KEYS = new Set([
   "playon_game_port",
   "server_port",
@@ -62,6 +80,13 @@ const GAME_PORT_KEYS = new Set([
 ]);
 
 const DIRECT_PORT_KEYS = new Set(["playon_direct_port", "udpport", "udp-port"]);
+
+const GAME_PORT_FLAGS = new Set(["-port", "--port", "--server-port", "/port"]);
+
+const DIRECT_PORT_FLAGS = new Set(["-udpport", "--udpport", "-udp-port", "--udp-port"]);
+
+/** Docker publish. The host side is the port another server could already own. */
+const PUBLISH_FLAGS = new Set(["-p", "--publish"]);
 
 type PortSlot = "game" | "direct" | "other";
 type LiteralHow = "fallback" | "assign" | "flag";
@@ -72,13 +97,20 @@ type PortHit = { value: number; how: LiteralHow; slot: PortSlot; at: number };
 const same = (a: string, b: string): boolean =>
   a.trim().toLowerCase() === b.trim().toLowerCase();
 
+function isIgnorableLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return true;
+  if (trimmed.startsWith("#") || trimmed.startsWith("::")) return true;
+  if (/^rem\b/i.test(trimmed)) return true;
+  if (/^@?echo\b/i.test(trimmed) && !/^@?echo\s+off\b/i.test(trimmed)) return true;
+  if (/^(write-host|write-output)\b/i.test(trimmed)) return true;
+  return false;
+}
+
 function codeText(text: string): string {
   return text
     .split(/\r?\n/)
-    .filter((line) => {
-      const trimmed = line.trim();
-      return trimmed.length > 0 && !trimmed.startsWith("#") && !/^rem\b/i.test(trimmed) && !trimmed.startsWith("::");
-    })
+    .filter((line) => !isIgnorableLine(line))
     .join("\n");
 }
 
@@ -124,9 +156,124 @@ function portSlotForKey(key: string): PortSlot | null {
   return null;
 }
 
+type FlagKind = "name" | "game" | "direct" | "publish";
+
+function flagKind(name: string): FlagKind | null {
+  const key = name.toLowerCase();
+  if (NAME_FLAGS.has(key)) return "name";
+  if (GAME_PORT_FLAGS.has(key)) return "game";
+  if (DIRECT_PORT_FLAGS.has(key)) return "direct";
+  if (PUBLISH_FLAGS.has(key)) return "publish";
+  return null;
+}
+
+/** Known identity flag, optionally with `=` / `/port:` glued on. */
+function splitFlag(word: string): { name: string; inline: string | null } | null {
+  if (!word || !/^[-+/]/.test(word)) return null;
+  // `docker run -p25565:25565` glues the mapping onto -p.
+  if (/^-p\d/i.test(word)) return { name: "-p", inline: word.slice(2) };
+  let cut = -1;
+  const eq = word.indexOf("=");
+  if (eq > 0) cut = eq;
+  if (word.startsWith("/")) {
+    const colon = word.indexOf(":");
+    if (colon > 0 && (cut < 0 || colon < cut)) cut = colon;
+  }
+  const name = cut > 0 ? word.slice(0, cut) : word;
+  if (!flagKind(name)) return null;
+  return { name, inline: cut > 0 ? word.slice(cut + 1) : null };
+}
+
+type ShellWord = { text: string; at: number };
+
+const WORD_BREAK = new Set([" ", "\t", "\n", "\r", "(", ")", "[", "]", ",", ";", "|", "&", '"', "'"]);
+
+function isWordBreak(ch: string): boolean {
+  return WORD_BREAK.has(ch);
+}
+
+/** A quoted blob that is itself an argument list (`ARGS=-servername "World"`). */
+function containsIdentityFlag(text: string): boolean {
+  if (text.startsWith("${") || text.startsWith("$(")) return false;
+  const parts = text.split(/[\s,;|()[\]]+/);
+  for (const part of parts) {
+    const head = part.replace(/^['"]+|['"]+$/g, "");
+    if (!head) continue;
+    if (splitFlag(head)) return true;
+    const eq = head.match(/^[A-Za-z_][\w.-]*=(.+)$/);
+    if (eq?.[1] && splitFlag(eq[1])) return true;
+  }
+  return false;
+}
+
+function tokenize(code: string): ShellWord[] {
+  const words: ShellWord[] = [];
+  const push = (text: string, at: number) => {
+    if (!text) return;
+    if (containsIdentityFlag(text) && /\s/.test(text)) {
+      for (const inner of tokenize(text)) words.push({ text: inner.text, at: at + inner.at });
+      return;
+    }
+    words.push({ text, at });
+  };
+
+  let i = 0;
+  while (i < code.length) {
+    const ch = code[i] ?? "";
+    if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") {
+      i++;
+      continue;
+    }
+    if (ch === "#" && (i === 0 || isWordBreak(code[i - 1] ?? ""))) {
+      while (i < code.length && code[i] !== "\n") i++;
+      continue;
+    }
+    if (ch === "(" || ch === ")" || ch === "[" || ch === "]" || ch === "," || ch === ";" || ch === "|" || ch === "&") {
+      i++;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      const quote = ch;
+      const start = i;
+      i++;
+      let buf = "";
+      while (i < code.length && code[i] !== quote && code[i] !== "\n") {
+        if (quote === '"' && code[i] === "\\" && (code[i + 1] === '"' || code[i + 1] === "\\")) {
+          buf += code[i + 1] === '"' ? '"' : "\\";
+          i += 2;
+          continue;
+        }
+        buf += code[i] ?? "";
+        i++;
+      }
+      if (code[i] === quote) i++;
+      push(buf, start);
+      continue;
+    }
+    const start = i;
+    let buf = "";
+    while (i < code.length && !isWordBreak(code[i] ?? "")) buf += code[i++] ?? "";
+    push(buf, start);
+  }
+  return words;
+}
+
+function parseFallback(raw: string): { key: string; value: string } | null {
+  const match = raw.trim().match(/^\$\{([A-Za-z_][\w.-]*):-([^}]*)\}$/);
+  if (!match?.[1]) return null;
+  return { key: match[1], value: match[2] ?? "" };
+}
+
+function publishHostPort(raw: string): string | null {
+  const value = unquote(raw.trim());
+  const match = value.match(/^(\d{1,5}):(\d{1,5})(?:\/(?:tcp|udp))?$/i);
+  return match?.[1] ?? null;
+}
+
 function collectHits(code: string): { names: NameHit[]; ports: PortHit[] } {
   const names: NameHit[] = [];
   const ports: PortHit[] = [];
+  const words = tokenize(code);
 
   const pushName = (raw: string, how: LiteralHow, at: number) => {
     const value = nameLiteral(raw);
@@ -136,54 +283,126 @@ function collectHits(code: string): { names: NameHit[]; ports: PortHit[] } {
     const value = portLiteral(raw);
     if (value != null) ports.push({ value, how, slot, at });
   };
+  const applyKey = (key: string, raw: string, how: LiteralHow, at: number) => {
+    const normalized = key.trim().toLowerCase();
+    if (NAME_KEYS.has(normalized)) {
+      pushName(raw, how, at);
+      return;
+    }
+    const slot = portSlotForKey(normalized);
+    if (slot) pushPort(raw, how, slot, at);
+  };
+  const recordKeyValue = (key: string, raw: string, how: LiteralHow, at: number) => {
+    const fallback = parseFallback(raw);
+    if (fallback) {
+      applyKey(fallback.key, fallback.value, "fallback", at);
+      return;
+    }
+    applyKey(key, raw, how, at);
+  };
 
-  for (const match of code.matchAll(/\$\{([A-Za-z_][\w.-]*):-([^}]+)\}/g)) {
-    const key = match[1] ?? "";
-    const raw = match[2] ?? "";
-    const at = match.index ?? 0;
-    if (NAME_KEYS.has(key.toLowerCase())) pushName(raw, "fallback", at);
-    const slot = portSlotForKey(key);
-    if (slot) pushPort(raw, "fallback", slot, at);
-  }
+  /**
+   * PowerShell `$args += '-servername'` / `$args += 'World'` stores the flag
+   * and its value on two statements. A `$var` immediately after the flag is
+   * the argument (and not a literal) unless it is that array append.
+   */
+  const arrayAppendLiteral = (index: number): { value: string; last: number } | null => {
+    const name = words[index + 1];
+    const op = words[index + 2];
+    const value = words[index + 3];
+    if (!name || !op || !value) return null;
+    if (!/^\$[A-Za-z_][\w]*$/.test(name.text)) return null;
+    if (op.text !== "+=" && op.text !== "=") return null;
+    if (splitFlag(value.text)) return null;
+    return { value: value.text, last: index + 3 };
+  };
 
-  for (const match of code.matchAll(
-    /(?:^|[\s;])(?:export\s+|set\s+)?["']?([A-Za-z_][\w.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'#;]+))/g,
-  )) {
-    const key = match[1] ?? "";
-    const raw = match[2] ?? match[3] ?? match[4] ?? "";
-    const at = match.index ?? 0;
-    if (NAME_KEYS.has(key.toLowerCase())) pushName(raw, "assign", at);
-    const slot = portSlotForKey(key);
-    if (slot) pushPort(raw, "assign", slot, at);
-  }
+  const takeFlag = (word: string, index: number): number => {
+    const parsed = splitFlag(word);
+    if (!parsed) return -1;
+    const kind = flagKind(parsed.name);
+    if (!kind) return -1;
+    let value = parsed.inline ?? "";
+    let last = index;
+    if (!value) {
+      const appended = arrayAppendLiteral(index);
+      const next = words[index + 1];
+      if (appended && next && /^\$/.test(next.text)) {
+        value = appended.value;
+        last = appended.last;
+      } else if (next && !splitFlag(next.text)) {
+        value = next.text;
+        last = index + 1;
+      } else {
+        return index;
+      }
+    }
+    const at = words[index]?.at ?? 0;
+    if (kind === "name") pushName(value, "flag", at);
+    else if (kind === "publish") {
+      const host = publishHostPort(value);
+      if (host) pushPort(host, "flag", "game", at);
+    } else {
+      pushPort(value, "flag", kind, at);
+    }
+    return last;
+  };
 
-  for (const match of code.matchAll(/\$env:([A-Za-z_][\w]*)\s*=\s*['"]([^'"]+)['"]/gi)) {
-    const key = match[1] ?? "";
-    const raw = match[2] ?? "";
-    const at = match.index ?? 0;
-    if (NAME_KEYS.has(key.toLowerCase())) pushName(raw, "assign", at);
-    const slot = portSlotForKey(key);
-    if (slot) pushPort(raw, "assign", slot, at);
-  }
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i]?.text ?? "";
+    const at = words[i]?.at ?? 0;
 
-  for (const match of code.matchAll(
-    /(?:^|[\s"'=])(-servername|--server-name|--servername|--level-name|--world|\+server\.identity)(?:=|\s+)([^\s"'\\]+)/gi,
-  )) {
-    pushName(match[2] ?? "", "flag", match.index ?? 0);
-  }
+    const envInline = word.match(/^\$env:([A-Za-z_][\w]*)=(.*)$/i);
+    if (envInline?.[1]) {
+      let value = envInline[2] ?? "";
+      let last = i;
+      const next = words[i + 1];
+      if (!value && next && !splitFlag(next.text)) {
+        value = next.text;
+        last = i + 1;
+      }
+      recordKeyValue(envInline[1], value, "assign", at);
+      i = last;
+      continue;
+    }
+    const envName = word.match(/^\$env:([A-Za-z_][\w]*)$/i);
+    const envNext = words[i + 1];
+    const envValue = words[i + 2];
+    if (envName?.[1] && envNext?.text === "=" && envValue && !splitFlag(envValue.text)) {
+      recordKeyValue(envName[1], envValue.text, "assign", at);
+      i += 2;
+      continue;
+    }
 
-  for (const match of code.matchAll(
-    /(?:^|[\s"'=])(-udpport|--udpport)(?:=|\s+)(\d{1,5})\b/gi,
-  )) {
-    pushPort(match[2] ?? "", "flag", "direct", match.index ?? 0);
-  }
-  for (const match of code.matchAll(
-    /(?:^|[\s"'=])(--server-port|--port|-port|\/port)(?:=|\s+)(\d{1,5})\b/gi,
-  )) {
-    pushPort(match[2] ?? "", "flag", "game", match.index ?? 0);
-  }
-  for (const match of code.matchAll(/(?:^|[\s])-p\s+(\d{1,5}):(\d{1,5})\b/g)) {
-    pushPort(match[1] ?? "", "flag", "game", match.index ?? 0);
+    const assigned = word.match(/^([A-Za-z_][\w.-]*)=(.*)$/);
+    if (assigned?.[1]) {
+      const key = assigned[1];
+      const inline = assigned[2] ?? "";
+      if (!inline) {
+        const next = words[i + 1];
+        if (next && !splitFlag(next.text) && next.text !== "=") {
+          recordKeyValue(key, next.text, "assign", at);
+          i += 1;
+          continue;
+        }
+      } else if (splitFlag(inline)) {
+        const last = takeFlag(inline, i);
+        i = last < 0 ? i : last;
+        continue;
+      } else {
+        recordKeyValue(key, inline, "assign", at);
+        continue;
+      }
+    }
+
+    const bare = parseFallback(word);
+    if (bare) {
+      applyKey(bare.key, bare.value, "fallback", at);
+      continue;
+    }
+
+    const last = takeFlag(word, i);
+    if (last >= 0) i = last;
   }
 
   names.sort((a, b) => a.at - b.at);
