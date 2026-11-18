@@ -4,6 +4,10 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+### Fixed
+
+- **Lab matrix Windows placement works with an MCP access token** — `requireWinNodeOnline` and the live-server protect list no longer call Home REST with only a bearer token (REST answers 403 `forbidden` by design). Home exposes a read-only operator `nodes_list` tool with the same inventory as `GET /api/nodes` and no key material. The matrix client uses `nodes_list` and `servers_list` over MCP, keeps a live `playon_session` cookie as a fallback, and refuses a cached session once it is expired or fails `GET /api/auth/me`. Protect-list failures stay fail-closed. Placement errors distinguish `auth_failed`, `windows_node_offline`, `windows_node_missing`, and `disabled_by_env` (`PLAYON_MATRIX_WIN_NODE_ID=off`).
+
 ### Changed
 
 - **Game-ready fal assets (epic #988)** — `mods_assets_generate` now takes a `kind`: `image`, `sprite` (background removed), `icon` (transparent, resized to the game's icon size, e.g. PZ 32px / Minecraft 16px), `texture` (square, resized to the game's texture size) or `sound` (short clip). Calls go through fal's queue API with a 5-minute cap and cancel on timeout, so slower models don't hang the request. Models are allowlisted per kind (no free-form model ids on the host's key). Results include a `placementHint` for where the game loads the file. Resizing is pure JS (no native image deps). The key is only ever sent to `queue.fal.run`. Files land under `mods-src/<modId>/assets/` only; deploy stays a separate confirm-gated snapshot.

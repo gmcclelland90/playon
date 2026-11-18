@@ -98,6 +98,7 @@ export const INSTALL_EXCLUDED_TOOLS = [
   "skill_promote",
   "skill_promote_server",
   "nodes_add",
+  "nodes_list",
   "nodes_remove",
   "servers_delete",
   "mods_scaffold",

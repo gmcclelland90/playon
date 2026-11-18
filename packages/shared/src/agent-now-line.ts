@@ -97,6 +97,7 @@ const TOOL_NOW: Record<string, (args?: Record<string, unknown>) => string> = {
     const host = hostNoun(args);
     return host ? `Listing files on ${host}` : "Listing host files";
   },
+  nodes_list: () => "Checking nodes",
   nodes_add: (args) => {
     const host = hostNoun(args);
     return host ? `Adding ${host}` : "Adding a node";

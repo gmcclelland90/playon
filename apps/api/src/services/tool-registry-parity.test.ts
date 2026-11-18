@@ -55,6 +55,7 @@ const ALL_TOOLS = [
   "net_suggest_bind",
   "placement_suggest",
   "nodes_add",
+  "nodes_list",
   "nodes_remove",
   "servers_create_from_skill",
   "servers_start",
@@ -274,6 +275,9 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(surface.skill("snapshot_list")).toBe("backup");
     expect(surface.activityVerb("backup_offnode_list")).toBe("snapshot");
     expect(surface.activityVerb("placement_suggest")).toBe("search");
+    expect(surface.activityVerb("nodes_list")).toBe("search");
+    expect(surface.get("nodes_list")?.readOnly).toBe(true);
+    expect(surface.get("nodes_list")?.requiresConfirm).toBeFalsy();
     expect(surface.confirmAction("nodes_add")).toBe("enroll a new compute node over SSH");
     expect(surface.confirmAction("nodes_remove")).toBe(
       "remove a compute node from this deployment",
@@ -345,7 +349,7 @@ describe("tool registry parity (Venice/Ollama/MCP)", () => {
     expect(byName.get("servers_query_test")?.workspacePolicy).toBe("none");
     expect(byName.get("skill_list")?.workspacePolicy).toBe("none");
     // Node-pool tools are keyed by nodeId or skill name; the workspace binding never applies.
-    for (const name of ["placement_suggest", "nodes_add", "nodes_remove"]) {
+    for (const name of ["placement_suggest", "nodes_add", "nodes_list", "nodes_remove"]) {
       expect(byName.get(name)?.workspacePolicy, `${name} should not be server-scoped`).toBe(
         "none",
       );

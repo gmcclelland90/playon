@@ -1,12 +1,16 @@
+import { eq } from "drizzle-orm";
 import {
   createMcpHandler,
   McpServer,
   type AuthInfo,
 } from "@modelcontextprotocol/server";
+import { RoleSchema } from "@playon/shared";
 import type { ControlPlane } from "../control-plane.js";
+import { users } from "../db/schema.js";
 import type { AccessTokenPrincipal } from "./access-tokens.js";
 import { jsonSchemaAsStandard } from "./mcp-json-schema.js";
-import { createPlayOnToolRegistry } from "./tools.js";
+import { runWithToolActor, type ToolActor } from "./tool-actor.js";
+import { createPlayOnToolRegistry, type PlayOnToolRegistry } from "./tools.js";
 
 function resultIsError(result: unknown): boolean {
   if (!result || typeof result !== "object") return false;
@@ -38,10 +42,13 @@ export function createPlayOnMcpHandler(plane: ControlPlane) {
           inputSchema: jsonSchemaAsStandard(def.parameters),
           annotations: def.requiresConfirm
             ? { destructiveHint: true, readOnlyHint: false }
-            : { readOnlyHint: false },
+            : { readOnlyHint: Boolean(def.readOnly) },
         },
         async (args) => {
-          const result = await registry.invoke(
+          const result = await invokeRegisteredMcpTool(
+            plane,
+            principal,
+            registry,
             def.name,
             (args ?? {}) as Record<string, unknown>,
             {
@@ -82,6 +89,43 @@ export function authInfoFromAccessToken(
       name: principal.name,
     },
   };
+}
+
+type McpInvokeOptions = {
+  confirmPolicy: "auto" | "gate";
+  autoApproveActor?: string;
+};
+
+/**
+ * Run one registry tool as the MCP token's user.
+ * `nodes_list` reads this actor and refuses roles below operator.
+ */
+export async function invokeRegisteredMcpTool(
+  plane: ControlPlane,
+  principal: AccessTokenPrincipal | null,
+  registry: PlayOnToolRegistry,
+  name: string,
+  args: Record<string, unknown>,
+  invokeOptions: McpInvokeOptions,
+): Promise<unknown> {
+  const actor = await resolveMcpToolActor(plane, principal);
+  const run = () => registry.invoke(name, args, invokeOptions);
+  return actor ? runWithToolActor(actor, run) : run();
+}
+
+async function resolveMcpToolActor(
+  plane: ControlPlane,
+  principal: AccessTokenPrincipal | null,
+): Promise<ToolActor | undefined> {
+  if (!principal) return undefined;
+  if (!principal.userId) return { userId: "", role: null };
+  const rows = await plane.db
+    .select({ role: users.role })
+    .from(users)
+    .where(eq(users.id, principal.userId))
+    .limit(1);
+  const parsed = RoleSchema.safeParse(rows[0]?.role);
+  return { userId: principal.userId, role: parsed.success ? parsed.data : null };
 }
 
 function authInfoToPrincipal(authInfo: AuthInfo | undefined): AccessTokenPrincipal | null {

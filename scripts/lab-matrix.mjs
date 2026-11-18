@@ -41,6 +41,8 @@ import {
 } from "./lab-matrix-stormworks.mjs";
 import {
   HomeClient,
+  classifyPlacementFailure,
+  explainWindowsPlacementNote,
   loadHomeAuth,
   wantsWindowsPlacement,
   windowsPlacementConfig,
@@ -636,16 +638,12 @@ async function loadHomeProtectContainerNames() {
     const cfg = windowsPlacementConfig(repoRoot);
     const auth = await loadHomeAuth(cfg);
     const home = new HomeClient(auth);
-    const list = await home.rest("/api/servers");
-    const servers = Array.isArray(list) ? list : Array.isArray(list?.servers) ? list.servers : [];
-    const names = new Set();
-    for (const s of servers) {
-      if (s?.id) names.add(playonContainerName(s.id));
-    }
+    // Fail closed: a fetch error throws and we do not treat the inventory as empty.
+    const names = await home.loadProtectedContainerNames(playonContainerName);
     return { loaded: true, names };
   } catch (err) {
     console.warn(
-      `lab-matrix home protect list unavailable: ${err instanceof Error ? err.message : err}`,
+      `lab-matrix home protect list unavailable (fail closed; will not reap containers that are not already known leftovers): ${err instanceof Error ? err.message : err}`,
     );
     return { loaded: false, names: new Set() };
   }
@@ -1687,12 +1685,18 @@ async function runMatrixBody({ dataRoot, db, sqlite, skillsRoots, gamesRoot }) {
       );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`lab-matrix windows placement disabled: ${msg}`);
+      const kind = classifyPlacementFailure(msg);
+      const detail = msg.startsWith(`${kind}:`) ? msg.slice(kind.length + 1).trim() : msg;
+      console.warn(`lab-matrix windows placement ${kind}: ${detail || msg}`);
       windows = { enabled: false };
-      windowsPlacementNote = `unavailable:${msg.slice(0, 160)}`;
+      windowsPlacementNote = `unavailable:${kind}: ${detail || msg}`.slice(0, 220);
     }
   } else if (tier === "static") {
     windowsPlacementNote = "n/a_static_tier";
+  } else if (!winCfg.enabled) {
+    console.log(
+      "lab-matrix windows placement disabled_by_env: PLAYON_MATRIX_WIN_NODE_ID=off",
+    );
   }
 
   const allSkills = listSkills(skillsRoots)
@@ -1700,7 +1704,7 @@ async function runMatrixBody({ dataRoot, db, sqlite, skillsRoots, gamesRoot }) {
     .sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
 
   if (!windows.enabled && filter === "windows") {
-    console.error("windows placement unavailable (is playon-win-1 online?)");
+    console.error(explainWindowsPlacementNote(windowsPlacementNote, winCfg.winNodeId));
     return 2;
   }
 
@@ -1921,7 +1925,7 @@ async function runMatrixBody({ dataRoot, db, sqlite, skillsRoots, gamesRoot }) {
   console.log(windowsCoverage.summaryLine);
   if (windowsCoverage.alert) {
     console.warn(
-      `lab-matrix Windows PE coverage alert: ${windowsCoverage.skipCount} skip(s) while placement off (${windowsPlacementNote}). Bring playon-win-1 online for weekend/daily sweeps.`,
+      `lab-matrix Windows PE coverage alert: ${windowsCoverage.skipCount} skip(s) while placement off (${explainWindowsPlacementNote(windowsPlacementNote, winCfg.winNodeId)}).`,
     );
   }
   if (final && typeof final === "object") {
