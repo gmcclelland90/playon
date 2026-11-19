@@ -269,6 +269,10 @@ export async function performNodeSelfUpdate(args: {
   expectedSize?: number;
   /** When true (tests), do not schedule process.exit */
   skipExit?: boolean;
+  /** Node data directory for `ota-apply-<jobId>.log` (#1060). */
+  dataRoot?: string;
+  /** Claimed job id; used only as a log filename. */
+  jobId?: string;
 }): Promise<{
   version: string;
   installRoot: string;
@@ -340,6 +344,8 @@ export async function performNodeSelfUpdate(args: {
         extracted,
         preserve,
         version: args.version,
+        jobId: args.jobId,
+        dataRoot: args.dataRoot,
       });
       windowsHelperSpawned = true;
       return result;
@@ -370,12 +376,73 @@ export async function performNodeSelfUpdate(args: {
   }
 }
 
+/** Filename-safe `data/ota-apply-<jobId>.log` under the node data dir (#1060). */
+export function windowsOtaApplyLogPath(dataRoot: string, jobId?: string): string {
+  const safe = (jobId ?? "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 80);
+  return path.join(path.resolve(dataRoot), `ota-apply-${safe || "unknown"}.log`);
+}
+
+function resolveSelfUpdateDataRoot(opts: { dataRoot?: string; installRoot: string }): string {
+  const explicit = opts.dataRoot?.trim();
+  if (explicit) return path.resolve(explicit);
+  const fromEnv = process.env.PLAYON_DATA_ROOT?.trim();
+  if (fromEnv) return path.resolve(fromEnv);
+  return path.join(opts.installRoot, "data");
+}
+
+/**
+ * Detached helper with stdout and stderr appended to `logPath`.
+ * File handles, not pipes: pipes would pin the child to this process and
+ * defeat the #1041 job breakaway inside apply-self-update.ps1. `ignore`
+ * discarded PowerShell 5.1 parse errors (#1060).
+ */
+export function spawnDetachedLoggedProcess(opts: {
+  command: string;
+  args: string[];
+  logPath: string;
+}): ChildProcess {
+  fs.mkdirSync(path.dirname(opts.logPath), { recursive: true });
+  fs.appendFileSync(
+    opts.logPath,
+    `[${new Date().toISOString()}] [node-agent] spawning ${path.basename(opts.command)}\n`,
+    "utf8",
+  );
+  const stdoutFd = fs.openSync(opts.logPath, "a");
+  let stderrFd: number | undefined;
+  try {
+    stderrFd = fs.openSync(opts.logPath, "a");
+    const child = spawn(opts.command, opts.args, {
+      detached: true,
+      windowsHide: true,
+      stdio: ["ignore", stdoutFd, stderrFd],
+    });
+    child.on("error", (err) => {
+      try {
+        fs.appendFileSync(
+          opts.logPath,
+          `[${new Date().toISOString()}] [node-agent] spawn failed: ${err.message}\n`,
+          "utf8",
+        );
+      } catch {
+        // The apply log is best-effort once launch has been requested.
+      }
+    });
+    child.unref();
+    return child;
+  } finally {
+    fs.closeSync(stdoutFd);
+    if (stderrFd !== undefined) fs.closeSync(stderrFd);
+  }
+}
+
 /** 0.2.3/0.2.4 used CommonJS require of node:child_process here and threw in ESM (#885). */
 function performWindowsSelfUpdate(opts: {
   installRoot: string;
   extracted: string;
   preserve: string[];
   version: string;
+  jobId?: string;
+  dataRoot?: string;
 }): {
   version: string;
   installRoot: string;
@@ -383,6 +450,10 @@ function performWindowsSelfUpdate(opts: {
   restartRequired: boolean;
 } {
   const helperScript = requireWindowsUpdateHelper(opts.extracted);
+  const logPath = windowsOtaApplyLogPath(
+    resolveSelfUpdateDataRoot({ dataRoot: opts.dataRoot, installRoot: opts.installRoot }),
+    opts.jobId,
+  );
 
   const preserveArgs = opts.preserve.flatMap((name) => ["-Preserve", name]);
   const args = [
@@ -399,15 +470,12 @@ function performWindowsSelfUpdate(opts: {
     String(process.pid),
     "-ExpectedVersion",
     opts.version,
+    "-ApplyLog",
+    logPath,
     ...preserveArgs,
   ];
 
-  const child = spawn("powershell.exe", args, {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
-  });
-  child.unref();
+  spawnDetachedLoggedProcess({ command: "powershell.exe", args, logPath });
 
   return {
     version: opts.version,

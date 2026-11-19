@@ -1,5 +1,5 @@
 # PlayOn Windows OTA bootstrap (#885 / #917)
-# Home writes this so 0.2.3–0.2.11 never claim node_self_update.
+# Home writes this so 0.2.3-0.2.11 never claim node_self_update.
 # Download + size/magic/sha256, then the packaged apply-self-update.ps1.
 param(
   [Parameter(Mandatory = $true)][string]$DownloadUrl,

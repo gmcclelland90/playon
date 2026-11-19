@@ -1,4 +1,4 @@
-# PlayOn Home — one-line installer (Windows x64)
+# PlayOn Home - one-line installer (Windows x64)
 #   irm https://playon.games/install.ps1 | iex
 #
 # Env (optional):
@@ -75,7 +75,7 @@ if (Test-Path $HomeDir) {
 
 Remove-Item -Recurse -Force $staging -ErrorAction SilentlyContinue
 
-Write-Host "==> Installed $($release.tag_name) → $HomeDir"
+Write-Host "==> Installed $($release.tag_name) -> $HomeDir"
 
 if ($AsService) {
   Write-Host "==> Registering Windows scheduled tasks (elevated)"

@@ -18,7 +18,7 @@ if (-not $isAdmin) {
   throw "Run install-node.ps1 from an elevated PowerShell (Run as administrator). Privilege is captured once at install so Enable Linux runtime can run without a UAC prompt."
 }
 
-# deploy/windows → package root is two levels up when inside a tree
+# deploy/windows -> package root is two levels up when inside a tree
 $Candidate = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $BundleRoot = $null
 if (Test-Path (Join-Path $Candidate "apps\node-agent\dist\index.js")) {
