@@ -3,6 +3,7 @@ import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { launchWindowsUpdateHelper } from "./windows-update-launch.js";
 import {
   ARCHIVE_EXTRACT_TIMEOUT_MS,
   WINDOWS_LOAD_ENV_CJS,
@@ -339,7 +340,7 @@ export async function performNodeSelfUpdate(args: {
     const extracted = await extractArchive(archivePath, path.join(staging, "extracted"));
 
     if (process.platform === "win32" && !args.skipExit) {
-      const result = performWindowsSelfUpdate({
+      const result = await performWindowsSelfUpdate({
         installRoot,
         extracted,
         preserve,
@@ -391,91 +392,38 @@ function resolveSelfUpdateDataRoot(opts: { dataRoot?: string; installRoot: strin
 }
 
 /**
- * Detached helper with stdout and stderr appended to `logPath`.
- * File handles, not pipes: pipes would pin the child to this process and
- * defeat the #1041 job breakaway inside apply-self-update.ps1. `ignore`
- * discarded PowerShell 5.1 parse errors (#1060).
+ * Windows apply runs outside this process. `launchWindowsUpdateHelper` returns
+ * only after the helper has disabled PlayOnNodeAgent and written its armed
+ * marker. A throw (`update_helper_not_started`) fails the job and must not
+ * exit: the caller stays on the old version (#1060 / #1041).
  */
-export function spawnDetachedLoggedProcess(opts: {
-  command: string;
-  args: string[];
-  logPath: string;
-}): ChildProcess {
-  fs.mkdirSync(path.dirname(opts.logPath), { recursive: true });
-  fs.appendFileSync(
-    opts.logPath,
-    `[${new Date().toISOString()}] [node-agent] spawning ${path.basename(opts.command)}\n`,
-    "utf8",
-  );
-  const stdoutFd = fs.openSync(opts.logPath, "a");
-  let stderrFd: number | undefined;
-  try {
-    stderrFd = fs.openSync(opts.logPath, "a");
-    const child = spawn(opts.command, opts.args, {
-      detached: true,
-      windowsHide: true,
-      stdio: ["ignore", stdoutFd, stderrFd],
-    });
-    child.on("error", (err) => {
-      try {
-        fs.appendFileSync(
-          opts.logPath,
-          `[${new Date().toISOString()}] [node-agent] spawn failed: ${err.message}\n`,
-          "utf8",
-        );
-      } catch {
-        // The apply log is best-effort once launch has been requested.
-      }
-    });
-    child.unref();
-    return child;
-  } finally {
-    fs.closeSync(stdoutFd);
-    if (stderrFd !== undefined) fs.closeSync(stderrFd);
-  }
-}
-
-/** 0.2.3/0.2.4 used CommonJS require of node:child_process here and threw in ESM (#885). */
-function performWindowsSelfUpdate(opts: {
+async function performWindowsSelfUpdate(opts: {
   installRoot: string;
   extracted: string;
   preserve: string[];
   version: string;
   jobId?: string;
   dataRoot?: string;
-}): {
+}): Promise<{
   version: string;
   installRoot: string;
   preserved: string[];
   restartRequired: boolean;
-} {
+}> {
   const helperScript = requireWindowsUpdateHelper(opts.extracted);
   const logPath = windowsOtaApplyLogPath(
     resolveSelfUpdateDataRoot({ dataRoot: opts.dataRoot, installRoot: opts.installRoot }),
     opts.jobId,
   );
-
-  const preserveArgs = opts.preserve.flatMap((name) => ["-Preserve", name]);
-  const args = [
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
+  await launchWindowsUpdateHelper({
     helperScript,
-    "-SourceDir",
-    opts.extracted,
-    "-TargetDir",
-    opts.installRoot,
-    "-AgentPid",
-    String(process.pid),
-    "-ExpectedVersion",
-    opts.version,
-    "-ApplyLog",
+    sourceDir: opts.extracted,
+    targetDir: opts.installRoot,
+    agentPid: process.pid,
+    version: opts.version,
+    preserve: opts.preserve,
     logPath,
-    ...preserveArgs,
-  ];
-
-  spawnDetachedLoggedProcess({ command: "powershell.exe", args, logPath });
+  });
 
   return {
     version: opts.version,
@@ -567,6 +515,7 @@ export function relaunchUpdatedAgent(opts: {
 }): ChildProcess | void {
   if (opts.skipExit) return;
   if (process.platform === "win32") {
+    // The helper is already outside this job and has disabled the agent task.
     setTimeout(() => process.exit(0), 200);
     return;
   }

@@ -4,6 +4,11 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+### Fixed
+
+- **Windows Home packaging extracts the vendored Node zip with tar** — `pnpm package:home` on current `windows-latest` runs under PowerShell 7, so `powershell.exe` inherited that `PSModulePath` and `Expand-Archive` called a 3-argument `ExtractToDirectory` that Windows PowerShell 5.1 does not have. The Node zip is unpacked with `tar -xf` first. The Expand-Archive fallback drops `PSModulePath`.
+- **Windows node OTA helper survives the agent task exiting** — On playon-win-1 the 0.2.18 and 0.2.19 agents spawned `apply-self-update.ps1` detached and exited about 200ms later. The helper never ran a line, because it was still inside the PlayOnNodeAgent job and Task Scheduler killed it when the agent exited. The agent now registers a one-shot `PlayOnNodeAgentApplyUpdate` task through Task Scheduler COM, copying the agent principal (same user, S4U, Highest), waits up to 10s for the helper to disable that task and write a start marker, and stays online on the old version if the marker never appears. `schtasks` and WMI `Win32_Process.Create` are fallbacks. The helper still logs to `data/ota-apply-<jobId>.log` and deletes the one-shot task when it finishes. When an older agent still spawns the script inside the job, the script's first action is the same one-shot relaunch (`#1060`, `#1041`).
+
 ## [0.2.19] — 2026-11-19
 
 ### Fixed
