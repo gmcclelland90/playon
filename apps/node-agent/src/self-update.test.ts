@@ -25,7 +25,6 @@ import {
   runAgentSupervisorLoop,
   runExtractCommand,
   shouldExitSystemdMainPid,
-  spawnDetachedLoggedProcess,
   swapInstallTree,
   windowsOtaApplyLogPath,
 } from "./self-update.js";
@@ -255,15 +254,25 @@ describe("performNodeSelfUpdate", () => {
 
   it("Windows helper receives ExpectedVersion so apply cannot lie about the stamp (#1040)", () => {
     const src = fs.readFileSync(fileURLToPath(new URL("./self-update.ts", import.meta.url)), "utf8");
-    expect(src).toMatch(/"-ExpectedVersion"/);
-    expect(src).toMatch(/opts\.version/);
+    const launch = fs.readFileSync(
+      fileURLToPath(new URL("./windows-update-launch.ts", import.meta.url)),
+      "utf8",
+    );
+    expect(launch).toMatch(/"-ExpectedVersion"/);
+    expect(src).toMatch(/version: opts\.version/);
     const index = fs.readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8");
     expect(index).toMatch(/not reporting done/);
     expect(index).toMatch(/apply started; waiting for new version check-in/);
     expect(index).toMatch(/restartRequired === true/);
+    expect(index).toMatch(/SELF-UPDATE FAILED/);
+    expect(index).toMatch(/staying on the current version; not exiting/);
+    const failed = index.indexOf("SELF-UPDATE FAILED");
+    const relaunch = index.indexOf("relaunchUpdatedAgent({");
+    expect(relaunch).toBeGreaterThan(0);
+    expect(failed).toBeGreaterThan(relaunch);
   });
 
-  it("names the apply log under the node data dir (#1060)", () => {
+  it("names the apply log under the node data dir and does not detached-spawn powershell (#1060)", () => {
     expect(windowsOtaApplyLogPath("/var/playon/data", "vrcRFARHBF6lFF_NL5i_Q")).toBe(
       path.resolve("/var/playon/data", "ota-apply-vrcRFARHBF6lFF_NL5i_Q.log"),
     );
@@ -274,46 +283,23 @@ describe("performNodeSelfUpdate", () => {
       path.resolve("/var/playon/data", "ota-apply-unknown.log"),
     );
     const src = fs.readFileSync(fileURLToPath(new URL("./self-update.ts", import.meta.url)), "utf8");
+    const launch = fs.readFileSync(
+      fileURLToPath(new URL("./windows-update-launch.ts", import.meta.url)),
+      "utf8",
+    );
     const jobs = fs.readFileSync(fileURLToPath(new URL("./jobs.ts", import.meta.url)), "utf8");
-    expect(src).toMatch(/"-ApplyLog"/);
-    expect(src).toMatch(/spawnDetachedLoggedProcess\(\{ command: "powershell\.exe"/);
+    expect(src).toMatch(/await launchWindowsUpdateHelper/);
+    expect(src).toMatch(/update_helper_not_started/);
+    expect(src).not.toMatch(/spawnDetachedLoggedProcess/);
     expect(src).not.toMatch(/spawn\("powershell\.exe"/);
-    expect(src).toMatch(/detached:\s*true/);
+    expect(launch).not.toMatch(/detached:\s*true/);
+    expect(launch).toMatch(/Schedule\.Service/);
+    expect(launch).toMatch(/update_helper_not_started/);
+    const awaited = src.indexOf("await launchWindowsUpdateHelper");
+    const restart = src.indexOf("restartRequired: true", awaited);
+    expect(restart).toBeGreaterThan(awaited);
     expect(jobs).toMatch(/jobId: job\.id/);
     expect(jobs).toMatch(/performNodeSelfUpdate\(\{[\s\S]*?dataRoot,/);
-  });
-
-  it("appends detached helper stdout and stderr to the apply log (#1060)", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "playon-ota-log-"));
-    const logPath = path.join(root, "data", "ota-apply-job.log");
-    const child = spawnDetachedLoggedProcess({
-      command: process.execPath,
-      args: [
-        "-e",
-        "process.stdout.write('out-line\\n'); process.stderr.write('err-line\\n');",
-      ],
-      logPath,
-    });
-    child.ref();
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error("helper log timeout")), 8_000);
-        child.once("exit", () => {
-          clearTimeout(timer);
-          resolve();
-        });
-        child.once("error", (err) => {
-          clearTimeout(timer);
-          reject(err);
-        });
-      });
-      const text = fs.readFileSync(logPath, "utf8");
-      expect(text).toMatch(/spawning node/);
-      expect(text).toContain("out-line");
-      expect(text).toContain("err-line");
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
   });
 
   it("swapInstallTree does not delete sibling processes under data tree (#837 regression)", () => {
@@ -770,10 +756,21 @@ describe("apply-self-update.ps1", () => {
     expect(src).toMatch(/CREATE_BREAKAWAY_FROM_JOB/);
     expect(src).toMatch(/function Test-CommandLineIsTargetAgent/);
     expect(src).toMatch(/\[string\]\$ApplyLog/);
+    expect(src).toMatch(/\[string\]\$StartedMarker/);
     expect(src).toMatch(/Write-Log "start pid=/);
+    expect(src).toMatch(/Write-Log "helper armed pid=/);
+    expect(src).toMatch(/function Start-ImmediateOneShotRelaunch/);
+    expect(src).toMatch(/Schedule\.Service/);
+    expect(src).toMatch(/Win32_Process/);
     const startLog = src.indexOf('Write-Log "start pid=');
     expect(startLog).toBeGreaterThan(src.indexOf("function Write-Log"));
     expect(startLog).toBeLessThan(src.indexOf("function Write-PortableStartNodeCmd"));
+    const head = src.slice(0, startLog);
+    expect(head).toMatch(/if \(-not \$Detached\) \{[\s\S]*Start-ImmediateOneShotRelaunch/);
+    expect(head).toMatch(/ConvertTo-PsSingleQuoted "-Detached"/);
+    expect(src.indexOf('Write-Log "helper armed pid=')).toBeGreaterThan(src.indexOf("Disable-ScheduledTask"));
+    expect(src.indexOf('Write-Log "helper armed pid=')).toBeGreaterThan(src.indexOf("function Start-WslSiblingHold"));
+    expect(src.indexOf('Write-Log "helper armed pid=')).toBeLessThan(src.indexOf("Waiting for node-agent"));
     expect(src).toMatch(/-ApplyLog/);
     expect([...Buffer.from(src, "utf8")].every((byte) => byte < 128)).toBe(true);
     expect(src).toMatch(/playon-linux/);
@@ -783,8 +780,8 @@ describe("apply-self-update.ps1", () => {
     const stopId = src.match(/^\s*Stop-Process[^\n]+/gm) ?? [];
     expect(stopId.length).toBeGreaterThan(0);
     expect(stopId.every((line) => /-Id \$/.test(line))).toBe(true);
-    const launch = src.match(/if \(-not \$Detached\) \{[\s\S]*?exit 0\r?\n\}/);
-    expect(launch?.[0]).toMatch(
+    const fallback = src.slice(src.lastIndexOf("if (-not $Detached)"));
+    expect(fallback).toMatch(
       /Start-WslSiblingHold[\s\S]*Start-BreakawayHelper[\s\S]*Disable-NodeAgentTask/,
     );
   });
