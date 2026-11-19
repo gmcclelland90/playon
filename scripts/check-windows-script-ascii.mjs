@@ -8,13 +8,19 @@
  *
  * deploy/ is copied into the Home and node packages. Other .ps1/.cmd/.bat
  * files in the repo are host scripts and have the same parser.
+ *
+ * A child directory with its own .git is a separate checkout. nightly-docker
+ * checks playon-games out inside the workspace so paper smoke can load catalog
+ * skills; those start scripts are not packaged with Home. Regular CI does not
+ * check that repo out, and the lab host keeps it as a sibling, so only the
+ * in-workspace layout was failing this guard.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const SKIP = new Set([
+export const SKIP_DIR_NAMES = new Set([
   "node_modules",
   "dist",
   "dist-home",
@@ -28,26 +34,29 @@ const SKIP = new Set([
 ]);
 const EXTS = new Set([".ps1", ".psm1", ".cmd", ".bat"]);
 
-function walk(dir, out = []) {
-  for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
-    if (SKIP.has(ent.name)) continue;
-    const full = path.join(dir, ent.name);
-    if (ent.isDirectory()) walk(full, out);
-    else if (EXTS.has(path.extname(ent.name).toLowerCase())) out.push(full);
+export function isNestedCheckout(dir) {
+  return fs.existsSync(path.join(dir, ".git"));
+}
+
+export function findWindowsScripts(rootDir) {
+  const out = [];
+  function walk(dir) {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (SKIP_DIR_NAMES.has(ent.name)) continue;
+      const full = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        if (isNestedCheckout(full)) continue;
+        walk(full);
+      } else if (EXTS.has(path.extname(ent.name).toLowerCase())) {
+        out.push(full);
+      }
+    }
   }
+  walk(rootDir);
   return out;
 }
 
-const files = walk(root);
-const applyHelper = path.join("deploy", "windows", "apply-self-update.ps1");
-if (!files.some((file) => file.endsWith(applyHelper))) {
-  console.error("check-windows-script-ascii: apply-self-update.ps1 was not scanned");
-  process.exit(1);
-}
-
-let failed = false;
-for (const file of files) {
-  const buf = fs.readFileSync(file);
+export function nonAsciiHits(buf) {
   let first = -1;
   let count = 0;
   for (let i = 0; i < buf.length; i++) {
@@ -56,15 +65,45 @@ for (const file of files) {
       count++;
     }
   }
-  if (count > 0) {
-    failed = true;
-    console.error(`${path.relative(root, file)}: ${count} non-ASCII byte(s), first at offset ${first}`);
+  return { count, first };
+}
+
+export function scanWindowsScripts(rootDir) {
+  const files = findWindowsScripts(rootDir);
+  const failures = [];
+  for (const file of files) {
+    const hit = nonAsciiHits(fs.readFileSync(file));
+    if (hit.count > 0) failures.push({ file, ...hit });
   }
+  return { files, failures };
 }
 
-if (failed) {
-  console.error("Windows scripts must be ASCII so PowerShell 5.1 can parse them (#1060).");
-  process.exit(1);
+function main() {
+  const { files, failures } = scanWindowsScripts(root);
+  const applyHelper = path.join("deploy", "windows", "apply-self-update.ps1");
+  if (!files.some((file) => file.endsWith(applyHelper))) {
+    console.error("FAIL check-windows-script-ascii");
+    console.error("check-windows-script-ascii: apply-self-update.ps1 was not scanned");
+    process.exit(1);
+  }
+
+  if (failures.length > 0) {
+    console.error("FAIL check-windows-script-ascii");
+    for (const failure of failures) {
+      const rel = path.relative(root, failure.file);
+      console.error(
+        `${rel}: ${failure.count} non-ASCII byte(s), first at offset ${failure.first}`,
+      );
+    }
+    console.error("Windows scripts must be ASCII so PowerShell 5.1 can parse them (#1060).");
+    process.exit(1);
+  }
+
+  console.log(`check-windows-script-ascii: ${files.length} script(s) ok`);
 }
 
-console.log(`check-windows-script-ascii: ${files.length} script(s) ok`);
+const invokedAsCli =
+  process.argv[1] &&
+  path.resolve(fileURLToPath(import.meta.url)) === path.resolve(process.argv[1]);
+
+if (invokedAsCli) main();

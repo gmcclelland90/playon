@@ -19,6 +19,20 @@ jobs:
           repository: gmcclelland90/playon-games
           token: ${{ secrets.PLAYON_GAMES_PAT || github.token }}
           path: playon-games
+      - name: Place playon-games beside this repo
+        run: |
+          # Lab and resolveCatalogGamesRoot use a sibling checkout. Leaving the
+          # tree inside the workspace makes pnpm test:unit scan catalog start
+          # scripts (check-windows-script-ascii.mjs). Never delete a sibling
+          # that was already there.
+          src="$GITHUB_WORKSPACE/playon-games"
+          dest="$GITHUB_WORKSPACE/../playon-games"
+          if [ -e "$dest" ]; then
+            echo "sibling playon-games already present at $dest; removing in-workspace checkout"
+            rm -rf "$src"
+          else
+            mv "$src" "$dest"
+          fi
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -39,7 +53,7 @@ jobs:
         run: pnpm loop:verify:runtime
         env:
           PLAYON_RUNTIME: docker
-          PLAYON_GAMES_SKILLS_ROOT: ${{ github.workspace }}/playon-games/skills-src/games
+          PLAYON_GAMES_SKILLS_ROOT: ${{ github.workspace }}/../playon-games/skills-src/games
           PLAYON_LAB_FILE_ISSUES: "0"
           PLAYON_LAB_PUBLISH_STATUS: "0"
           PLAYON_VENICE_API_KEY: ${{ secrets.PLAYON_VENICE_API_KEY }}
