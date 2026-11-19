@@ -16,6 +16,7 @@ import https from "node:https";
 import { createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { linuxNodeTarCreate, windowsNodeTarCreate } from "./package-node-archive.mjs";
+import { extractVendoredNodeArchive } from "./vendor-node-extract.mjs";
 import { bundledWindowsStartNodeCmd, windowsLoadEnvCjsSource } from "../packages/shared/dist/index.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -102,19 +103,7 @@ async function vendorNode() {
   fs.rmSync(extractDir, { recursive: true, force: true });
   fs.rmSync(runtimeNode, { recursive: true, force: true });
 
-  if (isWin) {
-    execFileSync(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-Command",
-        `Expand-Archive -Path '${archivePath.replace(/'/g, "''")}' -DestinationPath '${cacheDir.replace(/'/g, "''")}' -Force`,
-      ],
-      { stdio: "inherit" },
-    );
-  } else {
-    execFileSync("tar", ["-xzf", archivePath, "-C", cacheDir], { stdio: "inherit" });
-  }
+  extractVendoredNodeArchive(archivePath, cacheDir);
 
   if (!fs.existsSync(extractDir)) {
     console.error(`Node extract missing: ${extractDir}`);
