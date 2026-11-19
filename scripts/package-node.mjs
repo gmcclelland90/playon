@@ -19,6 +19,18 @@ import { linuxNodeTarCreate, windowsNodeTarCreate } from "./package-node-archive
 import { extractVendoredNodeArchive } from "./vendor-node-extract.mjs";
 import { bundledWindowsStartNodeCmd, windowsLoadEnvCjsSource } from "../packages/shared/dist/index.js";
 
+// PowerShell 7 (the GitHub Actions default shell) exports PSModulePath with its own
+// Microsoft.PowerShell.Archive first. Windows PowerShell 5.1 then loads that module and
+// Expand-Archive fails with "Cannot find an overload for ExtractToDirectory" (windows-latest
+// image 20261116+). Drop PSModulePath so powershell.exe rebuilds its own default.
+function windowsPowerShellEnv() {
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) {
+    if (k.toLowerCase() === "psmodulepath") delete env[k];
+  }
+  return env;
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const out = path.join(root, "dist-node");
@@ -305,7 +317,7 @@ if (isWin) {
       "-Command",
       `$ProgressPreference = 'SilentlyContinue'; Compress-Archive -Path '${stage.replace(/'/g, "''")}' -DestinationPath '${zipPath.replace(/'/g, "''")}' -Force`,
     ],
-    { stdio: "inherit" },
+    { stdio: "inherit", env: windowsPowerShellEnv() },
   );
   console.log("Packaged Node at", zipPath);
   // 0.2.3/0.2.5 agents Expand-Archive zips with a 60s spawnSync timeout (#868).

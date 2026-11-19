@@ -17,6 +17,18 @@ import https from "node:https";
 import { createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 
+// PowerShell 7 (the GitHub Actions default shell) exports PSModulePath with its own
+// Microsoft.PowerShell.Archive first. Windows PowerShell 5.1 then loads that module and
+// Expand-Archive fails with "Cannot find an overload for ExtractToDirectory" (windows-latest
+// image 20261116+). Drop PSModulePath so powershell.exe rebuilds its own default.
+function windowsPowerShellEnv() {
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) {
+    if (k.toLowerCase() === "psmodulepath") delete env[k];
+  }
+  return env;
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const out = path.join(root, "dist-home");
@@ -329,7 +341,7 @@ if (isWin) {
       "-Command",
       `Compress-Archive -Path '${stage.replace(/'/g, "''")}' -DestinationPath '${zipPath.replace(/'/g, "''")}' -Force`,
     ],
-    { stdio: "inherit" },
+    { stdio: "inherit", env: windowsPowerShellEnv() },
   );
   console.log("Packaged Home at", zipPath);
 } else {
