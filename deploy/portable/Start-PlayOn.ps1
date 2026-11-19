@@ -1,5 +1,5 @@
 # Copy to PlayOn Home bundle root as Start-PlayOn.ps1 (package-home does this).
-# Run: right-click → Run with PowerShell
+# Run: right-click -> Run with PowerShell
 #   or: powershell -ExecutionPolicy Bypass -File .\Start-PlayOn.ps1
 $ErrorActionPreference = "Stop"
 $Root = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }

@@ -1,6 +1,6 @@
-# PlayOn — Enable Linux runtime via WSL2 on a Windows host.
+# PlayOn - Enable Linux runtime via WSL2 on a Windows host.
 # Idempotent: run to install or repair the WSL sibling node (local-wsl or {nodeId}-wsl).
-# Home may be local or remote — pass -ApiUrl / -NodeToken / -NodeId when not using a local Home env file.
+# Home may be local or remote - pass -ApiUrl / -NodeToken / -NodeId when not using a local Home env file.
 #
 # Phases:
 #   1. Ensure WSL2 feature enabled (may require reboot)
@@ -177,7 +177,7 @@ function Test-WslPlatform {
 
 function Test-VirtEnabled {
   # When a hypervisor is already running, Win32_Processor.VirtualizationFirmwareEnabled
-  # often reads False even though VT-x/AMD-V is on — trust HyperVisorPresent first.
+  # often reads False even though VT-x/AMD-V is on - trust HyperVisorPresent first.
   try {
     $ci = Get-ComputerInfo -Property HyperVisorPresent -ErrorAction SilentlyContinue
     if ($ci -and $ci.HyperVisorPresent) { return $true }
@@ -226,7 +226,7 @@ function Get-WslNetworkingMode {
   return "nat"
 }
 
-# Default WSL2 vmIdleTimeout is 60s — systemd services alone do not keep the VM up.
+# Default WSL2 vmIdleTimeout is 60s - systemd services alone do not keep the VM up.
 # Disable idle shutdown so the sibling agent keeps heartbeating.
 function Ensure-WslVmIdleDisabled {
   $cfgPath = Join-Path $env:USERPROFILE ".wslconfig"
@@ -475,7 +475,7 @@ if ($idleCfgChanged) {
   Restart-WslDistroForConfig
 }
 
-# Already healthy — skip reinstall (re-Enable / refresh must not fight a running agent binary).
+# Already healthy - skip reinstall (re-Enable / refresh must not fight a running agent binary).
 if (-not $Repair -and (Test-DockerInDistro) -and (Test-AgentInDistro)) {
   Write-Phase "WSL Linux runtime already healthy"
   Write-Status "ready" "$NodeId node is ready" 0
@@ -502,7 +502,7 @@ if [ ! -f /etc/wsl.conf ] || ! grep -q 'systemd=true' /etc/wsl.conf 2>/dev/null;
   printf '[boot]\nsystemd=true\n' >/etc/wsl.conf
 fi
 
-# Install Docker Engine (avoid curl|sh under pipefail — SIGPIPE aborts the whole script)
+# Install Docker Engine (avoid curl|sh under pipefail - SIGPIPE aborts the whole script)
 if ! command -v docker >/dev/null 2>&1; then
   echo "PLAYON_WSL_PHASE:Installing Docker Engine..."
   echo "==> Installing Docker Engine..."
@@ -645,7 +645,7 @@ WorkingDirectory=${PLAYON_ROOT}
 ExecStart=${EXEC_START}
 Restart=always
 RestartSec=5
-# Only the agent MAINPID — never SIGTERM the supervised game tree on OTA/restart (#886).
+# Only the agent MAINPID - never SIGTERM the supervised game tree on OTA/restart (#886).
 KillMode=process
 SendSIGHUP=no
 
@@ -685,7 +685,7 @@ if ($setup.Code -ne 0) {
   Write-Host $setup.Out
   $detail = Normalize-WslText $setup.Out
   if ($detail.Length -gt 400) { $detail = $detail.Substring($detail.Length - 400) }
-  # Match real Docker failures only — do not treat unrelated log lines that mention "docker".
+  # Match real Docker failures only - do not treat unrelated log lines that mention "docker".
   if ($detail -match "Docker socket not available|get-docker\.sh|docker\.service") {
     Write-Status "error" "Docker installation failed inside WSL: $detail" 14
     exit 14

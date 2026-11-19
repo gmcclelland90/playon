@@ -4,6 +4,7 @@ param(
   [Parameter(Mandatory = $true)][int]$AgentPid,
   [string[]]$Preserve = @("data", "env", "node.env", "node.env.cmd", "node.env.json"),
   [string]$ExpectedVersion = "",
+  [string]$ApplyLog = "",
   [switch]$Detached
 )
 
@@ -18,13 +19,22 @@ function Write-Log {
   $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
   $line = "[$timestamp] [apply-self-update] $Message"
   Write-Host $line
-  try {
-    Add-Content -Path $LogFile -Value $line -ErrorAction SilentlyContinue
-  } catch {
+  foreach ($path in @($LogFile, $ApplyLog)) {
+    if (-not $path) { continue }
+    try {
+      Add-Content -Path $path -Value $line -ErrorAction SilentlyContinue
+    } catch {
+    }
   }
 }
 
-# Leftover double-click launcher. Task action is node.exe — never >> logfile.
+# Before any swap work. The node agent redirects this process's stdout/stderr
+# to data/ota-apply-<jobId>.log; -ApplyLog is the same file for the breakaway
+# child, whose stdio is not that redirect. A parse error never reaches here
+# and is captured on the agent's stderr handle (#1060).
+Write-Log "start pid=$PID detached=$([bool]$Detached) agent=$AgentPid source=$SourceDir target=$TargetDir"
+
+# Leftover double-click launcher. Task action is node.exe - never >> logfile.
 function Write-PortableStartNodeCmd {
   param([string]$Dir)
   $portable = Join-Path $Dir "start-node.cmd"
@@ -83,7 +93,7 @@ function Register-PlayOnNodeAgentTaskFromTree {
     -StartWhenAvailable
   $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType $logon -RunLevel $runLevel
   Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null
-  Write-Log "Registered $TaskName → $nodeExe $arg"
+  Write-Log "Registered $TaskName -> $nodeExe $arg"
 }
 
 function Format-ProcessArgs {
@@ -118,6 +128,9 @@ function Get-RelaunchArgList {
   )
   if ($ExpectedVersion) {
     $relaunch += @("-ExpectedVersion", $ExpectedVersion)
+  }
+  if ($ApplyLog) {
+    $relaunch += @("-ApplyLog", $ApplyLog)
   }
   foreach ($name in $Preserve) {
     $relaunch += @("-Preserve", $name)
@@ -242,7 +255,7 @@ public class PlayOnBreakaway {
 
 # Keep playon-linux awake while PlayOnNodeAgent's Job object tears down.
 # Killing wsl.exe (or the hold child) idles the distro and takes the WSL sibling
-# offline — do not Stop-Process wsl.exe (#1040 / #837).
+# offline - do not Stop-Process wsl.exe (#1040 / #837).
 function Start-WslSiblingHold {
   $distro = Get-WslDistroName
   $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
@@ -315,7 +328,7 @@ try {
 }
 
 if (-not (Test-Path $SourceDir)) {
-  Restore-NodeAgentTask -Reason "ERROR: Source directory not found: $SourceDir — leaving previous agent"
+  Restore-NodeAgentTask -Reason "ERROR: Source directory not found: $SourceDir - leaving previous agent"
   exit 1
 }
 
@@ -323,12 +336,12 @@ if ($ExpectedVersion) {
   $want = $ExpectedVersion.Trim() -replace '^[vV]', ''
   $srcVer = Get-TreeVersion -Dir $SourceDir
   if ($srcVer -and $srcVer -ne $want) {
-    Restore-NodeAgentTask -Reason "ERROR: package version $srcVer != expected $want — not swapping"
+    Restore-NodeAgentTask -Reason "ERROR: package version $srcVer != expected $want - not swapping"
     exit 1
   }
 }
 
-Write-Log "Swapping install tree: $SourceDir → $TargetDir"
+Write-Log "Swapping install tree: $SourceDir -> $TargetDir"
 New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
 
 $sourceNames = @((Get-ChildItem -Path $SourceDir).Name)
@@ -354,7 +367,7 @@ foreach ($item in Get-ChildItem -Path $SourceDir) {
     Remove-Item -Path $dest -Recurse -Force -ErrorAction Stop
   } catch {
     if ($_.Exception.Message -match "being used by another process|EBUSY|cannot access|locked") {
-      Restore-NodeAgentTask -Reason "ERROR: swap locked removing $($item.Name): $_ — aborting, previous tree kept where possible"
+      Restore-NodeAgentTask -Reason "ERROR: swap locked removing $($item.Name): $_ - aborting, previous tree kept where possible"
       exit 1
     }
   }
@@ -362,7 +375,7 @@ foreach ($item in Get-ChildItem -Path $SourceDir) {
     Copy-Item -Path $item.FullName -Destination $dest -Recurse -Force -ErrorAction Stop
   } catch {
     if ($_.Exception.Message -match "being used by another process|EBUSY|cannot access|locked") {
-      Restore-NodeAgentTask -Reason "ERROR: swap locked copying $($item.Name): $_ — aborting, restarting previous agent"
+      Restore-NodeAgentTask -Reason "ERROR: swap locked copying $($item.Name): $_ - aborting, restarting previous agent"
       exit 1
     }
     throw
@@ -377,7 +390,7 @@ if ($ExpectedVersion) {
     exit 1
   }
   if ($got -ne $want) {
-    Restore-NodeAgentTask -Reason "ERROR: swapped version $got != expected $want — leaving previous agent"
+    Restore-NodeAgentTask -Reason "ERROR: swapped version $got != expected $want - leaving previous agent"
     exit 1
   }
   Write-Log "Swapped tree version $got matches expected"
@@ -402,7 +415,7 @@ if (Test-Path $envFile) {
   [System.IO.File]::WriteAllText($envFile, $crlfEnv, [System.Text.ASCIIEncoding]::new())
   Write-Log "Rewrote node.env.cmd as CRLF"
 } else {
-  Write-Log "WARNING: node.env.cmd missing — load-env.cjs will use node.env.json if present"
+  Write-Log "WARNING: node.env.cmd missing - load-env.cjs will use node.env.json if present"
 }
 
 $startCmd = Join-Path $TargetDir "start-node.cmd"
