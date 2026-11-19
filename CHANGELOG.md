@@ -4,6 +4,18 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+## [0.2.19] — 2026-11-19
+
+### Fixed
+
+- **Windows node OTA no longer dies on Windows PowerShell 5.1** — `apply-self-update.ps1` contained UTF-8 em dashes with no BOM, so PowerShell 5.1 read it as cp1252 and the script failed to parse right after the agent exited for the swap. playon-win-1's 0.2.17 to 0.2.18 OTA went offline this way and had to be installed by hand. Every `.ps1`/`.psm1`/`.cmd`/`.bat` in the repo is now plain ASCII. CI fails on any non-ASCII byte in those scripts (`scripts/check-windows-script-ascii.mjs`) and, on `windows-latest`, parses each `.ps1`/`.psm1` with `powershell.exe` 5.1. The agent now sends the detached helper's stdout and stderr to `data/ota-apply-<jobId>.log`, and the script writes a start line there before any swap work, so a failed apply leaves evidence (`#1060`, `#1061`).
+
+### Notes
+
+- Rides `#1061` on top of 0.2.18 (`3cf7e44..a52ac3c`).
+- The helper is run from the new package, so nodes on 0.2.18 pick up the fixed script on this OTA. The `ota-apply-<jobId>.log` redirect starts with the agent that ships here, so it applies from the next OTA after 0.2.19.
+- **#1051** through **#1054** are not in this cut.
+
 ## [0.2.18] — 2026-11-18
 
 ### Fixed
