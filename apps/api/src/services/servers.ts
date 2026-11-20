@@ -139,12 +139,17 @@ import {
   type StartPeer,
 } from "./start-identity.js";
 import {
+  START_CONFIG_REL_PATHS,
+  startConfigHardcodedProblem,
+  type StartConfigPeer,
+  type StartConfigSelf,
+} from "./start-config-hardcoded.js";
+import {
   choosePzHome,
   neutralizePzStartScript,
   PZ_SKILL_NAME,
   pzCacheDir,
   pzProcessEnv,
-  pzStartScriptProblem,
   renderPzStartEnv,
   resolvePzStartIdentity,
   type PzLaunchIdentity,
@@ -2019,13 +2024,49 @@ export class ServerService {
       const text = await this.readServerText(server, rel);
       if (!text) continue;
       const patched = neutralizePzStartScript(text);
-      if (patched !== text) {
-        const wrote = await this.writeServerText(server, rel, patched);
-        if (!wrote) {
-          return `start_config_hardcoded: could not rewrite ${rel} for server ${server.id}`;
+      if (patched === text) continue;
+      const wrote = await this.writeServerText(server, rel, patched);
+      if (!wrote) {
+        return `start_config_hardcoded: could not rewrite ${rel} for server ${server.id}`;
+      }
+    }
+    return null;
+  }
+
+  /** Other servers' names, ports, and jail ids for the start-config guard. */
+  private async startConfigPeers(server: ServerRecord): Promise<StartConfigPeer[]> {
+    const peers = await this.loadStartPeers(server);
+    const out: StartConfigPeer[] = [];
+    for (const peer of peers) {
+      const names = [peer.name, peer.launchName].filter((name): name is string => !!name?.trim());
+      const ports = new Set<number>();
+      if (peer.gamePort != null && peer.gamePort > 0) ports.add(peer.gamePort);
+      const row = await this.getRaw(peer.id);
+      if (row && this.readSkillName(row.dataPath) === PZ_SKILL_NAME) {
+        for (const world of await this.loadPzWorlds(row)) {
+          if (world.name.trim()) names.push(world.name);
+          if (world.defaultPort != null && world.defaultPort > 0) ports.add(world.defaultPort);
+          if (world.udpPort != null && world.udpPort > 0) ports.add(world.udpPort);
         }
       }
-      const problem = pzStartScriptProblem(patched);
+      out.push({ id: peer.id, names, ports: [...ports] });
+    }
+    return out;
+  }
+
+  /**
+   * Refuse a start script that hardcodes another server's name, port, or
+   * data dir. This server's own identity is allowed (#1050).
+   */
+  private async hardcodedStartConfig(
+    server: ServerRecord,
+    self: StartConfigSelf,
+  ): Promise<string | null> {
+    const peers = await this.startConfigPeers(server);
+    for (const rel of START_CONFIG_REL_PATHS) {
+      const text = await this.readServerText(server, rel);
+      if (!text) continue;
+      const problem = startConfigHardcodedProblem({ text, self, peers });
       if (problem) return `${problem} (${rel})`;
     }
     return null;
@@ -2065,6 +2106,12 @@ export class ServerService {
       ...resolved.identity,
       ...(home.home ? { playonHome: home.home } : {}),
     };
+    const hardcoded = await this.hardcodedStartConfig(server, {
+      id: server.id,
+      names: [server.name, identity.serverName],
+      ports: [identity.gamePort, identity.directPort],
+    });
+    if (hardcoded) return { kind: "error", error: hardcoded };
     const existing = (await this.readServerText(server, "game/.playon-start.env")) ?? "";
     const wrote = await this.writeServerText(
       server,
@@ -2084,6 +2131,15 @@ export class ServerService {
   async startIsolationReason(server: ServerRecord): Promise<string | null> {
     const prepared = await this.ensurePzLaunchIdentity(server);
     if (prepared.kind === "error") return prepared.error;
+    if (prepared.kind === "skip") {
+      const advertised = await this.advertisedGamePort(server).catch(() => 0);
+      const hardcoded = await this.hardcodedStartConfig(server, {
+        id: server.id,
+        names: [server.name],
+        ports: advertised > 0 ? [advertised] : [],
+      });
+      if (hardcoded) return hardcoded;
+    }
     const peers = await this.loadStartPeers(server);
     const identity: StartLaunchIdentity =
       prepared.kind === "ok"

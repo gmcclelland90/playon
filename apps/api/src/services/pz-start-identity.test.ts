@@ -221,10 +221,35 @@ describe("PZ start argv defaults", () => {
     }
   });
 
-  it("refuses a script that still hardcodes NewZombieLand3", () => {
-    expect(pzStartScriptProblem('exec "$BIN" -servername NewZombieLand3 -port 16261\n')).toMatch(
-      /NewZombieLand3/,
-    );
+  it("allows a server's own name and ports in a fallback (#1050)", () => {
+    const own = [
+      "servername=${PLAYON_SERVER_NAME:-NewZombieLand3}",
+      "port=${PLAYON_GAME_PORT:-16261}",
+      "udpport=${PLAYON_DIRECT_PORT:-16262}",
+      'exec "$BIN" -servername "$servername" -port "$port" -udpport "$udpport"',
+      "",
+    ].join("\n");
+    expect(
+      pzStartScriptProblem(own, {
+        serverId: "nzl",
+        serverName: "NewZombieLand3",
+        gamePort: 16261,
+        directPort: 16262,
+        peers: [{ id: "clone", names: ["NZLCloneFrontierRD"], ports: [16361, 16362] }],
+      }),
+    ).toBeNull();
+  });
+
+  it("refuses a script that still hardcodes another server's name", () => {
+    expect(
+      pzStartScriptProblem('exec "$BIN" -servername NewZombieLand3 -port 16261\n', {
+        serverId: "clone",
+        serverName: "NZLCloneFrontierRD",
+        gamePort: 16361,
+        directPort: 16362,
+        peers: [{ id: "nzl", names: ["NewZombieLand3"], ports: [16261, 16262] }],
+      }),
+    ).toMatch(/start_config_hardcoded: start script names NewZombieLand3/);
   });
 
   it("builds argv from this server and strips baked-in servertest / 16261", () => {

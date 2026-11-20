@@ -4,6 +4,7 @@ import {
   buildManagedStartWrapper,
   formatServerNameFlag,
 } from "./manage-suggest.js";
+import { startConfigHardcodedProblem } from "./start-config-hardcoded.js";
 
 describe("managed start env/wrapper", () => {
   it("includes HOME, admin password, server name, and flag", () => {
@@ -40,5 +41,19 @@ describe("managed start env/wrapper", () => {
     expect(sh).toContain('EXTRA+=(-adminpassword "$PLAYON_ADMIN_PASSWORD")');
     expect(sh).toContain('EXTRA+=("$FLAG" "$PLAYON_SERVER_NAME")');
     expect(sh).toContain("start-server.sh");
+  });
+
+  it("does not treat the managed wrapper's own flag fallback as another server", () => {
+    const clone = { id: "clone", names: ["NZLCloneFrontierRD"], ports: [16361, 16362] };
+    const nzl = { id: "nzl", names: ["NewZombieLand3"], ports: [16261, 16262] };
+    for (const arg of ["servername", "world", "+server.identity", "--start-server", "name"]) {
+      expect(
+        startConfigHardcodedProblem({
+          text: buildManagedStartWrapper(arg),
+          self: clone,
+          peers: [nzl],
+        }),
+      ).toBeNull();
+    }
   });
 });
