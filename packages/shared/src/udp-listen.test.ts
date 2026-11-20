@@ -3,6 +3,7 @@ import {
   applyKnownSkillMetadataFixes,
   ENSHROUDED_LEGACY_GAME_PORT,
   ENSHROUDED_QUERY_PORT,
+  MINECRAFT_BEDROCK_SKILL,
   SkillMetadataSchema,
 } from "./skill.js";
 import {
@@ -173,6 +174,22 @@ describe("tcpPortOpenTargets", () => {
     });
     expect(tcpPortOpenTargets(catalog).map((p) => `${p.name}:${p.default}`)).toEqual([
       "rcon:27015",
+    ]);
+  });
+
+  it("treats Bedrock NetherNet signaling as the TCP port_open target (#1048)", () => {
+    const catalog = SkillMetadataSchema.parse({
+      name: MINECRAFT_BEDROCK_SKILL,
+      version: "0.1.0",
+      ports: [{ name: "game", protocol: "udp", default: 19132 }],
+    });
+    expect(tcpPortOpenTargets(catalog)).toEqual([]);
+    const fixed = applyKnownSkillMetadataFixes(catalog);
+    expect(tcpPortOpenTargets(fixed).map((p) => `${p.name}:${p.protocol}:${p.default}`)).toEqual([
+      "game:tcp:19132",
+    ]);
+    expect(udpListenTargets(fixed).udpGame.map((p) => `${p.name}:${p.default}`)).toEqual([
+      "game-udp:19140",
     ]);
   });
 
