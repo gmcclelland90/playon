@@ -25,6 +25,9 @@ function Get-ShippedScripts([string]$Dir) {
   foreach ($item in Get-ChildItem -LiteralPath $Dir -Force) {
     if ($item.PSIsContainer) {
       if ($skip -contains $item.Name) { continue }
+      # Nested git checkout (nightly places playon-games inside the workspace).
+      # Catalog scripts belong to that repo, not the package this guard parses.
+      if (Test-Path -LiteralPath (Join-Path $item.FullName ".git")) { continue }
       Get-ShippedScripts $item.FullName
     } elseif ($item.Extension -eq ".ps1" -or $item.Extension -eq ".psm1") {
       $item.FullName
