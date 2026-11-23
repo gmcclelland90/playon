@@ -32,7 +32,7 @@ Write-Host "==> Probing Home $ApiUrl"
 try {
   Invoke-WebRequest -Uri $ApiUrl -UseBasicParsing -TimeoutSec 5 | Out-Null
 } catch {
-  throw "Cannot reach Home at $ApiUrl — put this PC on the 172.16.0.0/16 LAN (or route it) and allow TCP 8787. $_"
+  throw "Cannot reach Home at $ApiUrl - put this PC on the 172.16.0.0/16 LAN (or route it) and allow TCP 8787. $_"
 }
 
 $script = Join-Path $PSScriptRoot "..\deploy\windows\install-node.ps1"
@@ -48,7 +48,7 @@ Write-Host "==> Installing node $NodeId -> $ApiUrl"
 
 Write-Host @"
 
-Done. In Home UI → Settings → Nodes, expect $NodeId online with os=windows.
+Done. In Home UI -> Settings -> Nodes, expect $NodeId online with os=windows.
 Scheduled task: PlayOnNodeAgent
 Data: C:\playon-node\data
 "@

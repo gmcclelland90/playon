@@ -53,6 +53,23 @@ assert.ok(
   !/execFileSync\(\s*["']tar["'][\s\S]*--force-local/.test(src),
   "package-node.mjs must not pass --force-local to tar",
 );
+assert.ok(src.includes("extractVendoredNodeArchive"), "package-node.mjs must extract vendored Node via tar");
+
+const homeSrc = fs.readFileSync(fileURLToPath(new URL("./package-home.mjs", import.meta.url)), "utf8");
+assert.ok(homeSrc.includes("extractVendoredNodeArchive"), "package-home.mjs must extract vendored Node via tar");
+
+const extractSrc = fs.readFileSync(fileURLToPath(new URL("./vendor-node-extract.mjs", import.meta.url)), "utf8");
+assert.ok(extractSrc.includes('["-xf", archivePath, "-C", destDir]'), "Windows Node zip must use tar -xf");
+assert.ok(
+  extractSrc.indexOf('["-xf", archivePath, "-C", destDir]') <
+    extractSrc.indexOf("Expand-Archive -LiteralPath"),
+  "tar must be tried before Expand-Archive",
+);
+assert.ok(
+  extractSrc.includes('key.toLowerCase() === "psmodulepath"'),
+  "Expand-Archive fallback must not inherit pwsh PSModulePath",
+);
+assert.ok(!extractSrc.includes("--force-local"), "vendor node extract must not pass --force-local");
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "playon-node-tar-"));
 try {

@@ -308,6 +308,26 @@ ${rows || '<tr><td colspan="4">No skills</td></tr>'}
 `;
 }
 
+export function verifySummaryLine(verify, m) {
+  const state = !verify ? "n/a" : verify.ok ? "green" : "red";
+  const hint = verifyFailureHint(verify);
+  return `verify=${state}${hint} matrix=${m.done}/${m.requested} fail=${m.fail}`;
+}
+
+function verifyFailureHint(verify) {
+  if (!verify || verify.ok) return "";
+  const layer = (verify.results || []).find((r) => r.name === verify.failedLayer);
+  const names = (layer?.failingTests || [])
+    .map((line) => String(line).trim())
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((line) => line.slice(0, 160));
+  if (names.length === 0) {
+    return verify.failedLayer ? ` layer=${verify.failedLayer}` : "";
+  }
+  return ` layer=${verify.failedLayer} failing=${names.join(" || ")}`;
+}
+
 function main() {
   const host = process.env.PLAYON_LAB_HOST_LABEL || "playon-dev";
   const now = new Date().toISOString();
@@ -333,9 +353,7 @@ function main() {
   }
 
   console.log(`wrote tmp/lab-report.md tmp/lab-report.html tmp/lab-now.md`);
-  console.log(
-    `verify=${verify ? (verify.ok ? "green" : "red") : "n/a"} matrix=${m.done}/${m.requested} fail=${m.fail}`,
-  );
+  console.log(verifySummaryLine(verify, m));
 }
 
 const isMain =

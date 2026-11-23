@@ -4,6 +4,8 @@ export interface ToolDefinition {
   parameters: Record<string, unknown>;
   /** When true, orchestrator pauses for host approval before running the handler. */
   requiresConfirm?: boolean;
+  /** MCP annotation only. Omitted from the LLM tool payload. */
+  readOnly?: boolean;
 }
 
 export type ToolHandler = (args: Record<string, unknown>) => Promise<unknown>;

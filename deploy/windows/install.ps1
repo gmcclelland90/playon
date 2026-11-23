@@ -1,4 +1,4 @@
-# PlayOn Home — Windows install-as-service (no Docker required).
+# PlayOn Home - Windows install-as-service (no Docker required).
 # Run elevated PowerShell from an extracted Home bundle.
 param(
   [string]$InstallRoot = "C:\playon",
@@ -10,13 +10,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# deploy/windows → bundle root is parent of deploy/
+# deploy/windows -> bundle root is parent of deploy/
 $BundleRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 if (-not (Test-Path (Join-Path $BundleRoot "apps\api\dist\index.js"))) {
-  throw "Could not find apps\api\dist\index.js under $BundleRoot — run from an extracted Home package."
+  throw "Could not find apps\api\dist\index.js under $BundleRoot - run from an extracted Home package."
 }
 
-Write-Host "==> PlayOn Home → $InstallRoot"
+Write-Host "==> PlayOn Home -> $InstallRoot"
 
 $bundledNode = Join-Path $BundleRoot "runtime\node\node.exe"
 $nodeExe = $null
@@ -51,7 +51,7 @@ if (-not $hasModules -and -not $hasApiModules) {
   pnpm install --prod --frozen-lockfile=false
   Pop-Location
 } else {
-  Write-Host "Vendored node_modules present — skipping pnpm install"
+  Write-Host "Vendored node_modules present - skipping pnpm install"
 }
 
 # Prefer bundled Node copied into InstallRoot
@@ -143,7 +143,7 @@ Write-Host ""
 Write-Host "PlayOn Home is starting."
 Write-Host "  Open:      http://playon.local"
 Write-Host "  Fallback:  http://${AdvertiseHost}:8787 (run elevated for :80 / no port)"
-Write-Host "  Discord:   https://<handle>.playon.games after Settings → Panel URL link"
+Write-Host "  Discord:   https://<handle>.playon.games after Settings -> Panel URL link"
 Write-Host "  Env:   $envFile"
 Write-Host "  Node:  $nodeExe"
 Write-Host "  Node token stored in env file for LAN join."

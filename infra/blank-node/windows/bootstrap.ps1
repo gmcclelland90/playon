@@ -27,7 +27,7 @@ $dataRoot = if ($env:PLAYON_DATA_ROOT) { $env:PLAYON_DATA_ROOT } else { "C:\play
 $repo = if ($env:PLAYON_REPO) { $env:PLAYON_REPO } else { "C:\playon\src\playon" }
 $heartbeatMs = if ($env:PLAYON_HEARTBEAT_MS) { $env:PLAYON_HEARTBEAT_MS } else { "5000" }
 
-Write-Host "PlayOn blank-node bootstrap → $apiUrl as $nodeId"
+Write-Host "PlayOn blank-node bootstrap -> $apiUrl as $nodeId"
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   Write-Host "Installing Node.js 22 via winget..."
@@ -86,4 +86,4 @@ Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Silent
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -RunLevel Highest -Force | Out-Null
 Start-ScheduledTask -TaskName $taskName
 
-Write-Host "Scheduled task '$taskName' started. Check control-plane Dashboard → Nodes for status: online."
+Write-Host "Scheduled task '$taskName' started. Check control-plane Dashboard -> Nodes for status: online."

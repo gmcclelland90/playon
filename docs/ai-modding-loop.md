@@ -11,7 +11,7 @@ Curated `games.*` skill content lives in sibling **playon-games** (not this repo
 | `mods_scaffold` | Confirm-gated. Creates `mods-src/<modId>/` + dialect skeleton + `playon-mod.json`. |
 | `mods_deploy` | Confirm-gated. `snapshot_create` first, then copies into the live dialect path (e.g. PZ `mods/`, Paper `plugins/`) and patches enable lists. Refuses Workshop cache paths. |
 | `mods_workshop_prepare` | Confirm-gated. PZ dry-run zip under `workshop-out/<modId>/`. `livePublish` → `blocked_human` / `steam_credentials_human_gate` (no Steam upload). |
-| `mods_assets_generate` | Confirm-gated. BYO fal image → `mods-src/<modId>/assets/` (see `docs/fal-assets.md`). |
+| `mods_assets_generate` | Confirm-gated. BYO fal `image` / `sprite` / `icon` / `texture` / `sound` into `mods-src/<modId>/assets/` only. Does not deploy. Copy to the returned `placementHint` inside `mods-src` before `mods_deploy`. See `docs/fal-assets.md`. |
 | `mods_lua_check` | Read-only (PZ). Static B42 Lua API guard on `mods-src` before deploy. |
 | `mods_errors` | Read-only. Parses dialect logs (PZ Lua, Paper) for mod name / file / line / message. |
 | `experiences_export` / `experiences_install` | Confirm-gated pack/install on an existing server. |
@@ -20,7 +20,7 @@ Curated `games.*` skill content lives in sibling **playon-games** (not this repo
 ## Loop
 
 1. `mods_scaffold` with a stable `modId` (and display name).
-2. Edit only under `mods-src/<modId>/` via `fs_*` (jailed).
+2. Edit only under `mods-src/<modId>/` via `fs_*` (jailed). Optional: `mods_assets_generate` (confirm) writes under `assets/`; copy that file to the `placementHint` path, still inside `mods-src`. It never writes the live mod directory.
 3. `mods_lua_check` (PZ) — fix findings before deploy.
 4. `mods_deploy` (host confirms) — never hand-patch live mod dirs when this tool exists.
 4. `servers_restart` (or equivalent skill restart).
