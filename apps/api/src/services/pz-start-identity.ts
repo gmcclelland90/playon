@@ -278,6 +278,11 @@ export function neutralizePzStartScript(text: string): string {
       'UDPPORT="${PLAYON_DIRECT_PORT:?playon: PLAYON_DIRECT_PORT is required}"',
     ],
     [
+      // Current catalog start.sh: `else ARGS+=(-servername "servertest")` (#1050 lab).
+      /^([ \t]*)ARGS\+=\(-servername ["']?servertest["']?\)(\r?)$/m,
+      '$1{ echo "playon: PLAYON_SERVER_NAME is required" >&2; exit 1; }$2',
+    ],
+    [
       /^if not defined PLAYON_SERVER_NAME set "PLAYON_SERVER_NAME=servertest"\r?$/m,
       [
         "if not defined PLAYON_SERVER_NAME (",

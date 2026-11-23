@@ -221,6 +221,36 @@ describe("PZ start argv defaults", () => {
     }
   });
 
+  it("rewrites the catalog ARGS+=(-servername \"servertest\") fallback (#1050 lab)", () => {
+    const catalogArgs = [
+      "#!/usr/bin/env bash",
+      'ARGS=(-cachedir="$CACHE" -adminpassword "$ADMIN")',
+      'if [[ -n "${PLAYON_SERVER_NAME:-}" ]]; then',
+      '  ARGS+=(-servername "$PLAYON_SERVER_NAME")',
+      'elif [[ -f "${CACHE}/../.playon-servername" ]]; then',
+      '  ARGS+=(-servername "$(tr -d \' \\n\' < "${CACHE}/../.playon-servername")")',
+      "else",
+      '  ARGS+=(-servername "servertest")',
+      "fi",
+      'exec ./ProjectZomboid64 "${ARGS[@]}"',
+      "",
+    ].join("\n");
+    expect(pzStartScriptProblem(catalogArgs)).toMatch(/start_config_hardcoded/);
+    const patched = neutralizePzStartScript(catalogArgs);
+    expect(patched).not.toMatch(/servertest/);
+    expect(patched).toMatch(/PLAYON_SERVER_NAME is required/);
+    expect(
+      pzStartScriptProblem(patched, {
+        serverId: "lab",
+        serverName: "LabWorld",
+        gamePort: 16461,
+        directPort: 16462,
+        peers: [{ id: "nzl", names: ["NewZombieLand3"], ports: [16261, 16262] }],
+      }),
+    ).toBeNull();
+    expect(neutralizePzStartScript(catalogArgs.replace(/\n/g, "\r\n"))).not.toMatch(/servertest/);
+  });
+
   it("allows a server's own name and ports in a fallback (#1050)", () => {
     const own = [
       "servername=${PLAYON_SERVER_NAME:-NewZombieLand3}",
