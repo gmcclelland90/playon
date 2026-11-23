@@ -305,14 +305,13 @@ async function sweepDockerLeftovers(pids) {
     const cfg = windowsPlacementConfig(repoRoot);
     const auth = await loadHomeAuth(cfg);
     const home = new HomeClient(auth);
-    const list = await home.rest("/api/servers");
-    const servers = Array.isArray(list) ? list : Array.isArray(list?.servers) ? list.servers : [];
-    for (const s of servers) {
-      if (s?.id) homeProtectNames.add(playonContainerName(s.id));
-    }
+    const names = await home.loadProtectedContainerNames(playonContainerName);
+    for (const name of names) homeProtectNames.add(name);
     homeProtectLoaded = true;
   } catch (err) {
-    console.warn(`docker protect list unavailable: ${err instanceof Error ? err.message : err}`);
+    console.warn(
+      `docker protect list unavailable (fail closed): ${err instanceof Error ? err.message : err}`,
+    );
   }
   const result = await reapLabMatrixDockerLeftovers({
     homeProtectNames,

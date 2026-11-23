@@ -2,7 +2,7 @@
 
 Living contract for what must be green, when, and how coverage grows. Agents extend this after releases and `P0`/`P1` incidents.
 
-Companion docs: [agent-dev-loop.md](agent-dev-loop.md), [lab-matrix.md](lab-matrix.md), [sdlc.md](sdlc.md), [automations.md](automations.md).
+Companion docs: [agent-dev-loop.md](agent-dev-loop.md), [lab-matrix.md](lab-matrix.md), [clone-isolation.md](clone-isolation.md), [sdlc.md](sdlc.md), [automations.md](automations.md).
 
 ## Tiers
 
@@ -12,6 +12,7 @@ Companion docs: [agent-dev-loop.md](agent-dev-loop.md), [lab-matrix.md](lab-matr
 | Merge | `pnpm loop:verify` | Before merge when touching API / agent / runtime; always before release | Linux lab + [nightly-docker](../.github/workflows/nightly-docker.yml) |
 | Runtime | `pnpm loop:verify:runtime` | Docker lifecycle / Paper path changes | Lab + nightly |
 | Catalog | `pnpm lab:matrix` | Skill / catalog changes; standing lab cadence | Lab timer ([infra/lab](../infra/lab/README.md)) |
+| Clone isolation | `pnpm lab:clone-isolation-static` (every PR) and `pnpm lab:clone-isolation` (lab) | Server create / clone / start identity. Static scan plus dry-run are in CI. The stand-in runs on `playon-lab-linux` and `playon-lab-windows`, not on the host that serves live players. | Every PR for the static job; path-filtered PRs, `30 7 * * *`, and manual for the lab jobs ([clone-isolation.md](clone-isolation.md)) |
 | Join-path canary | `pnpm lab:join-path-canary` | Published `joinHost:gamePort` from `resolveJoinAddress` (not loopback). Ready-gate uses that advertised path from Home; WSL NAT publish is `net_port_publish` on the Windows parent LAN IP. | Unit in `pnpm verify`; live Docker / WSL / Win PE lab-only ([#843](https://github.com/gmcclelland90/playon/issues/843)) |
 | LLM canary | `pnpm lab:llm-canary` / `--home` | Two-step tool trace (Venice + Ollama when present). Home path restores Settings and tears down `lab-llm-canary*` ([llm-model-compat.md](llm-model-compat.md)) | Playon Ops `llm-model-compat` (Mon/Thu) |
 | Polish canaries | Playon Ops `playon-polish-canary` | Soak, managed-install, OTA+nodes, site/catalog, WSL Phase 2 — lab fixtures only | Standing Sydney schedule; first greens recorded 2026-09-09 ([#835](https://github.com/gmcclelland90/playon/issues/835), [automations.md](automations.md)) |
@@ -30,6 +31,7 @@ CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the **fast**
 | agent | agent-core | Live Venice two-step tool loop (Ollama optional) |
 | smoke:paper-docker | scripts + runtime | Paper create → start → port |
 | lab:matrix | skills + playon-games catalog | Per-skill E2E install/start/port |
+| lab:clone-isolation | scripts + public catalog | A clone must not keep the live server's name, ports, or save. Own start-script fallbacks are allowed ([#1050](https://github.com/gmcclelland90/playon/issues/1050)); foreign identity is not |
 | lab:join-path-canary | api + shared | Probe `resolveJoinAddress` / `nodes.join_host`, not `127.0.0.1` |
 | lab:llm-canary | agent-core + scripts | Two-step lab-* tool trace; `--home` restore/teardown; Ollama `reachable=false` does not fail Venice |
 | playon-polish-canary | Ops / lab fixtures | Soak, managed-install, OTA+nodes, site/catalog, WSL Phase 2 — never friend servers / NZL |
@@ -44,6 +46,7 @@ CI ([`.github/workflows/ci.yml`](../.github/workflows/ci.yml)) runs the **fast**
 | API / agent-core / runtime logic | Merge bar on lab |
 | Docker lifecycle / Paper path | Runtime bar |
 | Catalog `games.*` skill | Merge bar + `pnpm lab:matrix --skill <id>` |
+| Server create / clone / start identity | Fast bar, including the clone-isolation static job. Lab stand-in when runners are online ([clone-isolation.md](clone-isolation.md)) |
 | Admin / player UI flow | Fast bar; add or update e2e when touching auth/panel critical path |
 | Release `v*` | Merge bar green, CHANGELOG section, no open `P0`; open `P1` empty or explicitly deferred |
 
@@ -97,6 +100,7 @@ After each release, skim CHANGELOG **Fixed** entries and file `test-debt` for ga
 - Windows vitest 3.x + tinypool forks can pass every assertion then crash the runner on teardown (`emitter.removeListener is not a function`) or exit 1 on unhandled `[vitest-worker]: Timeout calling "onTaskUpdate"` after a green suite. Unit configs share `vitest.windows.mjs` (serialize workers; `threads` unless a native addon; api keeps forks + `singleFork`). CI `verify` on windows-latest uses `TURBO_CONCURRENCY=1`. Prefer splitting long Windows api files near the ~60s birpc cliff; `@playon/api` also shards envelope + runtime-handle into sequential vitest processes on win32. This is runner isolation, not a product assertion ([vitest#8164](https://github.com/vitest-dev/vitest/issues/8164), [vitest#6511](https://github.com/vitest-dev/vitest/discussions/6511), [#912](https://github.com/gmcclelland90/playon/issues/912), [#952](https://github.com/gmcclelland90/playon/issues/952)).
 - Windows native `process_stop` returns before the child releases its cwd / inherited log handle. Immediate `rmSync` of the job temp tree then throws `EBUSY` after green assertions (`apps/node-agent/src/jobs.test.ts`). Tests wait for the pid and retry locked `rmdir` ([#952](https://github.com/gmcclelland90/playon/issues/952), run [34399355827](https://github.com/gmcclelland90/playon/actions/runs/34399355827)).
 - Windows node OTA lying-`done` + WSL sibling offline (#1040): unit/contract-covered (Home ignores premature `ok: true` until the new stamp heartbeats; stale-offline fail; apply helper PID-only kill + breakaway WSL hold; elevate scoped to `InstallRoot`). Live confirm is the OTA + nodes polish canary on disposable `playon-win-1` / `playon-win-1-wsl` only — never friend / NZL / Hub hosts.
+- Windows node OTA job-object kill (#1060 / #1041): the agent launches `apply-self-update.ps1` via a one-shot scheduled task and does not exit unless the helper writes `data/ota-apply-<jobId>.started` (or the armed log line). Unit-covered (launch order, schtasks `/TR` length, marker wait, failure stays on the old version). Live confirm is an OTA on disposable `playon-win-1` after the agent that contains this launch is itself running (the hop after the release that ships it). The hop that is still started by the previous agent only gets the new script's first-action relaunch, which can still lose the race if PowerShell is killed before line one.
 - Windows node OTA must keep `start-node.cmd` calling `node.env.cmd` so the agent heartbeats to Home, not localhost — unit-covered (vintage packaged launcher, simulated extract/apply, `apply-self-update.ps1` write-after-swap); live playon-win-1 restore is ops, not `pnpm verify`
 - Windows 0.2.3/0.2.4 OTA `require is not defined` is unit-covered (vintage ESM helper throw, Home bootstrap jobs, claimNext skip); live playon-win-1 OTA is not in `pnpm verify` ([#885](https://github.com/gmcclelland90/playon/issues/885))
 - Windows 0.2.10→0.2.11 `update_sha256_mismatch` is unit-covered (archive kind/size diagnostics, Home-driven 0.2.10 enqueue with cache-busted URL + `ExpectedSize`); live playon-win-1 apply is ops after Home has this build ([#917](https://github.com/gmcclelland90/playon/issues/917))
@@ -106,6 +110,8 @@ After each release, skim CHANGELOG **Fixed** entries and file `test-debt` for ga
 - Join-path live TCP on WSL sibling and Windows PE is lab-only (unit covers `resolveJoinAddress`; [lab-matrix.md](lab-matrix.md), [#843](https://github.com/gmcclelland90/playon/issues/843))
 - Managed instance liveness (leftover reap, healthy reuse, first-see port-dead, persisted start grace, docker native-tree reap, health-restart single-instance, workshop_update notify-only, existing managed Health-monitor migrate) is unit-covered in `@playon/shared` + `@playon/runtime` + api runtime-handle / health / watcher tests ([#880](https://github.com/gmcclelland90/playon/issues/880))
 - Host-port leftover detection + `playon-*` reap (matrix / cleanup) is unit-covered in `@playon/runtime` + api runtime-handle: TIME_WAIT / listen-without-pid holders, Docker-compatible publish bind (not exclusive), bind-in-use retry when the holder is unknown, and reap of stopped unpublished leftovers. Docker 500 bind-in-use rewrites to `host_port_in_use` with the holder. Live single-skill matrix (`games.cs2` / `games.factorio`) is lab-only ([#941](https://github.com/gmcclelland90/playon/issues/941), [#942](https://github.com/gmcclelland90/playon/issues/942), [#955](https://github.com/gmcclelland90/playon/issues/955))
+- Venice `Inference processing failed` (#1044): the OpenAI-compatible client retries that HTTP 500 body on the same bounded transient budget as 502/503. Other 500 bodies are not retried. Unit-covered in `@playon/agent-core`. A provider that stays down still fails `pnpm loop:verify` at `int`.
+- Bedrock lab `udp_process_not_running` (#1048): BDS 1.26.61 listens on TCP 19132 (`Accepting clients on [::]:19132`) and does not bind UDP 19132 (`server-udp-ports=19132` is not a host listen socket; LAN discovery is UDP 7551). Home overlays catalog `games.minecraft-bedrock` to TCP 19132 + UDP 19140 and `TRANSPORT=nethernet`. Unit-covered in `@playon/shared` + api runtime-handle. Live confirm is `pnpm lab:matrix --skill games.minecraft-bedrock` on playon-dev (and a Windows Docker host before merge — game-package policy).
 - CS2 A2S `query_offline` (#1035): catalog `CS2_IP` overlay + native A2S fallback after GameDig miss are unit-covered in `@playon/shared` + `@playon/server-query`. Live `pnpm lab:matrix --skill games.cs2` on playon-dev is the next-matrix confirm (not a 27015 leftover; teeworlds/factorio `udp_process_not_running` are separate). Durable `CS2_IP=0.0.0.0` belongs in playon-games `games.cs2`.
 - Windows node jail teardown + orphan GC (#968): unit-covered (Windows process listing/match, lab-only purge policy, delete-before-DB-drop, local GC, matrix `jail_not_removed` helper). Live playon-win-1 residue after a full matrix skill is lab-only (`pnpm lab:matrix-cleanup`); friend/NZL/Hub/Frontier jails are never auto-purged.
 - Linux Docker jail teardown `EACCES` / root-owned bind-mount residue (#972–#976): unit-covered in `@playon/runtime` `rmTreeWithRetrySync` (mode-lock chmod + docker helper fallback). Live `pnpm lab:matrix --skill games.nwn-ee` (and siblings) on playon-dev is lab-only.
@@ -114,9 +120,11 @@ After each release, skim CHANGELOG **Fixed** entries and file `test-debt` for ga
 - Weekly e2e is scheduled (`e2e-weekly.yml`) and `pnpm test:e2e` always builds workspace packages first; not yet in every-PR CI ([#44](https://github.com/gmcclelland90/playon/issues/44))
 - Lab cadence timer is live on playon-dev (daily verify → matrix → `source:lab` Issues; history on [#52](https://github.com/gmcclelland90/playon/issues/52) / [infra/lab](../infra/lab/README.md)); reinstall only if the host is rebuilt
 - Polish canaries beyond the skill matrix are standing Playon Ops routines (`playon-polish-canary`); first greens recorded 2026-09-09 ([#835](https://github.com/gmcclelland90/playon/issues/835), [automations.md](automations.md)). Extra unit CI stays out of scope. Friend / NZL hosts are never the canary target.
+- Clone isolation of the live catalog is unit-covered (own start-script identity allowed, foreign identity refused, loopback stand-in, production-host guard) and the static catalog scan runs on every PR ([#1016](https://github.com/gmcclelland90/playon/issues/1016), [#1049](https://github.com/gmcclelland90/playon/issues/1049)). The self-hosted stand-in (`playon-lab-linux` / `playon-lab-windows`) is not a required check until those runners are registered, and it must not be the production Home. Path-filtered lab checks are absent on unrelated PRs ([clone-isolation.md](clone-isolation.md)).
 
 ## Human gates for testing
 
 - Venice spend beyond routine lab verify → `blocked-human`
 - Destructive cleanup of durable Home inventory → never; matrix uses temp roots only ([lab-matrix.md](lab-matrix.md))
+- Clone isolation against a Home that lists NZL / Hub / Frontier → the check refuses; do not register that host as `playon-lab-linux` or `playon-lab-windows` ([clone-isolation.md](clone-isolation.md))
 - Bump friend-hosting / NewZombieLand3 node agents → never from polish canaries; Glenn-approved window only ([automations.md](automations.md))

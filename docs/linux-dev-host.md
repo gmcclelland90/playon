@@ -91,6 +91,10 @@ Preserve durable state across checkouts: Home data lives under `/home/playon/src
 
 Loop protocol: [agent-dev-loop.md](agent-dev-loop.md)
 
+## Clone-isolation runners
+
+`pnpm lab:clone-isolation` binds loopback stand-ins for every catalog package this OS can host. Register that GitHub Actions runner on a **different** machine from this Home. `playon-dev` serves NewZombieLand3, Hub, and Frontier, so it must not carry the labels `playon-lab-linux` or `playon-lab-windows`. Set `PLAYON_PRODUCTION_HOST=1` here so a mis-registered runner exits before it binds. Runner setup and the Windows lab box are in [clone-isolation.md](clone-isolation.md).
+
 ## Production-like start (recommended for LAN UI)
 
 Prefer systemd (`playon` + node agent on the node host) — see [lan-install.md](lan-install.md) and `infra/control-plane/`. Recopy units, `playon.slice`, and `/etc/needrestart/conf.d/playon.conf`, then `daemon-reload`, after this tree so a `needrestart` / `systemctl restart playon` does not SIGKILL native games (#1038 / #1045). Confirm `KillMode=process` before restarting. Do not use live Hub / NZL / Frontier as the restart smoke target. Home will relaunch them when their desired state is running; a clone that reuses NZL's launch name or port is refused (#1016).

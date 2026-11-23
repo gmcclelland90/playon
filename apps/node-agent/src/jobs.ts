@@ -354,7 +354,14 @@ export async function executeJob(
 
   if (job.kind === "node_self_update") {
     const args = parseNodeJobArgs("node_self_update", job.args);
-    return parseNodeJobResult("node_self_update", await performNodeSelfUpdate(args));
+    return parseNodeJobResult(
+      "node_self_update",
+      await performNodeSelfUpdate({
+        ...args,
+        jobId: job.id,
+        dataRoot,
+      }),
+    );
   }
 
   if (job.kind === "fs_list") {

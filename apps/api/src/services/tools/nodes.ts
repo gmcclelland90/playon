@@ -1,3 +1,5 @@
+import { listOperatorNodes } from "../node-board.js";
+import { assertOperatorToolActor } from "../tool-actor.js";
 import { globalTool, type ToolModule } from "./types.js";
 
 /**
@@ -22,6 +24,21 @@ export const nodesToolModule: ToolModule = ({ plane }) => {
       },
       surface: { skill: "installer", activityVerb: "search" },
       handler: async (args) => placement.plan(String(args.skillName)),
+    }),
+
+    globalTool({
+      def: {
+        name: "nodes_list",
+        description:
+          "List compute nodes for an operator (same inventory as GET /api/nodes: id, online status, OS, placement). Read-only. Does not return tokens, SSH credentials, or WireGuard keys.",
+        readOnly: true,
+        parameters: { type: "object", properties: {}, additionalProperties: false },
+      },
+      surface: { skill: "installer", activityVerb: "search" },
+      handler: async () => {
+        assertOperatorToolActor();
+        return listOperatorNodes(plane);
+      },
     }),
 
     globalTool({

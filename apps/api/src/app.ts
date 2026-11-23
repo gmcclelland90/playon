@@ -55,13 +55,10 @@ import {
   UpdateWatcherSchema,
   VultrOAuthCallbackRequestSchema,
   can,
-  deriveNodePresence,
   parseUsageHistory,
   messageFromError,
   isUdpJoinUnverified,
   playerPanelStatusFromJoinReady,
-  placementBadge,
-  placementFromNodeKind,
   type NodeKind,
   type Role,
   type SkillInUseDetails,
@@ -196,12 +193,12 @@ import { execConsoleCommand } from "./services/server-console.js";
 import { nodeJobService } from "./services/node-jobs.js";
 import { nodeRestartService } from "./services/node-restart.js";
 import {
-  nodeContainers,
   recordNodeContainers,
   recordNodeProcesses,
   serverUsageFromInventory,
 } from "./services/node-inventory.js";
-import { alertsForNode, persistNodeUsageSample } from "./services/usage-history.js";
+import { listOperatorNodes } from "./services/node-board.js";
+import { persistNodeUsageSample } from "./services/usage-history.js";
 import {
   authenticateAccessToken,
   bearerFromAuthorization,
@@ -309,7 +306,6 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
     agentProgress,
     skillPackages,
     drafts: draftService,
-    tunnel,
     addNode,
     installDocker,
     wslRuntime,
@@ -2268,65 +2264,7 @@ export function createApp(db: Db, config: AppConfig): PlayOnApp {
 
   app.get("/api/nodes", async (c) => {
     requireRole(c, "operator");
-    const list = await db.select().from(nodes);
-    const now = Date.now();
-    const nodeSettings = await getSetting<NodeSettings>(db, NODE_SETTINGS_KEY);
-    const nodeServers = await serverService.list();
-    return c.json({
-      localComputeEnabled: nodeSettings?.localComputeEnabled ?? true,
-      wireguardTools: tunnel.toolsAvailable(),
-      /** True when PLAYON_NODE_TOKEN is set — required to add LAN/cloud nodes. */
-      nodeTokenConfigured: Boolean(config.nodeToken?.trim()),
-      nodes: list.map((n) => {
-        const kind =
-          (n.kind as NodeKind) ||
-          (n.id === LOCAL_NODE_ID || n.id === LOCAL_WSL_NODE_ID ? "local" : "lan");
-        const usageHistory = parseUsageHistory(n.usageHistoryJson);
-        const hosted = nodeServers
-          .filter((s) => s.nodeId === n.id)
-          .map((s) => ({
-            id: s.id,
-            name: s.name,
-            ...serverUsageFromInventory(s.id, s.nodeId, s.runtimeMode),
-          }));
-        return {
-          id: n.id,
-          name: n.name,
-          os: n.os,
-          docker: n.docker,
-          native: n.native ?? true,
-          steamcmd: n.steamcmd ?? false,
-          freeDiskBytes: n.freeDiskBytes,
-          cpuPercent: n.cpuPercent,
-          memUsedBytes: n.memUsedBytes,
-          memTotalBytes: n.memTotalBytes,
-          agentVersion: n.agentVersion,
-          lastSeenAt: n.lastSeenAt.toISOString(),
-          status: deriveNodePresence(n.lastSeenAt, now),
-          kind,
-          placement: placementFromNodeKind(kind),
-          badge: placementBadge({
-            kind,
-            name: n.name,
-            tunnelStatus: n.tunnelStatus,
-            nodeId: n.id,
-          }),
-          tunnelStatus: n.tunnelStatus,
-          overlayIp: n.overlayIp,
-          tunnelEndpoint: n.tunnelEndpoint,
-          joinHost: n.joinHost ?? null,
-          containers: nodeContainers(n.id),
-          usageHistory: usageHistory.host,
-          alerts: alertsForNode({
-            nodeId: n.id,
-            nodeName: n.name,
-            current: n,
-            history: usageHistory,
-            hostedServers: hosted,
-          }),
-        };
-      }),
-    });
+    return c.json(await listOperatorNodes(plane));
   });
 
   app.get("/api/settings/nodes", async (c) => {

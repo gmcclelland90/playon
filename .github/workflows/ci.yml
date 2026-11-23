@@ -14,6 +14,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      # powershell.exe is Windows PowerShell 5.1. pwsh parses UTF-8 and would
+      # hide the cp1252 smart-quote failure this step exists to catch (#1060).
+      - name: PowerShell 5.1 parse check
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts\check-windows-ps1-parse.ps1
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
@@ -72,6 +78,24 @@ jobs:
         run: |
           node scripts/package-mvp.mjs
           test -f dist-package/playon-mvp.zip
+
+  # Every PR, including forks. Public catalog only — no secrets, no self-hosted runner.
+  # This is the check to mark required. The lab workflow is path-filtered and stays
+  # optional until playon-lab-linux / playon-lab-windows runners exist.
+  clone-isolation-static:
+    name: Clone isolation (static)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Scan catalog identity
+        run: node scripts/clone-isolation-static.mjs --catalog --cache tmp/clone-isolation-catalog
+      - name: Dry-run the live plan
+        run: node scripts/clone-isolation-live.mjs --dry-run --root tmp/clone-isolation-catalog
 
   image-smoke:
     runs-on: ubuntu-latest

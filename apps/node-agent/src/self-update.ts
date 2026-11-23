@@ -3,6 +3,7 @@ import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { launchWindowsUpdateHelper } from "./windows-update-launch.js";
 import {
   ARCHIVE_EXTRACT_TIMEOUT_MS,
   WINDOWS_LOAD_ENV_CJS,
@@ -269,6 +270,10 @@ export async function performNodeSelfUpdate(args: {
   expectedSize?: number;
   /** When true (tests), do not schedule process.exit */
   skipExit?: boolean;
+  /** Node data directory for `ota-apply-<jobId>.log` (#1060). */
+  dataRoot?: string;
+  /** Claimed job id; used only as a log filename. */
+  jobId?: string;
 }): Promise<{
   version: string;
   installRoot: string;
@@ -335,11 +340,13 @@ export async function performNodeSelfUpdate(args: {
     const extracted = await extractArchive(archivePath, path.join(staging, "extracted"));
 
     if (process.platform === "win32" && !args.skipExit) {
-      const result = performWindowsSelfUpdate({
+      const result = await performWindowsSelfUpdate({
         installRoot,
         extracted,
         preserve,
         version: args.version,
+        jobId: args.jobId,
+        dataRoot: args.dataRoot,
       });
       windowsHelperSpawned = true;
       return result;
@@ -370,44 +377,53 @@ export async function performNodeSelfUpdate(args: {
   }
 }
 
-/** 0.2.3/0.2.4 used CommonJS require of node:child_process here and threw in ESM (#885). */
-function performWindowsSelfUpdate(opts: {
+/** Filename-safe `data/ota-apply-<jobId>.log` under the node data dir (#1060). */
+export function windowsOtaApplyLogPath(dataRoot: string, jobId?: string): string {
+  const safe = (jobId ?? "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 80);
+  return path.join(path.resolve(dataRoot), `ota-apply-${safe || "unknown"}.log`);
+}
+
+function resolveSelfUpdateDataRoot(opts: { dataRoot?: string; installRoot: string }): string {
+  const explicit = opts.dataRoot?.trim();
+  if (explicit) return path.resolve(explicit);
+  const fromEnv = process.env.PLAYON_DATA_ROOT?.trim();
+  if (fromEnv) return path.resolve(fromEnv);
+  return path.join(opts.installRoot, "data");
+}
+
+/**
+ * Windows apply runs outside this process. `launchWindowsUpdateHelper` returns
+ * only after the helper has disabled PlayOnNodeAgent and written its armed
+ * marker. A throw (`update_helper_not_started`) fails the job and must not
+ * exit: the caller stays on the old version (#1060 / #1041).
+ */
+async function performWindowsSelfUpdate(opts: {
   installRoot: string;
   extracted: string;
   preserve: string[];
   version: string;
-}): {
+  jobId?: string;
+  dataRoot?: string;
+}): Promise<{
   version: string;
   installRoot: string;
   preserved: string[];
   restartRequired: boolean;
-} {
+}> {
   const helperScript = requireWindowsUpdateHelper(opts.extracted);
-
-  const preserveArgs = opts.preserve.flatMap((name) => ["-Preserve", name]);
-  const args = [
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
-    "-File",
+  const logPath = windowsOtaApplyLogPath(
+    resolveSelfUpdateDataRoot({ dataRoot: opts.dataRoot, installRoot: opts.installRoot }),
+    opts.jobId,
+  );
+  await launchWindowsUpdateHelper({
     helperScript,
-    "-SourceDir",
-    opts.extracted,
-    "-TargetDir",
-    opts.installRoot,
-    "-AgentPid",
-    String(process.pid),
-    "-ExpectedVersion",
-    opts.version,
-    ...preserveArgs,
-  ];
-
-  const child = spawn("powershell.exe", args, {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
+    sourceDir: opts.extracted,
+    targetDir: opts.installRoot,
+    agentPid: process.pid,
+    version: opts.version,
+    preserve: opts.preserve,
+    logPath,
   });
-  child.unref();
 
   return {
     version: opts.version,
@@ -499,6 +515,7 @@ export function relaunchUpdatedAgent(opts: {
 }): ChildProcess | void {
   if (opts.skipExit) return;
   if (process.platform === "win32") {
+    // The helper is already outside this job and has disabled the agent task.
     setTimeout(() => process.exit(0), 200);
     return;
   }

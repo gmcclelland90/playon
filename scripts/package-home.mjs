@@ -12,9 +12,22 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync, execSync } from "node:child_process";
+import { extractVendoredNodeArchive } from "./vendor-node-extract.mjs";
 import https from "node:https";
 import { createWriteStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
+
+// PowerShell 7 (the GitHub Actions default shell) exports PSModulePath with its own
+// Microsoft.PowerShell.Archive first. Windows PowerShell 5.1 then loads that module and
+// Expand-Archive fails with "Cannot find an overload for ExtractToDirectory" (windows-latest
+// image 20261116+). Drop PSModulePath so powershell.exe rebuilds its own default.
+function windowsPowerShellEnv() {
+  const env = { ...process.env };
+  for (const k of Object.keys(env)) {
+    if (k.toLowerCase() === "psmodulepath") delete env[k];
+  }
+  return env;
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -101,19 +114,7 @@ async function vendorNode() {
   fs.rmSync(extractDir, { recursive: true, force: true });
   fs.rmSync(runtimeNode, { recursive: true, force: true });
 
-  if (isWin) {
-    execFileSync(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-Command",
-        `Expand-Archive -Path '${archivePath.replace(/'/g, "''")}' -DestinationPath '${cacheDir.replace(/'/g, "''")}' -Force`,
-      ],
-      { stdio: "inherit" },
-    );
-  } else {
-    execFileSync("tar", ["-xzf", archivePath, "-C", cacheDir], { stdio: "inherit" });
-  }
+  extractVendoredNodeArchive(archivePath, cacheDir);
 
   if (!fs.existsSync(extractDir)) {
     console.error(`Node extract missing: ${extractDir}`);
@@ -340,7 +341,7 @@ if (isWin) {
       "-Command",
       `Compress-Archive -Path '${stage.replace(/'/g, "''")}' -DestinationPath '${zipPath.replace(/'/g, "''")}' -Force`,
     ],
-    { stdio: "inherit" },
+    { stdio: "inherit", env: windowsPowerShellEnv() },
   );
   console.log("Packaged Home at", zipPath);
 } else {
