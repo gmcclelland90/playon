@@ -151,6 +151,7 @@ Outbound HTTPS is required (GitHub, Node, `playon.games`). Do not set `PLAYON_PR
 ## What is left to enable
 
 1. Register the two runners with the labels above, on machines that are not `playon-dev` and do not host live players.
+   Then set the repository variable `PLAYON_LAB_RUNNERS_ONLINE` to `true` (Settings → Secrets and variables → Actions → Variables). Until it is set, the linux/windows lab jobs are skipped instead of queuing. Until then, run the stand-in by hand on the lab hosts (`node scripts/clone-isolation-live.mjs --host linux|windows --port-base 40000 --home off`).
 2. Set `PLAYON_PRODUCTION_HOST=1` on the production host.
 3. After **Clone isolation (static)** is green on this PR, mark that job required. Leave the linux/windows lab jobs optional until the runners have completed a manual run.
 4. Optional: a lab-only `PLAYON_LAB_HOME_SESSION` on the runner, then `workflow_dispatch` with `home=auto`. Keep `home_start` false.

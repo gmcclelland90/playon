@@ -11,6 +11,10 @@ name: clone-isolation-lab
 # playon-lab-windows are online. A missing runner queues the job. The every-PR
 # check to require is "Clone isolation (static)" in ci.yml.
 #
+# The self-hosted jobs only run when the repository variable
+# PLAYON_LAB_RUNNERS_ONLINE is 'true'. Until then they are skipped (no queued
+# jobs, no nightly failure noise). Set it after registering both runners.
+#
 # These runners must not be the production host that serves live player servers
 # (playon-dev / NewZombieLand3 / Hub / Frontier). See docs/clone-isolation.md.
 
@@ -125,7 +129,7 @@ jobs:
   linux:
     name: Clone isolation (linux)
     needs: gate
-    if: needs.gate.outputs.trusted == 'true'
+    if: needs.gate.outputs.trusted == 'true' && vars.PLAYON_LAB_RUNNERS_ONLINE == 'true'
     runs-on: [self-hosted, playon-lab-linux]
     timeout-minutes: 120
     permissions:
@@ -161,7 +165,7 @@ jobs:
   windows:
     name: Clone isolation (windows)
     needs: gate
-    if: needs.gate.outputs.trusted == 'true'
+    if: needs.gate.outputs.trusted == 'true' && vars.PLAYON_LAB_RUNNERS_ONLINE == 'true'
     runs-on: [self-hosted, playon-lab-windows]
     timeout-minutes: 120
     permissions:
