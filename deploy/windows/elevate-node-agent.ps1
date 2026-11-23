@@ -45,7 +45,7 @@ if (-not (Test-Path $loadEnv)) {
   if (Test-Path $bundled) {
     Copy-Item -Force $bundled $loadEnv
   } else {
-    throw "Missing $loadEnv — copy deploy/windows/load-env.cjs next to the agent or re-run install-node.ps1."
+    throw "Missing $loadEnv - copy deploy/windows/load-env.cjs next to the agent or re-run install-node.ps1."
   }
 }
 

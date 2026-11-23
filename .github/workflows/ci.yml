@@ -14,6 +14,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      # powershell.exe is Windows PowerShell 5.1. pwsh parses UTF-8 and would
+      # hide the cp1252 smart-quote failure this step exists to catch (#1060).
+      - name: PowerShell 5.1 parse check
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts\check-windows-ps1-parse.ps1
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:

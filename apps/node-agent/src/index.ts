@@ -106,7 +106,12 @@ async function tickJobs() {
       const message = err instanceof Error ? err.message : "job_failed";
       claimWatchdog.markJobFinished();
       await reportJobResult(apiBase, nodeId, job.id, { ok: false, error: message }, nodeToken);
-      console.warn(`[node-agent] job failed id=${job.id}: ${message}`);
+      if (job.kind === "node_self_update") {
+        console.error(`[node-agent] SELF-UPDATE FAILED id=${job.id}: ${message}`);
+        console.error(`[node-agent] staying on the current version; not exiting`);
+      } else {
+        console.warn(`[node-agent] job failed id=${job.id}: ${message}`);
+      }
     }
   } catch (err) {
     claimWatchdog.markClaimPoll();

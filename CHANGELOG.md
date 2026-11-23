@@ -4,6 +4,49 @@ All notable changes to PlayOn Home (root `package.json` version) are listed here
 
 ## Unreleased
 
+## [0.2.20] — 2026-11-19
+
+### Fixed
+
+- **Windows Home packaging extracts the vendored Node zip with tar** — `pnpm package:home` on current `windows-latest` runs under PowerShell 7, so `powershell.exe` inherited that `PSModulePath` and `Expand-Archive` called a 3-argument `ExtractToDirectory` that Windows PowerShell 5.1 does not have. The Node zip is unpacked with `tar -xf` first. The Expand-Archive fallback drops `PSModulePath`.
+- **Windows node OTA helper survives the agent task exiting** — On playon-win-1 the 0.2.18 and 0.2.19 agents spawned `apply-self-update.ps1` detached and exited about 200ms later. The helper never ran a line, because it was still inside the PlayOnNodeAgent job and Task Scheduler killed it when the agent exited. The agent now registers a one-shot `PlayOnNodeAgentApplyUpdate` task through Task Scheduler COM, copying the agent principal (same user, S4U, Highest), waits up to 10s for the helper to disable that task and write a start marker, and stays online on the old version if the marker never appears. `schtasks` and WMI `Win32_Process.Create` are fallbacks. The helper still logs to `data/ota-apply-<jobId>.log` and deletes the one-shot task when it finishes. When an older agent still spawns the script inside the job, the script's first action is the same one-shot relaunch (`#1060`, `#1041`).
+
+### Notes
+
+- Rides `#1064` and `#1063` on top of 0.2.19 (`ce532ed..0ce028b`).
+- Nodes on 0.2.19 still spawn the helper the old way for this OTA. The 0.2.20 script tries the one-shot relaunch first, so this OTA may or may not apply on its own. The agent-side Task Scheduler launch takes effect from the OTA after 0.2.20.
+- **#1051** through **#1054** are not in this cut.
+
+## [0.2.19] — 2026-11-19
+
+### Fixed
+
+- **Windows node OTA no longer dies on Windows PowerShell 5.1** — `apply-self-update.ps1` contained UTF-8 em dashes with no BOM, so PowerShell 5.1 read it as cp1252 and the script failed to parse right after the agent exited for the swap. playon-win-1's 0.2.17 to 0.2.18 OTA went offline this way and had to be installed by hand. Every `.ps1`/`.psm1`/`.cmd`/`.bat` in the repo is now plain ASCII. CI fails on any non-ASCII byte in those scripts (`scripts/check-windows-script-ascii.mjs`) and, on `windows-latest`, parses each `.ps1`/`.psm1` with `powershell.exe` 5.1. The agent now sends the detached helper's stdout and stderr to `data/ota-apply-<jobId>.log`, and the script writes a start line there before any swap work, so a failed apply leaves evidence (`#1060`, `#1061`).
+
+### Notes
+
+- Rides `#1061` on top of 0.2.18 (`3cf7e44..a52ac3c`).
+- The helper is run from the new package, so nodes on 0.2.18 pick up the fixed script on this OTA. The `ota-apply-<jobId>.log` redirect starts with the agent that ships here, so it applies from the next OTA after 0.2.19.
+- **#1051** through **#1054** are not in this cut.
+
+## [0.2.18] — 2026-11-18
+
+### Fixed
+
+- **Lab matrix Windows placement works with an MCP access token** — `requireWinNodeOnline` and the live-server protect list no longer call Home REST with only a bearer token (REST answers 403 `forbidden` by design). Home exposes a read-only operator `nodes_list` tool with the same inventory as `GET /api/nodes` and no key material. The matrix client uses `nodes_list` and `servers_list` over MCP, keeps a live `playon_session` cookie as a fallback, and refuses a cached session once it is expired or fails `GET /api/auth/me`. Protect-list failures stay fail-closed. Placement errors distinguish `auth_failed`, `windows_node_offline`, `windows_node_missing`, and `disabled_by_env` (`PLAYON_MATRIX_WIN_NODE_ID=off`) (`#1058`).
+
+- **Project Zomboid starts use the target server's own world identity** — PZ start now resolves `-servername`, the cache dir, and game/direct ports only from that server's own `Server/*.ini` and jail. A world whose name equals another server's display name is treated as someone else's. Missing ini, `DefaultPort`, or `UDPPort` fails the start with `start_config_missing` before any process is launched. The #1046 isolation guard stays. A brand-new PZ server with no ini of its own now fails start instead of launching as `servertest` on `16261` (`#1049`, `#1016`).
+
+### Changed
+
+- **Game-ready fal assets (epic #988)** — `mods_assets_generate` now takes a `kind`: `image`, `sprite` (background removed), `icon` (transparent, resized to the game's icon size, e.g. PZ 32px / Minecraft 16px), `texture` (square, resized to the game's texture size) or `sound` (short clip). Calls go through fal's queue API with a 5-minute cap and cancel on timeout, so slower models don't hang the request. Models are allowlisted per kind (no free-form model ids on the host's key). Results include a `placementHint` for where the game loads the file. Resizing is pure JS (no native image deps). The key is only ever sent to `queue.fal.run`. Files land under `mods-src/<modId>/assets/` only; deploy stays a separate confirm-gated snapshot (`#1025`).
+
+### Notes
+
+- Rides `#1058` (MCP `nodes_list` and lab matrix MCP checks), `#1025` (fal game-ready assets), `#1049` (PZ start identity from the server's own world ini), and `#892` (Minecraft join docs point at grokbot-mineflayer) on top of 0.2.17 (`f6bde8be..29d049a4`).
+- **#1051** (start-config shell-tokenization guard) is not in this cut.
+- Open P1s deferred from 0.2.17 and not touched by this cut remain deferred.
+
 ## [0.2.17] — 2026-10-27
 
 ### Fixed
